@@ -1,7 +1,7 @@
 import { api, type TokenPair } from './client'
 
 export type AccountType = 'BUYER' | 'PROFESSIONAL' | 'FIRM' | 'ENTERPRISE'
-export type Persona = 'BUYER' | 'PROFESSIONAL' | 'FIRM_ADMIN' | 'ENTERPRISE_ADMIN'
+export type Persona = 'BUYER' | 'PROFESSIONAL' | 'FIRM_ADMIN' | 'ENTERPRISE_ADMIN' | 'ENTERPRISE_MEMBER'
 export type Dashboard = 'buyer' | 'professional' | 'firm' | 'enterprise' | 'ops'
 
 export const PLATFORM_ROLES = [
@@ -83,6 +83,7 @@ export const ROLE_LABEL: Record<string, string> = {
   PROFESSIONAL: 'Professional',
   FIRM_ADMIN: 'Firm Admin',
   ENTERPRISE_ADMIN: 'Enterprise Admin',
+  ENTERPRISE_MEMBER: 'Enterprise Member',
   PLATFORM_ADMIN: 'Platform Admin',
   TS_ANALYST: 'Trust & Safety Analyst',
   COMPLIANCE_OFFICER: 'Compliance Officer',
@@ -99,4 +100,5 @@ export const DASHBOARD_FOR_PERSONA: Record<Persona, Dashboard> = {
   PROFESSIONAL: 'professional',
   FIRM_ADMIN: 'firm',
   ENTERPRISE_ADMIN: 'enterprise',
+  ENTERPRISE_MEMBER: 'enterprise',
 }

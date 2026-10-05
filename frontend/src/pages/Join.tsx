@@ -24,7 +24,10 @@ function isAccountType(v: string | null): v is AccountType {
 
 export default function Join() {
   const [params] = useSearchParams()
-  const initial = params.get('type')
+  const next = params.get('next')
+  const safeNext = next && /^\/invite(\?|$)/.test(next) ? next : null
+  // Invited to a firm -> you'll work as a Professional; to an organization -> as a Buyer.
+  const initial = params.get('type') ?? (safeNext ? (safeNext.includes('kind=firm') ? 'PROFESSIONAL' : 'BUYER') : null)
   const { accept } = useAuth()
   const navigate = useNavigate()
 
@@ -66,8 +69,8 @@ export default function Join() {
       })
       accept(result)
       // Dev only: the backend returns the email-confirmation token until an email provider is connected.
-      const next = result.user.mfaRequired ? '/app/security' : `/app/${result.user.defaultDashboard}`
-      navigate(next, { replace: true, state: { welcome: true, confirmToken: result.emailConfirmationToken } })
+      const dest = result.user.mfaRequired ? '/app/security' : safeNext ?? `/app/${result.user.defaultDashboard}`
+      navigate(dest, { replace: true, state: { welcome: true, confirmToken: result.emailConfirmationToken } })
     } catch (err) {
       if (err instanceof ApiError && err.code === 'EMAIL_TAKEN') setFieldErrors({ email: err.message })
       else setError(err)
@@ -127,7 +130,7 @@ export default function Join() {
         {fieldErrors.terms && <p className="small" style={{ color: 'var(--zk-danger)', marginTop: -10 }}>{fieldErrors.terms}</p>}
         <button className="btn btn-primary btn-block" disabled={busy}>{busy ? 'Creating account…' : 'Create account'}</button>
       </form>
-      <p className="auth-foot">Already have an account? <Link to="/login">Sign in</Link></p>
+      <p className="auth-foot">Already have an account? <Link to={safeNext ? `/login?next=${encodeURIComponent(safeNext)}` : '/login'}>Sign in</Link></p>
     </AuthLayout>
   )
 }

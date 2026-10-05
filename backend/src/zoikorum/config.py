@@ -13,6 +13,7 @@ class Settings(BaseSettings):
 
     env: str = "local"
     service_name: str = "zoikorum-api"
+    frontend_url: str = "http://localhost:5173"  # used to build links in invitations / emails
     database_url: str = "postgresql+asyncpg://zoikorum:zoikorum@localhost:5434/zoikorum"
     db_pool_size: int = 10
 

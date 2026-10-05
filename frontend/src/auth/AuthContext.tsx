@@ -11,6 +11,11 @@ interface AuthState {
   logout: () => Promise<void>
   /** Re-authenticate with the authenticator code for sensitive actions (step-up MFA). */
   stepUp: (code: string) => Promise<void>
+  /**
+   * Re-issue the token so new roles appear (memberships are applied by the background
+   * worker, usually within a second). Polls until `ready(user)` is true or ~8s pass.
+   */
+  refreshClaims: (ready?: (u: User) => boolean) => Promise<User | null>
 }
 
 const AuthContext = createContext<AuthState | null>(null)
@@ -57,9 +62,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     tokens.set(await authApi.stepUp(code))
   }, [])
 
+  const refreshClaims = useCallback(async (ready?: (u: User) => boolean) => {
+    let me: User | null = null
+    for (let i = 0; i < 16; i++) {
+      if (await refreshSession()) me = await reloadUser()
+      if (!ready) return me
+      if (me && ready(me)) {
+        await refreshSession() // token minted after the change is visible, so it carries the new roles
+        return me
+      }
+      await new Promise((r) => setTimeout(r, 500))
+    }
+    return me
+  }, [reloadUser])
+
   const value = useMemo(
-    () => ({ user, loading, accept, reloadUser, logout, stepUp }),
-    [user, loading, accept, reloadUser, logout, stepUp],
+    () => ({ user, loading, accept, reloadUser, logout, stepUp, refreshClaims }),
+    [user, loading, accept, reloadUser, logout, stepUp, refreshClaims],
   )
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

@@ -24,6 +24,17 @@ npm run build      # type-check + production build into dist/
 | `/app/ops`, `/app/ops/staff` | platform staff / Platform Admin | Operations home; grant/revoke staff roles (step-up MFA) |
 | `/app/account`, `/app/security` | signed in | Roles held, add Buyer/Professional role, set up two-step verification |
 
+## Step 2 — organizations, firms & team roles (built)
+
+| Route | Who | Purpose |
+|---|---|---|
+| `/app/enterprise` | Enterprise Admin / Member | Organization home: your roles, team size, setup checklist |
+| `/app/enterprise/team` | members (admins manage) | Members, roles, approval spend limits; invite / edit / remove; pending invitations |
+| `/app/enterprise/structure` | members (admins / budget owners manage) | Business units and cost centers with quarterly budgets |
+| `/app/firm`, `/app/firm/team`, `/app/firm/profile` | Firm Admin (members read) | Firm status, professionals, authorized representative, registration details |
+| `/app/invitations` | signed in | Invitations sent to your email (accept requires a confirmed email) |
+| `/invite?kind=org\|firm&token=` | anyone | Invitation link: sign in or sign up, then join automatically |
+
 Rules the UI follows:
 - Staff, Firm Admins and Enterprise Admins are sent to `/app/security` until two-step verification is on.
 - Pages are gated by role (`RequireRole`). The API applies the same check to every call.

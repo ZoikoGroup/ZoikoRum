@@ -50,8 +50,11 @@ class Persona:
     PROFESSIONAL = "PROFESSIONAL"
     FIRM_ADMIN = "FIRM_ADMIN"
     ENTERPRISE_ADMIN = "ENTERPRISE_ADMIN"
+    ENTERPRISE_MEMBER = "ENTERPRISE_MEMBER"  # invited enterprise team member (Requester, Approver ...)
 
-    ALL = frozenset({BUYER, PROFESSIONAL, FIRM_ADMIN, ENTERPRISE_ADMIN})
+    ALL = frozenset({BUYER, PROFESSIONAL, FIRM_ADMIN, ENTERPRISE_ADMIN, ENTERPRISE_MEMBER})
+    # Chosen by the user themselves; the others are derived from organization/firm membership.
+    SELF_SERVICE = frozenset({BUYER, PROFESSIONAL})
     # Signup "account type" -> persona granted.
     FROM_ACCOUNT_TYPE = {"BUYER": BUYER, "PROFESSIONAL": PROFESSIONAL, "FIRM": FIRM_ADMIN, "ENTERPRISE": ENTERPRISE_ADMIN}
 
@@ -67,6 +70,16 @@ class OrgRole:
     EXCEPTION_AUTHORITY = "EXCEPTION_AUTHORITY"
 
     ALL = frozenset({ORG_ADMIN, REQUESTER, APPROVER, BUDGET_OWNER, LEGAL_REVIEWER, EXCEPTION_AUTHORITY})
+
+
+class FirmRole:
+    """Roles inside a firm (Firm domain)."""
+
+    FIRM_ADMIN = "FIRM_ADMIN"
+    FIRM_MEMBER = "FIRM_MEMBER"
+    AUTHORIZED_REPRESENTATIVE = "AUTHORIZED_REPRESENTATIVE"  # legally acts for the firm; verified later
+
+    ALL = frozenset({FIRM_ADMIN, FIRM_MEMBER, AUTHORIZED_REPRESENTATIVE})
 
 
 class AuthStrength:

@@ -114,7 +114,8 @@ The other domain folders contain only their `facade.py` interface contracts; the
 |---|---|---|
 | 0 Foundation | Shared kernel (outbox/inbox, idempotency, timers, errors, money, auth), audit ledger, migrations | Built |
 | 1 Role-based login | Sign-up by account type (Buyer, Professional, Firm, Enterprise), one login for all roles, dashboard routing, role guards, staff roles with mandatory MFA, step-up, password reset, admin bootstrap CLI, frontend screens | Built |
-| 2+ | Proposed next: organizations & team invites (enterprise roles), professional profile & onboarding, then search, proposals, contracts, escrow… | Not started |
+| 2 Organizations, firms & team roles | Buyer domain (Individual/Enterprise organizations, members, Org roles: Org Admin, Requester, Approver, Budget Owner, Legal Reviewer, Exception Authority; spend limits; business units; cost centers; email-bound invitations) and Firm domain (firm profile with optimistic concurrency, Firm Admin / Member / Authorized Representative, invitations); identity derives Enterprise/Firm workspaces from memberships; frontend team, structure, firm and invitation screens | Built |
+| 3+ | Proposed next: professional profile & onboarding (taxonomy, offerings, publishing), then verification & trust tiers, search, proposals, contracts, escrow… | Not started |
 
 ## 7. Running it
 

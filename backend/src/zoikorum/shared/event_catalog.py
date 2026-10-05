@@ -43,6 +43,9 @@ class E:
     ORG_MEMBER_ADDED = _t("buyer", "organization", "member_added")
     BUYER_ROLE_ASSIGNED = _t("buyer", "organization", "role_assigned")
     ORG_MEMBER_REMOVED = _t("buyer", "organization", "member_removed")
+    ORG_MEMBER_INVITED = _t("buyer", "organization", "member_invited")
+    ORG_INVITATION_REVOKED = _t("buyer", "organization", "invitation_revoked")
+    ORGANIZATION_UPDATED = _t("buyer", "organization", "updated")
     SPEND_LIMIT_UPDATED = _t("buyer", "organization", "spend_limit_updated")
 
     # ---- Firm ----------------------------------------------------------------
@@ -51,6 +54,9 @@ class E:
     FIRM_MEMBER_INVITED = _t("firm", "firm", "member_invited")
     FIRM_MEMBER_JOINED = _t("firm", "firm", "member_joined")
     FIRM_MEMBER_REMOVED = _t("firm", "firm", "member_removed")
+    FIRM_MEMBER_ROLES_CHANGED = _t("firm", "firm", "member_roles_changed")
+    FIRM_INVITATION_REVOKED = _t("firm", "firm", "invitation_revoked")
+    FIRM_PROFILE_UPDATED = _t("firm", "firm", "profile_updated")
 
     # ---- Professional --------------------------------------------------------
     PROFESSIONAL_REGISTERED = _t("professional", "professional", "registered")

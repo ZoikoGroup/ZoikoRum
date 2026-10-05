@@ -90,10 +90,11 @@ interface RequestOptions {
   body?: unknown
   auth?: boolean
   query?: Record<string, string>
+  headers?: Record<string, string>
 }
 
 export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-  const { method = 'GET', body, auth = true, query } = opts
+  const { method = 'GET', body, auth = true, query, headers: extra = {} } = opts
   const url = query ? `${path}?${new URLSearchParams(query)}` : path
 
   const send = () =>
@@ -102,6 +103,7 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
       headers: {
         ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
         ...(auth && accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        ...extra,
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     }).catch(() => {

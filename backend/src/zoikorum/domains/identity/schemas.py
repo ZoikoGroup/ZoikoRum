@@ -77,6 +77,7 @@ class LinkOut(BaseModel):
     type: str
     targetId: uuid.UUID
     roles: list[str]
+    kind: str | None = None
 
 
 class IdentityOut(BaseModel):

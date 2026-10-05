@@ -22,7 +22,9 @@ def _imports(path: Path) -> list[str]:
         if isinstance(node, ast.Import):
             out += [a.name for a in node.names]
         elif isinstance(node, ast.ImportFrom) and node.module:
-            out.append(node.module)
+            # "from zoikorum.domains.x import facade" imports the name, not the package body.
+            if len(node.module.split(".")) != 3 or not node.module.startswith("zoikorum.domains."):
+                out.append(node.module)
             out += [f"{node.module}.{a.name}" for a in node.names]
     return out
 

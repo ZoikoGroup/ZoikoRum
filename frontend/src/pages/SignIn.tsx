@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { authApi } from '../api/auth'
 import { ApiError } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
@@ -10,7 +10,9 @@ export default function SignIn() {
   const { accept } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
-  const from = (location.state as { from?: string } | null)?.from
+  const [params] = useSearchParams()
+  const from = params.get('next') || (location.state as { from?: string } | null)?.from
+  const safeNext = from && /^\/(app|invite)(\/|\?|$)/.test(from) ? from : null
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -26,7 +28,7 @@ export default function SignIn() {
     try {
       const result = await authApi.login(email, password, needsCode ? code : undefined)
       accept(result)
-      navigate(from && from.startsWith('/app') ? from : `/app/${result.user.defaultDashboard}`, { replace: true })
+      navigate(result.user.mfaRequired ? '/app/security' : safeNext ?? `/app/${result.user.defaultDashboard}`, { replace: true })
     } catch (err) {
       if (err instanceof ApiError && err.code === 'MFA_REQUIRED') {
         setNeedsCode(true) // password was right; ask for the authenticator code

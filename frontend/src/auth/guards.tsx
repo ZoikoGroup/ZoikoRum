@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Navigate, useLocation } from 'react-router-dom'
+import { Navigate, useLocation, useSearchParams } from 'react-router-dom'
 import type { Persona, PlatformRole } from '../api/auth'
 import { useAuth } from './AuthContext'
 
@@ -27,10 +27,20 @@ export function RequireRole({ any, children }: { any: (Persona | PlatformRole)[]
   return <>{children}</>
 }
 
-/** Pages like /login: bounce signed-in users to their dashboard. */
+/** Only same-site app/invite paths may be used as a post-login destination (no open redirects). */
+// eslint-disable-next-line react-refresh/only-export-components
+export function safeNextPath(next: string | null | undefined): string | null {
+  return next && /^\/(app|invite)(\/|\?|$)/.test(next) ? next : null
+}
+
+/** Pages like /login: bounce signed-in users to ?next (e.g. an invite link) or their dashboard. */
 export function GuestOnly({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
+  const [params] = useSearchParams()
   if (loading) return null
-  if (user) return <Navigate to={`/app/${user.defaultDashboard}`} replace />
+  if (user) {
+    const dest = user.mfaRequired ? '/app/security' : safeNextPath(params.get('next')) ?? `/app/${user.defaultDashboard}`
+    return <Navigate to={dest} replace />
+  }
   return <>{children}</>
 }

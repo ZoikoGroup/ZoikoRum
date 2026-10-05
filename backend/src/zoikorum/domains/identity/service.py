@@ -39,6 +39,7 @@ RESET_TOKEN_TTL = 30 * 60
 # Where each account role lands after sign-in (frontend route keys).
 _DASHBOARD = {
     Persona.ENTERPRISE_ADMIN: "enterprise",
+    Persona.ENTERPRISE_MEMBER: "enterprise",
     Persona.FIRM_ADMIN: "firm",
     Persona.PROFESSIONAL: "professional",
     Persona.BUYER: "buyer",
@@ -87,7 +88,7 @@ def to_out(identity: Identity, links: list[IdentityLink]) -> IdentityOut:
         platformRoles=sorted(identity.platform_roles or []),
         organizationName=identity.signup_organization_name,
         defaultDashboard=default_dashboard(identity),
-        links=[LinkOut(type=l.link_type, targetId=l.target_id, roles=sorted(l.roles)) for l in links],
+        links=[LinkOut(type=l.link_type, targetId=l.target_id, roles=sorted(l.roles), kind=l.target_kind) for l in links],
         createdAt=identity.created_at,
     )
 
@@ -306,7 +307,10 @@ async def set_status(session: AsyncSession, identity_id: uuid.UUID, status: str,
         _evt(session, E.IDENTITY_REINSTATED, identity, reason=reason)
 
 
-async def upsert_link(session: AsyncSession, identity_id: uuid.UUID, link_type: str, target_id: uuid.UUID, roles: list[str]) -> None:
+async def upsert_link(
+    session: AsyncSession, identity_id: uuid.UUID, link_type: str, target_id: uuid.UUID, roles: list[str],
+    target_kind: str | None = None,
+) -> None:
     link = await session.scalar(
         select(IdentityLink).where(
             IdentityLink.identity_id == identity_id,
@@ -315,9 +319,44 @@ async def upsert_link(session: AsyncSession, identity_id: uuid.UUID, link_type: 
         )
     )
     if link is None:
-        session.add(IdentityLink(identity_id=identity_id, link_type=link_type, target_id=target_id, roles=sorted(set(roles))))
+        session.add(IdentityLink(identity_id=identity_id, link_type=link_type, target_id=target_id,
+                                 roles=sorted(set(roles)), target_kind=target_kind))
     else:
         link.roles = sorted(set(roles))
+        link.target_kind = target_kind or link.target_kind
+    await session.flush()
+    await recompute_personas(session, identity_id)
+
+
+def _derived_personas(links: list[IdentityLink]) -> set[str]:
+    """Account roles that follow from memberships (Enterprise Policy s.11, Firm domain)."""
+    out: set[str] = set()
+    for link in links:
+        if link.link_type == "ORG_MEMBER" and link.target_kind in ("ENTERPRISE", "BUSINESS"):
+            out.add(Persona.ENTERPRISE_ADMIN if "ORG_ADMIN" in link.roles else Persona.ENTERPRISE_MEMBER)
+        elif link.link_type == "FIRM_MEMBER":
+            out.add(Persona.PROFESSIONAL)  # firm members offer services as professionals
+            if "FIRM_ADMIN" in link.roles:
+                out.add(Persona.FIRM_ADMIN)
+    return out
+
+
+async def recompute_personas(session: AsyncSession, identity_id: uuid.UUID) -> None:
+    identity = await session.get(Identity, identity_id, with_for_update=True)
+    if identity is None:
+        return
+    links = await _links(session, identity_id)
+    self_chosen = set(identity.personas or []) & Persona.SELF_SERVICE
+    personas = sorted(self_chosen | _derived_personas(links))
+    if personas != sorted(identity.personas or []):
+        added = set(personas) - set(identity.personas or [])
+        identity.personas = personas
+        for persona in sorted(added):
+            _evt(session, E.PERSONA_ADDED, identity, persona=persona, source="MEMBERSHIP")
+    if identity.primary_persona not in personas:
+        identity.primary_persona = next(
+            (p for p in (Persona.ENTERPRISE_ADMIN, Persona.FIRM_ADMIN, Persona.ENTERPRISE_MEMBER,
+                         Persona.PROFESSIONAL, Persona.BUYER) if p in personas), None)
 
 
 async def remove_link(session: AsyncSession, identity_id: uuid.UUID, link_type: str, target_id: uuid.UUID) -> None:
@@ -330,6 +369,8 @@ async def remove_link(session: AsyncSession, identity_id: uuid.UUID, link_type: 
     )
     if link is not None:
         await session.delete(link)
+        await session.flush()
+        await recompute_personas(session, identity_id)
 
 
 async def get_me(session: AsyncSession, actor: Actor) -> IdentityOut:

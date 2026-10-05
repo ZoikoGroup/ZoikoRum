@@ -149,6 +149,8 @@ a:hover { text-decoration: underline; }
   padding: 14px 12px 6px; font-weight: 600; }
 .sidebar a { display: block; padding: 9px 12px; border-radius: var(--radius-sm); color: var(--zk-navy); font-size: 14px; }
 .sidebar a:hover { background: var(--zk-bg); text-decoration: none; }
+.sidebar a.sub { padding-left: 26px; font-size: 13.5px; color: var(--zk-muted); }
+.sidebar a .count { float: right; background: var(--zk-green); color: #fff; border-radius: 999px; font-size: 11px; font-weight: 700; padding: 1px 7px; }
 .sidebar a.active { background: var(--zk-ok-bg); color: var(--zk-green-dark); font-weight: 600; }
 .main { padding: 32px 40px; max-width: 1100px; }
 .page-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; margin-bottom: 24px; }
@@ -201,3 +203,14 @@ table.data td { padding: 12px; border-bottom: 1px solid var(--zk-border); vertic
   .auth-card .row { flex-direction: column; align-items: stretch; }
   .user-menu .badges, .user-menu > span:not(.avatar) { display: none; }
 }
+
+/* ---- Role picker ---- */
+.role-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.role-option { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--zk-border);
+  border-radius: var(--radius-sm); cursor: pointer; background: #fff; }
+.role-option:has(input:checked) { border-color: var(--zk-green); background: var(--zk-ok-bg); }
+.role-option input { width: 18px; height: 18px; margin-top: 2px; accent-color: var(--zk-green); }
+.role-option > span { display: flex; flex-direction: column; gap: 2px; font-size: 14px; color: var(--zk-navy); }
+fieldset:disabled .input { background: var(--zk-bg-soft); color: var(--zk-muted); }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; background: var(--zk-bg); padding: 2px 6px; border-radius: 4px; }
+@media (max-width: 900px) { .role-grid { grid-template-columns: 1fr; } }

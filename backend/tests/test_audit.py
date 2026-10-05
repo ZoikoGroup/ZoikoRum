@@ -13,7 +13,8 @@ async def test_every_event_is_audited_with_valid_hash_chain(client, make_user, d
     await drain()
     async with sf() as s:
         n = await s.scalar(text("SELECT count(*) FROM audit.audit_records"))
-        assert n == 2  # one IdentityCreated per registration
+        events = await s.scalar(text("SELECT count(*) FROM platform.outbox"))
+        assert n == events and n >= 2  # every event became an audit record
         result = await audit.verify_chain(s)
     assert result["valid"] is True and result["checked"] == n
 

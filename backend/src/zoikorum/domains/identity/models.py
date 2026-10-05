@@ -70,6 +70,8 @@ class IdentityLink(Base, UUIDPk, Timestamps):
     link_type: Mapped[str] = mapped_column(String(30), nullable=False)  # PROFESSIONAL | ORG_MEMBER | FIRM_MEMBER
     target_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     roles: Mapped[list[str]] = mapped_column(ARRAY(String(50)), nullable=False, default=list)
+    # What the target is: INDIVIDUAL | BUSINESS | ENTERPRISE (organizations), FIRM, PROFESSIONAL.
+    target_kind: Mapped[str | None] = mapped_column(String(20))
 
 
 class ConsentRecord(Base, UUIDPk, CreatedAt):
