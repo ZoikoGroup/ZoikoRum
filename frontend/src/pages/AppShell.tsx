@@ -66,16 +66,21 @@ export default function AppShell() {
               {d === 'firm' && <>
                 <NavLink className="sub" to="/app/firm/team">Firm team</NavLink>
                 <NavLink className="sub" to="/app/firm/profile">Firm profile</NavLink>
+                <NavLink className="sub" to="/app/firm/verification">Firm verification</NavLink>
               </>}
-              {d === 'professional' && inFirm && !dashboards.includes('firm') && (
-                <NavLink className="sub" to="/app/firm/team">My firm</NavLink>
-              )}
+              {d === 'professional' && <>
+                <NavLink className="sub" to="/app/professional/profile">My profile</NavLink>
+                <NavLink className="sub" to="/app/professional/offerings">Service offerings</NavLink>
+                <NavLink className="sub" to="/app/professional/verification">Verification &amp; trust</NavLink>
+                {inFirm && !dashboards.includes('firm') && <NavLink className="sub" to="/app/firm/team">My firm</NavLink>}
+              </>}
             </div>
           ))}
           {isStaff && (
             <>
               <div className="group">Staff</div>
               <NavLink to="/app/ops" end>{DASH_LABEL.ops}</NavLink>
+              {user.platformRoles.includes('COMPLIANCE_OFFICER') && <NavLink to="/app/ops/verification">Verification reviews</NavLink>}
               {isAdmin && <NavLink to="/app/ops/staff">Staff &amp; roles</NavLink>}
             </>
           )}

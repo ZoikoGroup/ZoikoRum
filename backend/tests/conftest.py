@@ -6,6 +6,8 @@ Set ZK_TEST_DATABASE (default zoikorum_test) to isolate parallel test runs.
 
 from __future__ import annotations
 
+import importlib
+import importlib.util
 import os
 import uuid
 from datetime import datetime, timezone
@@ -29,6 +31,8 @@ from zoikorum.shared import clock, ddl  # noqa: E402
 from zoikorum.shared.db import DOMAIN_SCHEMAS, Base, configure_engine, session_factory  # noqa: E402
 from zoikorum.shared.relay import drain as _drain  # noqa: E402
 
+LOADED_DOMAINS: list[str] = []
+
 
 @pytest.fixture(scope="session")
 async def engine():
@@ -40,7 +44,8 @@ async def engine():
     await admin.dispose()
 
     eng = create_async_engine(TEST_URL, pool_size=20)
-    load_domains()
+    global LOADED_DOMAINS
+    LOADED_DOMAINS = load_domains()
     async with eng.begin() as conn:
         for schema in DOMAIN_SCHEMAS:
             await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
@@ -67,6 +72,11 @@ async def clean_db(engine):
         await conn.execute(text("SET session_replication_role = replica"))  # bypass append-only triggers
         await conn.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
         await conn.execute(text("SET session_replication_role = DEFAULT"))
+    # Reference data (e.g. the capability taxonomy) that migrations load in real databases.
+    async with session_factory()() as s, s.begin():
+        for d in LOADED_DOMAINS:
+            if importlib.util.find_spec(f"zoikorum.domains.{d}.seed"):
+                await importlib.import_module(f"zoikorum.domains.{d}.seed").seed(s)
     yield
     clock.set_now(None)
 

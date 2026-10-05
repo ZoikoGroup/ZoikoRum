@@ -14,3 +14,18 @@ async def on_identity_created(session: AsyncSession, event: EventEnvelope) -> No
     p = event.payload
     if p.get("accountType") == "FIRM":
         await service.create_for_signup(session, uuid.UUID(p["identityId"]), p.get("organizationName"))
+
+
+@subscribe(E.VERIFICATION_COMPLETED, consumer="firm.registration_verified")
+async def on_verification_completed(session: AsyncSession, event: EventEnvelope) -> None:
+    p = event.payload
+    if p.get("subjectType") == "FIRM" and p.get("verificationType") == "FIRM_REGISTRATION":
+        await service.set_registration_verified(session, uuid.UUID(str(p["subjectId"])), True)
+
+
+@subscribe(E.VERIFICATION_EXPIRED, consumer="firm.registration_lapsed")
+@subscribe(E.VERIFICATION_REVOKED, consumer="firm.registration_lapsed")
+async def on_verification_lapsed(session: AsyncSession, event: EventEnvelope) -> None:
+    p = event.payload
+    if p.get("subjectType") == "FIRM" and p.get("verificationType") == "FIRM_REGISTRATION":
+        await service.set_registration_verified(session, uuid.UUID(str(p["subjectId"])), False)

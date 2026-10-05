@@ -1,11 +1,15 @@
-"""Professional facade - CONTRACT. Signatures and DTOs are fixed; implement bodies."""
+"""Professional facade - read-only interface other domains use."""
 
 from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from zoikorum.domains.professional.models import Offering, Professional
+from zoikorum.domains.professional.service import effective_availability, specializations_of
 
 
 @dataclass(frozen=True)
@@ -48,21 +52,53 @@ class OfferingSummary:
     deliverables: tuple[str, ...]
 
 
+def _summary(p: Professional) -> ProfessionalSummary:
+    return ProfessionalSummary(
+        id=p.id, identity_id=p.identity_id, firm_id=p.firm_id, display_name=p.display_name, headline=p.headline,
+        status=p.status, country=p.country, primary_category=p.primary_category,
+        primary_specialization=p.primary_specialization, specializations=tuple(specializations_of(p)),
+        jurisdictions_served=tuple(p.served_jurisdictions), licensed_jurisdictions=tuple(p.licensed_jurisdictions),
+        engagement_types=tuple(p.engagement_types), delivery_modes=tuple(p.delivery_modes),
+        pricing_models=tuple(p.pricing_models), availability=effective_availability(p),
+        max_concurrent_engagements=p.max_concurrent_engagements, active_engagements=p.active_engagements,
+        years_experience_band=p.years_experience_band, languages=tuple(p.languages),
+        visibility_reduced=p.visibility_reduced,
+    )
+
+
+def _offering(o: Offering) -> OfferingSummary:
+    return OfferingSummary(
+        id=o.id, professional_id=o.professional_id, title=o.title, specialization=o.specialization,
+        engagement_types=tuple(o.engagement_types), pricing_model=o.pricing_model,
+        starting_price_minor=o.starting_price_minor, currency=o.currency, typical_duration=o.typical_duration,
+        status=o.status, deliverables=tuple(o.deliverables),
+    )
+
+
 async def get_professional(session: AsyncSession, professional_id: uuid.UUID) -> ProfessionalSummary | None:
-    raise NotImplementedError
+    p = await session.get(Professional, professional_id)
+    return _summary(p) if p else None
 
 
 async def get_professional_by_identity(session: AsyncSession, identity_id: uuid.UUID) -> ProfessionalSummary | None:
-    raise NotImplementedError
+    p = await session.scalar(select(Professional).where(Professional.identity_id == identity_id))
+    return _summary(p) if p else None
 
 
 async def get_professionals(session: AsyncSession, ids: list[uuid.UUID]) -> dict[uuid.UUID, ProfessionalSummary]:
-    raise NotImplementedError
+    if not ids:
+        return {}
+    rows = (await session.scalars(select(Professional).where(Professional.id.in_(ids)))).all()
+    return {p.id: _summary(p) for p in rows}
 
 
 async def get_offering(session: AsyncSession, offering_id: uuid.UUID) -> OfferingSummary | None:
-    raise NotImplementedError
+    o = await session.get(Offering, offering_id)
+    return _offering(o) if o else None
 
 
 async def list_offerings(session: AsyncSession, professional_id: uuid.UUID, active_only: bool = True) -> list[OfferingSummary]:
-    raise NotImplementedError
+    stmt = select(Offering).where(Offering.professional_id == professional_id).order_by(Offering.created_at)
+    if active_only:
+        stmt = stmt.where(Offering.status == "ACTIVE")
+    return [_offering(o) for o in (await session.scalars(stmt)).all()]

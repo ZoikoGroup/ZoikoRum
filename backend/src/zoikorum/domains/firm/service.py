@@ -44,6 +44,21 @@ async def create_for_signup(session: AsyncSession, identity_id: uuid.UUID, legal
     _evt(session, E.FIRM_MEMBER_JOINED, firm, identityId=identity_id, roles=roles)
 
 
+async def set_registration_verified(session: AsyncSession, firm_id: uuid.UUID, verified: bool) -> None:
+    """Consumer of firm-registration verification outcomes. Idempotent; suspension wins."""
+    firm = await session.get(Firm, firm_id, with_for_update=True)
+    if firm is None or firm.status == "SUSPENDED":
+        return
+    target = "VERIFIED" if verified else "PENDING_VERIFICATION"
+    if firm.status == target:
+        return
+    firm.status = target
+    if verified:
+        _evt(session, E.FIRM_VERIFIED, firm)
+    else:
+        _evt(session, E.FIRM_PROFILE_UPDATED, firm, changes={"status": target}, updatedBy=None)
+
+
 async def _firm(session: AsyncSession, firm_id: uuid.UUID, lock: bool = False) -> Firm:
     firm = await session.get(Firm, firm_id, with_for_update=lock)
     if firm is None or firm.status == "SUSPENDED":

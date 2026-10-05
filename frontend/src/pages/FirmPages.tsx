@@ -267,7 +267,7 @@ export function FirmDashboard() {
     { label: 'Complete the firm profile (registration number, size)', done: !!firm.registrationNumber && !!firm.sizeBand, to: '/app/firm/profile' },
     { label: 'Name an authorized representative', done: firm.hasAuthorizedRepresentative, to: '/app/firm/team' },
     { label: 'Invite your professionals', done: firm.memberCount > 1, to: '/app/firm/team' },
-    { label: 'Verify the firm registration', done: firm.status === 'VERIFIED', to: null },
+    { label: 'Verify the firm registration', done: firm.status === 'VERIFIED', to: '/app/firm/verification' },
   ]
   return (
     <>

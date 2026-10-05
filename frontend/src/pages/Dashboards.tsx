@@ -38,10 +38,28 @@ const CARDS: Record<Dashboard, { title: string; intro: string; cards: string[]; 
   },
 }
 
+/** Welcome message after sign-up and the email-confirmation reminder, shown on every dashboard. */
+export function AccountAlerts() {
+  const { user } = useAuth()
+  const welcome = (useLocation().state as { welcome?: boolean; confirmToken?: string } | null) ?? {}
+  if (!user) return null
+  return (
+    <>
+      {welcome.welcome && <div className="alert alert-success" role="status">Welcome to Zoikorum, {user.displayName}. Your account is ready.</div>}
+      {!user.emailConfirmed && (
+        <div className="alert alert-warn">
+          Please confirm your email address. Your profile cannot be published until it is confirmed.
+          {welcome.confirmToken && (
+            <> {' '}Development mode: <Link to={`/confirm-email?token=${encodeURIComponent(welcome.confirmToken)}`}>confirm now</Link>.</>
+          )}
+        </div>
+      )}
+    </>
+  )
+}
+
 export function DashboardPage({ kind }: { kind: Dashboard }) {
   const { user } = useAuth()
-  const location = useLocation()
-  const welcome = (location.state as { welcome?: boolean; confirmToken?: string } | null) ?? {}
   if (!user) return null
   const c = CARDS[kind]
 
@@ -56,15 +74,7 @@ export function DashboardPage({ kind }: { kind: Dashboard }) {
         </div>
       </div>
 
-      {welcome.welcome && <div className="alert alert-success" role="status">Welcome to Zoikorum, {user.displayName}. Your account is ready.</div>}
-      {!user.emailConfirmed && (
-        <div className="alert alert-warn">
-          Please confirm your email address. Your profile cannot be published until it is confirmed.
-          {welcome.confirmToken && (
-            <> {' '}Development mode: <Link to={`/confirm-email?token=${encodeURIComponent(welcome.confirmToken)}`}>confirm now</Link>.</>
-          )}
-        </div>
-      )}
+      <AccountAlerts />
 
       <div className="grid-cards">
         {c.cards.map((label) => (

@@ -35,6 +35,25 @@ npm run build      # type-check + production build into dist/
 | `/app/invitations` | signed in | Invitations sent to your email (accept requires a confirmed email) |
 | `/invite?kind=org\|firm&token=` | anyone | Invitation link: sign in or sign up, then join automatically |
 
+## Step 3 — professional profile & offerings (built)
+
+| Route | Who | Purpose |
+|---|---|---|
+| `/app/professional` | Professional | Profile status, Trust Tier (C until verification), readiness checklist with links to fix each item |
+| `/app/professional/profile?step=` | Professional | Step-by-step setup: basics, specializations (taxonomy), engagement & pricing, availability, jurisdictions, credentials, review & publish |
+| `/app/professional/offerings` | Professional | Service offerings: create, edit, activate, pause (paused ≠ deleted) |
+| `/professionals/:id` | anyone (no sign-in) | Public profile. Unpublished profiles are visible only to their owner (preview) |
+
+## Step 4 — verification & trust tiers (built)
+
+| Route | Who | Purpose |
+|---|---|---|
+| `/app/professional/verification` | Professional | Trust tier, the five verification areas and why; start identity, jurisdiction and insurance checks; submit documents |
+| `/app/firm/verification` | Firm Admin | Start and follow the firm-registration check |
+| `/app/ops/verification` | Compliance Officer | Review queue: evidence, decision (verified / more info / not verified) with step-up MFA |
+
+Documents: the browser computes each file's SHA-256; only name, size and fingerprint are sent until secure storage is connected.
+
 Rules the UI follows:
 - Staff, Firm Admins and Enterprise Admins are sent to `/app/security` until two-step verification is on.
 - Pages are gated by role (`RequireRole`). The API applies the same check to every call.
@@ -44,7 +63,7 @@ Rules the UI follows:
 
 ## Layout
 ```
-src/api/        HTTP client (token refresh, Problem Details errors) + typed auth API
+src/api/        HTTP client (token refresh, Problem Details errors) + typed APIs (auth, orgs, professional)
 src/auth/       AuthContext (session) and route guards
 src/components/ shared UI: site header, auth layout, fields, step-up MFA dialog
 src/pages/      screens

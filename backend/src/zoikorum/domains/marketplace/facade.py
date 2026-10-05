@@ -1,7 +1,7 @@
-"""Marketplace facade - CONTRACT. Signatures and DTOs are fixed; implement bodies.
+"""Marketplace facade - read-only interface other domains use.
 
 The capability taxonomy is hierarchical and versioned:
-category (finance-accounting) -> group (finance-leadership) -> specialization (fractional-cfo).
+category (finance-and-accounting) -> group (finance-leadership) -> specialization (fractional-cfo).
 """
 
 from __future__ import annotations
@@ -9,7 +9,12 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
+
+from zoikorum.domains.marketplace.models import TaxonomyNode
+from zoikorum.shared.errors import ValidationFailed
 
 
 @dataclass(frozen=True)
@@ -32,18 +37,36 @@ class CategoryInfo:
 
 
 async def get_specializations(session: AsyncSession, slugs: list[str]) -> dict[str, SpecializationInfo]:
-    raise NotImplementedError
+    if not slugs:
+        return {}
+    group = aliased(TaxonomyNode)
+    rows = (
+        await session.execute(
+            select(TaxonomyNode, group.slug)
+            .join(group, group.id == TaxonomyNode.parent_id)
+            .where(TaxonomyNode.slug.in_(slugs), TaxonomyNode.level == "SPECIALIZATION", TaxonomyNode.status == "ACTIVE")
+        )
+    ).all()
+    return {
+        n.slug: SpecializationInfo(n.slug, n.name, g_slug, n.category_slug, n.requires_credential, n.regulated,
+                                   tuple(n.deliverable_templates), tuple(n.credential_hints))
+        for n, g_slug in rows
+    }
 
 
 async def validate_specializations(session: AsyncSession, slugs: list[str]) -> None:
     """Raise ValidationFailed if any slug is not an active taxonomy specialization."""
-    raise NotImplementedError
+    found = await get_specializations(session, slugs)
+    unknown = sorted(set(slugs) - set(found))
+    if unknown:
+        raise ValidationFailed(f"Not a Zoikorum specialization: {', '.join(unknown)}", code="UNKNOWN_SPECIALIZATION")
 
 
 async def get_category(session: AsyncSession, slug: str) -> CategoryInfo | None:
-    raise NotImplementedError
+    n = await session.scalar(select(TaxonomyNode).where(TaxonomyNode.slug == slug, TaxonomyNode.level == "CATEGORY"))
+    return CategoryInfo(n.slug, n.name, n.taxonomy_version) if n else None
 
 
 async def saved_by(session: AsyncSession, professional_id: uuid.UUID) -> list[uuid.UUID]:
-    """Identity ids that saved this professional (availability alerts)."""
-    raise NotImplementedError
+    """Identity ids that saved this professional (saved professionals arrive with search)."""
+    return []
