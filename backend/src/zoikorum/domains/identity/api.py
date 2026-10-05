@@ -7,7 +7,11 @@ from fastapi import APIRouter, Request, status
 from zoikorum.config import get_settings
 from zoikorum.domains.identity import service
 from zoikorum.domains.identity.schemas import (
+    AddPersonaIn,
+    AuthOut,
     ConfirmEmailIn,
+    ForgotPasswordIn,
+    ForgotPasswordOut,
     GrantRoleIn,
     IdentityOut,
     LoginIn,
@@ -16,6 +20,8 @@ from zoikorum.domains.identity.schemas import (
     RefreshIn,
     RegisterIn,
     RegisterOut,
+    ResetPasswordIn,
+    StaffMemberOut,
     StepUpIn,
     TokenPair,
 )
@@ -30,14 +36,18 @@ def _ua(request: Request) -> str | None:
     return request.headers.get("User-Agent")
 
 
+def _expose_dev_tokens() -> bool:
+    # No email provider yet: outside production, return one-time tokens so dev/test can complete flows.
+    return get_settings().env != "production"
+
+
 @router.post("/auth/register", response_model=RegisterOut, status_code=status.HTTP_201_CREATED)
 async def register(body: RegisterIn, request: Request, session: DbSession) -> RegisterOut:
     identity, pair, confirm = await service.register(session, body, _ua(request))
-    expose = get_settings().env != "production"
     return RegisterOut(
-        identity=service.to_out(identity, []),
         tokens=pair,
-        emailConfirmationToken=confirm if expose else None,
+        user=service.to_out(identity, []),
+        emailConfirmationToken=confirm if _expose_dev_tokens() else None,
     )
 
 
@@ -47,8 +57,8 @@ async def confirm_email(body: ConfirmEmailIn, session: DbSession) -> IdentityOut
     return service.to_out(identity, [])
 
 
-@router.post("/auth/login", response_model=TokenPair)
-async def login(body: LoginIn, request: Request) -> TokenPair:
+@router.post("/auth/login", response_model=AuthOut)
+async def login(body: LoginIn, request: Request) -> AuthOut:
     # Own transaction: a failed attempt must still commit its lockout counter.
     async with session_factory()() as session:
         async with session.begin():
@@ -74,6 +84,18 @@ async def logout(actor: CurrentActor, session: DbSession) -> None:
     await service.logout(session, actor)
 
 
+@router.post("/auth/password/forgot", response_model=ForgotPasswordOut, status_code=status.HTTP_202_ACCEPTED)
+async def forgot_password(body: ForgotPasswordIn, session: DbSession) -> ForgotPasswordOut:
+    token = await service.request_password_reset(session, body.email)
+    # Same response whether or not the email exists (no account enumeration).
+    return ForgotPasswordOut(resetToken=token if _expose_dev_tokens() else None)
+
+
+@router.post("/auth/password/reset", status_code=status.HTTP_204_NO_CONTENT)
+async def reset_password(body: ResetPasswordIn, session: DbSession) -> None:
+    await service.reset_password(session, body.token, body.newPassword)
+
+
 @router.post("/auth/mfa/enroll", response_model=MfaEnrollOut)
 async def mfa_enroll(actor: CurrentActor, session: DbSession) -> MfaEnrollOut:
     secret, uri = await service.enroll_mfa(session, actor)
@@ -95,7 +117,32 @@ async def me(actor: CurrentActor, session: DbSession) -> IdentityOut:
     return await service.get_me(session, actor)
 
 
+@router.post("/me/account-types", response_model=AuthOut)
+async def add_account_type(body: AddPersonaIn, request: Request, actor: CurrentActor, session: DbSession) -> AuthOut:
+    """Add Buyer or Professional to an existing account; returns fresh tokens with the new role."""
+    return await service.add_persona(session, actor, body.accountType, _ua(request))
+
+
+# ---- Platform staff administration (Platform Admin, MFA + step-up) -------------
+
+@router.get("/admin/staff", response_model=list[StaffMemberOut])
+async def list_staff(actor: CurrentActor, session: DbSession) -> list[StaffMemberOut]:
+    return await service.list_staff(session, actor)
+
+
 @router.post("/admin/identities/{identity_id}/platform-roles", response_model=IdentityOut)
 async def grant_role(identity_id: uuid.UUID, body: GrantRoleIn, actor: CurrentActor, session: DbSession) -> IdentityOut:
     identity = await service.grant_platform_role(session, actor, identity_id, body.role)
     return service.to_out(identity, [])
+
+
+@router.delete("/admin/identities/{identity_id}/platform-roles/{role}", response_model=IdentityOut)
+async def revoke_role(identity_id: uuid.UUID, role: str, actor: CurrentActor, session: DbSession) -> IdentityOut:
+    identity = await service.revoke_platform_role(session, actor, identity_id, role)
+    return service.to_out(identity, [])
+
+
+@router.get("/admin/identities/lookup", response_model=StaffMemberOut)
+async def lookup_identity(email: str, actor: CurrentActor, session: DbSession) -> StaffMemberOut:
+    """Find an account by email so an admin can grant it a staff role."""
+    return await service.lookup_by_email(session, actor, email)

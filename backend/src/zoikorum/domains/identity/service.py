@@ -22,9 +22,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from zoikorum.config import get_settings
 from zoikorum.domains.identity import tokens
 from zoikorum.domains.identity.models import ConsentRecord, Identity, IdentityLink, Session
-from zoikorum.domains.identity.schemas import IdentityOut, LinkOut, RegisterIn, TokenPair
+from zoikorum.domains.identity.schemas import AuthOut, IdentityOut, LinkOut, RegisterIn, StaffMemberOut, TokenPair
 from zoikorum.shared import clock
-from zoikorum.shared.auth import Actor, AuthStrength, PlatformRole
+from zoikorum.shared.auth import Actor, AuthStrength, Persona, PlatformRole
 from zoikorum.shared.crypto import decrypt_field, encrypt_field, sha256_hex
 from zoikorum.shared.errors import Conflict, Forbidden, NotFound, Unauthenticated, ValidationFailed
 from zoikorum.shared.event_catalog import E
@@ -34,6 +34,33 @@ _hasher = PasswordHasher()
 MAX_FAILED_LOGINS = 5
 LOCKOUT = timedelta(minutes=15)
 EMAIL_TOKEN_TTL = 3 * 24 * 3600
+RESET_TOKEN_TTL = 30 * 60
+
+# Where each account role lands after sign-in (frontend route keys).
+_DASHBOARD = {
+    Persona.ENTERPRISE_ADMIN: "enterprise",
+    Persona.FIRM_ADMIN: "firm",
+    Persona.PROFESSIONAL: "professional",
+    Persona.BUYER: "buyer",
+}
+# Roles whose accounts must use MFA (Architecture 11.4, Enterprise Policy s.11).
+_MFA_PERSONAS = {Persona.ENTERPRISE_ADMIN, Persona.FIRM_ADMIN}
+
+
+def default_dashboard(identity: Identity) -> str:
+    if identity.platform_roles:
+        return "ops"
+    if identity.primary_persona in _DASHBOARD:
+        return _DASHBOARD[identity.primary_persona]
+    for persona, dash in _DASHBOARD.items():
+        if persona in (identity.personas or []):
+            return dash
+    return "buyer"
+
+
+def mfa_required(identity: Identity) -> bool:
+    needs = bool(identity.platform_roles) or bool(_MFA_PERSONAS.intersection(identity.personas or []))
+    return needs and identity.mfa_enabled_at is None
 
 
 def _evt(session: AsyncSession, event_type: str, identity: Identity, **payload) -> None:
@@ -54,7 +81,12 @@ def to_out(identity: Identity, links: list[IdentityLink]) -> IdentityOut:
         status=identity.status,
         emailConfirmed=identity.email_confirmed_at is not None,
         mfaEnabled=identity.mfa_enabled_at is not None,
+        mfaRequired=mfa_required(identity),
+        personas=sorted(identity.personas or []),
+        primaryPersona=identity.primary_persona,
         platformRoles=sorted(identity.platform_roles or []),
+        organizationName=identity.signup_organization_name,
+        defaultDashboard=default_dashboard(identity),
         links=[LinkOut(type=l.link_type, targetId=l.target_id, roles=sorted(l.roles)) for l in links],
         createdAt=identity.created_at,
     )
@@ -95,11 +127,16 @@ async def register(session: AsyncSession, data: RegisterIn, user_agent: str | No
         display_name=data.displayName.strip(),
         country=data.country,
         platform_roles=[],
+        personas=[Persona.FROM_ACCOUNT_TYPE[data.accountType]],
+        primary_persona=Persona.FROM_ACCOUNT_TYPE[data.accountType],
+        signup_organization_name=(data.organizationName or "").strip() or None,
     )
     session.add(identity)
     await session.flush()
     session.add(ConsentRecord(identity_id=identity.id, consent_type="TERMS", document_version=data.termsVersion))
-    _evt(session, E.IDENTITY_CREATED, identity, email=email, country=identity.country)
+    _evt(session, E.IDENTITY_CREATED, identity, email=email, country=identity.country,
+         accountType=data.accountType, personas=identity.personas,
+         organizationName=identity.signup_organization_name)
     pair = await _start_session(session, identity, AuthStrength.PASSWORD, user_agent)
     confirm = tokens.mint_purpose_token(identity.id, "email_confirm", EMAIL_TOKEN_TTL)
     return identity, pair, confirm
@@ -127,7 +164,7 @@ class LoginFailure:
 
 async def login(
     session: AsyncSession, email: str, password: str, totp: str | None, user_agent: str | None
-) -> TokenPair | LoginFailure:
+) -> AuthOut | LoginFailure:
     identity = await session.scalar(select(Identity).where(Identity.email == email.lower()).with_for_update())
     now = clock.now()
     if identity is None:
@@ -161,7 +198,7 @@ async def login(
     identity.locked_until = None
     pair = await _start_session(session, identity, strength, user_agent)
     _evt(session, E.AUTHENTICATION_SUCCEEDED, identity, authStrength=strength)
-    return pair
+    return AuthOut(tokens=pair, user=to_out(identity, await _links(session, identity.id)))
 
 
 async def refresh(session: AsyncSession, refresh_token: str, user_agent: str | None) -> TokenPair | LoginFailure:
@@ -307,3 +344,109 @@ async def _get_for_update(session: AsyncSession, identity_id: uuid.UUID) -> Iden
     if identity is None:
         raise NotFound("Identity not found")
     return identity
+
+
+async def add_persona(session: AsyncSession, actor: Actor, account_type: str, user_agent: str | None) -> AuthOut:
+    """Self-service: a buyer may also become a professional and vice versa.
+    Firm/Enterprise admin roles come from creating or joining an organization."""
+    identity = await _get_for_update(session, actor.identity_id)
+    persona = Persona.FROM_ACCOUNT_TYPE[account_type]
+    if persona not in (Persona.BUYER, Persona.PROFESSIONAL):
+        raise Forbidden("Firm and Enterprise roles are granted through an organization")
+    if persona not in identity.personas:
+        identity.personas = sorted({*identity.personas, persona})
+        _evt(session, E.PERSONA_ADDED, identity, persona=persona)
+    family = None
+    if actor.session_id:
+        old = await session.get(Session, actor.session_id)
+        family = old.family_id if old else None
+    pair = await _start_session(session, identity, actor.auth_strength, user_agent, family, actor.auth_time)
+    return AuthOut(tokens=pair, user=to_out(identity, await _links(session, identity.id)))
+
+
+def _password_fingerprint(identity: Identity) -> str:
+    # Binds a reset token to the current password hash, so the token dies once used.
+    return sha256_hex(identity.password_hash or "")[:16]
+
+
+async def request_password_reset(session: AsyncSession, email: str) -> str | None:
+    """Returns the reset token (to be emailed). Unknown emails return None silently."""
+    identity = await session.scalar(select(Identity).where(Identity.email == email.lower()))
+    if identity is None or identity.status != "ACTIVE":
+        return None
+    _evt(session, E.PASSWORD_RESET_REQUESTED, identity)
+    return tokens.mint_purpose_token(
+        identity.id, "password_reset", RESET_TOKEN_TTL, extra={"pwf": _password_fingerprint(identity)}
+    )
+
+
+async def reset_password(session: AsyncSession, token: str, new_password: str) -> None:
+    try:
+        claims = tokens.read_purpose_claims(token, "password_reset")
+    except jwt.PyJWTError as exc:
+        raise ValidationFailed("Reset link is invalid or expired", code="RESET_TOKEN_INVALID") from exc
+    identity = await _get_for_update(session, uuid.UUID(claims["sub"]))
+    if claims.get("pwf") != _password_fingerprint(identity):
+        raise ValidationFailed("Reset link was already used", code="RESET_TOKEN_INVALID")
+    identity.password_hash = _hasher.hash(new_password)
+    identity.failed_login_count = 0
+    identity.locked_until = None
+    await session.execute(
+        update(Session).where(Session.identity_id == identity.id, Session.revoked_at.is_(None)).values(revoked_at=clock.now())
+    )
+    _evt(session, E.PASSWORD_CHANGED, identity, method="RESET")
+
+
+async def revoke_platform_role(session: AsyncSession, actor: Actor, identity_id: uuid.UUID, role: str) -> Identity:
+    actor.require_platform_role(PlatformRole.PLATFORM_ADMIN)
+    actor.require_step_up()
+    identity = await _get_for_update(session, identity_id)
+    if role == PlatformRole.PLATFORM_ADMIN and identity_id == actor.identity_id:
+        raise Conflict("You cannot remove your own Platform Admin role", code="SELF_DEMOTION")
+    if role in identity.platform_roles:
+        identity.platform_roles = sorted(set(identity.platform_roles) - {role})
+        await session.execute(
+            update(Session).where(Session.identity_id == identity_id, Session.revoked_at.is_(None)).values(revoked_at=clock.now())
+        )
+        _evt(session, E.PLATFORM_ROLE_REVOKED, identity, role=role, revokedBy=actor.identity_id)
+    return identity
+
+
+async def list_staff(session: AsyncSession, actor: Actor) -> list[StaffMemberOut]:
+    actor.require_platform_role(PlatformRole.PLATFORM_ADMIN)
+    rows = (
+        await session.scalars(
+            select(Identity).where(Identity.platform_roles != []).order_by(Identity.display_name).limit(500)
+        )
+    ).all()
+    return [
+        StaffMemberOut(id=i.id, email=i.email, displayName=i.display_name, platformRoles=sorted(i.platform_roles),
+                       mfaEnabled=i.mfa_enabled_at is not None, status=i.status)
+        for i in rows
+    ]
+
+
+async def create_platform_admin(session: AsyncSession, email: str, password: str, display_name: str, country: str) -> Identity:
+    """Bootstrap only (CLI). Creates the first Platform Admin or promotes an existing account."""
+    identity = await session.scalar(select(Identity).where(Identity.email == email.lower()).with_for_update())
+    if identity is None:
+        identity = Identity(
+            email=email.lower(), password_hash=_hasher.hash(password), display_name=display_name,
+            country=country, platform_roles=[PlatformRole.PLATFORM_ADMIN], personas=[], email_confirmed_at=clock.now(),
+        )
+        session.add(identity)
+        await session.flush()
+        _evt(session, E.IDENTITY_CREATED, identity, email=identity.email, country=country, accountType="STAFF")
+    elif PlatformRole.PLATFORM_ADMIN not in identity.platform_roles:
+        identity.platform_roles = sorted({*identity.platform_roles, PlatformRole.PLATFORM_ADMIN})
+    _evt(session, E.PLATFORM_ROLE_GRANTED, identity, role=PlatformRole.PLATFORM_ADMIN, grantedBy="bootstrap-cli")
+    return identity
+
+
+async def lookup_by_email(session: AsyncSession, actor: Actor, email: str) -> StaffMemberOut:
+    actor.require_platform_role(PlatformRole.PLATFORM_ADMIN)
+    i = await session.scalar(select(Identity).where(Identity.email == email.strip().lower()))
+    if i is None:
+        raise NotFound("No account with that email")
+    return StaffMemberOut(id=i.id, email=i.email, displayName=i.display_name, platformRoles=sorted(i.platform_roles),
+                          mfaEnabled=i.mfa_enabled_at is not None, status=i.status)

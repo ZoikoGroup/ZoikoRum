@@ -104,7 +104,11 @@ def install(app: FastAPI) -> None:
 
     @app.exception_handler(RequestValidationError)
     async def _validation(_: Request, exc: RequestValidationError):
-        err = ValidationFailed("Request body or parameters are invalid", extra={"errors": json.loads(json.dumps(exc.errors(), default=str))})
+        errors = json.loads(json.dumps(exc.errors(), default=str))
+        first = errors[0] if errors else {}
+        field = ".".join(str(x) for x in first.get("loc", [])[1:]) or "request"
+        reason = str(first.get("msg", "is invalid")).removeprefix("Value error, ")
+        err = ValidationFailed(f"{field}: {reason}" if errors else "Request is invalid", extra={"errors": errors})
         return problem(err)
 
 

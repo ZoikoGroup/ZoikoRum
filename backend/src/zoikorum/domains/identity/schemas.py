@@ -4,7 +4,10 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, model_validator
+
+AccountType = Literal["BUYER", "PROFESSIONAL", "FIRM", "ENTERPRISE"]
+Dashboard = Literal["buyer", "professional", "firm", "enterprise", "ops"]
 
 
 class RegisterIn(BaseModel):
@@ -12,8 +15,16 @@ class RegisterIn(BaseModel):
     password: str = Field(min_length=12, max_length=256)
     displayName: str = Field(min_length=1, max_length=200)
     country: str = Field(min_length=2, max_length=2, pattern="^[A-Z]{2}$")
+    accountType: AccountType = "BUYER"
+    organizationName: str | None = Field(default=None, max_length=200)
     acceptTerms: Literal[True]
     termsVersion: str = "2026-01"
+
+    @model_validator(mode="after")
+    def _org_name_for_organizations(self) -> "RegisterIn":
+        if self.accountType in ("FIRM", "ENTERPRISE") and not (self.organizationName or "").strip():
+            raise ValueError("organizationName is required for Firm and Enterprise accounts")
+        return self
 
 
 class LoginIn(BaseModel):
@@ -42,6 +53,19 @@ class GrantRoleIn(BaseModel):
     role: str
 
 
+class AddPersonaIn(BaseModel):
+    accountType: Literal["BUYER", "PROFESSIONAL"]
+
+
+class ForgotPasswordIn(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordIn(BaseModel):
+    token: str
+    newPassword: str = Field(min_length=12, max_length=256)
+
+
 class TokenPair(BaseModel):
     accessToken: str
     refreshToken: str
@@ -63,16 +87,40 @@ class IdentityOut(BaseModel):
     status: str
     emailConfirmed: bool
     mfaEnabled: bool
+    # True when this account's roles demand MFA but it is not enabled yet (staff, enterprise admins).
+    mfaRequired: bool
+    personas: list[str]
+    primaryPersona: str | None
     platformRoles: list[str]
+    organizationName: str | None
+    defaultDashboard: Dashboard
     links: list[LinkOut] = []
     createdAt: datetime
 
 
-class RegisterOut(BaseModel):
-    identity: IdentityOut
+class AuthOut(BaseModel):
     tokens: TokenPair
+    user: IdentityOut
+
+
+class RegisterOut(AuthOut):
     # Only returned outside production so tests/dev can confirm without email.
     emailConfirmationToken: str | None = None
+
+
+class ForgotPasswordOut(BaseModel):
+    message: str = "If an account exists for that email, a reset link has been sent."
+    # Only returned outside production (no email provider yet).
+    resetToken: str | None = None
+
+
+class StaffMemberOut(BaseModel):
+    id: uuid.UUID
+    email: str
+    displayName: str
+    platformRoles: list[str]
+    mfaEnabled: bool
+    status: str
 
 
 class MfaEnrollOut(BaseModel):

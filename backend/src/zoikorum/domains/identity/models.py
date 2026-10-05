@@ -25,6 +25,12 @@ class Identity(Base, UUIDPk, Timestamps, Versioned):
     country: Mapped[str] = mapped_column(String(2), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="ACTIVE")  # ACTIVE|SUSPENDED|DELETED
     platform_roles: Mapped[list[str]] = mapped_column(ARRAY(String(50)), nullable=False, default=list)
+    # Marketplace account roles (shared.auth.Persona) - BUYER, PROFESSIONAL, FIRM_ADMIN, ENTERPRISE_ADMIN.
+    personas: Mapped[list[str]] = mapped_column(ARRAY(String(30)), nullable=False, default=list)
+    primary_persona: Mapped[str | None] = mapped_column(String(30))
+    # Organization name captured at Firm/Enterprise signup. The firm/buyer domains create the
+    # organization itself from the IDENTITY_CREATED event (next build step).
+    signup_organization_name: Mapped[str | None] = mapped_column(String(200))
     mfa_secret_enc: Mapped[str | None] = mapped_column(String(500))  # AES-GCM encrypted TOTP secret
     mfa_enabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     failed_login_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

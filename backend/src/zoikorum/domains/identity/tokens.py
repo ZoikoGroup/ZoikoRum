@@ -41,6 +41,7 @@ def mint_access_token(
         "sid": str(session_id),
         "email": identity.email,
         "roles": sorted(identity.platform_roles or []),
+        "personas": sorted(identity.personas or []),
         "orgs": orgs,
         "firms": firms,
         "pro": pro,
@@ -58,11 +59,12 @@ def new_refresh_token() -> tuple[str, str]:
     return token, sha256_hex(token)
 
 
-def mint_purpose_token(identity_id: uuid.UUID, purpose: str, ttl_seconds: int) -> str:
+def mint_purpose_token(identity_id: uuid.UUID, purpose: str, ttl_seconds: int, extra: dict | None = None) -> str:
     s = get_settings()
     now = clock.now()
     return jwt.encode(
         {
+            **(extra or {}),
             "iss": s.jwt_issuer,
             "sub": str(identity_id),
             "typ": purpose,
@@ -74,9 +76,16 @@ def mint_purpose_token(identity_id: uuid.UUID, purpose: str, ttl_seconds: int) -
     )
 
 
-def read_purpose_token(token: str, purpose: str) -> uuid.UUID:
+def read_purpose_claims(token: str, purpose: str) -> dict:
     s = get_settings()
-    claims = jwt.decode(token, s.jwt_secret, algorithms=["HS256"], issuer=s.jwt_issuer)
+    # Expiry is checked against the domain clock (tests travel in time).
+    claims = jwt.decode(token, s.jwt_secret, algorithms=["HS256"], issuer=s.jwt_issuer, options={"verify_exp": False})
     if claims.get("typ") != purpose:
         raise jwt.InvalidTokenError("wrong token purpose")
-    return uuid.UUID(claims["sub"])
+    if claims.get("exp", 0) < clock.now().timestamp():
+        raise jwt.ExpiredSignatureError("token expired")
+    return claims
+
+
+def read_purpose_token(token: str, purpose: str) -> uuid.UUID:
+    return uuid.UUID(read_purpose_claims(token, purpose)["sub"])

@@ -30,6 +30,10 @@ class E:
     IDENTITY_REINSTATED = _t("identity", "identity", "reinstated")
     IDENTITY_SOFT_DELETED = _t("identity", "identity", "soft_deleted")
     PLATFORM_ROLE_GRANTED = _t("identity", "identity", "platform_role_granted")
+    PLATFORM_ROLE_REVOKED = _t("identity", "identity", "platform_role_revoked")
+    PERSONA_ADDED = _t("identity", "identity", "persona_added")
+    PASSWORD_RESET_REQUESTED = _t("identity", "identity", "password_reset_requested")
+    PASSWORD_CHANGED = _t("identity", "identity", "password_changed")
 
     # ---- Buyer ---------------------------------------------------------------
     BUYER_REGISTERED = _t("buyer", "buyer", "registered")

@@ -1,39 +1,40 @@
 # Zoikorum Frontend
 
-Web client for the Zoikorum marketplace. It talks to the backend only through the
-versioned REST API in `../backend` (`/v1/...`). Business rules, state machines and
-policy checks live in the backend. The UI must never be the only line of enforcement.
+React 19 + TypeScript + Vite web app for Zoikorum. Styling follows zoikorum.com (Inter, green `#00875A`,
+slate text). All business rules are enforced by the backend; the UI only mirrors them.
 
-Status: **not scaffolded yet.** The backend is being built first; this folder
-reserves the structure the wireframe documents describe.
+## Run
+```bash
+# 1. backend (see ../backend/README.md): API on :8000 and the worker
+# 2. frontend
+npm install
+npm run dev        # http://localhost:5173  (proxies /v1/* to the API on :8000)
+npm run build      # type-check + production build into dist/
+```
 
-## Screens (from the wireframe docs) → backend domains
+## Step 1 — role-based login (built)
 
-| Screen (wireframe doc) | Route | Backend APIs |
+| Route | Who | Purpose |
 |---|---|---|
-| Homepage | `/` | marketplace taxonomy, search |
-| Category page (Finance & Accounting) | `/c/:category` | `GET /v1/search/professionals` (facets, "why this result") |
-| Professional profile | `/p/:professionalId` | professional, trust, verification summary |
-| Request Proposal & Engagement flow | `/engage/:professionalId` | proposal, contract, escrow, payments |
-| Buyer dashboard & engagements | `/buyer` | analytics projections, contract, escrow, messaging |
-| Professional onboarding & verification | `/join` | identity, professional, firm, verification, trust |
-| Professional dashboard & service mgmt | `/pro` | professional offerings, proposal, contract, payments |
-| Payments, escrow & release controls | `/engagements/:id/payments` | escrow, payments, policy approvals |
-| Dispute resolution | `/disputes/:id` | dispute, escrow, messaging |
-| Enterprise policy profiles & approvals | `/enterprise/policies` | buyer orgs, policy |
-| Trust & Safety / enforcement (internal) | `/ops` | admin, verification review queues, audit |
+| `/login` | everyone | One sign-in for all roles; asks for the authenticator code when MFA is on; opens the right dashboard |
+| `/join` (`?type=BUYER\|PROFESSIONAL\|FIRM\|ENTERPRISE`) | new users | Sign-up by account type; Firm/Enterprise also capture the organization name |
+| `/enterprise` | enterprise buyers | Target of the site's "Enterprise Access" button |
+| `/forgot-password`, `/reset-password`, `/confirm-email` | everyone | Account recovery and email confirmation |
+| `/app/buyer` · `/app/professional` · `/app/firm` · `/app/enterprise` | by account role | Role workspaces (summary cards fill in later steps) |
+| `/app/ops`, `/app/ops/staff` | platform staff / Platform Admin | Operations home; grant/revoke staff roles (step-up MFA) |
+| `/app/account`, `/app/security` | signed in | Roles held, add Buyer/Professional role, set up two-step verification |
 
-## Planned structure
+Rules the UI follows:
+- Staff, Firm Admins and Enterprise Admins are sent to `/app/security` until two-step verification is on.
+- Pages are gated by role (`RequireRole`). The API applies the same check to every call.
+- Sensitive actions that get `STEP_UP_REQUIRED` open the "Confirm it's you" code dialog and retry.
+- In development (no email provider yet) the API returns the email-confirmation and password-reset
+  tokens, and the UI shows them as "Development mode" links.
 
+## Layout
 ```
-frontend/
-  src/
-    api/          typed API client generated from the backend OpenAPI spec
-    features/     one folder per screen above
-    components/   shared UI (trust tier badge, money, status badges, timelines)
-    auth/         token storage, refresh, step-up MFA prompt
+src/api/        HTTP client (token refresh, Problem Details errors) + typed auth API
+src/auth/       AuthContext (session) and route guards
+src/components/ shared UI: site header, auth layout, fields, step-up MFA dialog
+src/pages/      screens
 ```
-
-UX rules carried through from the docs: ≤3 primary actions per screen, a "Why am I
-seeing this?" explanation on every ranked result and enforcement notice, no colour-only
-signals (WCAG 2.2 AA minimum), and under 400ms feedback on every action.

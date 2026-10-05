@@ -98,7 +98,8 @@ def drain(sf):
 class User:
     def __init__(self, client: AsyncClient, data: dict, email: str, password: str):
         self.client = client
-        self.id = uuid.UUID(data["identity"]["id"])
+        self.id = uuid.UUID(data["user"]["id"])
+        self.user = data["user"]
         self.email = email
         self.password = password
         self.access = data["tokens"]["accessToken"]
@@ -140,12 +141,16 @@ class User:
 
 @pytest.fixture
 def make_user(client, sf):
-    async def _make(name: str = "user", *, platform_roles: tuple[str, ...] = (), country: str = "US") -> User:
+    async def _make(
+        name: str = "user", *, platform_roles: tuple[str, ...] = (), country: str = "US",
+        account_type: str = "BUYER", organization: str | None = None,
+    ) -> User:
         email = f"{name}-{uuid.uuid4().hex[:8]}@example.com"
         password = "correct-horse-battery-staple"
         r = await client.post(
             "/v1/auth/register",
-            json={"email": email, "password": password, "displayName": name.title(), "country": country, "acceptTerms": True},
+            json={"email": email, "password": password, "displayName": name.title(), "country": country,
+                  "accountType": account_type, "organizationName": organization, "acceptTerms": True},
         )
         assert r.status_code == 201, r.text
         user = User(client, r.json(), email, password)

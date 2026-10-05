@@ -40,6 +40,22 @@ class PlatformRole:
     )
 
 
+class Persona:
+    """Account roles a ZoikoID holds on the marketplace (chosen at signup, more can be added).
+
+    One identity may hold several, e.g. a buyer who also offers services as a professional.
+    """
+
+    BUYER = "BUYER"
+    PROFESSIONAL = "PROFESSIONAL"
+    FIRM_ADMIN = "FIRM_ADMIN"
+    ENTERPRISE_ADMIN = "ENTERPRISE_ADMIN"
+
+    ALL = frozenset({BUYER, PROFESSIONAL, FIRM_ADMIN, ENTERPRISE_ADMIN})
+    # Signup "account type" -> persona granted.
+    FROM_ACCOUNT_TYPE = {"BUYER": BUYER, "PROFESSIONAL": PROFESSIONAL, "FIRM": FIRM_ADMIN, "ENTERPRISE": ENTERPRISE_ADMIN}
+
+
 class OrgRole:
     """Buyer-organization roles (Enterprise Policy doc s.11)."""
 
@@ -68,6 +84,7 @@ class Actor:
     session_id: uuid.UUID | None
     email: str | None
     platform_roles: frozenset[str] = frozenset()
+    personas: frozenset[str] = frozenset()
     # Buyer side: organization memberships {org_id: {roles}}
     org_roles: dict[str, frozenset[str]] = field(default_factory=dict)
     professional_id: uuid.UUID | None = None
@@ -82,10 +99,21 @@ class Actor:
     def require_platform_role(self, *roles: str) -> None:
         if not self.has_platform_role(*roles):
             raise Forbidden(f"Requires one of platform roles: {', '.join(roles)}")
+        # Staff accounts must always work from an MFA-backed session.
+        if self.auth_strength not in AuthStrength.ELEVATED:
+            raise StepUpRequired("Staff access requires multi-factor authentication")
 
     @property
     def is_operator(self) -> bool:
         return bool(self.platform_roles)
+
+    def has_persona(self, *personas: str) -> bool:
+        return bool(self.personas.intersection(personas))
+
+    def require_persona(self, *personas: str) -> None:
+        if not self.has_persona(*personas):
+            names = " or ".join(p.replace("_", " ").title() for p in personas)
+            raise Forbidden(f"This action is available to {names} accounts", code="ROLE_REQUIRED")
 
     # ---- ABAC: buyer organizations -----------------------------------------
     @property
@@ -146,6 +174,7 @@ def decode_access_token(token: str) -> Actor:
         session_id=uuid.UUID(claims["sid"]) if claims.get("sid") else None,
         email=claims.get("email"),
         platform_roles=frozenset(claims.get("roles", [])),
+        personas=frozenset(claims.get("personas", [])),
         org_roles={k: frozenset(v) for k, v in claims.get("orgs", {}).items()},
         professional_id=uuid.UUID(claims["pro"]) if claims.get("pro") else None,
         firm_roles={k: frozenset(v) for k, v in claims.get("firms", {}).items()},
@@ -179,6 +208,26 @@ async def _optional_actor(request: Request) -> Actor | None:
 
 
 CurrentActor = Annotated[Actor, Depends(_current_actor)]
+
+
+def require_roles(*roles: str):
+    """Route guard: caller must hold at least one of the given personas or platform roles.
+
+        @router.post("/v1/offerings", dependencies=[Depends(require_roles(Persona.PROFESSIONAL))])
+    """
+    personas = [r for r in roles if r in Persona.ALL]
+    staff = [r for r in roles if r in PlatformRole.ALL]
+
+    async def guard(actor: CurrentActor) -> Actor:
+        if personas and actor.has_persona(*personas):
+            return actor
+        if staff and actor.has_platform_role(*staff):
+            actor.require_platform_role(*staff)  # also enforces MFA for staff
+            return actor
+        names = " or ".join(r.replace("_", " ").title() for r in roles)
+        raise Forbidden(f"This area is available to {names} accounts", code="ROLE_REQUIRED")
+
+    return guard
 OptionalActor = Annotated[Actor | None, Depends(_optional_actor)]
 
 

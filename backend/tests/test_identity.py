@@ -15,7 +15,7 @@ async def test_register_login_and_me(client, make_user):
     assert r.status_code == 200 and r.json()["emailConfirmed"] is True
 
     r = await client.post("/v1/auth/login", json={"email": u.email, "password": u.password})
-    assert r.status_code == 200 and r.json()["accessToken"]
+    assert r.status_code == 200 and r.json()["tokens"]["accessToken"]
 
 
 async def test_duplicate_email_and_short_password_rejected(client, make_user):
