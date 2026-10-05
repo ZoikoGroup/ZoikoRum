@@ -137,8 +137,12 @@ def _seed_taxonomy() -> None:
                                  'status', 'taxonomy_version')),
         schema='marketplace',
     )
+    # Only the columns that exist at this revision: the row builder grows with the model
+    # (e.g. requires_insurance, filled in by migration d94dfd86d326), but this migration must not.
+    columns = set(nodes.c.keys())
     for row in default_taxonomy_rows():
-        op.execute(postgresql.insert(nodes).values(**row).on_conflict_do_nothing(index_elements=['slug']))
+        values = {k: v for k, v in row.items() if k in columns}
+        op.execute(postgresql.insert(nodes).values(**values).on_conflict_do_nothing(index_elements=['slug']))
 
 
 def downgrade() -> None:
