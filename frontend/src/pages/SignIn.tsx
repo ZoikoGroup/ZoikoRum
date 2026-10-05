@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { authApi } from '../api/auth'
 import { ApiError } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
-import { AuthLayout, ErrorAlert, Field } from '../components/ui'
+import { AuthLayout, ErrorAlert, Field, PasswordInput } from '../components/ui'
 
 /** One sign-in for every role. The backend tells us which dashboard to open. */
 export default function SignIn() {
@@ -51,8 +51,7 @@ export default function SignIn() {
                 value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />
             </Field>
             <Field label="Password" id="password">
-              <input id="password" className="input" type="password" autoComplete="current-password" required
-                value={password} onChange={(e) => setPassword(e.target.value)} />
+              <PasswordInput id="password" autoComplete="current-password" value={password} onChange={setPassword} />
             </Field>
             <p className="small" style={{ textAlign: 'right', marginTop: -6 }}>
               <Link to="/forgot-password">Forgot password?</Link>

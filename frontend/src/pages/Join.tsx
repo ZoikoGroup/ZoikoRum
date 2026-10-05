@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { authApi, type AccountType } from '../api/auth'
 import { ApiError } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
-import { AuthLayout, ErrorAlert, Field } from '../components/ui'
+import { AuthLayout, ErrorAlert, Field, PasswordInput } from '../components/ui'
 
 const TYPES: { value: AccountType; title: string; desc: string }[] = [
   { value: 'BUYER', title: 'Buyer', desc: 'Find verified professionals and engage them under contract and escrow.' },
@@ -108,8 +108,8 @@ export default function Join() {
             aria-invalid={!!fieldErrors.email} />
         </Field>
         <Field label="Password" id="password" error={fieldErrors.password} hint="At least 12 characters. A short phrase works well.">
-          <input id="password" className="input" type="password" autoComplete="new-password" value={form.password}
-            onChange={set('password')} aria-invalid={!!fieldErrors.password} />
+          <PasswordInput id="password" autoComplete="new-password" value={form.password}
+            onChange={(v) => setForm({ ...form, password: v })} invalid={!!fieldErrors.password} />
         </Field>
         <Field label={needsOrg ? 'Country of incorporation' : 'Country of residence'} id="country">
           <select id="country" className="input" value={form.country} onChange={set('country')}>

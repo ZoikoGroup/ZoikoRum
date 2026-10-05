@@ -92,6 +92,15 @@ a:hover { text-decoration: underline; }
 }
 .input:focus { border-color: var(--zk-green); box-shadow: var(--focus); outline: none; }
 .input[aria-invalid='true'] { border-color: var(--zk-danger); }
+.password-wrap { position: relative; display: flex; }
+.password-wrap .input { flex: 1; padding-right: 48px; }
+.password-wrap .input::-ms-reveal { display: none; } /* hide Edge's own reveal button - we provide one */
+.password-wrap .eye {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  width: 40px; height: 36px; border: 0; background: transparent; cursor: pointer;
+  color: var(--zk-muted); display: grid; place-items: center; border-radius: var(--radius-sm);
+}
+.password-wrap .eye:hover { color: var(--zk-navy); background: var(--zk-bg); }
 .checkbox { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; margin-bottom: 18px; }
 .checkbox input { width: 18px; height: 18px; margin-top: 2px; accent-color: var(--zk-green); }
 .code-input { letter-spacing: 0.4em; font-size: 22px; text-align: center; font-variant-numeric: tabular-nums; }

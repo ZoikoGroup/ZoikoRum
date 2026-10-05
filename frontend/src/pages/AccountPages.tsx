@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { authApi } from '../api/auth'
 import { useAuth } from '../auth/AuthContext'
-import { AuthLayout, ErrorAlert, Field } from '../components/ui'
+import { AuthLayout, ErrorAlert, Field, PasswordInput } from '../components/ui'
 
 export function ForgotPassword() {
   const [email, setEmail] = useState('')
@@ -84,12 +84,10 @@ export function ResetPassword() {
       {!token && <div className="alert alert-error">This reset link is missing its token. <Link to="/forgot-password">Request a new one</Link>.</div>}
       <form onSubmit={submit}>
         <Field label="New password" id="pw" hint="At least 12 characters.">
-          <input id="pw" className="input" type="password" autoComplete="new-password" value={password}
-            onChange={(e) => setPassword(e.target.value)} />
+          <PasswordInput id="pw" autoComplete="new-password" value={password} onChange={setPassword} />
         </Field>
         <Field label="Confirm new password" id="pw2" error={mismatch ? 'Passwords do not match.' : undefined}>
-          <input id="pw2" className="input" type="password" autoComplete="new-password" value={confirm}
-            onChange={(e) => setConfirm(e.target.value)} aria-invalid={mismatch} />
+          <PasswordInput id="pw2" autoComplete="new-password" value={confirm} onChange={setConfirm} invalid={mismatch} />
         </Field>
         <button className="btn btn-primary btn-block" disabled={busy || !token || password.length < 12 || password !== confirm}>
           {busy ? 'Saving…' : 'Set new password'}
