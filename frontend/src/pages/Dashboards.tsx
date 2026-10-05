@@ -1,42 +1,8 @@
 import { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { authApi, ROLE_LABEL, type Dashboard } from '../api/auth'
+import { authApi, ROLE_LABEL } from '../api/auth'
 import { useAuth } from '../auth/AuthContext'
 import { ErrorAlert } from '../components/ui'
-
-// Summary cards per role, taken from the dashboard wireframes. Figures arrive in later build steps.
-const CARDS: Record<Dashboard, { title: string; intro: string; cards: string[]; next: string[] }> = {
-  buyer: {
-    title: 'Buyer dashboard',
-    intro: "What's happening across your engagements.",
-    cards: ['Active engagements', 'Pending actions', 'Open proposals', 'Funds in protection', 'Saved professionals'],
-    next: ['Browse verified professionals', 'Request a proposal', 'Track milestones and releases'],
-  },
-  professional: {
-    title: 'Professional dashboard',
-    intro: 'What you need to act on right now.',
-    cards: ['Active engagements', 'New requests', 'Pending actions', 'Upcoming milestones', 'Earnings this month', 'Verification status'],
-    next: ['Complete your profile and specializations', 'Verify your identity to reach Tier B', 'Publish your first service offering'],
-  },
-  firm: {
-    title: 'Firm dashboard',
-    intro: 'Your firm, its professionals and its verification status.',
-    cards: ['Firm members', 'Active engagements', 'New requests', 'Verification status'],
-    next: ['Verify the firm registration', 'Verify an authorized representative', 'Invite your professionals'],
-  },
-  enterprise: {
-    title: 'Enterprise dashboard',
-    intro: 'Governed engagements across your organization.',
-    cards: ['Active engagements', 'Approvals waiting', 'Funds in protection', 'Policy exceptions', 'Team members'],
-    next: ['Invite your team and assign roles', 'Set up a policy profile', 'Configure approval chains'],
-  },
-  ops: {
-    title: 'Operations',
-    intro: 'Platform governance work queues.',
-    cards: ['Verification reviews', 'Open enforcement cases', 'Disputes in mediation', 'Dead-letter events'],
-    next: ['Review queues arrive with the verification and Trust & Safety steps'],
-  },
-}
 
 /** Welcome message after sign-up and the email-confirmation reminder, shown on every dashboard. */
 export function AccountAlerts() {
@@ -54,44 +20,6 @@ export function AccountAlerts() {
           )}
         </div>
       )}
-    </>
-  )
-}
-
-export function DashboardPage({ kind }: { kind: Dashboard }) {
-  const { user } = useAuth()
-  if (!user) return null
-  const c = CARDS[kind]
-
-  return (
-    <>
-      <div className="page-head">
-        <div>
-          <h1>{c.title}</h1>
-          <p className="muted" style={{ margin: 0 }}>
-            {user.organizationName ? `${user.organizationName} · ` : ''}{c.intro}
-          </p>
-        </div>
-      </div>
-
-      <AccountAlerts />
-
-      <div className="grid-cards">
-        {c.cards.map((label) => (
-          <div key={label} className="card stat">
-            <div className="label">{label}</div>
-            <div className="value">—</div>
-            <div className="note">Available in an upcoming release</div>
-          </div>
-        ))}
-      </div>
-
-      <section className="card panel">
-        <h2>Next steps</h2>
-        <ul className="checklist">
-          {c.next.map((n) => <li key={n}><span>{n}</span><span className="badge">Coming soon</span></li>)}
-        </ul>
-      </section>
     </>
   )
 }

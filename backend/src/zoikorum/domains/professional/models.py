@@ -63,6 +63,11 @@ class Professional(Base, UUIDPk, Timestamps, Versioned):
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     visibility_reduced: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
+    # Profile photo (Onboarding s.7): bytes in blob storage, only the key/type/hash here
+    photo_key: Mapped[str | None] = mapped_column(String(200))
+    photo_content_type: Mapped[str | None] = mapped_column(String(30))
+    photo_sha256: Mapped[str | None] = mapped_column(String(64))
+
 
 class CredentialClaim(Base, UUIDPk, Timestamps):
     """A credential the professional claims (s.12). Shown as 'Self-reported' until verified;

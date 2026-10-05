@@ -52,3 +52,14 @@ async def test_export_requires_compliance_authority(client, make_user, drain):
     assert r.status_code == 201 and r.json()["recordCount"] >= 1
     r = await client.get(f"/v1/audit/exports/{r.json()['id']}/download", headers=officer.h)
     assert r.status_code == 200 and r.headers["X-Content-SHA256"]
+
+
+async def test_activity_feed_newest_first(client, make_user, drain):
+    buyer = await make_user("bea")
+    await drain()
+    await buyer.refresh()  # organization roles reach the token on refresh
+    org = (await client.get("/v1/organizations/mine", headers=buyer.h)).json()[0]
+    params = {"tenantId": org["id"], "limit": 10}
+    oldest = (await client.get("/v1/audit/records", headers=buyer.h, params=params)).json()["items"]
+    newest = (await client.get("/v1/audit/records", headers=buyer.h, params={**params, "newestFirst": "true"})).json()["items"]
+    assert len(oldest) >= 2 and [r["seq"] for r in newest] == sorted((r["seq"] for r in oldest), reverse=True)

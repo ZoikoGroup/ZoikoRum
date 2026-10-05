@@ -136,7 +136,7 @@ def _authorise_scope(actor: Actor, tenant_id: str | None) -> None:
 async def query(
     session: AsyncSession, actor: Actor, *, tenant_id: str | None, object_type: str | None,
     object_id: str | None, correlation_id: str | None, since: datetime | None, until: datetime | None,
-    limit: int = 1000,
+    limit: int = 1000, newest_first: bool = False,
 ) -> list[AuditRecord]:
     _authorise_scope(actor, tenant_id)
     if not any([tenant_id, object_id, correlation_id]) and not actor.is_operator:
@@ -154,7 +154,8 @@ async def query(
         stmt = stmt.where(AuditRecord.occurred_at >= since)
     if until:
         stmt = stmt.where(AuditRecord.occurred_at < until)
-    return list((await session.scalars(stmt.order_by(AuditRecord.seq).limit(min(limit, 50_000)))).all())
+    order = AuditRecord.seq.desc() if newest_first else AuditRecord.seq
+    return list((await session.scalars(stmt.order_by(order).limit(min(limit, 50_000)))).all())
 
 
 def record_to_dict(r: AuditRecord) -> dict:

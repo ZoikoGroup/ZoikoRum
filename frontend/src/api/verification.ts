@@ -47,7 +47,7 @@ export interface Trust {
   professionalId: string
   tier: 'A' | 'B' | 'C'
   tierLabel: string
-  score: number
+  score: number | null  // owner and Trust & Safety only
   dimensions: Record<string, string>
   explanation: string[]
   updatedAt: string | null
@@ -96,7 +96,7 @@ export const CASE_STATUS: Record<string, { label: string; cls: string }> = {
   REVOKED: { label: 'Revoked', cls: 'warn' },
 }
 
-// Plain-language dimension values (wording from zoikorum.com).
+// Plain-language dimension values (Homepage wireframe s.3.3).
 export const DIMENSIONS: { key: string; label: string }[] = [
   { key: 'identity', label: 'Identity' },
   { key: 'credentials', label: 'Credentials' },

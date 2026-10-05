@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { Link } from 'react-router-dom'
 import {
   formatMoney, ORG_ROLE_INFO, ORG_ROLES, orgApi,
   type BusinessUnit, type CostCenter, type Invitation, type Organization, type OrgMember, type OrgRole,
@@ -368,49 +367,3 @@ export function EnterpriseStructurePage() {
 }
 
 /** Enterprise home: the organization, your roles, and team setup progress. */
-export function EnterpriseDashboard() {
-  const { org, loading, isAdmin } = useEnterpriseOrg()
-  const [pending, setPending] = useState(0)
-  const [units, setUnits] = useState(0)
-  useEffect(() => {
-    if (!org) return
-    orgApi.businessUnits(org.id).then((u) => setUnits(u.length)).catch(() => {})
-    if (isAdmin) orgApi.invitations(org.id).then((i) => setPending(i.length)).catch(() => {})
-  }, [org, isAdmin])
-  if (loading) return <p className="muted">Loading…</p>
-  if (!org) return <p className="muted">Your enterprise organization is still being set up. Refresh in a moment.</p>
-
-  const steps = [
-    { label: 'Invite your team and assign roles', done: org.memberCount > 1, to: '/app/enterprise/team', admin: true },
-    { label: 'Name an Exception Authority (separate from admins)', done: false, to: '/app/enterprise/team', admin: true },
-    { label: 'Add business units and cost centers', done: units > 0, to: '/app/enterprise/structure', admin: true },
-    { label: 'Set up a policy profile', done: false, to: null, admin: true },
-  ].filter((s) => isAdmin || !s.admin)
-
-  return (
-    <>
-      <div className="page-head"><div><h1>{org.name}</h1>
-        <p className="muted" style={{ margin: 0 }}>Enterprise workspace · Governed engagements across your organization.</p></div></div>
-      <div className="grid-cards">
-        <div className="card stat"><div className="label">Your roles</div><div style={{ marginTop: 10 }}><RoleBadges roles={org.myRoles} /></div></div>
-        <div className="card stat"><div className="label">Team members</div><div className="value">{org.memberCount}</div></div>
-        {isAdmin && <div className="card stat"><div className="label">Pending invitations</div><div className="value">{pending}</div></div>}
-        <div className="card stat"><div className="label">Business units</div><div className="value">{units}</div></div>
-        <div className="card stat"><div className="label">Approvals waiting</div><div className="value">—</div><div className="note">Arrives with policy profiles</div></div>
-      </div>
-      {steps.length > 0 && (
-        <section className="card panel">
-          <h2>Set up your organization</h2>
-          <ul className="checklist">
-            {steps.map((s) => (
-              <li key={s.label}>
-                <span>{s.to ? <Link to={s.to}>{s.label}</Link> : s.label}</span>
-                {s.done ? <span className="badge green">Done</span> : s.to ? <span className="badge warn">To do</span> : <span className="badge">Coming soon</span>}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-    </>
-  )
-}

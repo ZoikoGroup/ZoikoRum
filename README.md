@@ -32,7 +32,7 @@ Then open http://localhost:5173. Create the first Platform Admin with
 ## Build status
 
 Built in small, reviewed steps. See [ARCHITECTURE.md §6](backend/docs/ARCHITECTURE.md) for the current status:
-foundation, role-based login, organizations & firms, professional profiles, and verification & trust tiers are built; search & discovery comes next.
+foundation, role-based login, organizations & firms, professional profiles, verification & trust tiers, and search & discovery are built; proposals come next.
 
 ## Rules of the road
 

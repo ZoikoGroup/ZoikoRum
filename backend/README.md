@@ -27,12 +27,19 @@ uvicorn zoikorum.main:app --reload --app-dir src   # API on http://localhost:800
 python -m zoikorum.worker                          # outbox relay, consumer retries, durable timers
 ```
 The worker must run, or events (and therefore the audit ledger and every later domain) will not progress.
+On Windows, clicking inside the worker's console window can pause it (QuickEdit mode); press Enter or Esc in that window to resume.
+Uploaded files (profile photos) go to `ZK_STORAGE_DIR` (default `backend/var/storage`, git-ignored).
 
 Create the first Platform Admin (only possible from the CLI; the password is prompted, or read from `ZK_ADMIN_PASSWORD`):
 ```bash
 python -m zoikorum.cli create-admin --email admin@yourcompany.com --name "Platform Admin"
 ```
 Sign in at http://localhost:5173/login. Staff accounts must set up two-step verification first.
+
+After restoring a database or changing the search document, rebuild the search index:
+```bash
+python -m zoikorum.cli reindex-search
+```
 
 ## Test
 ```bash

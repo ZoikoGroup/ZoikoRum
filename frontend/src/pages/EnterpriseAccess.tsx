@@ -10,7 +10,7 @@ const ROLES = [
   ['Exception Authority', 'The only role that may approve policy exceptions.'],
 ]
 
-/** Target of the "Enterprise Access" button on zoikorum.com. */
+/** Enterprise entry point: sign in or create an enterprise account. */
 export default function EnterpriseAccess() {
   return (
     <AuthLayout
@@ -43,7 +43,7 @@ export default function EnterpriseAccess() {
         </div>
       </div>
       <p className="small muted">
-        Need a procurement pack or security review first? <a href="https://zoikorum.com/#contact">Contact sales</a>.
+        Need a procurement pack or a security review first? Mention it when you create the account and our team will follow up.
       </p>
     </AuthLayout>
   )

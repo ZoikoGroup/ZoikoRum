@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import uuid
 
 from sqlalchemy import text
@@ -10,12 +11,14 @@ from zoikorum.domains.trust.rules import Check, Facts, evaluate
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_event
 
-BIO = ("Former Big Four audit manager. I help growing companies set up month-end close, "
+PHOTO = {"contentType": "image/png", "dataBase64": base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"0" * 64).decode()}
+BIO = (
+"Former Big Four audit manager. I help growing companies set up month-end close, "
        "board reporting and cash forecasting that their investors can rely on.")
 
 
-def facts(*checks, required=(), regulated=False, licensed=(), served=("US",), suspended=False) -> Facts:
-    return Facts(checks=tuple(Check(*c) for c in checks), credential_required=frozenset(required), regulated=regulated,
+def facts(*checks, required=(), insurance=False, licensed=(), served=("US",), suspended=False) -> Facts:
+    return Facts(checks=tuple(Check(*c) for c in checks), credential_required=frozenset(required), insurance_required=insurance,
                  licensed=frozenset(licensed), served=frozenset(served), engagement_suspended=suspended)
 
 
@@ -38,11 +41,17 @@ def test_verified_identity_gives_tier_b_and_full_checks_give_tier_a():
 
 def test_regulated_work_needs_credentials_and_insurance_for_tier_a():
     base = [("IDENTITY", "VERIFIED"), ("RESTRICTIONS", "VERIFIED"), ("CREDENTIAL", "VERIFIED", "US-TX", "tax-compliance-and-filings")]
-    r = evaluate(facts(*base, required={"tax-compliance-and-filings", "transfer-pricing"}, regulated=True, licensed={"US"}))
+    r = evaluate(facts(*base, required={"tax-compliance-and-filings", "transfer-pricing"}, insurance=True, licensed={"US"}))
     assert r.tier == "B" and r.dimensions["credentials"] == "PARTIAL" and r.dimensions["insurance"] == "PENDING"
     assert r.dimensions["jurisdiction"] == "ELIGIBLE"  # the verified credential proves the US licence
-    r = evaluate(facts(*base, ("INSURANCE", "VERIFIED"), required={"tax-compliance-and-filings"}, regulated=True, licensed={"US"}))
+    r = evaluate(facts(*base, ("INSURANCE", "VERIFIED"), required={"tax-compliance-and-filings"}, insurance=True, licensed={"US"}))
     assert r.tier == "A"
+
+
+def test_tier_b_waits_for_screening_to_clear():
+    r = evaluate(facts(("IDENTITY", "VERIFIED"), ("RESTRICTIONS", "PENDING")))
+    assert r.tier == "C" and "For Tier B: sanctions and restrictions screening has not cleared yet." in r.explanation
+    assert evaluate(facts(("IDENTITY", "VERIFIED"), ("RESTRICTIONS", "VERIFIED"))).tier == "B"
 
 
 def test_adverse_facts_drop_to_tier_c():
@@ -58,8 +67,10 @@ async def published_pro(client, make_user, drain):
     u = await make_user("pia", account_type="PROFESSIONAL")
     pro = (await client.post("/v1/professionals", headers=u.h, json={})).json()
     await client.post("/v1/auth/confirm-email", json={"token": u.confirm_token})
+    await client.put("/v1/professionals/me/photo", headers=u.h, json=PHOTO)
     await client.patch("/v1/professionals/me", headers=u.h, json={
-        "headline": "Fractional CFO", "bio": BIO, "engagementTypes": ["FRACTIONAL"], "deliveryModes": ["REMOTE"],
+        "headline": "Fractional CFO", "bio": BIO, "legalName": "Pia Example", "yearsExperienceBand": "11-15",
+        "engagementTypes": ["FRACTIONAL"], "deliveryModes": ["REMOTE"],
         "pricingModels": ["CUSTOM"]})
     await client.put("/v1/professionals/me/specializations", headers=u.h, json={"primary": "fractional-cfo"})
     await client.put("/v1/professionals/me/jurisdictions", headers=u.h, json={"served": ["US"]})
@@ -71,6 +82,7 @@ async def published_pro(client, make_user, drain):
 async def verify(client, make_user, u, pro, vtype, **extra):
     case = (await client.post("/v1/verification/cases", headers=u.h, json={
         "verificationType": vtype, "subjectType": "PROFESSIONAL", "subjectId": pro["id"], **extra})).json()
+    await client.post(f"/v1/verification/cases/{case['id']}/evidence", headers=u.h, json={"evidenceType": "ID_DOCUMENT", "items": [{"name": "doc.pdf", "sha256": "d" * 64, "size": 1000}]})
     o = await make_user(f"officer-{vtype.lower()}", platform_roles=("COMPLIANCE_OFFICER",))
     await o.step_up()
     r = await client.post(f"/v1/verification/cases/{case['id']}/decision", headers=o.h, json={"decision": "VERIFIED", "reasonCode": "OK"})
@@ -97,8 +109,9 @@ async def test_verification_moves_a_professional_from_c_to_b_to_a(client, make_u
 
     await verify(client, make_user, u, pro, "JURISDICTION", jurisdiction="US")
     await drain()
-    t = (await client.get(trust_url)).json()
+    t = (await client.get(trust_url, headers=u.h)).json()  # the score is for the owner and Trust & Safety
     assert t["tier"] == "A" and t["tierLabel"] == "Fully Verified Professional" and t["score"] == 40
+    assert (await client.get(trust_url)).json()["score"] is None
     assert await tier_changes(sf) == [("C", "B"), ("B", "A")]
 
     public = (await client.get(f"/v1/professionals/{pro['id']}")).json()

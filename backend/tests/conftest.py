@@ -9,6 +9,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import os
+import tempfile
 import uuid
 from datetime import datetime, timezone
 
@@ -20,6 +21,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 os.environ.setdefault("ZK_ENV", "test")
 os.environ.setdefault("ZK_RATE_LIMIT_ENABLED", "false")
+os.environ.setdefault("ZK_STORAGE_DIR", tempfile.mkdtemp(prefix="zk-storage-"))  # uploads never touch the repo
 
 ADMIN_URL = os.environ.get("ZK_TEST_ADMIN_URL", "postgresql+asyncpg://zoikorum:zoikorum@localhost:5434/zoikorum")
 TEST_DB = os.environ.get("ZK_TEST_DATABASE", "zoikorum_test")

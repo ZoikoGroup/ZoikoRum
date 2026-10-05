@@ -48,3 +48,13 @@ async def get_identities(session: AsyncSession, ids: list[uuid.UUID]) -> dict[uu
 async def find_by_email(session: AsyncSession, email: str) -> IdentitySummary | None:
     i = await session.scalar(select(Identity).where(Identity.email == email.lower()))
     return _summary(i) if i else None
+
+
+async def count_accounts(session: AsyncSession) -> dict[str, int]:
+    """Platform totals for the operations dashboard: all accounts and accounts per account role."""
+    from sqlalchemy import func
+
+    total = await session.scalar(select(func.count()).select_from(Identity)) or 0
+    persona = func.unnest(Identity.personas).label("persona")
+    rows = (await session.execute(select(persona, func.count()).group_by(persona))).all()
+    return {"total": total, **{p: n for p, n in rows}}

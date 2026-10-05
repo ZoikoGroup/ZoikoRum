@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+import uuid
+
 import pytest
 from sqlalchemy import text
 
@@ -84,3 +87,41 @@ async def test_only_platform_admins_change_the_taxonomy(client, make_user):
                           json={"groupSlug": "taxation", "name": "Something New"})
     assert r.status_code == 403
     assert (await client.post("/v1/admin/taxonomy/seed", headers=user.h)).status_code == 403
+
+
+async def _published_pro(client, make_user, drain, name="pia"):
+    u = await make_user(name, account_type="PROFESSIONAL")
+    pro = (await client.post("/v1/professionals", headers=u.h, json={})).json()
+    await client.post("/v1/auth/confirm-email", json={"token": u.confirm_token})
+    await client.put("/v1/professionals/me/photo", headers=u.h, json={
+        "contentType": "image/png", "dataBase64": base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"0" * 64).decode()})
+    await client.patch("/v1/professionals/me", headers=u.h, json={
+        "headline": "Fractional CFO", "legalName": "Pia Example", "yearsExperienceBand": "3-5",
+        "engagementTypes": ["PROJECT"], "deliveryModes": ["REMOTE"], "pricingModels": ["CUSTOM"],
+        "bio": "Month-end close, board reporting and cash forecasting for growing companies and their investors."})
+    await client.put("/v1/professionals/me/specializations", headers=u.h, json={"primary": "fractional-cfo"})
+    await client.put("/v1/professionals/me/jurisdictions", headers=u.h, json={"served": ["US"]})
+    assert (await client.post("/v1/professionals/me/publish", headers=u.h, json={"attestAccurate": True})).status_code == 200
+    await drain()
+    return u, pro
+
+
+async def test_buyers_save_and_unsave_professionals(client, make_user, drain, sf):
+    u, pro = await _published_pro(client, make_user, drain)
+    buyer = await make_user("bea")
+    url = "/v1/saved/professionals"
+    assert (await client.post(url, headers=buyer.h, json={"professionalId": pro["id"]})).status_code == 204
+    assert (await client.post(url, headers=buyer.h, json={"professionalId": pro["id"]})).status_code == 204  # idempotent
+    (saved,) = (await client.get(url, headers=buyer.h)).json()
+    assert saved["displayName"] == "Pia" and saved["primarySpecialization"] == "Fractional CFO"
+    assert saved["tier"] == "C" and saved["available"] is True
+    async with sf() as s:
+        assert await facade.saved_by(s, uuid.UUID(pro["id"])) == [buyer.id]
+
+    await client.post("/v1/professionals/me/unpublish", headers=u.h)
+    assert (await client.get(url, headers=buyer.h)).json()[0]["available"] is False  # kept, marked unavailable
+    other = await make_user("oli")
+    assert (await client.post(url, headers=other.h, json={"professionalId": pro["id"]})).status_code == 404  # unpublished
+    assert (await client.delete(f"{url}/{pro['id']}", headers=buyer.h)).status_code == 204
+    assert (await client.get(url, headers=buyer.h)).json() == []
+    assert (await client.get(url)).status_code == 401

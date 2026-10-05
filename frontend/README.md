@@ -1,6 +1,6 @@
 # Zoikorum Frontend
 
-React 19 + TypeScript + Vite web app for Zoikorum. Styling follows zoikorum.com (Inter, green `#00875A`,
+React 19 + TypeScript + Vite web app for Zoikorum. Zoikorum brand styling (Inter, green `#00875A`,
 slate text). All business rules are enforced by the backend; the UI only mirrors them.
 
 ## Run
@@ -53,6 +53,13 @@ npm run build      # type-check + production build into dist/
 | `/app/ops/verification` | Compliance Officer | Review queue: evidence, decision (verified / more info / not verified) with step-up MFA |
 
 Documents: the browser computes each file's SHA-256; only name, size and fingerprint are sent until secure storage is connected.
+
+## Step 5 — search & dashboards (built)
+
+| Route | Who | Purpose |
+|---|---|---|
+| `/professionals` | anyone (no sign-in) | Browse and filter published professionals; each result shows its Trust Tier and why it matched. Filters live in the URL |
+| `/app/buyer`, `/app/enterprise`, `/app/professional`, `/app/firm`, `/app/ops` | by role | One dashboard design: greeting, summary cards, pending actions with priority, plus role panels (recent activity, verified professionals, verification). Only real data; future areas say when they arrive |
 
 Rules the UI follows:
 - Staff, Firm Admins and Enterprise Admins are sent to `/app/security` until two-step verification is on.

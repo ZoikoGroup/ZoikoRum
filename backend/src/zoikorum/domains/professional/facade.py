@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.domains.professional.models import Offering, Professional
-from zoikorum.domains.professional.service import effective_availability, specializations_of
+from zoikorum.domains.professional.service import effective_availability, photo_url, specializations_of
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,13 @@ class ProfessionalSummary:
     years_experience_band: str | None
     languages: tuple[str, ...]
     visibility_reduced: bool  # enforcement - search must down-rank, with explanation
+    # Added for the search projection (optional, so existing callers are unaffected).
+    bio: str | None = None
+    city: str | None = None
+    indicative_rate_minor: int | None = None
+    indicative_rate_currency: str | None = None
+    published_at: datetime | None = None
+    photo_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -62,7 +70,8 @@ def _summary(p: Professional) -> ProfessionalSummary:
         pricing_models=tuple(p.pricing_models), availability=effective_availability(p),
         max_concurrent_engagements=p.max_concurrent_engagements, active_engagements=p.active_engagements,
         years_experience_band=p.years_experience_band, languages=tuple(p.languages),
-        visibility_reduced=p.visibility_reduced,
+        visibility_reduced=p.visibility_reduced, bio=p.bio, city=p.city, indicative_rate_minor=p.rate_minor,
+        indicative_rate_currency=p.rate_currency, published_at=p.published_at, photo_url=photo_url(p),
     )
 
 
@@ -102,3 +111,16 @@ async def list_offerings(session: AsyncSession, professional_id: uuid.UUID, acti
     if active_only:
         stmt = stmt.where(Offering.status == "ACTIVE")
     return [_offering(o) for o in (await session.scalars(stmt)).all()]
+
+
+async def list_professional_ids(session: AsyncSession) -> list[uuid.UUID]:
+    """Every professional (any status). Used to rebuild read models such as the search index."""
+    return list((await session.scalars(select(Professional.id).order_by(Professional.created_at))).all())
+
+
+async def count_profiles(session: AsyncSession) -> dict[str, int]:
+    """{"total": all profiles, "published": visible to buyers}."""
+    from sqlalchemy import func
+
+    rows = dict((await session.execute(select(Professional.status, func.count()).group_by(Professional.status))).all())
+    return {"total": sum(rows.values()), "published": rows.get("PUBLISHED", 0)}

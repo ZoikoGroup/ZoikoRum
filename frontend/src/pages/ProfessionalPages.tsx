@@ -7,8 +7,9 @@ import {
   RATE_UNIT_LABEL, RATE_UNITS, proApi, taxonomyApi, toMajor, toMinor,
   type Availability, type Credential, type Offering, type Profile, type Readiness, type TaxonomyCategory,
 } from '../api/professional'
-import { trustApi, type Trust } from '../api/verification'
+import { DIMENSION_VALUE, DIMENSIONS, trustApi, verificationApi, type Trust, type VerificationCase } from '../api/verification'
 import { useAuth } from '../auth/AuthContext'
+import { ActionList, Avatar, greeting, Icon, Kpi, type Action } from '../components/dashboard'
 import { ErrorAlert, Field } from '../components/ui'
 import { AccountAlerts } from './Dashboards'
 import { COUNTRIES } from './Join'
@@ -109,7 +110,7 @@ function CreateProfile({ onCreated }: { onCreated: (p: Profile) => void }) {
 
 // Where each readiness item is fixed.
 const FIX_AT: Record<string, string> = {
-  email: '/app/account', basics: '/app/professional/profile?step=basics', copy: '/app/professional/profile?step=basics',
+  email: '/app/account', basics: '/app/professional/profile?step=basics', photo: '/app/professional/profile?step=basics', bio: '/app/professional/profile?step=basics', copy: '/app/professional/profile?step=basics',
   specializations: '/app/professional/profile?step=specializations', engagement: '/app/professional/profile?step=engagement',
   pricing: '/app/professional/profile?step=engagement', jurisdictions: '/app/professional/profile?step=jurisdictions',
   availability: '/app/professional/profile?step=availability', credentials: '/app/professional/profile?step=credentials',
@@ -132,71 +133,172 @@ function ReadinessList({ readiness }: { readiness: Readiness }) {
 
 export function ProfessionalDashboard() {
   const { profile, setProfile, loading, error } = useMyProfile()
+  const { user } = useAuth()
   const [readiness, setReadiness] = useState<Readiness | null>(null)
   const [offerings, setOfferings] = useState<Offering[]>([])
-  const [credentials, setCredentials] = useState<Credential[]>([])
   const [trust, setTrust] = useState<Trust | null>(null)
+  const [cases, setCases] = useState<VerificationCase[]>([])
+  const [actionError, setActionError] = useState<unknown>(null)
 
-  useEffect(() => {
+  const load = useCallback(async () => {
     if (!profile) return
-    Promise.all([proApi.readiness(), proApi.offerings(), proApi.credentials(), trustApi.get(profile.id)])
-      .then(([r, o, c, t]) => { setReadiness(r); setOfferings(o); setCredentials(c); setTrust(t) })
-      .catch(() => {})
+    const [r, o, t, v] = await Promise.all([proApi.readiness(), proApi.offerings(), trustApi.get(profile.id),
+      verificationApi.forSubject('PROFESSIONAL', profile.id)])
+    setReadiness(r); setOfferings(o); setTrust(t); setCases(v)
   }, [profile])
+  useEffect(() => { load().catch(() => {}) }, [load])
 
-  if (loading) return <p className="muted">Loading…</p>
+  if (loading || !user) return <p className="muted">Loading…</p>
+
+  async function run(action: () => Promise<unknown>) {
+    setActionError(null)
+    try { await action(); await load() } catch (err) { setActionError(err) }
+  }
+  const duplicate = (o: Offering) => run(() => proApi.createOffering({
+    title: `${o.title} (copy)`.slice(0, 150), specialization: o.specialization, summary: o.summary ?? undefined,
+    deliverables: o.deliverables, engagementTypes: o.engagementTypes, pricingModel: o.pricingModel,
+    startingPrice: o.startingPrice, typicalDuration: o.typicalDuration ?? undefined,
+  }))
+
+  const soon = Date.now() + 30 * 86400_000
+  const expiring = cases.filter((c) => c.status === 'VERIFIED' && c.expiresAt && new Date(c.expiresAt).getTime() < soon)
+  const actions: Action[] = []
+  for (const c of cases.filter((c) => c.status === 'NEEDS_INFO')) {
+    actions.push({ title: `More information needed: ${c.label}`, detail: c.publicReason ?? 'See the reviewer\'s note',
+      priority: 'High', to: '/app/professional/verification', icon: 'shield' })
+  }
+  for (const c of expiring) {
+    actions.push({ title: `${c.label} expires soon`, detail: `Valid until ${new Date(c.expiresAt!).toLocaleDateString()}: renew to keep your tier`,
+      priority: 'High', to: '/app/professional/verification', icon: 'clock' })
+  }
+  for (const i of readiness?.items.filter((i) => i.required && !i.done) ?? []) {
+    actions.push({ title: i.label, detail: 'Required before you can publish', priority: 'High', to: FIX_AT[i.key], icon: 'user' })
+  }
+  if (profile && readiness?.canPublish && profile.status !== 'PUBLISHED' && profile.status !== 'SUSPENDED') {
+    actions.push({ title: 'Publish your profile', detail: 'Everything required is done', priority: 'Medium',
+      to: '/app/professional/profile?step=publish', icon: 'check' })
+  }
+  if (trust?.dimensions.identity === 'NONE') {
+    actions.push({ title: 'Verify your identity', detail: 'Reach Tier B to respond to requests', priority: 'Medium',
+      to: '/app/professional/verification', icon: 'shield' })
+  }
+  for (const i of readiness?.items.filter((i) => !i.required && !i.done) ?? []) {
+    actions.push({ title: i.label, detail: 'Recommended: makes your profile stronger', priority: 'Low', to: FIX_AT[i.key], icon: 'star' })
+  }
+
   return (
     <>
-      <div className="page-head">
+      <div className="home-head">
         <div>
-          <h1>Professional dashboard</h1>
-          <p className="muted" style={{ margin: 0 }}>What you need to act on right now.</p>
+          <h1>{greeting(user.displayName)}</h1>
+          <p className="muted" style={{ margin: 0 }}>What do you need to act on right now?</p>
         </div>
         {profile && (
           <div className="row">
-            <Link className="btn btn-secondary" to={`/professionals/${profile.id}`}>View public profile</Link>
-            <Link className="btn btn-primary" to="/app/professional/profile">Edit profile</Link>
+            <Link className="btn btn-secondary" to={`/professionals/${profile.id}`}><Icon name="user" /> View public profile</Link>
+            <Link className="btn btn-primary" to="/app/professional/offerings">+ New offering</Link>
           </div>
         )}
       </div>
       <AccountAlerts />
-      <ErrorAlert error={error} />
+      <ErrorAlert error={error ?? actionError} />
       {!profile ? <CreateProfile onCreated={setProfile} /> : (
         <>
-          <div className="grid-cards">
-            <div className="card stat"><div className="label">Profile</div>
-              <div style={{ marginTop: 10 }}><ProfileStatusBadge status={profile.status} /></div>
-              <div className="note">{profile.status === 'PUBLISHED' ? 'Visible to buyers' : 'Only you can see it'}</div></div>
-            <div className="card stat"><div className="label">Trust tier</div><div className="value">{trust?.tier ?? '—'}</div>
-              <div className="note">{trust ? `${trust.tierLabel} · score ${trust.score}` : 'Loading…'}</div></div>
-            <div className="card stat"><div className="label">Active offerings</div>
-              <div className="value">{offerings.filter((o) => o.status === 'ACTIVE').length}</div>
-              <div className="note">{offerings.length} in total</div></div>
-            <div className="card stat"><div className="label">Credentials</div><div className="value">{credentials.length}</div>
-              <div className="note">{credentials.filter((c) => c.status === 'VERIFIED').length} verified</div></div>
-            <div className="card stat"><div className="label">Active engagements</div><div className="value">—</div>
-              <div className="note">Arrives with proposals &amp; contracts</div></div>
+          {/* Summary cards (max 6) */}
+          <div className="kpi-row six">
+            <a href="#engagements"><Kpi icon="contract" tone="blue" label="Active Engagements" value={0} note="Contracts in progress" /></a>
+            <a href="#requests"><Kpi icon="proposal" tone="violet" label="New Requests" value={0} note="From buyers" /></a>
+            <a href="#actions"><Kpi icon="bell" tone="amber" label="Pending Actions" value={actions.length} note={actions.length ? 'Needs your attention' : 'All caught up'} /></a>
+            <a href="#engagements"><Kpi icon="clock" tone="teal" label="Upcoming Milestones" value={0} note="Next 14 days" /></a>
+            <a href="#earnings"><Kpi icon="check" tone="green" label="Earnings This Month" value="—" note="Live when payments launch" /></a>
+            <a href="#verification"><Kpi icon="shield" tone={trust?.tier === 'C' ? 'amber' : 'green'} label="Verification Status"
+              value={trust ? `Tier ${trust.tier}` : '—'} note={trust?.tierLabel ?? 'Loading…'} /></a>
           </div>
-          {readiness && (
-            <section className="card panel">
-              <h2>{profile.status === 'PUBLISHED' ? 'Profile strength' : 'Get ready to publish'}</h2>
-              {profile.status !== 'PUBLISHED' && (
-                <p className="muted small">
-                  {readiness.canPublish
-                    ? <>Everything required is done. <Link to="/app/professional/profile?step=publish">Review and publish</Link>.</>
-                    : 'Finish the required items to publish your profile.'}
-                </p>
+
+          <div className="home-grid">
+            <div>
+              <section className="card panel">
+                <div className="panel-head"><h2>Service Offerings</h2><Link className="small" to="/app/professional/offerings">Manage</Link></div>
+                {offerings.length === 0 ? (
+                  <p className="muted small" style={{ margin: 0 }}>No offerings yet. <Link to="/app/professional/offerings">Create a structured service</Link> buyers can request.</p>
+                ) : (
+                  <div className="offering-grid compact">
+                    {offerings.map((o) => (
+                      <article key={o.id} className="offering card">
+                        <div className="offering-top"><h3>{o.title}</h3>
+                          <span className={`badge ${o.status === 'ACTIVE' ? 'green' : o.status === 'PAUSED' ? 'warn' : ''}`}>{LABEL[o.status]}</span></div>
+                        <div className="muted small">{o.specializationName ?? o.specialization} · {o.engagementTypes.map((t) => LABEL[t]).join(', ')}</div>
+                        <div className="price">{priceText(o)}{o.typicalDuration && <span className="muted small"> · {o.typicalDuration}</span>}</div>
+                        <div className="muted small">Availability: {LABEL[profile.availability] ?? profile.availability}</div>
+                        <div className="row" style={{ marginTop: 'auto' }}>
+                          <Link className="btn btn-secondary btn-sm" to="/app/professional/offerings">View / Edit</Link>
+                          {o.status === 'ACTIVE'
+                            ? <button className="btn btn-ghost btn-sm" onClick={() => run(() => proApi.pauseOffering(o.id))}>Pause</button>
+                            : <button className="btn btn-ghost btn-sm" onClick={() => run(() => proApi.activateOffering(o.id))}>Activate</button>}
+                          <button className="btn btn-ghost btn-sm" onClick={() => duplicate(o)}>Duplicate</button>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              <section className="card panel" id="requests">
+                <div className="panel-head"><h2>Incoming Requests &amp; Proposals</h2></div>
+                <table className="data">
+                  <thead><tr><th>Buyer</th><th>Service</th><th>Type</th><th>Budget</th><th>Deadline</th><th>Actions</th></tr></thead>
+                  <tbody><tr><td colSpan={6} className="empty-row">
+                    <strong>No requests yet.</strong> Proposal requests from buyers appear here, ready to respond to.
+                    Requests open in the next release; Tier B (verified identity) is needed to reply.
+                  </td></tr></tbody>
+                </table>
+              </section>
+
+              <section className="card panel" id="engagements">
+                <div className="panel-head"><h2>Active Engagements</h2></div>
+                <table className="data">
+                  <thead><tr><th>Buyer</th><th>Service</th><th>Status</th><th>Milestone</th><th>Payment</th><th>Actions</th></tr></thead>
+                  <tbody><tr><td colSpan={6} className="empty-row">
+                    <strong>No active engagements.</strong> Signed contracts, milestones and submissions appear here.
+                  </td></tr></tbody>
+                </table>
+              </section>
+            </div>
+
+            <aside>
+              <section className="card panel attention" id="actions">
+                <div className="panel-head"><h2>Pending Actions</h2></div>
+                <ActionList actions={actions} empty="You're all set. New requests from buyers will appear here." />
+              </section>
+              <section className="card panel" id="earnings">
+                <div className="panel-head"><h2>Earnings &amp; Payouts</h2></div>
+                <ul className="checklist">
+                  <li><span>Earnings this month</span><strong>—</strong></li>
+                  <li><span>Pending release</span><strong>—</strong></li>
+                  <li><span>Lifetime earnings</span><strong>—</strong></li>
+                </ul>
+                <p className="muted small" style={{ margin: '8px 0 0' }}>Live when payments launch: money is released from escrow when buyers accept milestones.</p>
+              </section>
+              {trust && (
+                <section className="card panel" id="verification">
+                  <div className="panel-head"><h2>Verification &amp; Trust</h2>
+                    <span className={`badge ${trust.tier === 'C' ? 'warn' : 'green'}`}>Tier {trust.tier}</span></div>
+                  <ul className="checklist">
+                    {DIMENSIONS.map((d) => {
+                      const v = DIMENSION_VALUE[trust.dimensions[d.key]] ?? { label: 'Not verified', good: false }
+                      return <li key={d.key}><span>{d.label}</span><span className={`badge ${v.good ? 'green' : ''}`}>{v.label}</span></li>
+                    })}
+                  </ul>
+                  {expiring.length > 0 && (
+                    <div className="alert alert-warn" style={{ margin: '10px 0 0' }}>
+                      {expiring.map((c) => <div key={c.id}>{c.label} expires {new Date(c.expiresAt!).toLocaleDateString()}</div>)}
+                    </div>
+                  )}
+                  <Link className="btn btn-secondary btn-sm" style={{ marginTop: 12 }} to="/app/professional/verification">Complete verification →</Link>
+                </section>
               )}
-              <ReadinessList readiness={readiness} />
-            </section>
-          )}
-          {trust && trust.tier !== 'A' && (
-            <section className="card panel">
-              <h2>Reach Tier {trust.tier === 'C' ? 'B' : 'A'}</h2>
-              <ul className="why">{trust.explanation.filter((e) => e.startsWith('For Tier')).map((e) => <li key={e}>{e}</li>)}</ul>
-              <Link className="btn btn-primary" to="/app/professional/verification">Go to verification</Link>
-            </section>
-          )}
+            </aside>
+          </div>
         </>
       )}
     </>
@@ -207,11 +309,12 @@ export function ProfessionalDashboard() {
 
 const STEPS = [
   { key: 'basics', label: 'Basics' },
-  { key: 'specializations', label: 'Specializations' },
-  { key: 'engagement', label: 'Engagement & pricing' },
+  { key: 'specializations', label: 'Services' },
+  { key: 'engagement', label: 'Pricing & engagement' },
   { key: 'availability', label: 'Availability' },
-  { key: 'jurisdictions', label: 'Jurisdictions' },
+  { key: 'verification', label: 'Verification' },
   { key: 'credentials', label: 'Credentials' },
+  { key: 'jurisdictions', label: 'Jurisdictions' },
   { key: 'publish', label: 'Review & publish' },
 ] as const
 type StepKey = (typeof STEPS)[number]['key']
@@ -243,6 +346,49 @@ function StepActions({ busy, label = 'Save and continue' }: { busy: boolean; lab
   return <button className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : label}</button>
 }
 
+/** Profile photo (Onboarding s.7, required to publish): JPEG, PNG or WebP under 2 MB. */
+function PhotoUploader({ profile, onSaved }: { profile: Profile; onSaved: (p: Profile) => void }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<unknown>(null)
+  async function upload(file: File | undefined) {
+    if (!file) return
+    setError(null)
+    if (file.size > 2 * 1024 * 1024) { setError(new Error('Use a photo under 2 MB.')); return }
+    setBusy(true)
+    try {
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '')
+        reader.onerror = () => reject(new Error('The photo could not be read.'))
+        reader.readAsDataURL(file)
+      })
+      onSaved(await proApi.setPhoto(file.type, base64))
+    } catch (err) {
+      setError(err)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="photo-row">
+      <Avatar name={profile.displayName} photoUrl={profile.photoUrl} size={72} />
+      <div>
+        <label className="btn btn-secondary btn-sm" style={{ cursor: busy ? 'wait' : 'pointer' }}>
+          {busy ? 'Uploading…' : profile.photoUrl ? 'Change photo' : 'Upload photo *'}
+          <input type="file" accept="image/jpeg,image/png,image/webp" hidden disabled={busy}
+            onChange={(e) => upload(e.target.files?.[0])} />
+        </label>
+        {profile.photoUrl && (
+          <button type="button" className="btn btn-ghost btn-sm" disabled={busy}
+            onClick={async () => { try { onSaved(await proApi.removePhoto()) } catch (err) { setError(err) } }}>Remove</button>
+        )}
+        <p className="muted small" style={{ margin: '6px 0 0' }}>A clear, professional head-and-shoulders photo. JPEG, PNG or WebP, under 2 MB.</p>
+        <ErrorAlert error={error} />
+      </div>
+    </div>
+  )
+}
+
 function BasicsStep({ profile, onSaved, next }: StepProps) {
   const [f, setF] = useState({
     displayName: profile.displayName, legalName: profile.legalName ?? '', headline: profile.headline ?? '',
@@ -267,26 +413,27 @@ function BasicsStep({ profile, onSaved, next }: StepProps) {
 
   return (
     <form onSubmit={submit}>
+      <PhotoUploader profile={profile} onSaved={onSaved} />
       <ErrorAlert error={error} />
       <div className="row">
         <Field label="Display name" id="b-name" hint="Shown to buyers.">
           <input id="b-name" className="input" value={f.displayName} onChange={set('displayName')} required />
         </Field>
-        <Field label="Legal name (private)" id="b-legal" hint="As on your ID. Used for verification, never shown publicly.">
-          <input id="b-legal" className="input" value={f.legalName} onChange={set('legalName')} />
+        <Field label="Legal name (private) *" id="b-legal" hint="As on your ID. Used for verification, never shown publicly.">
+          <input id="b-legal" className="input" value={f.legalName} onChange={set('legalName')} required />
         </Field>
       </div>
       <div style={{ height: 16 }} />
-      <Field label="Headline" id="b-headline" hint="Your primary role, e.g. “Fractional CFO for SaaS companies”.">
-        <input id="b-headline" className="input" maxLength={120} value={f.headline} onChange={set('headline')} />
+      <Field label="Primary role title *" id="b-headline" hint="e.g. “Fractional CFO for SaaS companies”.">
+        <input id="b-headline" className="input" maxLength={120} value={f.headline} onChange={set('headline')} required />
       </Field>
-      <Field label="Bio" id="b-bio" hint={`What you do and for whom, in plain words (at least 80 characters; ${f.bio.length}/3000). ` +
-        'Avoid superlatives and guarantees such as “best”, “leading”, “top” or “#1”.'}>
+      <Field label="Bio (optional)" id="b-bio" hint={`What you do and for whom, in plain words: 150–250 words reads best, 300 at most ` +
+        `(${f.bio.trim() ? f.bio.trim().split(/\s+/).length : 0} words). Avoid superlatives and guarantees such as “best”, “top-rated” or “#1”.`}>
         <textarea id="b-bio" className="input" rows={6} maxLength={3000} value={f.bio} onChange={set('bio')} />
       </Field>
       <div className="row">
-        <Field label="Years of experience" id="b-exp">
-          <select id="b-exp" className="input" value={f.yearsExperienceBand} onChange={set('yearsExperienceBand')}>
+        <Field label="Years of experience *" id="b-exp">
+          <select id="b-exp" className="input" value={f.yearsExperienceBand} onChange={set('yearsExperienceBand')} required>
             <option value="">Select…</option>
             {EXPERIENCE_BANDS.map((b) => <option key={b} value={b}>{b} years</option>)}
           </select>
@@ -667,9 +814,33 @@ function PublishStep({ profile, onSaved }: StepProps) {
   )
 }
 
+/** Verification checklist step (Onboarding s.10-11): what is verified, what each tier unlocks, where to start. */
+function VerificationStep({ profile, next }: StepProps) {
+  const [trust, setTrust] = useState<Trust | null>(null)
+  useEffect(() => { trustApi.get(profile.id).then(setTrust).catch(() => {}) }, [profile.id])
+  return (
+    <>
+      <p className="muted small">Verification raises your Trust Tier. You can publish now as Tier C and verify at any time.</p>
+      {trust && (
+        <ul className="checklist">
+          <li><span><strong>Your tier</strong></span><span className={`badge ${trust.tier === 'C' ? 'warn' : 'green'}`}>Tier {trust.tier} · {trust.tierLabel}</span></li>
+          {DIMENSIONS.map((d) => {
+            const v = DIMENSION_VALUE[trust.dimensions[d.key]] ?? { label: 'Not verified', good: false }
+            return <li key={d.key}><span>{d.label}</span><span className={`badge ${v.good ? 'green' : ''}`}>{v.label}</span></li>
+          })}
+        </ul>
+      )}
+      <div className="row" style={{ marginTop: 16 }}>
+        <Link className="btn btn-secondary" to="/app/professional/verification">Verify identity and more</Link>
+        <button type="button" className="btn btn-primary" onClick={next}>Continue</button>
+      </div>
+    </>
+  )
+}
+
 const STEP_VIEW: Record<StepKey, (p: StepProps) => ReactNode> = {
   basics: BasicsStep, specializations: SpecializationsStep, engagement: EngagementStep, availability: AvailabilityStep,
-  jurisdictions: JurisdictionsStep, credentials: CredentialsStep, publish: PublishStep,
+  verification: VerificationStep, credentials: CredentialsStep, jurisdictions: JurisdictionsStep, publish: PublishStep,
 }
 
 export function ProfileSetupPage() {

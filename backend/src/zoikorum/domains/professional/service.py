@@ -3,6 +3,8 @@ availability, credential claims, offerings and publishing (Professional Onboardi
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import re
 import uuid
 
@@ -13,6 +15,7 @@ from zoikorum.domains.firm import facade as firm_facade
 from zoikorum.domains.identity import facade as identity_facade
 from zoikorum.domains.marketplace import facade as marketplace_facade
 from zoikorum.domains.trust import facade as trust_facade
+from zoikorum.domains.verification import facade as verification_facade
 from zoikorum.domains.professional.models import CredentialClaim, Offering, Professional
 from zoikorum.domains.professional.schemas import (
     AvailabilityIn,
@@ -27,6 +30,7 @@ from zoikorum.domains.professional.schemas import (
     PublicCredentialOut,
     PublicProfileOut,
     PublicTrustOut,
+    PhotoIn,
     ReadinessItem,
     ReadinessOut,
     RegisterIn,
@@ -40,6 +44,7 @@ from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_audit, record_event
 from zoikorum.shared.money import MoneyDTO
 from zoikorum.shared.state_machine import StateMachine
+from zoikorum.shared.storage import get_storage
 
 PROFILE_STATES = StateMachine("Professional", {
     "DRAFT": {"PUBLISHED", "SUSPENDED"},
@@ -55,12 +60,15 @@ OFFERING_STATES = StateMachine("Offering", {
 
 MAX_OFFERINGS = 20
 MAX_CREDENTIALS = 20
-MIN_BIO_LENGTH = 80
+MAX_BIO_WORDS = 300  # Onboarding s.7 (150-250 words recommended on the public profile)
 # Copy rules (Ethics Code, Onboarding s.17): no unverifiable superlatives or promises of outcome.
-_SUPERLATIVES = re.compile(r"#\s?1\b|\bno\.\s?1\b|\bnumber one\b|\b(best|leading|guarantee[sd]?|top(?!-))\b", re.IGNORECASE)
+# "top-line"/"top-down" are finance terms, not claims; "top-rated", "top-tier", "top 1%" are claims.
+_SUPERLATIVES = re.compile(r"#\s?1\b|\bno\.\s?1\b|\bnumber one\b|\b(best|leading|guarantee[sd]?|top(?!-(?:line|down)\b))\b",
+                           re.IGNORECASE)
 # Claim states the owner sees; FAILED/REVOKED/EXPIRED/WITHDRAWN are hidden from buyers.
-_LABELS = {"SELF_REPORTED": "Self-reported", "PENDING": "Self-reported", "VERIFIED": "Verified",
-           "FAILED": "Could not be verified", "EXPIRED": "Expired", "REVOKED": "Revoked", "WITHDRAWN": "Withdrawn"}
+# Owner labels follow Onboarding s.12 (Validated / Pending / Not validated); buyers see "Self-reported" until validated (s.17).
+_LABELS = {"SELF_REPORTED": "Self-reported", "PENDING": "Pending", "VERIFIED": "Validated",
+           "FAILED": "Not validated", "EXPIRED": "Expired", "REVOKED": "Revoked", "WITHDRAWN": "Withdrawn"}
 _PUBLIC_CLAIM_STATES = ("SELF_REPORTED", "PENDING", "VERIFIED")
 
 
@@ -68,6 +76,18 @@ def _evt(session: AsyncSession, event_type: str, pro: Professional, *, aggregate
          aggregate_id: uuid.UUID | None = None, **payload) -> None:
     record_event(session, event_type, aggregate_type=aggregate_type, aggregate_id=aggregate_id or pro.id,
                  tenant_id=pro.id, payload={"professionalId": pro.id, **payload})
+
+
+def public_dimensions(dimensions: dict[str, str]) -> dict[str, str]:
+    """Buyers never see a screening problem, only whether it is clear (a flag stays between the professional and Trust & Safety)."""
+    out = dict(dimensions)
+    if out.get("restrictions") not in (None, "CLEAR"):
+        out["restrictions"] = "UNKNOWN"
+    return out
+
+
+def public_explanation(lines) -> list[str]:
+    return [line for line in lines if "screening" not in line and "suspended" not in line]
 
 
 def check_copy(field: str, text: str | None) -> None:
@@ -126,13 +146,18 @@ async def _spec_out(session: AsyncSession, pro: Professional) -> list[Specializa
     return out
 
 
+def photo_url(pro: Professional) -> str | None:
+    # The hash in the URL busts browser caches when the photo changes.
+    return f"/v1/professionals/{pro.id}/photo?v={pro.photo_sha256[:12]}" if pro.photo_key else None
+
+
 def _rate(pro: Professional) -> MoneyDTO | None:
     return MoneyDTO(amountMinor=pro.rate_minor, currency=pro.rate_currency) if pro.rate_minor is not None else None
 
 
 async def _profile_out(session: AsyncSession, pro: Professional) -> ProfileOut:
     return ProfileOut(
-        id=pro.id, firmId=pro.firm_id, status=pro.status, displayName=pro.display_name, legalName=pro.legal_name,
+        id=pro.id, photoUrl=photo_url(pro), firmId=pro.firm_id, status=pro.status, displayName=pro.display_name, legalName=pro.legal_name,
         headline=pro.headline, yearsExperienceBand=pro.years_experience_band, bio=pro.bio, languages=list(pro.languages),
         country=pro.country, city=pro.city, website=pro.website, primaryCategory=pro.primary_category,
         specializations=await _spec_out(session, pro), engagementTypes=list(pro.engagement_types),
@@ -194,8 +219,11 @@ async def get_me(session: AsyncSession, actor: Actor) -> ProfileOut:
 async def update_me(session: AsyncSession, actor: Actor, patch: ProfilePatch, if_match: int | None) -> ProfileOut:
     pro = await _mine(session, actor, lock=True)
     _if_match(if_match, pro.version, "profile")
+    check_copy("display name", patch.displayName)
     check_copy("headline", patch.headline)
     check_copy("bio", patch.bio)
+    if patch.bio and len(patch.bio.split()) > MAX_BIO_WORDS:
+        raise ValidationFailed(f"Keep your bio to {MAX_BIO_WORDS} words or fewer (150-250 reads best)", code="BIO_TOO_LONG")
     fields = {"displayName": "display_name", "legalName": "legal_name", "headline": "headline",
               "yearsExperienceBand": "years_experience_band", "bio": "bio", "city": "city", "country": "country",
               "website": "website", "engagementTypes": "engagement_types", "deliveryModes": "delivery_modes",
@@ -285,6 +313,64 @@ async def set_availability(session: AsyncSession, actor: Actor, body: Availabili
     return await _profile_out(session, pro)
 
 
+# ---- Profile photo -----------------------------------------------------------------
+
+_MAGIC = {"image/jpeg": (b"\xff\xd8\xff",), "image/png": (b"\x89PNG\r\n\x1a\n",), "image/webp": (b"RIFF",)}
+MAX_PHOTO_BYTES = 2 * 1024 * 1024
+
+
+async def set_photo(session: AsyncSession, actor: Actor, body: PhotoIn) -> ProfileOut:
+    """Stores the photo in blob storage. The declared type must match the file's own bytes."""
+    pro = await _mine(session, actor, lock=True)
+    try:
+        data = base64.b64decode(body.dataBase64, validate=True)
+    except ValueError as exc:
+        raise ValidationFailed("The photo could not be read", code="INVALID_PHOTO") from exc
+    if len(data) > MAX_PHOTO_BYTES:
+        raise ValidationFailed("Use a photo under 2 MB", code="PHOTO_TOO_LARGE")
+    ok = any(data.startswith(m) for m in _MAGIC[body.contentType])
+    if body.contentType == "image/webp":
+        ok = ok and data[8:12] == b"WEBP"
+    if not ok:
+        raise ValidationFailed("Upload a JPEG, PNG or WebP image", code="INVALID_PHOTO")
+    old = pro.photo_key
+    digest = sha256_hex_bytes(data)
+    key = f"professionals/{pro.id}/photo-{digest[:16]}"
+    get_storage().put(key, data)
+    pro.photo_key, pro.photo_content_type, pro.photo_sha256 = key, body.contentType, digest
+    if old and old != key:
+        get_storage().delete(old)
+    _evt(session, E.PROFILE_UPDATED, pro, changes=["photo"])
+    await session.flush()
+    return await _profile_out(session, pro)
+
+
+async def remove_photo(session: AsyncSession, actor: Actor) -> ProfileOut:
+    pro = await _mine(session, actor, lock=True)
+    if pro.photo_key:
+        get_storage().delete(pro.photo_key)
+        pro.photo_key = pro.photo_content_type = pro.photo_sha256 = None
+        _evt(session, E.PROFILE_UPDATED, pro, changes=["photo"])
+        await session.flush()
+    return await _profile_out(session, pro)
+
+
+async def photo(session: AsyncSession, actor: Actor | None, professional_id: uuid.UUID) -> tuple[bytes, str]:
+    """Same visibility as the public profile: published, or the owner / operators."""
+    pro = await session.get(Professional, professional_id)
+    own = bool(actor and pro and pro.identity_id == actor.identity_id)
+    if pro is None or not pro.photo_key or (pro.status != "PUBLISHED" and not own and not (actor and actor.is_operator)):
+        raise NotFound("Photo not found")
+    data = get_storage().get(pro.photo_key)
+    if data is None:
+        raise NotFound("Photo not found")
+    return data, pro.photo_content_type or "application/octet-stream"
+
+
+def sha256_hex_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
 # ---- Credential claims -----------------------------------------------------------
 
 async def add_credential(session: AsyncSession, actor: Actor, body: CredentialIn) -> CredentialOut:
@@ -365,6 +451,8 @@ async def create_offering(session: AsyncSession, actor: Actor, body: OfferingIn)
     _check_offering_specialization(pro, body.specialization)
     check_copy("offering title", body.title)
     check_copy("offering summary", body.summary)
+    for d in body.deliverables:
+        check_copy("deliverable", d)
     count = await session.scalar(select(func.count()).select_from(Offering).where(Offering.professional_id == pro.id))
     if count >= MAX_OFFERINGS:
         raise Conflict(f"You can have up to {MAX_OFFERINGS} offerings. Pause or edit an existing one.", code="TOO_MANY_OFFERINGS")
@@ -400,6 +488,8 @@ async def update_offering(session: AsyncSession, actor: Actor, offering_id: uuid
         _check_offering_specialization(pro, patch.specialization)
     check_copy("offering title", patch.title)
     check_copy("offering summary", patch.summary)
+    for d in patch.deliverables or []:
+        check_copy("deliverable", d)
     fields = {"title": "title", "specialization": "specialization", "summary": "summary",
               "typicalDuration": "typical_duration", "pricingModel": "pricing_model"}
     changed = []
@@ -459,12 +549,14 @@ async def _readiness(session: AsyncSession, pro: Professional) -> ReadinessOut:
         Offering.professional_id == pro.id, Offering.status == "ACTIVE"))
     specs = await marketplace_facade.get_specializations(session, specializations_of(pro))
     needs_credential = any(i.requires_credential for i in specs.values())
-    copy_ok = not any(_SUPERLATIVES.search(t or "") for t in (pro.headline, pro.bio))
+    copy_ok = not any(_SUPERLATIVES.search(t or "") for t in (pro.display_name, pro.headline, pro.bio))
     items = [
         ReadinessItem(key="email", label="Confirm your email address", done=bool(who and who.email_confirmed), required=True),
-        ReadinessItem(key="basics", label=f"Add a headline and a bio of at least {MIN_BIO_LENGTH} characters",
-                      done=bool(pro.headline and pro.bio and len(pro.bio) >= MIN_BIO_LENGTH), required=True),
-        ReadinessItem(key="copy", label="Headline and bio avoid superlatives and guarantees", done=copy_ok, required=True),
+        ReadinessItem(key="basics", label="Add your legal name (private), primary role title and years of experience",
+                      done=bool(pro.legal_name and pro.headline and pro.years_experience_band), required=True),
+        ReadinessItem(key="photo", label="Add a professional photo", done=pro.photo_key is not None, required=True),
+        ReadinessItem(key="copy", label="Name, headline and bio avoid superlatives and guarantees", done=copy_ok, required=True),
+        ReadinessItem(key="bio", label="Add a short bio (150-250 words reads best)", done=bool(pro.bio), required=False),
         ReadinessItem(key="specializations", label="Choose your primary specialization",
                       done=pro.primary_specialization is not None, required=True),
         ReadinessItem(key="engagement", label="Choose engagement types and delivery modes",
@@ -527,18 +619,24 @@ async def public_profile(session: AsyncSession, actor: Actor | None, professiona
     names = await _spec_names(session, sorted({o.specialization for o in offerings}))
     category = await marketplace_facade.get_category(session, pro.primary_category) if pro.primary_category else None
     trust = await trust_facade.get_trust(session, pro.id)
+    checks = await verification_facade.get_checks(session, "PROFESSIONAL", pro.id)
+    verified_jurisdictions = sorted({c.jurisdiction[:2].upper() for c in checks if c.status == "VERIFIED" and c.jurisdiction
+                                     and c.verification_type in ("JURISDICTION", "CREDENTIAL")})
     return PublicProfileOut(
-        id=pro.id, displayName=pro.display_name, headline=pro.headline, yearsExperienceBand=pro.years_experience_band,
+        id=pro.id, photoUrl=photo_url(pro), displayName=pro.display_name, headline=pro.headline,
+        yearsExperienceBand=pro.years_experience_band,
         bio=pro.bio, languages=list(pro.languages), country=pro.country, city=pro.city,
         primaryCategory=pro.primary_category, primaryCategoryName=category.name if category else None,
         specializations=await _spec_out(session, pro), engagementTypes=list(pro.engagement_types),
         deliveryModes=list(pro.delivery_modes), pricingModels=list(pro.pricing_models), indicativeRate=_rate(pro),
         rateUnit=pro.rate_unit, availability=effective_availability(pro),
         servedJurisdictions=list(pro.served_jurisdictions), licensedJurisdictions=list(pro.licensed_jurisdictions),
+        verifiedJurisdictions=verified_jurisdictions,
         credentials=[PublicCredentialOut(name=c.name, issuingBody=c.issuing_body, jurisdiction=c.jurisdiction,
                                          status="VERIFIED" if c.status == "VERIFIED" else "SELF_REPORTED",
-                                         displayLabel=_LABELS[c.status]) for c in claims],
+                                         displayLabel="Validated" if c.status == "VERIFIED" else "Self-reported") for c in claims],
         offerings=[_offering_out(o, names) for o in offerings],
-        trust=PublicTrustOut(tier=trust.tier, score=trust.score, dimensions=dict(trust.dimensions), explanation=list(trust.explanation)),
+        trust=PublicTrustOut(tier=trust.tier, dimensions=public_dimensions(trust.dimensions),
+                             explanation=public_explanation(trust.explanation), updatedAt=trust.updated_at),
         publishedAt=pro.published_at, isOwnProfile=own,
     )

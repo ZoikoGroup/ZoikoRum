@@ -1,0 +1,82 @@
+import type { ReactNode } from 'react'
+import { Link } from 'react-router-dom'
+
+/* Building blocks shared by every role's dashboard: icons, summary cards, the pending-actions list. */
+
+export type IconName =
+  | 'request' | 'proposal' | 'contract' | 'shield' | 'check' | 'bell' | 'team' | 'mail' | 'building' | 'search'
+  | 'user' | 'star' | 'clock'
+
+const PATHS: Record<IconName, string> = {
+  request: 'M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6',
+  proposal: 'M4 5h16v11H8l-4 4zM8 9h8M8 12h5',
+  contract: 'M6 3h9l4 4v14H6zM9 12h7M9 16h4M15 3v4h4',
+  shield: 'M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6zM9 12l2 2 4-4',
+  check: 'M5 12l4 4L19 7',
+  bell: 'M6 16V11a6 6 0 1 1 12 0v5l2 2H4zM10 20a2 2 0 0 0 4 0',
+  team: 'M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM2 21v-1a7 7 0 0 1 14 0v1M17 11a3 3 0 1 0 0-6M22 21v-1a5 5 0 0 0-4-4.9',
+  mail: 'M3 6h18v12H3zM3 7l9 6 9-6',
+  building: 'M4 21V5l8-3v19M12 9h8v12M7 8h2M7 12h2M7 16h2M15 13h2M15 17h2',
+  search: 'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM21 21l-5-5',
+  user: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21v-1a8 8 0 0 1 16 0v1',
+  star: 'M12 3l2.8 5.7 6.2.9-4.5 4.4 1 6.2L12 17.3 6.5 20.2l1-6.2L3 9.6l6.2-.9z',
+  clock: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3 3',
+}
+
+export function Icon({ name }: { name: IconName }) {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden fill="none" stroke="currentColor" strokeWidth="1.8"
+      strokeLinecap="round" strokeLinejoin="round"><path d={PATHS[name]} /></svg>
+  )
+}
+
+export type Tone = 'blue' | 'green' | 'teal' | 'violet' | 'amber' | 'red'
+
+export function Kpi({ icon, tone, label, value, note }: { icon: IconName; tone: Tone; label: string; value: ReactNode; note: ReactNode }) {
+  return (
+    <div className="card kpi">
+      <span className={`kpi-icon ${tone}`}><Icon name={icon} /></span>
+      <div>
+        <div className="label">{label}</div>
+        <div className="value">{value}</div>
+        <div className="note">{note}</div>
+      </div>
+    </div>
+  )
+}
+
+export type Priority = 'High' | 'Medium' | 'Low'
+export interface Action { title: string; detail: string; priority: Priority; to: string; icon: IconName }
+
+export function ActionList({ actions, empty = 'Nothing needs your attention right now.' }: { actions: Action[]; empty?: ReactNode }) {
+  if (actions.length === 0) return <p className="muted small" style={{ margin: 0 }}>{empty}</p>
+  return (
+    <ul className="action-list">
+      {actions.map((a) => (
+        <li key={a.title}>
+          <span className={`kpi-icon ${a.priority === 'High' ? 'red' : a.priority === 'Medium' ? 'amber' : 'blue'}`}><Icon name={a.icon} /></span>
+          <Link to={a.to}><strong>{a.title}</strong><span className="muted small">{a.detail}</span></Link>
+          <span className={`badge prio-${a.priority.toLowerCase()}`}>{a.priority}</span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/** One line that says what is coming, instead of cards full of dashes. */
+export function ComingSoon({ children }: { children: ReactNode }) {
+  return <div className="coming-soon"><span className="badge">Coming soon</span><span>{children}</span></div>
+}
+
+/** Photo when there is one, otherwise initials. */
+export function Avatar({ name, photoUrl, size = 40 }: { name: string; photoUrl?: string | null; size?: number }) {
+  const initials = name.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase()
+  return photoUrl
+    ? <img className="avatar-img" src={photoUrl} alt="" width={size} height={size} style={{ width: size, height: size }} />
+    : <span className="avatar" aria-hidden style={{ width: size, height: size, fontSize: size / 2.6 }}>{initials}</span>
+}
+
+export function greeting(name: string): string {
+  const h = new Date().getHours()
+  return `${h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'}, ${name.split(/\s+/)[0]}`
+}

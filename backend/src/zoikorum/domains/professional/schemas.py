@@ -65,8 +65,14 @@ class SpecializationOut(BaseModel):
     regulated: bool
 
 
+class PhotoIn(BaseModel):
+    contentType: Literal["image/jpeg", "image/png", "image/webp"]
+    dataBase64: str = Field(min_length=10, max_length=2_900_000)  # <= ~2 MB once decoded
+
+
 class ProfileOut(BaseModel):
     id: uuid.UUID
+    photoUrl: str | None
     firmId: uuid.UUID | None
     status: str
     displayName: str
@@ -183,16 +189,19 @@ class PublicCredentialOut(BaseModel):
 
 
 class PublicTrustOut(BaseModel):
+    """Public trust snapshot: tier, dimensions and why (no raw score; screening shown only when clear)."""
+
     tier: str  # A | B | C
-    score: int
     dimensions: dict[str, str]  # identity, credentials, jurisdiction, restrictions, insurance
     explanation: list[str]
+    updatedAt: datetime | None  # "last verified"
 
 
 class PublicProfileOut(BaseModel):
     """What buyers see (Professional Profile doc). Never includes legal name or registration numbers."""
 
     id: uuid.UUID
+    photoUrl: str | None
     displayName: str
     headline: str | None
     yearsExperienceBand: str | None
@@ -211,6 +220,7 @@ class PublicProfileOut(BaseModel):
     availability: str
     servedJurisdictions: list[str]
     licensedJurisdictions: list[str]
+    verifiedJurisdictions: list[str]  # licensed jurisdictions backed by a verified check
     credentials: list[PublicCredentialOut]
     offerings: list[OfferingOut]
     trust: PublicTrustOut

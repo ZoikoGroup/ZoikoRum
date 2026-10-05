@@ -129,8 +129,9 @@ async def _open(session: AsyncSession, *, subject_type: str, subject_id: uuid.UU
     if case.provider_result == "PASS":
         await _verify(session, case, reviewer_id=None, expires_at=None)
     elif case.provider_result == "FAIL":
-        _fail(session, case, reviewer_id=None, reason_code="PROVIDER_FAILED",
-              public_reason="We could not confirm this automatically. Contact support if you think this is wrong.")
+        # A negative provider result is never final on its own: a person reviews it (Architecture 10.4).
+        CASE_STATES.assert_can(case.status, "IN_REVIEW")
+        case.status = "IN_REVIEW"
     await session.flush()
     return case
 
@@ -245,13 +246,19 @@ async def decide(session: AsyncSession, actor: Actor, case_id: uuid.UUID, body: 
     actor.require_platform_role(*REVIEWERS)
     actor.require_step_up()
     case = await _case(session, case_id, lock=True)
-    if case.owner_identity_id == actor.identity_id:
-        raise Forbidden("You cannot review your own verification", code="SELF_REVIEW")
+    if case.owner_identity_id == actor.identity_id or (
+            case.subject_type == "FIRM" and await firm_facade.member_roles(session, case.subject_id, actor.identity_id)):
+        raise Forbidden("You cannot review your own verification or your own firm's", code="SELF_REVIEW")
     if body.decision != "VERIFIED" and not body.publicReason:
         raise ValidationFailed("Explain the outcome to the professional in plain language", code="PUBLIC_REASON_REQUIRED")
     if body.decision == "VERIFIED":
         if body.expiresAt and body.expiresAt <= clock.now():
             raise ValidationFailed("The expiry date must be in the future", code="INVALID_EXPIRY")
+        # Evidence-based verification (Trust charter s.6): screening is checked against lists, everything else needs a document.
+        if case.verification_type != "RESTRICTIONS" and not await session.scalar(
+                select(func.count()).select_from(EvidenceItem).where(EvidenceItem.case_id == case.id)):
+            raise ValidationFailed("Ask for supporting documents before verifying: none have been submitted",
+                                   code="EVIDENCE_REQUIRED")
         await _verify(session, case, reviewer_id=actor.identity_id, expires_at=body.expiresAt)
     elif body.decision == "FAILED":
         _fail(session, case, reviewer_id=actor.identity_id, reason_code=body.reasonCode, public_reason=body.publicReason)
@@ -292,7 +299,8 @@ async def remind_expiring(session: AsyncSession, payload: dict) -> None:
     case = await session.get(VerificationCase, uuid.UUID(payload["caseId"]))
     if not _still_verified(case):
         return
-    days_left = max(0, (case.expires_at - clock.now()).days)
+    # The reminder kind (30/14/7) is the promise; the timer may fire a little late.
+    days_left = int(payload.get("days") or max(0, (case.expires_at - clock.now()).days))
     _evt(session, E.VERIFICATION_EXPIRING, case, expiresAt=case.expires_at, daysLeft=days_left)
 
 

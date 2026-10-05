@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from zoikorum.domains.marketplace.models import TaxonomyNode
+from zoikorum.domains.marketplace.models import SavedProfessional, TaxonomyNode
 from zoikorum.shared.errors import ValidationFailed
 
 
@@ -27,6 +27,7 @@ class SpecializationInfo:
     regulated: bool  # regulated work => Tier A typically required by policy
     deliverable_templates: tuple[str, ...]
     credential_hints: tuple[str, ...]  # e.g. ("CPA", "CA", "ACCA")
+    requires_insurance: bool = False  # Tier A needs verified professional indemnity insurance
 
 
 @dataclass(frozen=True)
@@ -49,7 +50,7 @@ async def get_specializations(session: AsyncSession, slugs: list[str]) -> dict[s
     ).all()
     return {
         n.slug: SpecializationInfo(n.slug, n.name, g_slug, n.category_slug, n.requires_credential, n.regulated,
-                                   tuple(n.deliverable_templates), tuple(n.credential_hints))
+                                   tuple(n.deliverable_templates), tuple(n.credential_hints), n.requires_insurance)
         for n, g_slug in rows
     }
 
@@ -68,5 +69,6 @@ async def get_category(session: AsyncSession, slug: str) -> CategoryInfo | None:
 
 
 async def saved_by(session: AsyncSession, professional_id: uuid.UUID) -> list[uuid.UUID]:
-    """Identity ids that saved this professional (saved professionals arrive with search)."""
-    return []
+    """Identity ids that saved this professional (availability alerts)."""
+    return list((await session.scalars(select(SavedProfessional.identity_id).where(
+        SavedProfessional.professional_id == professional_id))).all())

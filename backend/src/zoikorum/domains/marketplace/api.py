@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import uuid
+
 from fastapi import APIRouter, status
 
 from zoikorum.domains.marketplace import service
-from zoikorum.domains.marketplace.schemas import SpecializationAdminOut, SpecializationIn, SpecializationPatch
+from zoikorum.domains.marketplace.schemas import SavedOut, SaveIn, SpecializationAdminOut, SpecializationIn, SpecializationPatch
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
 
@@ -41,3 +43,19 @@ async def update_specialization(slug: str, body: SpecializationPatch, actor: Cur
 @router.post("/v1/admin/taxonomy/specializations/{slug}/deprecate", response_model=SpecializationAdminOut)
 async def deprecate_specialization(slug: str, actor: CurrentActor, session: DbSession):
     return await service.deprecate_specialization(session, actor, slug)
+
+
+@router.get("/v1/saved/professionals", response_model=list[SavedOut])
+async def saved(actor: CurrentActor, session: DbSession):
+    """Your saved professionals, newest first."""
+    return await service.saved_professionals(session, actor)
+
+
+@router.post("/v1/saved/professionals", status_code=status.HTTP_204_NO_CONTENT)
+async def save(body: SaveIn, actor: CurrentActor, session: DbSession) -> None:
+    await service.save_professional(session, actor, body.professionalId)
+
+
+@router.delete("/v1/saved/professionals/{professional_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def unsave(professional_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> None:
+    await service.unsave_professional(session, actor, professional_id)

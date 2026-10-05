@@ -40,7 +40,7 @@ export function TrustSummary({ trust }: { trust: Trust }) {
         <span className={`tier tier-${trust.tier}`}>Tier {trust.tier}</span>
         <div>
           <h2 style={{ margin: 0 }}>{trust.tierLabel}</h2>
-          <p className="muted small" style={{ margin: 0 }}>Trust score {trust.score} / 100</p>
+          {trust.score !== null && <p className="muted small" style={{ margin: 0 }}>Trust score {trust.score} / 100</p>}
         </div>
       </div>
       <ul className="checklist">
@@ -52,6 +52,15 @@ export function TrustSummary({ trust }: { trust: Trust }) {
       {trust.explanation.length > 0 && (
         <ul className="why">{trust.explanation.map((e) => <li key={e}>{e}</li>)}</ul>
       )}
+      <h3>What each tier unlocks</h3>
+      <table className="data">
+        <thead><tr><th>Tier</th><th>Needs</th><th>Unlocks</th></tr></thead>
+        <tbody>
+          <tr><td><strong>C</strong> · Discovery</td><td>A published profile</td><td>Visible in search; no contracts or protected payments</td></tr>
+          <tr><td><strong>B</strong> · Verified Identity</td><td>Identity verified, screening clear</td><td>Respond to requests; limited-risk engagements (per buyer policy)</td></tr>
+          <tr><td><strong>A</strong> · Fully Verified</td><td>B + required credentials, a verified jurisdiction, insurance where required</td><td>Enterprise and regulated engagements</td></tr>
+        </tbody>
+      </table>
     </section>
   )
 }
@@ -185,7 +194,7 @@ export function ProfessionalVerificationPage() {
   return (
     <>
       <div className="page-head"><div><h1>Verification &amp; trust</h1>
-        <p className="muted" style={{ margin: 0 }}>Verified checks raise your Trust Tier. Every decision is made by a person, never by AI.</p></div></div>
+        <p className="muted" style={{ margin: 0 }}>Verified checks raise your Trust Tier. Checks are made by a verification provider or a compliance reviewer — never by AI.</p></div></div>
       {trust && <TrustSummary trust={trust} />}
       <ChecksPanel subjectType="PROFESSIONAL" subjectId={profile.id} allowed={['IDENTITY', 'JURISDICTION', 'INSURANCE']}
         onChanged={() => setTimeout(loadTrust, 1500)} />

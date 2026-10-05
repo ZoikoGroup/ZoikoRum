@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { FIRM_ROLE_INFO, firmApi, type Firm, type FirmMember, type FirmRole, type Invitation } from '../api/orgs'
+import { verificationApi, type VerificationCase } from '../api/verification'
+import { useAuth } from '../auth/AuthContext'
+import { ActionList, ComingSoon, greeting, Icon, Kpi, type Action } from '../components/dashboard'
 import { ErrorAlert, Field, useStepUp } from '../components/ui'
 import { COUNTRIES } from './Join'
 
@@ -261,37 +264,65 @@ export function FirmProfilePage() {
 /** Firm home: verification status, team and representative. */
 export function FirmDashboard() {
   const { firm, loading, isAdmin } = useMyFirm()
-  if (loading) return <p className="muted">Loading…</p>
+  const { user } = useAuth()
+  const [cases, setCases] = useState<VerificationCase[]>([])
+  const [invites, setInvites] = useState(0)
+  useEffect(() => {
+    if (!firm || !isAdmin) return
+    verificationApi.forSubject('FIRM', firm.id).then(setCases).catch(() => {})
+    firmApi.invitations(firm.id).then((i) => setInvites(i.length)).catch(() => {})
+  }, [firm, isAdmin])
+  if (loading || !user) return <p className="muted">Loading…</p>
   if (!firm) return <p className="muted">Your firm is still being set up. Refresh in a moment.</p>
-  const steps = [
-    { label: 'Complete the firm profile (registration number, size)', done: !!firm.registrationNumber && !!firm.sizeBand, to: '/app/firm/profile' },
-    { label: 'Name an authorized representative', done: firm.hasAuthorizedRepresentative, to: '/app/firm/team' },
-    { label: 'Invite your professionals', done: firm.memberCount > 1, to: '/app/firm/team' },
-    { label: 'Verify the firm registration', done: firm.status === 'VERIFIED', to: '/app/firm/verification' },
-  ]
+
+  const registration = cases.find((c) => c.verificationType === 'FIRM_REGISTRATION')
+  const actions: Action[] = []
+  if (isAdmin) {
+    if (registration?.status === 'NEEDS_INFO') actions.push({ title: 'More information needed for firm verification',
+      detail: registration.publicReason ?? 'See the reviewer\'s note', priority: 'High', to: '/app/firm/verification', icon: 'shield' })
+    if (!registration && firm.status !== 'VERIFIED') actions.push({ title: 'Verify the firm registration',
+      detail: 'Confirms the firm is a registered legal entity', priority: 'High', to: '/app/firm/verification', icon: 'shield' })
+    if (!firm.registrationNumber || !firm.sizeBand) actions.push({ title: 'Complete the firm profile',
+      detail: 'Registration number and firm size', priority: 'Medium', to: '/app/firm/profile', icon: 'building' })
+    if (!firm.hasAuthorizedRepresentative) actions.push({ title: 'Name an authorized representative',
+      detail: 'The person who legally acts for the firm', priority: 'Medium', to: '/app/firm/team', icon: 'user' })
+    if (firm.memberCount <= 1) actions.push({ title: 'Invite your professionals', detail: 'They offer services under the firm',
+      priority: 'Low', to: '/app/firm/team', icon: 'team' })
+    if (invites > 0) actions.push({ title: `${invites} invitation${invites > 1 ? 's' : ''} not yet accepted`,
+      detail: 'Remind your colleagues or resend', priority: 'Low', to: '/app/firm/team', icon: 'mail' })
+  }
+
   return (
     <>
-      <div className="page-head"><div><h1>{firm.tradingName || firm.legalName}</h1>
-        <p className="muted" style={{ margin: 0 }}>Firm workspace · <FirmStatusBadge status={firm.status} /></p></div></div>
-      <div className="grid-cards">
-        <div className="card stat"><div className="label">Your roles</div><div style={{ marginTop: 10 }}><FirmRoleBadges roles={firm.myRoles} /></div></div>
-        <div className="card stat"><div className="label">Firm members</div><div className="value">{firm.memberCount}</div></div>
-        <div className="card stat"><div className="label">Authorized representative</div><div className="value">{firm.hasAuthorizedRepresentative ? 'Yes' : 'No'}</div></div>
-        <div className="card stat"><div className="label">Active engagements</div><div className="value">—</div><div className="note">Arrives with proposals &amp; contracts</div></div>
+      <div className="home-head">
+        <div>
+          <h1>{greeting(user.displayName)}</h1>
+          <p className="muted" style={{ margin: 0 }}>{firm.tradingName || firm.legalName} · <FirmStatusBadge status={firm.status} /></p>
+        </div>
+        {isAdmin && <div className="row"><Link className="btn btn-primary" to="/app/firm/team"><Icon name="team" /> Manage team</Link></div>}
       </div>
-      {isAdmin && (
-        <section className="card panel">
-          <h2>Get your firm ready</h2>
-          <ul className="checklist">
-            {steps.map((s) => (
-              <li key={s.label}>
-                <span>{s.to ? <Link to={s.to}>{s.label}</Link> : s.label}</span>
-                {s.done ? <span className="badge green">Done</span> : s.to ? <span className="badge warn">To do</span> : <span className="badge">Coming soon</span>}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+      <div className="kpi-row">
+        <Kpi icon="shield" tone={firm.status === 'VERIFIED' ? 'green' : 'amber'} label="Firm verification"
+          value={STATUS_LABEL[firm.status] ?? firm.status} note={registration ? `Check: ${registration.status.replace('_', ' ').toLowerCase()}` : 'Not started'} />
+        <Kpi icon="team" tone="blue" label="Firm members" value={firm.memberCount} note={invites ? `${invites} invited` : 'Including you'} />
+        <Kpi icon="user" tone={firm.hasAuthorizedRepresentative ? 'green' : 'amber'} label="Authorized representative"
+          value={firm.hasAuthorizedRepresentative ? 'Named' : 'Missing'} note="Needed for regulated work" />
+      </div>
+      <ComingSoon>Proposal requests, contracts and protected payments for your firm's professionals.</ComingSoon>
+      <div className="home-grid">
+        <div>
+          <section className="card panel">
+            <div className="panel-head"><h2>Your roles</h2></div>
+            <FirmRoleBadges roles={firm.myRoles} />
+          </section>
+        </div>
+        <aside>
+          <section className="card panel">
+            <div className="panel-head"><h2>Pending actions</h2></div>
+            <ActionList actions={actions} empty={isAdmin ? 'Your firm is set up.' : 'Firm Admins manage firm setup.'} />
+          </section>
+        </aside>
+      </div>
     </>
   )
 }

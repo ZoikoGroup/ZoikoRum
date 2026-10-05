@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Header, status
+from fastapi import APIRouter, Header, Response, status
 
 from zoikorum.domains.professional import service
 from zoikorum.domains.professional.schemas import (
@@ -14,6 +14,7 @@ from zoikorum.domains.professional.schemas import (
     OfferingIn,
     OfferingOut,
     OfferingPatch,
+    PhotoIn,
     ProfileOut,
     ProfilePatch,
     PublicProfileOut,
@@ -47,6 +48,24 @@ async def me(actor: CurrentActor, session: DbSession):
 @router.patch("/me", response_model=ProfileOut)
 async def update_me(body: ProfilePatch, actor: CurrentActor, session: DbSession, if_match: IfMatch = None):
     return await service.update_me(session, actor, body, _version(if_match))
+
+
+@router.put("/me/photo", response_model=ProfileOut)
+async def set_photo(body: PhotoIn, actor: CurrentActor, session: DbSession):
+    """Profile photo: JPEG, PNG or WebP under 2 MB, sent as base64."""
+    return await service.set_photo(session, actor, body)
+
+
+@router.delete("/me/photo", response_model=ProfileOut)
+async def remove_photo(actor: CurrentActor, session: DbSession):
+    return await service.remove_photo(session, actor)
+
+
+@router.get("/{professional_id}/photo")
+async def photo(professional_id: uuid.UUID, actor: OptionalActor, session: DbSession) -> Response:
+    data, content_type = await service.photo(session, actor, professional_id)
+    return Response(data, media_type=content_type, headers={"Cache-Control": "public, max-age=86400",
+                                                            "X-Content-Type-Options": "nosniff"})
 
 
 @router.put("/me/specializations", response_model=ProfileOut)

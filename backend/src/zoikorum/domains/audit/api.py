@@ -49,9 +49,10 @@ async def list_records(
     objectId: str | None = None,
     correlationId: str | None = None,
     limit: int = Query(default=200, le=1000),
+    newestFirst: bool = False,  # activity feeds: latest records first
 ) -> dict:
     rows = await service.query(session, actor, tenant_id=tenantId, object_type=objectType, object_id=objectId,
-                               correlation_id=correlationId, since=None, until=None, limit=limit)
+                               correlation_id=correlationId, since=None, until=None, limit=limit, newest_first=newestFirst)
     return {"items": [service.record_to_dict(r) for r in rows]}
 
 

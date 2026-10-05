@@ -117,7 +117,21 @@ The other domain folders contain only their `facade.py` interface contracts; the
 | 2 Organizations, firms & team roles | Buyer domain (Individual/Enterprise organizations, members, Org roles: Org Admin, Requester, Approver, Budget Owner, Legal Reviewer, Exception Authority; spend limits; business units; cost centers; email-bound invitations) and Firm domain (firm profile with optimistic concurrency, Firm Admin / Member / Authorized Representative, invitations); identity derives Enterprise/Firm workspaces from memberships; frontend team, structure, firm and invitation screens | Built |
 | 3 Professional profile & taxonomy | Marketplace taxonomy (Finance & Accounting: 7 groups, 43 specializations, credential/regulated flags; seeded by migration; admin add/edit/deprecate with taxonomy versioning) and Professional domain (one profile per account, optional firm link, profile basics with optimistic concurrency, 1 primary + ≤5 secondary specializations, jurisdictions with cross-border acknowledgement, availability/capacity, credential claims shown as "Self-reported" until verified, offerings DRAFT/ACTIVE/PAUSED, readiness checklist, publish with copy rules + attestation, public profile) | Built (backend + frontend). Reactions to contract and enforcement events arrive with those domains |
 | 4 Verification & trust tiers | Verification domain (cases for identity, credentials, jurisdiction, insurance, sanctions screening and firm registration; provider adapter with a deterministic fake; append-only evidence metadata + SHA-256; Compliance Officer review queue with step-up MFA and no self-review; 30/14/7-day expiry reminders and expiry on durable timers; credential claims and firm status follow outcomes) and Trust domain (deterministic Tier A/B/C rules, five verification dimensions, 0-100 score with plain-language reasons, tier history and signals; adverse events downgrade immediately; risk flags never change the tier); frontend verification, firm verification and review-queue screens; real tiers on dashboards and public profiles | Built. Secure document storage (blob uploads) and a real KYC/sanctions provider are still open decisions |
-| 5+ | Proposed next: search & discovery, then proposals, contracts, escrow… | Not started |
+| 5 Search & discovery | Search projection `search.professional_documents` built only from events (profile, offerings, availability, jurisdictions, trust, verification, enforcement) through facades; Postgres full-text (name/headline A, specializations B, bio/offerings/verified credentials C); filters (specialization any/all, tier, verified dimensions, engagement, delivery, availability, pricing, credential, jurisdiction), 7 sorts, facets; ranking with the Architecture 9.4 weights and a plain-language "why this result" (contract, review, response and policy signals score 0 until those domains exist); SEARCH_PERFORMED / SEARCH_ZERO_RESULT; `count_eligible` for policy impact previews; admin and CLI reindex. Frontend: public Browse page, dashboard "Verified professionals", and one dashboard design for every role | Built. Buyer-organization policy filtering arrives with the policy domain |
+| 6+ | Proposed next: proposals (request → proposal → compare → accept), then contracts, escrow… | Not started |
+
+## 6a. Product decisions taken (2026-10-05, after the documentation audit)
+
+| Topic | Decision |
+|---|---|
+| Engagement type "Fractional" and pricing "Quote on request" | Kept (Onboarding doc s.9 lists them; the Professional Dashboard doc's shorter list is treated as examples) |
+| Profile photo | Required to publish (Onboarding s.7). Stored through `shared/storage.py` (local disk in development, S3 in production) |
+| Tier names | Homepage wireframe wording: "Fully Verified Professional", "Verified Identity", "Unverified (Discovery Only)" |
+| Step-up MFA before submitting verification evidence (Architecture 11.4) | Not enforced yet (BUILD_SPEC omits it; it would force every professional to enrol an authenticator first). Can be enabled later |
+| Offering editor | Five-step wizard with per-step saving (Professional Dashboard s.6) |
+| Tier B | Requires identity VERIFIED **and** restrictions screening CLEAR |
+| Verification | VERIFIED needs at least one evidence item (except list-based screening); a provider FAIL goes to human review |
+| Public trust | No raw score; screening shown only when clear; licences marked verified / self-reported |
 
 ## 7. Running it
 

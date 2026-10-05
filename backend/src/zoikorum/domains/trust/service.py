@@ -63,7 +63,7 @@ async def recompute(session: AsyncSession, prof: TrustProfile, source_event_type
     result = evaluate(Facts(
         checks=tuple(Check(c.verification_type, c.status, c.jurisdiction, c.specialization) for c in checks),
         credential_required=frozenset(s for s, i in specs.items() if i.requires_credential),
-        regulated=any(i.regulated for i in specs.values()),
+        insurance_required=any(i.requires_insurance for i in specs.values()),
         licensed=frozenset(pro.licensed_jurisdictions), served=frozenset(pro.jurisdictions_served),
         engagement_suspended=prof.engagement_suspended,
     ))
@@ -142,21 +142,30 @@ def _out(professional_id: uuid.UUID, prof: TrustProfile | None) -> TrustOut:
                     updatedAt=prof.recomputed_at if prof else None)
 
 
-async def _require_visible(session: AsyncSession, actor: Actor | None, professional_id: uuid.UUID, *, owner_only: bool) -> None:
+async def _require_visible(session: AsyncSession, actor: Actor | None, professional_id: uuid.UUID, *, owner_only: bool) -> bool:
+    """Raises if the caller may not see it. Returns True for the owner and Trust & Safety (full detail)."""
     pro = await professional_facade.get_professional(session, professional_id)
     own = bool(actor and pro and pro.identity_id == actor.identity_id)
     if actor and not own and actor.has_platform_role(*OPERATORS):
         actor.require_platform_role(*OPERATORS)  # also enforces an MFA session
-        return
+        return True
     if pro is None or (not own and (owner_only or pro.status != "PUBLISHED")):
         raise NotFound("Professional not found")
+    return own
 
 
 async def get_trust(session: AsyncSession, actor: Actor | None, professional_id: uuid.UUID) -> TrustOut:
     """Public for published profiles: tier, dimensions and the plain-language explanation."""
-    await _require_visible(session, actor, professional_id, owner_only=False)
+    privileged = await _require_visible(session, actor, professional_id, owner_only=False)
     prof = await session.scalar(select(TrustProfile).where(TrustProfile.professional_id == professional_id))
-    return _out(professional_id, prof)
+    out = _out(professional_id, prof)
+    if privileged:
+        return out
+    dims = dict(out.dimensions)
+    if dims.get("restrictions") not in (None, "CLEAR"):
+        dims["restrictions"] = "UNKNOWN"  # a flag stays between the professional and Trust & Safety
+    return out.model_copy(update={"score": None, "dimensions": dims,
+                                  "explanation": [e for e in out.explanation if "screening" not in e and "suspended" not in e]})
 
 
 async def history(session: AsyncSession, actor: Actor, professional_id: uuid.UUID) -> TrustHistoryOut:

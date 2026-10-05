@@ -12,6 +12,7 @@ from sqlalchemy.exc import DBAPIError
 from zoikorum.shared import clock
 
 SHA = "a" * 64
+DOC = {"evidenceType": "ID_DOCUMENT", "items": [{"name": "doc.pdf", "sha256": "d" * 64, "size": 1000}]}
 
 
 async def new_pro(client, make_user, drain, name="pia", **kw):
@@ -109,18 +110,19 @@ async def test_credential_check_updates_the_claim_and_expires(client, make_user,
     case = await case_of(client, u, pro, "CREDENTIAL")
     assert case["credentialClaimId"] == claim["id"] and case["label"] == "CPA (US)" and case["status"] == "PENDING"
 
+    await client.post(f"/v1/verification/cases/{case['id']}/evidence", headers=u.h, json=DOC)
     o = await officer(make_user)
     r = await client.post(f"/v1/verification/cases/{case['id']}/decision", headers=o.h,
                           json={"decision": "VERIFIED", "reasonCode": "REGISTRY_MATCH"})
     assert r.json()["expiresAt"].startswith(expires)  # defaults to the credential's own expiry
     await drain()
     (c,) = (await client.get("/v1/professionals/me/credentials", headers=u.h)).json()
-    assert c["status"] == "VERIFIED" and c["displayLabel"] == "Verified"
+    assert c["status"] == "VERIFIED" and c["displayLabel"] == "Validated"
 
     clock.set_now(clock.now() + timedelta(days=71))  # 29 days left: the 30-day reminder is due
     await drain()
     (reminder,) = await outbox(sf, "zoikorum.verification.case.expiring.v1")
-    assert reminder["caseId"] == case["id"] and reminder["daysLeft"] == 29
+    assert reminder["caseId"] == case["id"] and reminder["daysLeft"] == 30  # the 30-day reminder says 30
 
     clock.set_now(clock.now() + timedelta(days=30))
     await drain()
@@ -136,6 +138,7 @@ async def test_revoking_a_check_reaches_the_claim(client, make_user, drain):
         "credentialType": "CERTIFICATION", "name": "CMA", "issuingBody": "IMA"})
     await drain()
     case = await case_of(client, u, pro, "CREDENTIAL")
+    await client.post(f"/v1/verification/cases/{case['id']}/evidence", headers=u.h, json=DOC)
     o = await officer(make_user)
     await client.post(f"/v1/verification/cases/{case['id']}/decision", headers=o.h, json={"decision": "VERIFIED", "reasonCode": "OK"})
     r = await client.post(f"/v1/verification/cases/{case['id']}/revoke", headers=o.h,
@@ -159,6 +162,7 @@ async def test_firm_registration_verifies_the_firm(client, make_user, drain, sf)
     r = await client.post("/v1/verification/cases", headers=admin.h, json={
         "verificationType": "FIRM_REGISTRATION", "subjectType": "FIRM", "subjectId": firm["id"]})
     assert r.status_code == 201
+    await client.post(f"/v1/verification/cases/{r.json()['id']}/evidence", headers=admin.h, json=DOC)
     o = await officer(make_user)
     await client.post(f"/v1/verification/cases/{r.json()['id']}/decision", headers=o.h,
                       json={"decision": "VERIFIED", "reasonCode": "COMPANIES_HOUSE_MATCH"})
@@ -184,3 +188,44 @@ async def test_evidence_is_append_only(client, make_user, drain, sf):
     with pytest.raises(DBAPIError):
         async with sf() as s, s.begin():
             await s.execute(text("UPDATE verification.evidence_items SET sha256 = :x"), {"x": "c" * 64})
+
+
+async def test_verified_needs_a_document_and_provider_fail_goes_to_a_person(client, make_user, drain, monkeypatch):
+    u, pro = await new_pro(client, make_user, drain)
+    case = (await client.post("/v1/verification/cases", headers=u.h, json={
+        "verificationType": "IDENTITY", "subjectType": "PROFESSIONAL", "subjectId": pro["id"]})).json()
+    o = await officer(make_user)
+    r = await client.post(f"/v1/verification/cases/{case['id']}/decision", headers=o.h, json={"decision": "VERIFIED", "reasonCode": "OK"})
+    assert r.status_code == 422 and r.json()["code"] == "EVIDENCE_REQUIRED"
+
+    from zoikorum.domains.verification import service as verification_service
+
+    class Failing:
+        async def check(self, verification_type, details):
+            return "FAIL"
+
+    monkeypatch.setattr(verification_service, "get_provider", lambda: Failing())
+    insurance = (await client.post("/v1/verification/cases", headers=u.h, json={
+        "verificationType": "INSURANCE", "subjectType": "PROFESSIONAL", "subjectId": pro["id"]})).json()
+    assert insurance["status"] == "IN_REVIEW"  # never rejected without a person
+
+
+async def test_screening_flag_is_private_and_hides_the_profile(client, make_user, drain, sf):
+    from test_search import publish
+
+    u, pro = await publish(client, make_user, drain, "sanctioned", headline="Fractional CFO", primary="fractional-cfo")
+    screening = await case_of(client, u, pro, "RESTRICTIONS")
+    assert screening["status"] == "PENDING"  # possible match: a person reviews it
+    assert (await client.get(f"/v1/trust/professionals/{pro['id']}", headers=u.h)).json()["tier"] == "C"
+    assert [i["displayName"] for i in (await client.get("/v1/search/professionals")).json()["items"]] == ["Sanctioned"]
+
+    o = await officer(make_user)
+    await client.post(f"/v1/verification/cases/{screening['id']}/decision", headers=o.h, json={
+        "decision": "FAILED", "reasonCode": "SANCTIONS_MATCH", "publicReason": "Screening found a match. Contact support."})
+    await drain()
+    assert (await client.get("/v1/search/professionals")).json()["items"] == []  # flagged profiles never surface
+    public = (await client.get(f"/v1/professionals/{pro['id']}")).json()
+    assert public["trust"]["dimensions"]["restrictions"] == "UNKNOWN" and "score" not in public["trust"]
+    assert not any("screening" in line for line in public["trust"]["explanation"])
+    owner = (await client.get(f"/v1/trust/professionals/{pro['id']}", headers=u.h)).json()
+    assert owner["dimensions"]["restrictions"] == "FLAGGED"  # the professional still sees why

@@ -3,6 +3,7 @@ offerings, publishing and the public profile."""
 
 from __future__ import annotations
 
+import base64
 import uuid
 from urllib.parse import parse_qs, urlparse
 
@@ -10,7 +11,9 @@ from sqlalchemy import text
 
 from zoikorum.domains.professional import facade
 
-BIO = ("Former Big Four audit manager. I help growing companies set up month-end close, "
+PHOTO = {"contentType": "image/png", "dataBase64": base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"0" * 64).decode()}
+BIO = (
+"Former Big Four audit manager. I help growing companies set up month-end close, "
        "board reporting and cash forecasting that their investors can rely on.")
 
 
@@ -24,8 +27,10 @@ async def new_pro(client, make_user, name="pia", **kw):
 async def ready_to_publish(client, u):
     """Fill every required onboarding item."""
     await client.post("/v1/auth/confirm-email", json={"token": u.confirm_token})
+    assert (await client.put("/v1/professionals/me/photo", headers=u.h, json=PHOTO)).status_code == 200
     r = await client.patch("/v1/professionals/me", headers=u.h, json={
-        "headline": "Fractional CFO", "bio": BIO, "engagementTypes": ["FRACTIONAL", "PROJECT"],
+        "headline": "Fractional CFO", "bio": BIO, "legalName": "Pia Example", "yearsExperienceBand": "6-10",
+        "engagementTypes": ["FRACTIONAL", "PROJECT"],
         "deliveryModes": ["REMOTE"], "pricingModels": ["RETAINER", "CUSTOM"]})
     assert r.status_code == 200, r.text
     r = await client.put("/v1/professionals/me/specializations", headers=u.h,
@@ -75,6 +80,10 @@ async def test_profile_edits_use_optimistic_concurrency_and_copy_rules(client, m
     assert r.status_code == 422 and r.json()["code"] == "COPY_RULES"
     r = await client.patch("/v1/professionals/me", headers=u.h, json={"bio": "I build top-line revenue models."})
     assert r.status_code == 200
+    r = await client.patch("/v1/professionals/me", headers=u.h, json={"headline": "Top-rated CFO"})
+    assert r.status_code == 422 and r.json()["code"] == "COPY_RULES"
+    r = await client.patch("/v1/professionals/me", headers=u.h, json={"bio": "word " * 301})
+    assert r.status_code == 422 and r.json()["code"] == "BIO_TOO_LONG"
 
     r = await client.patch("/v1/professionals/me", headers=u.h, json={"indicativeRate": {"amountMinor": 15000, "currency": "USD"}})
     assert r.status_code == 422 and r.json()["code"] == "RATE_UNIT_REQUIRED"
@@ -162,7 +171,7 @@ async def test_credentials_are_self_reported_until_verified(client, make_user, s
         "registrationNumber": "TX-12345", "jurisdiction": "us", "expiresOn": "2030-12-31", "specialization": "transfer-pricing"})
     assert r.status_code == 201, r.text
     claim = r.json()
-    assert claim["status"] == "PENDING" and claim["displayLabel"] == "Self-reported" and claim["jurisdiction"] == "US"
+    assert claim["status"] == "PENDING" and claim["displayLabel"] == "Pending" and claim["jurisdiction"] == "US"
 
     (evt,) = await outbox(sf, "zoikorum.professional.credential.submitted.v1")
     assert evt["credentialClaimId"] == claim["id"] and evt["registrationNumber"] == "TX-12345"
@@ -267,3 +276,27 @@ async def test_firm_members_can_practise_under_their_firm(client, make_user, dra
     outsider = await make_user("oz", account_type="PROFESSIONAL")
     r = await client.post("/v1/professionals", headers=outsider.h, json={"firmId": firm["id"]})
     assert r.status_code == 403 and r.json()["code"] == "NOT_FIRM_MEMBER"
+
+
+async def test_profile_photo_upload_checks_and_visibility(client, make_user, drain):
+    u, pro = await new_pro(client, make_user)
+    url = "/v1/professionals/me/photo"
+    fake = {"contentType": "image/jpeg", "dataBase64": base64.b64encode(b"<script>alert(1)</script>").decode()}
+    r = await client.put(url, headers=u.h, json=fake)
+    assert r.status_code == 422 and r.json()["code"] == "INVALID_PHOTO"  # declared type must match the bytes
+    big = {"contentType": "image/png", "dataBase64": base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"0" * (2 * 1024 * 1024)).decode()}
+    assert (await client.put(url, headers=u.h, json=big)).status_code == 422
+
+    r = await client.put(url, headers=u.h, json=PHOTO)
+    assert r.status_code == 200 and r.json()["photoUrl"].startswith(f"/v1/professionals/{pro['id']}/photo?v=")
+    ready = (await client.get("/v1/professionals/me/readiness", headers=u.h)).json()
+    assert next(i for i in ready["items"] if i["key"] == "photo")["done"] is True
+
+    photo_url = f"/v1/professionals/{pro['id']}/photo"
+    assert (await client.get(photo_url)).status_code == 404  # draft profile: not public yet
+    own = await client.get(photo_url, headers=u.h)
+    assert own.status_code == 200 and own.headers["content-type"] == "image/png" and own.content.startswith(b"\x89PNG")
+
+    r = await client.delete(url, headers=u.h)
+    assert r.json()["photoUrl"] is None
+    assert (await client.get(photo_url, headers=u.h)).status_code == 404

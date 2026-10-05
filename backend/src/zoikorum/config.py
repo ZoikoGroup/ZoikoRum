@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
 
     rate_limit_enabled: bool = True
+    storage_dir: str = "var/storage"  # LocalDiskStorage root (development); S3 bucket in production
 
 
 @lru_cache

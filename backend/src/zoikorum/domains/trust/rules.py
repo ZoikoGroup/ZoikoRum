@@ -2,9 +2,9 @@
 
 Pure functions: no I/O, so every tier decision can be unit-tested and explained.
 Tier C: default (Discovery only).
-Tier B: identity VERIFIED, restrictions not FLAGGED, no engagement suspension.
+Tier B: identity VERIFIED, restrictions screening CLEAR (baseline eligibility), no engagement suspension.
 Tier A: Tier B + credentials VALIDATED for every credential-required specialization + jurisdiction
-        ELIGIBLE + restrictions CLEAR + insurance VERIFIED when a specialization is regulated.
+        ELIGIBLE + insurance VERIFIED when a specialization requires it.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ class Check:
 class Facts:
     checks: tuple[Check, ...]
     credential_required: frozenset[str]  # specialization slugs that require a credential
-    regulated: bool  # any specialization is regulated -> insurance required
+    insurance_required: bool  # a specialization requires professional indemnity insurance
     licensed: frozenset[str]
     served: frozenset[str]
     engagement_suspended: bool = False
@@ -85,7 +85,7 @@ def dimensions(f: Facts) -> dict[str, str]:
     insurance = _of(f, "INSURANCE")
     if any(c.status == "VERIFIED" for c in insurance):
         ins_dim = "VERIFIED"
-    elif f.regulated or any(c.status in OPEN for c in insurance):
+    elif f.insurance_required or any(c.status in OPEN for c in insurance):
         ins_dim = "PENDING"
     else:
         ins_dim = "NOT_REQUIRED"
@@ -103,25 +103,25 @@ def evaluate(f: Facts) -> Evaluation:
         tier_b_gaps.append("Identity is not verified yet" if d["identity"] == "NONE" else "Identity verification is in progress")
     if d["restrictions"] == "FLAGGED":
         tier_b_gaps.append("Sanctions and restrictions screening did not clear")
+    elif d["restrictions"] != "CLEAR":
+        tier_b_gaps.append("Sanctions and restrictions screening has not cleared yet")
     if f.engagement_suspended:
         tier_b_gaps.append("Engagements are suspended by a Trust & Safety action")
 
     tier_a_gaps = list(tier_b_gaps)
     if d["credentials"] not in ("VALIDATED", "NOT_APPLICABLE"):
-        tier_a_gaps.append("Credentials for your regulated specializations are not all verified")
+        tier_a_gaps.append("Credentials required by your specializations are not all verified")
     if d["jurisdiction"] != "ELIGIBLE":
         tier_a_gaps.append("No licensed jurisdiction has been verified yet")
-    if d["restrictions"] != "CLEAR" and d["restrictions"] != "FLAGGED":
-        tier_a_gaps.append("Sanctions and restrictions screening has not cleared yet")
     if d["insurance"] not in ("VERIFIED", "NOT_REQUIRED"):
-        tier_a_gaps.append("Professional indemnity insurance is required for your regulated work and is not verified")
+        tier_a_gaps.append("Professional indemnity insurance is required for your specialization and is not verified")
 
     if not tier_a_gaps:
         tier = "A"
         why.append("Identity, credentials, jurisdiction, screening and insurance requirements are all verified.")
     elif not tier_b_gaps:
         tier = "B"
-        why.append("Identity is verified and screening raised no restrictions.")
+        why.append("Identity is verified and restrictions screening is clear.")
         why.extend(f"For Tier A: {g[0].lower()}{g[1:]}." for g in tier_a_gaps)
     else:
         tier = "C"

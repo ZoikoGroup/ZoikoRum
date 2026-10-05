@@ -1,98 +1,147 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { firmApi, orgApi } from '../api/orgs'
 import { DASHBOARD_FOR_PERSONA, ROLE_LABEL } from '../api/auth'
 import { useAuth } from '../auth/AuthContext'
+import { Icon, type IconName } from '../components/dashboard'
 
-const DASH_LABEL: Record<string, string> = {
-  buyer: 'Buyer dashboard',
-  professional: 'Professional dashboard',
-  firm: 'Firm dashboard',
-  enterprise: 'Enterprise dashboard',
-  ops: 'Operations',
+/* Signed-in layout: navy sidebar (only the areas this account's roles can use) and a top bar with
+   search, notifications and the account menu. Areas still being built are listed as "Soon", not linked. */
+
+function Item({ to, icon, children, end, count }: { to: string; icon: IconName; children: ReactNode; end?: boolean; count?: number }) {
+  return (
+    <NavLink to={to} end={end} className="side-link">
+      <Icon name={icon} /><span>{children}</span>{!!count && <span className="count">{count}</span>}
+    </NavLink>
+  )
 }
 
-/** Signed-in layout. The sidebar only lists areas this account's roles can use. */
+function Soon({ icon, children }: { icon: IconName; children: ReactNode }) {
+  return <span className="side-link soon" aria-disabled="true"><Icon name={icon} /><span>{children}</span><em>Soon</em></span>
+}
+
 export default function AppShell() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const [inviteCount, setInviteCount] = useState(0)
   const [inFirm, setInFirm] = useState(false)
+  const [open, setOpen] = useState(false)
+  const [q, setQ] = useState('')
 
-  // Pending invitations badge + whether this professional belongs to a firm.
   useEffect(() => {
+    setOpen(false)  // close the mobile menu after navigating
     Promise.all([orgApi.myInvitations(), firmApi.myInvitations(), firmApi.mine()])
       .then(([o, f, firms]) => { setInviteCount(o.length + f.length); setInFirm(firms.length > 0) })
       .catch(() => {})
   }, [location.pathname])
   if (!user) return null
 
-  const dashboards = [...new Set(user.personas.map((p) => DASHBOARD_FOR_PERSONA[p]))]
+  const dashboards = new Set(user.personas.map((p) => DASHBOARD_FOR_PERSONA[p]))
   const isStaff = user.platformRoles.length > 0
   const isAdmin = user.platformRoles.includes('PLATFORM_ADMIN')
+  const isOfficer = user.platformRoles.includes('COMPLIANCE_OFFICER')
+  const customer = dashboards.has('enterprise') ? 'enterprise' : dashboards.has('buyer') ? 'buyer' : null
   const initials = user.displayName.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase()
+  const roleName = ROLE_LABEL[user.primaryPersona ?? ''] ?? ROLE_LABEL[user.platformRoles[0] ?? ''] ?? ''
+
+  function search(e: FormEvent) {
+    e.preventDefault()
+    navigate(q.trim() ? `/professionals?q=${encodeURIComponent(q.trim())}` : '/professionals')
+  }
 
   return (
-    <>
-      <header className="site-header">
-        <div className="inner">
-          <NavLink className="logo" to={`/app/${user.defaultDashboard}`} aria-label="Dashboard home">
-            <img src="/logo.png" alt="Zoikorum" />
-          </NavLink>
+    <div className="shell">
+      <aside className={`side ${open ? 'open' : ''}`} aria-label="Workspace">
+        <NavLink className="side-logo" to={`/app/${user.defaultDashboard}`} aria-label="Dashboard home">
+          <img src="/logo.png" alt="Zoikorum" />
+        </NavLink>
+
+        {customer && <>
+          <div className="side-group">{customer === 'enterprise' ? 'Enterprise' : 'Hire'}</div>
+          <Item to={`/app/${customer}`} icon="building" end>Dashboard</Item>
+          <Item to="/professionals" icon="search">Browse Professionals</Item>
+          <Item to="/app/saved" icon="star">Saved Professionals</Item>
+          {customer === 'enterprise' && <>
+            <Item to="/app/enterprise/team" icon="team">Team &amp; Roles</Item>
+            <Item to="/app/enterprise/structure" icon="building">Structure</Item>
+          </>}
+          <Soon icon="request">My Requests</Soon>
+          <Soon icon="proposal">Proposals</Soon>
+          <Soon icon="contract">Active Projects</Soon>
+          <Soon icon="shield">Payments</Soon>
+        </>}
+
+        {dashboards.has('professional') && <>
+          <div className="side-group">Professional</div>
+          <Item to="/app/professional" icon="building" end>Dashboard</Item>
+          <Item to="/app/professional/profile" icon="user">My Profile</Item>
+          <Item to="/app/professional/offerings" icon="request">Service Offerings</Item>
+          <Item to="/app/professional/verification" icon="shield">Verification &amp; Trust</Item>
+          {inFirm && !dashboards.has('firm') && <Item to="/app/firm/team" icon="team">My Firm</Item>}
+          <Soon icon="proposal">Requests</Soon>
+          <Soon icon="contract">Engagements</Soon>
+          <Soon icon="clock">Earnings</Soon>
+        </>}
+
+        {dashboards.has('firm') && <>
+          <div className="side-group">Firm</div>
+          <Item to="/app/firm" icon="building" end>Firm Dashboard</Item>
+          <Item to="/app/firm/team" icon="team">Firm Team</Item>
+          <Item to="/app/firm/profile" icon="user">Firm Profile</Item>
+          <Item to="/app/firm/verification" icon="shield">Firm Verification</Item>
+        </>}
+
+        {isStaff && <>
+          <div className="side-group">Administration</div>
+          <Item to="/app/ops" icon="building" end>Admin Dashboard</Item>
+          {isOfficer && <Item to="/app/ops/verification" icon="shield">Verification Reviews</Item>}
+          {isAdmin && <Item to="/app/ops/staff" icon="team">Staff &amp; Roles</Item>}
+          {!customer && <Item to="/professionals" icon="search">Professionals</Item>}
+          <Soon icon="bell">Disputes</Soon>
+          <Soon icon="contract">Reports</Soon>
+        </>}
+
+        <div className="side-group">Account</div>
+        <Soon icon="mail">Messages</Soon>
+        <Item to="/app/invitations" icon="bell" count={inviteCount}>Invitations</Item>
+        <Item to="/app/account" icon="user">Settings</Item>
+        <Item to="/app/security" icon="shield">Security</Item>
+      </aside>
+      {open && <button className="side-backdrop" aria-label="Close menu" onClick={() => setOpen(false)} />}
+
+      <div className="shell-main">
+        <header className="topbar">
+          <button className="icon-btn menu-btn" aria-label="Open menu" onClick={() => setOpen(true)}>
+            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
+          </button>
+          <form className="top-search" role="search" onSubmit={search}>
+            <Icon name="search" />
+            <input aria-label="Search professionals" placeholder="Search professionals and services…" value={q} onChange={(e) => setQ(e.target.value)} />
+          </form>
           <div style={{ flex: 1 }} />
-          <div className="user-menu">
-            <div className="badges" aria-label="Your roles">
-              {[...user.personas, ...user.platformRoles].map((r) => <span key={r} className="badge">{ROLE_LABEL[r] ?? r}</span>)}
+          <NavLink to="/app/invitations" className="icon-btn" aria-label={`Notifications${inviteCount ? `: ${inviteCount} new` : ''}`}>
+            <Icon name="bell" />{inviteCount > 0 && <span className="dot-count">{inviteCount}</span>}
+          </NavLink>
+          <details className="user-menu-pop">
+            <summary>
+              <span className="avatar" aria-hidden>{initials}</span>
+              <span className="who"><strong>{user.displayName}</strong><span>{roleName}</span></span>
+            </summary>
+            <div className="menu card">
+              <div className="badges" style={{ padding: '4px 4px 10px' }}>
+                {[...user.personas, ...user.platformRoles].map((r) => <span key={r} className="badge">{ROLE_LABEL[r] ?? r}</span>)}
+              </div>
+              <NavLink to="/app/account">Profile &amp; roles</NavLink>
+              <NavLink to="/app/security">Security</NavLink>
+              <button onClick={async () => { await logout(); navigate('/login') }}>Sign out</button>
             </div>
-            <span className="avatar" aria-hidden>{initials}</span>
-            <span>{user.displayName}</span>
-            <button className="btn btn-secondary btn-sm" onClick={async () => { await logout(); navigate('/login') }}>
-              Sign out
-            </button>
-          </div>
-        </div>
-      </header>
-      <div className="app">
-        <nav className="sidebar" aria-label="Workspace">
-          {dashboards.length > 0 && <div className="group">Workspaces</div>}
-          {dashboards.map((d) => (
-            <div key={d}>
-              <NavLink to={`/app/${d}`} end>{DASH_LABEL[d]}</NavLink>
-              {d === 'enterprise' && <>
-                <NavLink className="sub" to="/app/enterprise/team">Team &amp; roles</NavLink>
-                <NavLink className="sub" to="/app/enterprise/structure">Structure</NavLink>
-              </>}
-              {d === 'firm' && <>
-                <NavLink className="sub" to="/app/firm/team">Firm team</NavLink>
-                <NavLink className="sub" to="/app/firm/profile">Firm profile</NavLink>
-                <NavLink className="sub" to="/app/firm/verification">Firm verification</NavLink>
-              </>}
-              {d === 'professional' && <>
-                <NavLink className="sub" to="/app/professional/profile">My profile</NavLink>
-                <NavLink className="sub" to="/app/professional/offerings">Service offerings</NavLink>
-                <NavLink className="sub" to="/app/professional/verification">Verification &amp; trust</NavLink>
-                {inFirm && !dashboards.includes('firm') && <NavLink className="sub" to="/app/firm/team">My firm</NavLink>}
-              </>}
-            </div>
-          ))}
-          {isStaff && (
-            <>
-              <div className="group">Staff</div>
-              <NavLink to="/app/ops" end>{DASH_LABEL.ops}</NavLink>
-              {user.platformRoles.includes('COMPLIANCE_OFFICER') && <NavLink to="/app/ops/verification">Verification reviews</NavLink>}
-              {isAdmin && <NavLink to="/app/ops/staff">Staff &amp; roles</NavLink>}
-            </>
-          )}
-          <div className="group">Account</div>
-          <NavLink to="/app/invitations">Invitations{inviteCount > 0 && <span className="count">{inviteCount}</span>}</NavLink>
-          <NavLink to="/app/account">Profile &amp; roles</NavLink>
-          <NavLink to="/app/security">Security</NavLink>
-        </nav>
+          </details>
+        </header>
         <main className="main">
           <Outlet />
         </main>
       </div>
-    </>
+    </div>
   )
 }

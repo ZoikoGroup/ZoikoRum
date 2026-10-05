@@ -10,7 +10,7 @@ class TrustOut(BaseModel):
     professionalId: uuid.UUID
     tier: str
     tierLabel: str
-    score: int
+    score: int | None  # owner and Trust & Safety only
     dimensions: dict[str, str]
     explanation: list[str]
     updatedAt: datetime | None

@@ -1,14 +1,18 @@
-"""Marketplace: capability taxonomy (Step 3). Saved items and comparison come with search."""
+"""Marketplace: capability taxonomy and buyers' saved professionals."""
 
 from __future__ import annotations
 
-from sqlalchemy import func, select
+import uuid
+
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from zoikorum.domains.marketplace.models import TaxonomyNode
-from zoikorum.domains.marketplace.schemas import SpecializationAdminOut, SpecializationIn, SpecializationPatch
+from zoikorum.domains.marketplace.models import SavedProfessional, TaxonomyNode
+from zoikorum.domains.marketplace.schemas import SavedOut, SpecializationAdminOut, SpecializationIn, SpecializationPatch
 from zoikorum.domains.marketplace.taxonomy_data import default_taxonomy_rows, slugify
+from zoikorum.domains.professional import facade as professional_facade
+from zoikorum.domains.trust import facade as trust_facade
 from zoikorum.shared.auth import Actor, PlatformRole
 from zoikorum.shared.errors import Conflict, NotFound
 from zoikorum.shared.event_catalog import E
@@ -23,6 +27,7 @@ async def seed_default_taxonomy(session: AsyncSession) -> None:
 
 def _node(n: TaxonomyNode) -> dict:
     return {"slug": n.slug, "name": n.name, "requiresCredential": n.requires_credential, "regulated": n.regulated,
+            "requiresInsurance": n.requires_insurance,
             "deliverableTemplates": list(n.deliverable_templates), "credentialHints": list(n.credential_hints)}
 
 
@@ -77,7 +82,7 @@ async def _bump_version(session: AsyncSession, actor: Actor, spec: TaxonomyNode,
     group = await session.get(TaxonomyNode, spec.parent_id)
     return SpecializationAdminOut(
         slug=spec.slug, name=spec.name, groupSlug=group.slug, categorySlug=spec.category_slug,
-        requiresCredential=spec.requires_credential, regulated=spec.regulated,
+        requiresCredential=spec.requires_credential, regulated=spec.regulated, requiresInsurance=spec.requires_insurance,
         deliverableTemplates=list(spec.deliverable_templates), credentialHints=list(spec.credential_hints),
         status=spec.status, taxonomyVersion=spec.taxonomy_version,
     )
@@ -95,6 +100,7 @@ async def create_specialization(session: AsyncSession, actor: Actor, body: Speci
     spec = TaxonomyNode(
         slug=slug, name=body.name.strip(), level="SPECIALIZATION", parent_id=group.id, category_slug=group.category_slug,
         sort_order=(last or 0) + 1, requires_credential=body.requiresCredential, regulated=body.regulated,
+        requires_insurance=body.requiresInsurance,
         deliverable_templates=body.deliverableTemplates, credential_hints=body.credentialHints, status="ACTIVE",
     )
     session.add(spec)
@@ -105,6 +111,7 @@ async def update_specialization(session: AsyncSession, actor: Actor, slug: str, 
     actor.require_platform_role(PlatformRole.PLATFORM_ADMIN)
     spec = await _spec(session, slug)
     fields = {"name": "name", "requiresCredential": "requires_credential", "regulated": "regulated",
+              "requiresInsurance": "requires_insurance",
               "deliverableTemplates": "deliverable_templates", "credentialHints": "credential_hints"}
     for api_name, col in fields.items():
         value = getattr(patch, api_name)
@@ -121,3 +128,48 @@ async def deprecate_specialization(session: AsyncSession, actor: Actor, slug: st
         raise Conflict("Specialization is already deprecated", code="ALREADY_DEPRECATED")
     spec.status = "DEPRECATED"
     return await _bump_version(session, actor, spec, "DEPRECATED")
+
+
+# ---- Saved professionals (buyer shortlist) ---------------------------------------
+
+async def save_professional(session: AsyncSession, actor: Actor, professional_id: uuid.UUID) -> None:
+    """Idempotent. Only published professionals can be saved."""
+    pro = await professional_facade.get_professional(session, professional_id)
+    if pro is None or pro.status != "PUBLISHED":
+        raise NotFound("Professional not found")
+    res = await session.execute(pg_insert(SavedProfessional).values(id=uuid.uuid4(), identity_id=actor.identity_id,
+                                                                    professional_id=professional_id)
+                                .on_conflict_do_nothing(index_elements=["identity_id", "professional_id"]))
+    if res.rowcount:
+        record_event(session, E.PROFESSIONAL_SAVED, aggregate_type="SavedProfessional", aggregate_id=professional_id,
+                     payload={"professionalId": professional_id, "identityId": actor.identity_id})
+
+
+async def unsave_professional(session: AsyncSession, actor: Actor, professional_id: uuid.UUID) -> None:
+    await session.execute(delete(SavedProfessional).where(SavedProfessional.identity_id == actor.identity_id,
+                                                          SavedProfessional.professional_id == professional_id))
+
+
+async def saved_professionals(session: AsyncSession, actor: Actor) -> list[SavedOut]:
+    rows = (await session.scalars(select(SavedProfessional).where(SavedProfessional.identity_id == actor.identity_id)
+                                  .order_by(SavedProfessional.created_at.desc()).limit(200))).all()
+    ids = [r.professional_id for r in rows]
+    pros = await professional_facade.get_professionals(session, ids)
+    trust = await trust_facade.get_trust_many(session, ids)
+    specs = await get_specialization_names(session, [p.primary_specialization for p in pros.values() if p.primary_specialization])
+    out = []
+    for r in rows:
+        p = pros.get(r.professional_id)
+        if p is None:
+            continue
+        out.append(SavedOut(professionalId=p.id, displayName=p.display_name, headline=p.headline,
+                            primarySpecialization=specs.get(p.primary_specialization or ""), tier=trust[p.id].tier,
+                            availability=p.availability, available=p.status == "PUBLISHED", savedAt=r.created_at))
+    return out
+
+
+async def get_specialization_names(session: AsyncSession, slugs: list[str]) -> dict[str, str]:
+    if not slugs:
+        return {}
+    rows = await session.execute(select(TaxonomyNode.slug, TaxonomyNode.name).where(TaxonomyNode.slug.in_(slugs)))
+    return dict(rows.all())

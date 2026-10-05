@@ -9,6 +9,9 @@ __pycache__/
 !.env.example
 *.log
 .coverage
+
+# Local blob storage (uploaded photos, documents)
+backend/var/
 htmlcov/
 
 # Tool caches

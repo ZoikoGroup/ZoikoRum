@@ -14,7 +14,7 @@ _NS = uuid.UUID("5b1f0f6e-6a52-4e83-9d6f-2f6e7c1a9a01")
 
 # Specializations flagged (Onboarding s.12, Policy "Regulated Engagement Profile"):
 #   C = requires a validated credential before the claim is displayed as verified work
-#   R = regulated work (enterprise policies typically require Tier A)
+#   R = regulated work (enterprise policies typically require Tier A); professional indemnity insurance required
 FINANCE_ACCOUNTING = {
     "name": "Finance & Accounting",
     "credential_hints": ["CPA", "CA", "ACCA", "CMA", "CFA", "CIA", "CGMA", "CFE"],
@@ -85,19 +85,20 @@ def default_taxonomy_rows() -> list[dict]:
     cat = FINANCE_ACCOUNTING
     cat_slug = slugify(cat["name"])
     rows = [dict(id=node_id(cat_slug), slug=cat_slug, name=cat["name"], level="CATEGORY", parent_id=None,
-                 category_slug=cat_slug, sort_order=1, requires_credential=False, regulated=False,
+                 category_slug=cat_slug, sort_order=1, requires_credential=False, regulated=False, requires_insurance=False,
                  deliverable_templates=[], credential_hints=cat["credential_hints"], status="ACTIVE",
                  taxonomy_version=TAXONOMY_VERSION)]
     for gi, (group, specs) in enumerate(cat["groups"], start=1):
         g_slug = slugify(group)
         rows.append(dict(id=node_id(g_slug), slug=g_slug, name=group, level="GROUP", parent_id=node_id(cat_slug),
-                         category_slug=cat_slug, sort_order=gi, requires_credential=False, regulated=False,
+                         category_slug=cat_slug, sort_order=gi, requires_credential=False, regulated=False, requires_insurance=False,
                          deliverable_templates=GROUP_DELIVERABLES.get(group, []), credential_hints=[],
                          status="ACTIVE", taxonomy_version=TAXONOMY_VERSION))
         for si, (spec, flags) in enumerate(specs, start=1):
             s_slug = slugify(spec)
             rows.append(dict(id=node_id(s_slug), slug=s_slug, name=spec, level="SPECIALIZATION", parent_id=node_id(g_slug),
                              category_slug=cat_slug, sort_order=si, requires_credential="C" in flags, regulated="R" in flags,
+                             requires_insurance="R" in flags,
                              deliverable_templates=SPECIALIZATION_DELIVERABLES.get(spec, GROUP_DELIVERABLES.get(group, [])),
                              credential_hints=cat["credential_hints"] if "C" in flags else [],
                              status="ACTIVE", taxonomy_version=TAXONOMY_VERSION))

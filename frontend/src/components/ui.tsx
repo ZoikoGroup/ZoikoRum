@@ -3,24 +3,20 @@ import { Link } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 
-const SITE = 'https://zoikorum.com'
-
-/** Public header - same navigation as zoikorum.com. */
+/** Public header. Every link stays inside the Zoikorum app. */
 export function SiteHeader() {
   const { user } = useAuth()
   return (
     <>
       <header className="site-header">
         <div className="inner">
-          <a className="logo" href={SITE} aria-label="Zoikorum home">
+          <Link className="logo" to="/" aria-label="Zoikorum home">
             <img src="/logo.png" alt="Zoikorum" />
-          </a>
+          </Link>
           <nav aria-label="Primary">
-            <a href={`${SITE}/#platform`}>Platform</a>
-            <a href={`${SITE}/#contracts`}>Contracts &amp; Controls</a>
-            <a href={`${SITE}/#payments`}>Payment Protection</a>
-            <a href={`${SITE}/#solutions`}>Solutions</a>
-            <Link to="/join?type=PROFESSIONAL">Professionals</Link>
+            <Link to="/professionals">Find professionals</Link>
+            <Link to="/join?type=PROFESSIONAL">For professionals</Link>
+            <Link to="/enterprise">Enterprise</Link>
           </nav>
           <div className="actions">
             {user ? (
@@ -28,7 +24,7 @@ export function SiteHeader() {
             ) : (
               <>
                 <Link className="btn btn-ghost btn-sm" to="/login">Sign In</Link>
-                <Link className="btn btn-primary btn-sm" to="/enterprise">Enterprise Access</Link>
+                <Link className="btn btn-primary btn-sm" to="/join">Get started</Link>
               </>
             )}
           </div>
@@ -38,6 +34,26 @@ export function SiteHeader() {
         <span>Identity Verified</span><span>Contract Required</span><span>Escrow Protected</span><span>Audit Ready</span>
       </div>
     </>
+  )
+}
+
+export function SiteFooter() {
+  return (
+    <footer className="site-footer">
+      <div className="inner">
+        <nav aria-label="Footer">
+          <Link to="/professionals">Find professionals</Link>
+          <Link to="/join?type=PROFESSIONAL">Join as a professional</Link>
+          <Link to="/enterprise">Enterprise</Link>
+          <Link to="/legal/terms">Terms</Link>
+          <Link to="/legal/privacy">Privacy</Link>
+        </nav>
+        <p className="small">
+          Zoikorum provides marketplace infrastructure, verification, contracting facilitation and payment protection.
+          Professional services are delivered by independent professionals and firms.
+        </p>
+      </div>
+    </footer>
   )
 }
 

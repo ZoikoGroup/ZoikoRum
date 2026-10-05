@@ -36,3 +36,17 @@ async def get_checks(session: AsyncSession, subject_type: str, subject_id: uuid.
         latest.setdefault((c.verification_type, c.credential_claim_id, c.jurisdiction if c.credential_claim_id is None else None), c)
     return [CheckStatus(c.id, c.verification_type, c.status, c.label, c.jurisdiction, c.verified_at, c.expires_at,
                         c.public_reason, c.credential_claim_id, c.specialization) for c in latest.values()]
+
+
+async def open_case_counts(session: AsyncSession) -> dict[str, int]:
+    """Open checks waiting for people, and how many are past their published service level."""
+    from sqlalchemy import func
+
+    from zoikorum.shared import clock
+
+    open_states = ("PENDING", "IN_REVIEW", "NEEDS_INFO")
+    total = await session.scalar(select(func.count()).select_from(VerificationCase)
+                                 .where(VerificationCase.status.in_(open_states))) or 0
+    overdue = await session.scalar(select(func.count()).select_from(VerificationCase).where(
+        VerificationCase.status.in_(("PENDING", "IN_REVIEW")), VerificationCase.estimated_completion < clock.now())) or 0
+    return {"open": total, "overdue": overdue}

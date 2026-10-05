@@ -122,8 +122,8 @@ export default function Join() {
         <label className="checkbox">
           <input type="checkbox" checked={terms} onChange={(e) => setTerms(e.target.checked)} />
           <span>
-            I agree to the <a href="https://zoikorum.com/terms" target="_blank" rel="noreferrer">Terms</a> and{' '}
-            <a href="https://zoikorum.com/privacy" target="_blank" rel="noreferrer">Privacy Policy</a>. I understand Zoikorum
+            I agree to the <Link to="/legal/terms" target="_blank">Terms</Link> and{' '}
+            <Link to="/legal/privacy" target="_blank">Privacy Policy</Link>. I understand Zoikorum
             facilitates engagements but does not provide professional services.
           </span>
         </label>

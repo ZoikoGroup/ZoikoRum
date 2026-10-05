@@ -51,6 +51,7 @@ export interface SpecializationRef { slug: string; name: string; primary: boolea
 
 export interface Profile {
   id: string
+  photoUrl: string | null
   firmId: string | null
   status: 'DRAFT' | 'PUBLISHED' | 'UNPUBLISHED' | 'SUSPENDED'
   displayName: string
@@ -152,6 +153,7 @@ export interface OfferingInput {
 
 export interface PublicProfile {
   id: string
+  photoUrl: string | null
   displayName: string
   headline: string | null
   yearsExperienceBand: string | null
@@ -172,7 +174,8 @@ export interface PublicProfile {
   licensedJurisdictions: string[]
   credentials: { name: string; issuingBody: string; jurisdiction: string | null; status: string; displayLabel: string }[]
   offerings: Offering[]
-  trust: { tier: 'A' | 'B' | 'C'; score: number; dimensions: Record<string, string>; explanation: string[] }
+  trust: { tier: 'A' | 'B' | 'C'; dimensions: Record<string, string>; explanation: string[]; updatedAt: string | null }
+  verifiedJurisdictions: string[]
   publishedAt: string | null
   isOwnProfile: boolean
 }
@@ -181,6 +184,9 @@ const P = '/v1/professionals'
 export const proApi = {
   create: (body: { firmId?: string | null }) => api<Profile>(P, { method: 'POST', body }),
   me: () => api<Profile>(`${P}/me`),
+  setPhoto: (contentType: string, dataBase64: string) =>
+    api<Profile>(`${P}/me/photo`, { method: 'PUT', body: { contentType, dataBase64 } }),
+  removePhoto: () => api<Profile>(`${P}/me/photo`, { method: 'DELETE' }),
   update: (version: number, body: ProfilePatch) =>
     api<Profile>(`${P}/me`, { method: 'PATCH', body, headers: { 'If-Match': String(version) } }),
   setSpecializations: (primary: string, secondary: string[]) =>

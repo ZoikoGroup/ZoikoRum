@@ -3,22 +3,33 @@ import { Link, useParams } from 'react-router-dom'
 import { formatMoney } from '../api/orgs'
 import { LABEL, RATE_UNIT_LABEL, proApi, type PublicProfile } from '../api/professional'
 import { DIMENSION_VALUE, DIMENSIONS } from '../api/verification'
-import { ErrorAlert, SiteHeader } from '../components/ui'
+import { Avatar } from '../components/dashboard'
+import { ErrorAlert, SiteFooter, SiteHeader } from '../components/ui'
 import { countryName, priceText } from './ProfessionalPages'
+import { SaveButton, useSavedIds } from './SavedPage'
 
 const TIER_LABEL = { A: 'Fully Verified Professional', B: 'Verified Identity', C: 'Unverified (Discovery Only)' }
+const AVAILABILITY_CLASS: Record<string, string> = { NOW: 'green', TWO_WEEKS: 'green', ONE_MONTH: 'green', AT_CAPACITY: 'warn' }
 
-/** Public professional profile. Works signed in or out; unpublished profiles are visible only to their owner. */
+/** Public professional profile (Professional Profile doc). Works signed in or out; unpublished profiles are
+    visible only to their owner. Never shows private data, the raw trust score or screening outcomes. */
 export default function PublicProfilePage() {
   const { id = '' } = useParams()
   const [p, setP] = useState<PublicProfile | null>(null)
   const [error, setError] = useState<unknown>(null)
   useEffect(() => { proApi.publicProfile(id).then(setP).catch(setError) }, [id])
+  const savedIds = useSavedIds()
 
+  const keyCredentials = p?.credentials.filter((c) => c.status === 'VERIFIED').slice(0, 2) ?? []
   return (
     <>
       <SiteHeader />
       <main className="profile-wrap">
+        <nav className="breadcrumb small" aria-label="Breadcrumb">
+          <Link to="/professionals">Find professionals</Link>
+          {p?.primaryCategory && <> › <Link to={`/professionals?category=${p.primaryCategory}`}>{p.primaryCategoryName}</Link></>}
+          {p && <> › <span>{p.displayName}</span></>}
+        </nav>
         <ErrorAlert error={error} />
         {!p && !error && <p className="muted">Loading…</p>}
         {p && (
@@ -31,21 +42,29 @@ export default function PublicProfilePage() {
             )}
             <section className="card panel profile-head">
               <div>
-                <h1>{p.displayName}</h1>
+                <div className="name-row"><Avatar name={p.displayName} photoUrl={p.photoUrl} size={72} /><h1>{p.displayName}</h1></div>
                 {p.headline && <p className="headline">{p.headline}</p>}
                 <p className="muted small" style={{ margin: 0 }}>
                   {[p.city, countryName(p.country)].filter(Boolean).join(', ')}
                   {p.primaryCategoryName && ` · ${p.primaryCategoryName}`}
                   {p.yearsExperienceBand && ` · ${p.yearsExperienceBand} years’ experience`}
+                  {p.deliveryModes.length > 0 && ` · ${p.deliveryModes.map((d) => LABEL[d]).join(' / ')}`}
                 </p>
                 <div className="badges" style={{ marginTop: 12 }}>
                   <span className={`badge ${p.trust.tier === 'C' ? 'warn' : 'green'}`}>Tier {p.trust.tier} · {TIER_LABEL[p.trust.tier]}</span>
-                  <span className={`badge ${p.availability === 'AT_CAPACITY' ? 'warn' : 'green'}`}>{LABEL[p.availability]}</span>
+                  <span className={`badge ${AVAILABILITY_CLASS[p.availability] ?? ''}`}>{LABEL[p.availability]}</span>
+                  {keyCredentials.map((c) => <span key={c.name} className="badge green">✓ {c.name}</span>)}
                 </div>
+                {p.trust.updatedAt && <p className="muted small" style={{ margin: '8px 0 0' }}>Last verified {new Date(p.trust.updatedAt).toLocaleDateString()}</p>}
               </div>
               <div className="cta">
-                <button className="btn btn-primary" disabled title="Proposal requests arrive in an upcoming release">Request a proposal</button>
-                <span className="muted small">Coming soon</span>
+                {savedIds.canSave && savedIds.ids && !p.isOwnProfile && (
+                  <SaveButton id={p.id} saved={savedIds.ids.has(p.id)} onToggle={(pid) => { savedIds.toggle(pid).catch(setError) }} />
+                )}
+                <span className="badge">Coming soon</span>
+                <span className="muted small" style={{ maxWidth: 220, textAlign: 'right' }}>
+                  Requesting a proposal, contracts and protected payments are on the way.
+                </span>
               </div>
             </section>
 
@@ -75,6 +94,13 @@ export default function PublicProfilePage() {
                     ))}
                   </section>
                 )}
+                <section className="card panel"><h2>Contracts &amp; payment protection</h2>
+                  <ul className="why" style={{ margin: 0 }}>
+                    <li>Every engagement runs under a signed contract with agreed scope and milestones.</li>
+                    <li>Payments are held in escrow and released only when you accept the work.</li>
+                    <li>If something goes wrong, a structured dispute process holds the funds while it is resolved.</li>
+                  </ul>
+                </section>
               </div>
               <aside>
                 <section className="card panel"><h2>Verification</h2>
@@ -85,7 +111,7 @@ export default function PublicProfilePage() {
                     })}
                     <li><span>Engagement integrity</span><span className="muted small">No engagements yet</span></li>
                   </ul>
-                  <p className="muted small" style={{ margin: '8px 0 0' }}>Trust score {p.trust.score} / 100. Every check is decided by a person.</p>
+                  <p className="muted small" style={{ margin: '8px 0 0' }}>Checks are made by a verification provider or a compliance reviewer — never by AI.</p>
                 </section>
                 <section className="card panel"><h2>How they work</h2>
                   <ul className="checklist">
@@ -108,13 +134,21 @@ export default function PublicProfilePage() {
                 </section>
                 <section className="card panel"><h2>Jurisdictions</h2>
                   <p className="small" style={{ margin: 0 }}>Serves: {p.servedJurisdictions.map(countryName).join(', ') || '—'}</p>
-                  {p.licensedJurisdictions.length > 0 && <p className="small" style={{ margin: '6px 0 0' }}>Licensed in: {p.licensedJurisdictions.map(countryName).join(', ')}</p>}
+                  {p.licensedJurisdictions.length > 0 && (
+                    <p className="small" style={{ margin: '6px 0 0' }}>Licensed in: {p.licensedJurisdictions.map((j) =>
+                      `${countryName(j)} (${p.verifiedJurisdictions.includes(j) ? 'verified' : 'self-reported'})`).join(', ')}</p>
+                  )}
                 </section>
               </aside>
             </div>
+            <p className="muted small disclosure">
+              {p.displayName} is an independent professional. Zoikorum provides marketplace infrastructure, verification,
+              contracting facilitation and payment protection; it does not employ professionals or provide regulated professional services.
+            </p>
           </>
         )}
       </main>
+      <SiteFooter />
     </>
   )
 }
