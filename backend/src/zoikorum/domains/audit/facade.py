@@ -1,0 +1,34 @@
+"""Audit facade. Other domains WRITE audit entries via
+``shared.events.record_audit`` (outbox), never by calling this module.
+This facade exposes read-only activity timelines (e.g. engagement activity log)."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from zoikorum.domains.audit.models import AuditRecord
+
+
+@dataclass(frozen=True)
+class TimelineEntry:
+    occurred_at: datetime
+    action: str
+    actor_id: str | None
+    object_type: str
+    object_id: str
+    hash: str
+
+
+async def timeline_for_objects(session: AsyncSession, object_ids: list[str], limit: int = 500) -> list[TimelineEntry]:
+    if not object_ids:
+        return []
+    rows = (
+        await session.scalars(
+            select(AuditRecord).where(AuditRecord.object_id.in_(object_ids)).order_by(AuditRecord.seq).limit(limit)
+        )
+    ).all()
+    return [TimelineEntry(r.occurred_at, r.action, r.actor_id, r.object_type, r.object_id, r.hash) for r in rows]

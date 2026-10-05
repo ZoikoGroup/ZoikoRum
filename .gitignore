@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.import_linter_cache/
+*.egg-info/
+.env
+.env.*
+!.env.example
+*.log
+.coverage
+htmlcov/
