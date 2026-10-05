@@ -1,0 +1,16 @@
+# Normalise line endings: the repository stores LF; Windows checkouts keep LF too,
+# so diffs don't fill with CRLF noise. PowerShell scripts stay CRLF for Windows tools.
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+
+# Binary assets: never diff or convert.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.pdf binary
+*.woff binary
+*.woff2 binary

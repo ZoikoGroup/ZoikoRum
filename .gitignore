@@ -1,0 +1,30 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.import_linter_cache/
+*.egg-info/
+.env
+.env.*
+!.env.example
+*.log
+.coverage
+
+# Local blob storage (uploaded photos, documents)
+backend/var/
+htmlcov/
+
+# Tool caches
+.mypy_cache/
+.ruff_cache/
+*.tsbuildinfo
+
+# Node (the frontend has its own .gitignore; this guards stray installs at the root)
+node_modules/
+
+# Editors and OS files
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
