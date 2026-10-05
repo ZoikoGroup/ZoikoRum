@@ -12,6 +12,8 @@ Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · Domain contracts: 
 # from the repo root
 python -m venv .venv
 .venv/Scripts/pip install -e "backend[dev]"      # Windows; use .venv/bin/pip on macOS/Linux
+# Exact, tested versions instead (CI does this):
+#   pip install -r backend/requirements-dev.txt && pip install --no-deps -e backend
 cp backend/.env.example backend/.env             # then change the secrets
 
 cd backend
@@ -38,6 +40,11 @@ cd backend
 pytest                       # uses database "zoikorum_test" on localhost:5434 (created automatically)
 ```
 Useful env vars for isolated runs: `ZK_TEST_DATABASE=<db>` and `ZK_DOMAINS=identity,audit,<domain>`.
+
+## Dependencies
+`pyproject.toml` declares the dependencies (minimum versions). `requirements.txt` (runtime) and
+`requirements-dev.txt` (tests) pin the exact versions the test suite passes with, for reproducible
+installs. When you add or upgrade a dependency, update `pyproject.toml`, run the tests, then refresh both pin files.
 
 ## Layout
 ```

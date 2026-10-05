@@ -10,3 +10,18 @@ __pycache__/
 *.log
 .coverage
 htmlcov/
+
+# Tool caches
+.mypy_cache/
+.ruff_cache/
+*.tsbuildinfo
+
+# Node (the frontend has its own .gitignore; this guards stray installs at the root)
+node_modules/
+
+# Editors and OS files
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
