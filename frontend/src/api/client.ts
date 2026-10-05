@@ -46,7 +46,11 @@ export const tokens = {
   },
 }
 
+const UNREACHABLE = 'We can’t reach the Zoikorum server right now. Please try again in a moment.'
+
 async function toError(res: Response): Promise<ApiError> {
+  // 502/503/504 come from the proxy/gateway when the API itself is down.
+  if ([502, 503, 504].includes(res.status)) return new ApiError(res.status, 'SERVER_UNREACHABLE', UNREACHABLE)
   let body: Record<string, unknown> = {}
   try {
     body = await res.json()
@@ -100,6 +104,8 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
         ...(auth && accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
+    }).catch(() => {
+      throw new ApiError(0, 'SERVER_UNREACHABLE', UNREACHABLE) // network down / server not running
     })
 
   let res = await send()
