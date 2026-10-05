@@ -58,7 +58,11 @@ async def engine():
 @pytest.fixture(autouse=True)
 async def clean_db(engine):
     clock.set_now(None)
-    tables = ", ".join(f'"{t.schema}"."{t.name}"' for t in Base.metadata.sorted_tables)
+    async with engine.connect() as conn:
+        rows = await conn.execute(text(
+            "SELECT table_schema, table_name FROM information_schema.tables "
+            "WHERE table_type = 'BASE TABLE' AND table_schema = ANY(:s)"), {"s": list(DOMAIN_SCHEMAS)})
+        tables = ", ".join(f'"{a}"."{b}"' for a, b in rows.all())
     async with engine.begin() as conn:
         await conn.execute(text("SET session_replication_role = replica"))  # bypass append-only triggers
         await conn.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
