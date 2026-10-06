@@ -5,9 +5,25 @@ import { Link } from 'react-router-dom'
 
 export type IconName =
   | 'request' | 'proposal' | 'contract' | 'shield' | 'check' | 'bell' | 'team' | 'mail' | 'building' | 'search'
-  | 'user' | 'star' | 'clock'
+  | 'user' | 'star' | 'clock' | 'bookmark' | 'wallet' | 'message' | 'gear' | 'help' | 'lock' | 'compare' | 'folder'
+  | 'plus' | 'download' | 'trash' | 'filter' | 'globe' | 'home' | 'briefcase'
 
 const PATHS: Record<IconName, string> = {
+  bookmark: 'M6 3h12v18l-6-4-6 4z',
+  wallet: 'M3 6h18v13H3zM3 10h18M16 15h2',
+  message: 'M4 5h16v11H8l-4 4z',
+  gear: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 3h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6a7 7 0 0 0 0 2.4l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L10 21h4l.5-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z',
+  help: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01',
+  lock: 'M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4',
+  compare: 'M4 20V10M10 20V4M16 20v-7M2 20h20',
+  folder: 'M3 6h6l2 2h10v11H3z',
+  plus: 'M12 5v14M5 12h14',
+  download: 'M12 3v12M7 10l5 5 5-5M5 21h14',
+  trash: 'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3',
+  filter: 'M3 5h18l-7 8v6l-4 2v-8z',
+  globe: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18',
+  home: 'M3 11l9-7 9 7v9h-6v-6H9v6H3z',
+  briefcase: 'M3 8h18v12H3zM8 8V5h8v3M3 13h18',
   request: 'M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6',
   proposal: 'M4 5h16v11H8l-4 4zM8 9h8M8 12h5',
   contract: 'M6 3h9l4 4v14H6zM9 12h7M9 16h4M15 3v4h4',

@@ -1,6 +1,6 @@
 # Zoikorum Backend — Build Spec (implementation contract)
 
-This file turns the 18 source documents (Architecture, Engineering Handbook,
+This file turns the 18 source documents in `docs/product/` (Architecture, Engineering Handbook,
 and the wireframes/charters) into buildable contracts. Every domain must follow
 it. When in doubt, re-read `src/zoikorum/domains/identity` (reference domain)
 and `src/zoikorum/shared` (kernel).

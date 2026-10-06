@@ -50,6 +50,9 @@ class ResultItem(BaseModel):
     tier: str
     tierLabel: str
     trustScore: int
+    dimensions: dict[str, str] = {}  # public view: screening shown only when clear
+    languages: list[str] = []
+    yearsExperienceBand: str | None = None
     whyThisResult: list[str]
 
 

@@ -8,6 +8,7 @@ escrow-protected payments and an audit-grade record of every action.
 | [`backend/`](backend/) | FastAPI + PostgreSQL modular monolith: one schema per domain, outbox events, audit ledger | [backend/README.md](backend/README.md), [Architecture](backend/docs/ARCHITECTURE.md), [Build spec](backend/docs/BUILD_SPEC.md) |
 | [`frontend/`](frontend/) | React 19 + TypeScript + Vite web app | [frontend/README.md](frontend/README.md) |
 | `docker-compose.yml` | Local Postgres 16 (port 5434) and Redis 7 (port 6380) | |
+| [`docs/product/`](docs/product/README.md) | The 18 product documents (originals + readable text) | |
 | `start-dev.ps1` | Starts the whole dev stack on Windows | |
 | `.github/workflows/ci.yml` | CI: backend migrations + tests, frontend lint + build | |
 

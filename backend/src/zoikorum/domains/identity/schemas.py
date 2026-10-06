@@ -96,6 +96,9 @@ class IdentityOut(BaseModel):
     organizationName: str | None
     defaultDashboard: Dashboard
     links: list[LinkOut] = []
+    phone: str | None = None
+    language: str = "en"
+    timeZone: str | None = None
     createdAt: datetime
 
 
@@ -127,3 +130,30 @@ class StaffMemberOut(BaseModel):
 class MfaEnrollOut(BaseModel):
     secret: str
     otpauthUri: str
+
+
+class MePatch(BaseModel):
+    displayName: str | None = Field(default=None, min_length=1, max_length=200)
+    phone: str | None = Field(default=None, pattern=r"^(\+[1-9]\d{6,14})?$")  # E.164; "" clears it
+    language: Literal["en", "en-GB", "en-US", "es", "fr", "de", "hi"] | None = None
+    timeZone: str | None = Field(default=None, max_length=64)
+
+
+class SessionOut(BaseModel):
+    id: uuid.UUID
+    device: str | None
+    authStrength: str
+    signedInAt: datetime
+    current: bool
+
+
+class DataRequestIn(BaseModel):
+    requestType: Literal["ACCESS", "ERASURE"]
+
+
+class DataRequestOut(BaseModel):
+    id: uuid.UUID
+    requestType: str
+    status: str
+    createdAt: datetime
+    completedAt: datetime | None

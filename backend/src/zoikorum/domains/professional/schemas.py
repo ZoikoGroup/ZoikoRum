@@ -197,6 +197,16 @@ class PublicTrustOut(BaseModel):
     updatedAt: datetime | None  # "last verified"
 
 
+class FirmLinkIn(BaseModel):
+    firmId: uuid.UUID | None = None  # None = practise independently
+
+
+class PublicFirmOut(BaseModel):
+    id: uuid.UUID
+    name: str  # trading name when set, otherwise the registered name
+    verified: bool  # firm registration checked
+
+
 class PublicProfileOut(BaseModel):
     """What buyers see (Professional Profile doc). Never includes legal name or registration numbers."""
 
@@ -226,3 +236,4 @@ class PublicProfileOut(BaseModel):
     trust: PublicTrustOut
     publishedAt: datetime | None
     isOwnProfile: bool
+    firm: PublicFirmOut | None = None

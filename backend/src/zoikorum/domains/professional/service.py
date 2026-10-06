@@ -21,6 +21,7 @@ from zoikorum.domains.professional.schemas import (
     AvailabilityIn,
     CredentialIn,
     CredentialOut,
+    FirmLinkIn,
     JurisdictionsIn,
     OfferingIn,
     OfferingOut,
@@ -28,6 +29,7 @@ from zoikorum.domains.professional.schemas import (
     ProfileOut,
     ProfilePatch,
     PublicCredentialOut,
+    PublicFirmOut,
     PublicProfileOut,
     PublicTrustOut,
     PhotoIn,
@@ -300,6 +302,50 @@ async def set_jurisdictions(session: AsyncSession, actor: Actor, body: Jurisdict
         _evt(session, E.JURISDICTIONS_UPDATED, pro, served=served, licensed=licensed)
     await session.flush()
     return await _profile_out(session, pro)
+
+
+async def _set_firm_link(session: AsyncSession, pro: Professional, firm_id: uuid.UUID | None) -> None:
+    pro.firm_id = firm_id
+    _evt(session, E.PROFILE_UPDATED, pro, changes=["firm"], firmId=firm_id)
+    await session.flush()
+
+
+async def set_firm(session: AsyncSession, actor: Actor, body: FirmLinkIn) -> ProfileOut:
+    """Practise under a firm you are an active member of, or independently (firmId null)."""
+    pro = await _mine(session, actor, lock=True)
+    if body.firmId and not await firm_facade.member_roles(session, body.firmId, actor.identity_id):
+        raise Forbidden("You can only practise under a firm you are a member of", code="NOT_FIRM_MEMBER")
+    if body.firmId != pro.firm_id:
+        await _set_firm_link(session, pro, body.firmId)
+    return await _profile_out(session, pro)
+
+
+async def firm_member_joined(session: AsyncSession, firm_id: uuid.UUID, identity_id: uuid.UUID) -> None:
+    """Consumer of FIRM_MEMBER_JOINED: a profile with no firm starts practising under the firm just joined.
+    A profile already linked to another firm keeps its link; the professional can switch in their profile."""
+    pro = await session.scalar(select(Professional).where(Professional.identity_id == identity_id).with_for_update())
+    if pro is not None and pro.firm_id is None:
+        await _set_firm_link(session, pro, firm_id)
+
+
+async def firm_member_removed(session: AsyncSession, firm_id: uuid.UUID, identity_id: uuid.UUID) -> None:
+    """Consumer of FIRM_MEMBER_REMOVED: leaving a firm ends practising under it."""
+    pro = await session.scalar(select(Professional).where(Professional.identity_id == identity_id).with_for_update())
+    if pro is not None and pro.firm_id == firm_id:
+        await _set_firm_link(session, pro, None)
+
+
+async def engagement_count_changed(session: AsyncSession, professional_id: uuid.UUID, delta: int) -> None:
+    """Consumer of CONTRACT_ACTIVATED (+1) and CONTRACT_COMPLETED / TERMINATED (-1). Reaching the professional's
+    maximum shows them as At capacity in search (Onboarding s.12)."""
+    pro = await session.get(Professional, professional_id, with_for_update=True)
+    if pro is None:
+        return
+    before = effective_availability(pro)
+    pro.active_engagements = max(0, pro.active_engagements + delta)
+    _evt(session, E.CAPACITY_CHANGED, pro, activeEngagements=pro.active_engagements, maxConcurrent=pro.max_concurrent_engagements,
+         availability=effective_availability(pro), availabilityChanged=before != effective_availability(pro))
+    await session.flush()
 
 
 async def set_availability(session: AsyncSession, actor: Actor, body: AvailabilityIn) -> ProfileOut:
@@ -622,7 +668,10 @@ async def public_profile(session: AsyncSession, actor: Actor | None, professiona
     checks = await verification_facade.get_checks(session, "PROFESSIONAL", pro.id)
     verified_jurisdictions = sorted({c.jurisdiction[:2].upper() for c in checks if c.status == "VERIFIED" and c.jurisdiction
                                      and c.verification_type in ("JURISDICTION", "CREDENTIAL")})
+    firm = await firm_facade.get_firm(session, pro.firm_id) if pro.firm_id else None
     return PublicProfileOut(
+        firm=PublicFirmOut(id=firm.id, name=firm.trading_name or firm.legal_name, verified=firm.status == "VERIFIED")
+        if firm and firm.status != "SUSPENDED" else None,
         id=pro.id, photoUrl=photo_url(pro), displayName=pro.display_name, headline=pro.headline,
         yearsExperienceBand=pro.years_experience_band,
         bio=pro.bio, languages=list(pro.languages), country=pro.country, city=pro.city,

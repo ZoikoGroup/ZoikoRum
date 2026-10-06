@@ -12,5 +12,7 @@
 *.ico binary
 *.webp binary
 *.pdf binary
+*.docx binary
+*.xlsx binary
 *.woff binary
 *.woff2 binary

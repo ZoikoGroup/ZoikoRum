@@ -101,6 +101,7 @@ async def test_verified_professionals_rank_first_and_filter(client, make_user, d
     r = (await client.get(URL, params={"q": "fractional cfo"})).json()
     assert [i["displayName"] for i in r["items"]] == ["Bea", "Cara"]  # same relevance; Tier B outranks Tier C
     assert r["items"][0]["tier"] == "B" and "Tier B: Verified Identity" in r["items"][0]["whyThisResult"]
+    assert r["items"][0]["dimensions"]["identity"] == "VERIFIED" and r["items"][0]["yearsExperienceBand"] == "6-10"
     assert {f["value"]: f["count"] for f in r["facets"]["tier"]} == {"B": 1, "C": 1}
     assert await names(client, verified="identity") == ["Bea"]
 

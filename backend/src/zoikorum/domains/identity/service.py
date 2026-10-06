@@ -21,8 +21,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.config import get_settings
 from zoikorum.domains.identity import tokens
-from zoikorum.domains.identity.models import ConsentRecord, Identity, IdentityLink, Session
-from zoikorum.domains.identity.schemas import AuthOut, IdentityOut, LinkOut, RegisterIn, StaffMemberOut, TokenPair
+from zoikorum.domains.identity.models import ConsentRecord, DataRequest, Identity, IdentityLink, Session
+from zoikorum.domains.identity.schemas import (
+    AuthOut, DataRequestOut, IdentityOut, LinkOut, MePatch, RegisterIn, SessionOut, StaffMemberOut, TokenPair,
+)
 from zoikorum.shared import clock
 from zoikorum.shared.auth import Actor, AuthStrength, Persona, PlatformRole
 from zoikorum.shared.crypto import decrypt_field, encrypt_field, sha256_hex
@@ -89,6 +91,8 @@ def to_out(identity: Identity, links: list[IdentityLink]) -> IdentityOut:
         organizationName=identity.signup_organization_name,
         defaultDashboard=default_dashboard(identity),
         links=[LinkOut(type=l.link_type, targetId=l.target_id, roles=sorted(l.roles), kind=l.target_kind) for l in links],
+        phone=decrypt_field(identity.phone_enc) if identity.phone_enc else None,
+        language=identity.language or "en", timeZone=identity.time_zone,
         createdAt=identity.created_at,
     )
 
@@ -491,3 +495,77 @@ async def lookup_by_email(session: AsyncSession, actor: Actor, email: str) -> St
         raise NotFound("No account with that email")
     return StaffMemberOut(id=i.id, email=i.email, displayName=i.display_name, platformRoles=sorted(i.platform_roles),
                           mfaEnabled=i.mfa_enabled_at is not None, status=i.status)
+
+
+# ---- Settings: profile details, sessions, privacy requests ---------------------------
+
+async def update_me(session: AsyncSession, actor: Actor, patch: MePatch) -> IdentityOut:
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    identity = await _get_for_update(session, actor.identity_id)
+    changed = []
+    if patch.displayName and patch.displayName.strip() != identity.display_name:
+        identity.display_name = patch.displayName.strip()
+        changed.append("displayName")
+    if patch.phone is not None:
+        identity.phone_enc = encrypt_field(patch.phone) if patch.phone else None
+        changed.append("phone")
+    if patch.language and patch.language != identity.language:
+        identity.language = patch.language
+        changed.append("language")
+    if patch.timeZone is not None and patch.timeZone != identity.time_zone:
+        if patch.timeZone:
+            try:
+                ZoneInfo(patch.timeZone)
+            except (ZoneInfoNotFoundError, ValueError) as exc:
+                raise ValidationFailed("Unknown time zone", code="INVALID_TIME_ZONE") from exc
+        identity.time_zone = patch.timeZone or None
+        changed.append("timeZone")
+    if changed:
+        # Field names only: personal values stay out of the event stream.
+        _evt(session, E.IDENTITY_PROFILE_UPDATED, identity, changes=changed)
+    return to_out(identity, await _links(session, identity.id))
+
+
+async def list_sessions(session: AsyncSession, actor: Actor) -> list[SessionOut]:
+    now = clock.now()
+    rows = (await session.scalars(select(Session).where(
+        Session.identity_id == actor.identity_id, Session.revoked_at.is_(None), Session.rotated_at.is_(None),
+        Session.expires_at > now).order_by(Session.auth_time.desc()).limit(50))).all()
+    return [SessionOut(id=s.id, device=s.user_agent, authStrength=s.auth_strength, signedInAt=s.auth_time,
+                       current=s.id == actor.session_id) for s in rows]
+
+
+async def revoke_session(session: AsyncSession, actor: Actor, session_id: uuid.UUID) -> None:
+    s = await session.get(Session, session_id, with_for_update=True)
+    if s is None or s.identity_id != actor.identity_id:
+        raise NotFound("Session not found")
+    if s.revoked_at is None:
+        s.revoked_at = clock.now()
+        record_event(session, E.SESSION_REVOKED, aggregate_type="Session", aggregate_id=s.id,
+                     payload={"identityId": actor.identity_id, "sessionId": s.id, "reason": "USER_SIGNED_OUT_DEVICE"})
+
+
+def _dr_out(r: DataRequest) -> DataRequestOut:
+    return DataRequestOut(id=r.id, requestType=r.request_type, status=r.status, createdAt=r.created_at, completedAt=r.completed_at)
+
+
+async def create_data_request(session: AsyncSession, actor: Actor, request_type: str) -> DataRequestOut:
+    """Download-my-data or delete-my-account request. One open request per type."""
+    open_one = await session.scalar(select(DataRequest).where(
+        DataRequest.identity_id == actor.identity_id, DataRequest.request_type == request_type,
+        DataRequest.status != "COMPLETED"))
+    if open_one:
+        return _dr_out(open_one)
+    identity = await _get_for_update(session, actor.identity_id)
+    r = DataRequest(identity_id=identity.id, request_type=request_type, status="RECEIVED")
+    session.add(r)
+    await session.flush()
+    _evt(session, E.DATA_REQUEST_CREATED, identity, dataRequestId=r.id, requestType=request_type)
+    return _dr_out(r)
+
+
+async def list_data_requests(session: AsyncSession, actor: Actor) -> list[DataRequestOut]:
+    rows = (await session.scalars(select(DataRequest).where(DataRequest.identity_id == actor.identity_id)
+                                  .order_by(DataRequest.created_at.desc()))).all()
+    return [_dr_out(r) for r in rows]

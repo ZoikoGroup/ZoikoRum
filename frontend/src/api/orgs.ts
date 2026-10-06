@@ -33,10 +33,14 @@ export interface Organization {
   country: string
   status: string
   businessContext: string | null
+  industry: string | null
+  timeZone: string | null
   myRoles: OrgRole[]
   memberCount: number
   createdAt: string
 }
+
+export interface BillingContact { identityId: string; displayName: string; email: string; isPrimary: boolean }
 
 export interface OrgMember {
   identityId: string
@@ -46,6 +50,7 @@ export interface OrgMember {
   spendLimit: Money | null
   businessUnitId: string | null
   joinedAt: string
+  lastActiveAt: string | null
 }
 
 export interface Invitation {
@@ -89,6 +94,11 @@ const O = '/v1/organizations'
 export const orgApi = {
   mine: () => api<Organization[]>(`${O}/mine`),
   get: (id: string) => api<Organization>(`${O}/${id}`),
+  update: (id: string, body: { name?: string; industry?: string; timeZone?: string; businessContext?: string }) =>
+    api<Organization>(`${O}/${id}`, { method: 'PATCH', body }),
+  billingContacts: (id: string) => api<BillingContact[]>(`${O}/${id}/billing-contacts`),
+  setBillingContacts: (id: string, primaryIdentityId: string, backupIdentityId?: string | null) =>
+    api<BillingContact[]>(`${O}/${id}/billing-contacts`, { method: 'PUT', body: { primaryIdentityId, backupIdentityId: backupIdentityId || null } }),
   members: (id: string) => api<OrgMember[]>(`${O}/${id}/members`),
   updateMember: (id: string, identityId: string, body: { roles?: OrgRole[]; spendLimit?: Money | null; clearSpendLimit?: boolean }) =>
     api<OrgMember>(`${O}/${id}/members/${identityId}`, { method: 'PATCH', body }),
@@ -128,5 +138,6 @@ export const firmApi = {
 
 export function formatMoney(m: Money | null | undefined): string {
   if (!m) return '—'
+  if (!/^[A-Z]{3}$/.test(m.currency ?? '')) return (m.amountMinor / 100).toLocaleString(undefined, { maximumFractionDigits: 2 })
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: m.currency, maximumFractionDigits: 0 }).format(m.amountMinor / 100)
 }

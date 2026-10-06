@@ -36,6 +36,10 @@ class Identity(Base, UUIDPk, Timestamps, Versioned):
     failed_login_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     enterprise_federated: Mapped[bool] = mapped_column(default=False, nullable=False)
+    # Profile details (Settings > Account). The phone number is personal data: encrypted at rest (Architecture 8.2).
+    phone_enc: Mapped[str | None] = mapped_column(String(500))
+    language: Mapped[str] = mapped_column(String(10), nullable=False, default="en", server_default="en")
+    time_zone: Mapped[str | None] = mapped_column(String(64))
 
 
 class Session(Base, UUIDPk, CreatedAt):
@@ -83,3 +87,17 @@ class ConsentRecord(Base, UUIDPk, CreatedAt):
     )
     consent_type: Mapped[str] = mapped_column(String(50), nullable=False)  # TERMS | PRIVACY | MARKETING
     document_version: Mapped[str] = mapped_column(String(50), nullable=False)
+
+
+class DataRequest(Base, UUIDPk, Timestamps):
+    """A person's privacy request (GDPR/CCPA access or erasure). Logged and handled by staff (Regulator pack s.9)."""
+
+    __tablename__ = "data_requests"
+    __table_args__ = {"schema": SCHEMA}
+
+    identity_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.identities.id"), nullable=False, index=True
+    )
+    request_type: Mapped[str] = mapped_column(String(20), nullable=False)  # ACCESS | ERASURE
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="RECEIVED")  # RECEIVED | IN_PROGRESS | COMPLETED
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

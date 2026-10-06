@@ -178,11 +178,13 @@ export interface PublicProfile {
   verifiedJurisdictions: string[]
   publishedAt: string | null
   isOwnProfile: boolean
+  firm: { id: string; name: string; verified: boolean } | null
 }
 
 const P = '/v1/professionals'
 export const proApi = {
   create: (body: { firmId?: string | null }) => api<Profile>(P, { method: 'POST', body }),
+  setFirm: (firmId: string | null) => api<Profile>(`${P}/me/firm`, { method: 'PUT', body: { firmId } }),
   me: () => api<Profile>(`${P}/me`),
   setPhoto: (contentType: string, dataBase64: string) =>
     api<Profile>(`${P}/me/photo`, { method: 'PUT', body: { contentType, dataBase64 } }),

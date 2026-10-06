@@ -8,13 +8,16 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from zoikorum.domains.marketplace.models import SavedProfessional, TaxonomyNode
-from zoikorum.domains.marketplace.schemas import SavedOut, SpecializationAdminOut, SpecializationIn, SpecializationPatch
+from zoikorum.domains.marketplace.models import Collection, CollectionItem, SavedProfessional, TaxonomyNode
+from zoikorum.domains.marketplace.schemas import (
+    CollectionOut, CompareItem, SavedOut, SpecializationAdminOut, SpecializationIn, SpecializationPatch,
+)
 from zoikorum.domains.marketplace.taxonomy_data import default_taxonomy_rows, slugify
 from zoikorum.domains.professional import facade as professional_facade
 from zoikorum.domains.trust import facade as trust_facade
+from zoikorum.domains.verification import facade as verification_facade
 from zoikorum.shared.auth import Actor, PlatformRole
-from zoikorum.shared.errors import Conflict, NotFound
+from zoikorum.shared.errors import Conflict, NotFound, ValidationFailed
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_event
 
@@ -156,16 +159,44 @@ async def saved_professionals(session: AsyncSession, actor: Actor) -> list[Saved
     ids = [r.professional_id for r in rows]
     pros = await professional_facade.get_professionals(session, ids)
     trust = await trust_facade.get_trust_many(session, ids)
-    specs = await get_specialization_names(session, [p.primary_specialization for p in pros.values() if p.primary_specialization])
+    specs = await get_specialization_names(session, sorted({s for p in pros.values() for s in p.specializations}))
+    membership: dict = {}
+    for cid, pid in (await session.execute(select(CollectionItem.collection_id, CollectionItem.professional_id)
+                                           .join(Collection, Collection.id == CollectionItem.collection_id)
+                                           .where(Collection.identity_id == actor.identity_id))).all():
+        membership.setdefault(pid, []).append(cid)
     out = []
     for r in rows:
         p = pros.get(r.professional_id)
         if p is None:
             continue
-        out.append(SavedOut(professionalId=p.id, displayName=p.display_name, headline=p.headline,
-                            primarySpecialization=specs.get(p.primary_specialization or ""), tier=trust[p.id].tier,
-                            availability=p.availability, available=p.status == "PUBLISHED", savedAt=r.created_at))
+        t = trust[p.id]
+        out.append(SavedOut(
+            professionalId=p.id, displayName=p.display_name, headline=p.headline, photoUrl=p.photo_url, city=p.city,
+            country=p.country, languages=list(p.languages), yearsExperienceBand=p.years_experience_band,
+            primarySpecialization=specs.get(p.primary_specialization or ""),
+            specializations=[specs.get(s, s) for s in p.specializations], engagementTypes=list(p.engagement_types),
+            pricingModels=list(p.pricing_models), startingPrice=await _starting_price(session, p.id), tier=t.tier,
+            dimensions=_public_dimensions(t.dimensions), lastVerifiedAt=t.updated_at, availability=p.availability,
+            available=p.status == "PUBLISHED", collectionIds=membership.get(p.id, []), savedAt=r.created_at))
     return out
+
+
+def _public_dimensions(dimensions) -> dict[str, str]:
+    """Customers never see a screening problem, only whether screening is clear."""
+    out = dict(dimensions)
+    if out.get("restrictions") not in (None, "CLEAR"):
+        out["restrictions"] = "UNKNOWN"
+    return out
+
+
+async def _starting_price(session: AsyncSession, professional_id: uuid.UUID):
+    from zoikorum.shared.money import MoneyDTO
+
+    priced = [o for o in await professional_facade.list_offerings(session, professional_id, active_only=True)
+              if o.starting_price_minor is not None and o.currency]
+    cheapest = min(priced, key=lambda o: o.starting_price_minor, default=None)
+    return MoneyDTO(amountMinor=cheapest.starting_price_minor, currency=cheapest.currency) if cheapest else None
 
 
 async def get_specialization_names(session: AsyncSession, slugs: list[str]) -> dict[str, str]:
@@ -173,3 +204,109 @@ async def get_specialization_names(session: AsyncSession, slugs: list[str]) -> d
         return {}
     rows = await session.execute(select(TaxonomyNode.slug, TaxonomyNode.name).where(TaxonomyNode.slug.in_(slugs)))
     return dict(rows.all())
+
+
+# ---- Collections (Saved Professionals > Collections) -----------------------------
+
+MAX_COLLECTIONS = 50
+MAX_COMPARE = 3  # Professional Profile / Category docs: compare up to 3 side by side
+
+
+async def _collection(session: AsyncSession, actor: Actor, collection_id: uuid.UUID, lock: bool = False) -> Collection:
+    c = await session.get(Collection, collection_id, with_for_update=lock)
+    if c is None or c.identity_id != actor.identity_id:
+        raise NotFound("Collection not found")
+    return c
+
+
+def _collection_evt(session: AsyncSession, actor: Actor, c: Collection, change: str, **extra) -> None:
+    record_event(session, E.COLLECTION_UPDATED, aggregate_type="Collection", aggregate_id=c.id,
+                 payload={"collectionId": c.id, "identityId": actor.identity_id, "change": change, **extra})
+
+
+async def list_collections(session: AsyncSession, actor: Actor) -> list[CollectionOut]:
+    rows = (await session.execute(
+        select(Collection, func.count(CollectionItem.id)).outerjoin(CollectionItem, CollectionItem.collection_id == Collection.id)
+        .where(Collection.identity_id == actor.identity_id).group_by(Collection.id).order_by(Collection.updated_at.desc())
+    )).all()
+    return [CollectionOut(id=c.id, name=c.name, count=n, updatedAt=c.updated_at) for c, n in rows]
+
+
+async def create_collection(session: AsyncSession, actor: Actor, name: str) -> CollectionOut:
+    name = name.strip()
+    if await session.scalar(select(func.count()).select_from(Collection).where(Collection.identity_id == actor.identity_id)) >= MAX_COLLECTIONS:
+        raise Conflict(f"You can have up to {MAX_COLLECTIONS} collections", code="TOO_MANY_COLLECTIONS")
+    if await session.scalar(select(Collection.id).where(Collection.identity_id == actor.identity_id, Collection.name == name)):
+        raise Conflict("You already have a collection with that name", code="COLLECTION_EXISTS")
+    c = Collection(identity_id=actor.identity_id, name=name)
+    session.add(c)
+    await session.flush()
+    _collection_evt(session, actor, c, "CREATED")
+    return CollectionOut(id=c.id, name=c.name, count=0, updatedAt=c.updated_at)
+
+
+async def rename_collection(session: AsyncSession, actor: Actor, collection_id: uuid.UUID, name: str) -> CollectionOut:
+    c = await _collection(session, actor, collection_id, lock=True)
+    name = name.strip()
+    if name != c.name and await session.scalar(select(Collection.id).where(
+            Collection.identity_id == actor.identity_id, Collection.name == name)):
+        raise Conflict("You already have a collection with that name", code="COLLECTION_EXISTS")
+    c.name = name
+    await session.flush()
+    _collection_evt(session, actor, c, "RENAMED")
+    n = await session.scalar(select(func.count()).select_from(CollectionItem).where(CollectionItem.collection_id == c.id))
+    return CollectionOut(id=c.id, name=c.name, count=n or 0, updatedAt=c.updated_at)
+
+
+async def delete_collection(session: AsyncSession, actor: Actor, collection_id: uuid.UUID) -> None:
+    """Removes the group only; the professionals stay saved."""
+    c = await _collection(session, actor, collection_id, lock=True)
+    await session.execute(delete(CollectionItem).where(CollectionItem.collection_id == c.id))
+    _collection_evt(session, actor, c, "DELETED")
+    await session.delete(c)
+
+
+async def add_to_collection(session: AsyncSession, actor: Actor, collection_id: uuid.UUID, ids: list[uuid.UUID]) -> CollectionOut:
+    c = await _collection(session, actor, collection_id, lock=True)
+    for pid in dict.fromkeys(ids):
+        await save_professional(session, actor, pid)  # a collection member is always saved too
+        await session.execute(pg_insert(CollectionItem).values(id=uuid.uuid4(), collection_id=c.id, professional_id=pid)
+                              .on_conflict_do_nothing(index_elements=["collection_id", "professional_id"]))
+    c.updated_at = func.now()
+    await session.flush()
+    _collection_evt(session, actor, c, "ITEMS_ADDED", professionalIds=list(dict.fromkeys(ids)))
+    n = await session.scalar(select(func.count()).select_from(CollectionItem).where(CollectionItem.collection_id == c.id))
+    await session.refresh(c)
+    return CollectionOut(id=c.id, name=c.name, count=n or 0, updatedAt=c.updated_at)
+
+
+async def remove_from_collection(session: AsyncSession, actor: Actor, collection_id: uuid.UUID, professional_id: uuid.UUID) -> None:
+    c = await _collection(session, actor, collection_id, lock=True)
+    await session.execute(delete(CollectionItem).where(CollectionItem.collection_id == c.id,
+                                                       CollectionItem.professional_id == professional_id))
+    _collection_evt(session, actor, c, "ITEM_REMOVED", professionalId=professional_id)
+
+
+# ---- Compare (max 3, published professionals only) --------------------------------
+
+async def compare(session: AsyncSession, ids: list[uuid.UUID]) -> list[CompareItem]:
+    ids = list(dict.fromkeys(ids))
+    if not 1 <= len(ids) <= MAX_COMPARE:
+        raise ValidationFailed(f"Compare between 1 and {MAX_COMPARE} professionals", code="COMPARE_LIMIT")
+    pros = await professional_facade.get_professionals(session, ids)
+    trust = await trust_facade.get_trust_many(session, ids)
+    published = [pros[i] for i in ids if i in pros and pros[i].status == "PUBLISHED"]
+    names = await get_specialization_names(session, sorted({s for p in published for s in p.specializations}))
+    out = []
+    for p in published:
+        checks = await verification_facade.get_checks(session, "PROFESSIONAL", p.id)
+        out.append(CompareItem(
+            professionalId=p.id, displayName=p.display_name, headline=p.headline, photoUrl=p.photo_url, country=p.country,
+            tier=trust[p.id].tier, dimensions=_public_dimensions(trust[p.id].dimensions),
+            verifiedCredentials=[c.label for c in checks if c.verification_type == "CREDENTIAL" and c.status == "VERIFIED"],
+            specializations=[names.get(s, s) for s in p.specializations], engagementTypes=list(p.engagement_types),
+            deliveryModes=list(p.delivery_modes), pricingModels=list(p.pricing_models),
+            startingPrice=await _starting_price(session, p.id), availability=p.availability,
+            yearsExperienceBand=p.years_experience_band, servedJurisdictions=list(p.jurisdictions_served),
+            licensedJurisdictions=list(p.licensed_jurisdictions), languages=list(p.languages)))
+    return out

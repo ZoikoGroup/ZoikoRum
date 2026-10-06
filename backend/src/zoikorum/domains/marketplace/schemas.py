@@ -5,6 +5,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from zoikorum.shared.money import MoneyDTO
+
 
 class SpecializationIn(BaseModel):
     groupSlug: str = Field(min_length=1, max_length=120)
@@ -47,8 +49,56 @@ class SavedOut(BaseModel):
     professionalId: uuid.UUID
     displayName: str
     headline: str | None
+    photoUrl: str | None = None
+    city: str | None = None
+    country: str | None = None
+    languages: list[str] = []
+    yearsExperienceBand: str | None = None
     primarySpecialization: str | None
+    specializations: list[str] = []  # display names, primary first
+    engagementTypes: list[str] = []
+    pricingModels: list[str] = []
+    startingPrice: MoneyDTO | None = None
     tier: str
+    dimensions: dict[str, str] = {}  # public view: screening shown only when clear
+    lastVerifiedAt: datetime | None = None
     availability: str
     available: bool  # False when the profile is no longer published
+    collectionIds: list[uuid.UUID] = []
     savedAt: datetime
+
+
+class CollectionIn(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+
+
+class CollectionOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    count: int
+    updatedAt: datetime
+
+
+class CollectionItemsIn(BaseModel):
+    professionalIds: list[uuid.UUID] = Field(min_length=1, max_length=50)
+
+
+class CompareItem(BaseModel):
+    professionalId: uuid.UUID
+    displayName: str
+    headline: str | None
+    photoUrl: str | None
+    country: str
+    tier: str
+    dimensions: dict[str, str]
+    verifiedCredentials: list[str]
+    specializations: list[str]
+    engagementTypes: list[str]
+    deliveryModes: list[str]
+    pricingModels: list[str]
+    startingPrice: MoneyDTO | None
+    availability: str
+    yearsExperienceBand: str | None
+    servedJurisdictions: list[str]
+    licensedJurisdictions: list[str]
+    languages: list[str]

@@ -235,7 +235,8 @@ def _item(doc: Doc, why: list[str]) -> ResultItem:
                                         for s in doc.specializations],
         engagementTypes=doc.engagement_types, deliveryModes=doc.delivery_modes, pricingModels=doc.pricing_models,
         availability=doc.availability, startingPrice=price, tier=doc.tier, tierLabel=TIER_LABEL[doc.tier],
-        trustScore=doc.trust_score, whyThisResult=why,
+        trustScore=doc.trust_score, whyThisResult=why, languages=doc.languages, yearsExperienceBand=doc.years_experience_band,
+        dimensions={**doc.dimensions, **({"restrictions": "UNKNOWN"} if doc.dimensions.get("restrictions") not in (None, "CLEAR") else {})},
     )
 
 

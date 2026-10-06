@@ -2,6 +2,7 @@
 
     python -m zoikorum.cli create-admin --email admin@zoikorum.com --name "Platform Admin"
     python -m zoikorum.cli reindex-search      # rebuild the search projection from the owning domains
+    python -m zoikorum.cli schema-doc          # regenerate docs/DATABASE_SCHEMA.md from the models
 
 The first Platform Admin can only be created here (never over HTTP). The password
 is read from a prompt or ZK_ADMIN_PASSWORD - never pass it as an argument.
@@ -51,9 +52,17 @@ def main() -> None:
     ca.add_argument("--name", default="Platform Admin")
     ca.add_argument("--country", default="US")
     sub.add_parser("reindex-search", help="rebuild the search projection")
+    sd = sub.add_parser("schema-doc", help="write the database schema as Markdown")
+    sd.add_argument("--out", default="docs/DATABASE_SCHEMA.md")
     args = parser.parse_args()
     if args.cmd == "reindex-search":
         asyncio.run(_reindex_search())
+    if args.cmd == "schema-doc":
+        from zoikorum.schema_doc import render
+
+        with open(args.out, "w", encoding="utf-8") as f:
+            f.write(render())
+        print(f"Wrote {args.out}")
     if args.cmd == "create-admin":
         # Same validation as the API, so the account can actually sign in.
         from email_validator import EmailNotValidError, validate_email

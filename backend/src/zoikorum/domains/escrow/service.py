@@ -1,0 +1,288 @@
+"""Escrow domain (Step 8): accounts per contract, milestone funding, capture, and the release decision tree
+(Payments & Escrow doc, BUILD_SPEC s.escrow, Engineering Handbook 15.2).
+
+Rules: no HTTP endpoint releases money; release happens only when a milestone is accepted. Every movement writes a
+balanced append-only double-entry group in the same transaction as the balance change, under a row lock on the
+account. Dispute holds, refunds and amendments arrive with the dispute and change-order steps.
+"""
+
+from __future__ import annotations
+
+import uuid
+
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from zoikorum.config import get_settings
+from zoikorum.domains.buyer import facade as buyer_facade
+from zoikorum.domains.escrow.models import Allocation, EscrowAccount, Funding, LedgerEntry, Release
+from zoikorum.domains.escrow.schemas import AllocationOut, EscrowOut, FundingOut, FundIn, LedgerLineOut
+from zoikorum.domains.professional import facade as professional_facade
+from zoikorum.shared import clock
+from zoikorum.shared.auth import Actor, OrgRole, PlatformRole
+from zoikorum.shared.errors import Conflict, Forbidden, NotFound, PolicyBlocked
+from zoikorum.shared.event_catalog import E
+from zoikorum.shared.events import record_event
+from zoikorum.shared.money import Money, MoneyDTO
+from zoikorum.shared.state_machine import StateMachine
+
+ALLOCATION_STATES = StateMachine("Allocation", {
+    "UNFUNDED": {"FUNDING"},
+    "FUNDING": {"HELD", "UNFUNDED"},
+    "HELD": {"RELEASED", "ON_HOLD", "RELEASE_PENDING_APPROVAL", "REFUNDED"},
+    "ON_HOLD": {"HELD", "RELEASED", "PARTIALLY_RELEASED", "REFUNDED"},
+    "RELEASE_PENDING_APPROVAL": {"RELEASED", "HELD"},
+    "PARTIALLY_RELEASED": set(),
+    "RELEASED": set(),
+    "REFUNDED": set(),
+})
+FUNDERS = (OrgRole.REQUESTER, OrgRole.APPROVER, OrgRole.BUDGET_OWNER)
+VIEWERS = (PlatformRole.FINANCIAL_OPS, PlatformRole.PLATFORM_ADMIN)
+
+
+def _m(minor: int, ccy: str) -> MoneyDTO:
+    return MoneyDTO(amountMinor=minor, currency=ccy)
+
+
+def _evt(session: AsyncSession, event_type: str, a: EscrowAccount, **payload) -> None:
+    record_event(session, event_type, aggregate_type="EscrowAccount", aggregate_id=a.id, tenant_id=a.organization_id,
+                 payload={"escrowAccountId": a.id, "contractId": a.contract_id, "organizationId": a.organization_id, **payload})
+
+
+def _post(session: AsyncSession, a: EscrowAccount, ref_type: str, ref_id: uuid.UUID, lines: list[tuple[str, str, int, int, str]],
+          milestone_id: uuid.UUID | None = None) -> None:
+    """Write one balanced ledger group. lines = (entry_type, ledger_account, debit, credit, memo)."""
+    debit, credit = sum(x[2] for x in lines), sum(x[3] for x in lines)
+    if debit != credit or debit <= 0 or any(x[2] < 0 or x[3] < 0 for x in lines):
+        raise ValueError(f"Unbalanced ledger group: debit {debit} != credit {credit}")  # never write money that does not add up
+    group = uuid.uuid4()
+    for entry_type, account, d, c, memo in lines:
+        session.add(LedgerEntry(entry_group_id=group, account_id=a.id, entry_type=entry_type, ledger_account=account, debit_minor=d,
+                                credit_minor=c, currency=a.currency, reference_type=ref_type, reference_id=ref_id,
+                                milestone_id=milestone_id, memo=memo))
+
+
+async def _account(session: AsyncSession, account_id: uuid.UUID, lock: bool = False) -> EscrowAccount:
+    a = await session.get(EscrowAccount, account_id, with_for_update=lock)
+    if a is None:
+        raise NotFound("Escrow account not found")
+    return a
+
+
+async def _allocations(session: AsyncSession, account_id: uuid.UUID, lock: bool = False) -> list[Allocation]:
+    stmt = select(Allocation).where(Allocation.account_id == account_id).order_by(Allocation.sequence)
+    return list((await session.scalars(stmt.with_for_update() if lock else stmt)).all())
+
+
+async def _viewer(session: AsyncSession, actor: Actor, a: EscrowAccount) -> str:
+    if await buyer_facade.get_member_roles(session, a.organization_id, actor.identity_id):
+        return "BUYER"
+    pro = await professional_facade.get_professional(session, a.professional_id)
+    if pro is not None and pro.identity_id == actor.identity_id:
+        return "PROFESSIONAL"
+    if actor.has_platform_role(*VIEWERS):
+        actor.require_platform_role(*VIEWERS)  # read-only: operators can never move money
+        return "OPERATOR"
+    raise NotFound("Escrow account not found")
+
+
+def _status(a: EscrowAccount, allocs: list[Allocation]) -> str:
+    if allocs and all(x.state == "RELEASED" for x in allocs):
+        return "FULLY_RELEASED"
+    if a.released_minor > 0:
+        return "PARTIALLY_RELEASED"
+    if a.funded_minor > 0:
+        return "FUNDED"
+    return "UNFUNDED"
+
+
+async def _out(session: AsyncSession, actor: Actor, a: EscrowAccount, viewer: str) -> EscrowOut:
+    allocs = await _allocations(session, a.id)
+    fundings = (await session.scalars(select(Funding).where(Funding.account_id == a.id).order_by(Funding.created_at.desc()))).all()
+    can_fund = viewer == "BUYER" and any(x.state == "UNFUNDED" for x in allocs) and bool(
+        (await buyer_facade.get_member_roles(session, a.organization_id, actor.identity_id)).intersection(FUNDERS))
+    ccy = a.currency
+    unfunded = sum(x.amount_minor for x in allocs if x.state == "UNFUNDED")
+    return EscrowOut(
+        id=a.id, contractId=a.contract_id, status=a.status, currency=ccy, total=_m(a.total_minor, ccy), funded=_m(a.funded_minor, ccy),
+        held=_m(a.held_minor, ccy), released=_m(a.released_minor, ccy), fees=_m(a.fees_minor, ccy), refunded=_m(a.refunded_minor, ccy),
+        unfunded=_m(unfunded, ccy), feeBps=get_settings().platform_fee_bps,
+        allocations=[AllocationOut(milestoneId=x.milestone_id, sequence=x.sequence, title=x.title, amount=_m(x.amount_minor, ccy), state=x.state,
+                                   released=_m(x.released_minor, ccy), fee=_m(x.fee_minor, ccy), fundedAt=x.funded_at, releasedAt=x.released_at)
+                     for x in allocs],
+        fundings=[FundingOut(id=f.id, amount=_m(f.amount_minor, f.currency), milestoneIds=[uuid.UUID(str(i)) for i in f.milestone_ids],
+                             status=f.status, failureMessage=f.failure_message, createdAt=f.created_at, capturedAt=f.captured_at)
+                  for f in fundings],
+        viewerRole=viewer, canFund=can_fund,
+    )
+
+
+# ---- Opening -------------------------------------------------------------------------------
+
+async def open_account(session: AsyncSession, payload: dict) -> None:
+    """Consumer of CONTRACT_ACTIVATED. Idempotent per contract."""
+    contract_id = uuid.UUID(str(payload["contractId"]))
+    if await session.scalar(select(EscrowAccount.id).where(EscrowAccount.contract_id == contract_id)):
+        return
+    a = EscrowAccount(contract_id=contract_id, organization_id=uuid.UUID(str(payload["organizationId"])),
+                      professional_id=uuid.UUID(str(payload["professionalId"])), currency=payload["currency"],
+                      total_minor=int(payload["totalMinor"]), status="UNFUNDED")
+    session.add(a)
+    await session.flush()
+    session.add_all([Allocation(account_id=a.id, milestone_id=uuid.UUID(str(m["milestoneId"])), sequence=m["sequence"], title=m["title"],
+                                amount_minor=int(m["amountMinor"]), state="UNFUNDED") for m in payload.get("milestones", [])])
+    _evt(session, E.ESCROW_OPENED, a, professionalId=a.professional_id, currency=a.currency, totalMinor=a.total_minor)
+
+
+# ---- Reads --------------------------------------------------------------------------------------
+
+async def get_account(session: AsyncSession, actor: Actor, account_id: uuid.UUID) -> EscrowOut:
+    a = await _account(session, account_id)
+    return await _out(session, actor, a, await _viewer(session, actor, a))
+
+
+async def get_by_contract(session: AsyncSession, actor: Actor, contract_id: uuid.UUID) -> EscrowOut:
+    a = await session.scalar(select(EscrowAccount).where(EscrowAccount.contract_id == contract_id))
+    if a is None:
+        raise NotFound("No escrow account yet: it opens when both parties have signed the contract")
+    return await _out(session, actor, a, await _viewer(session, actor, a))
+
+
+async def ledger(session: AsyncSession, actor: Actor, account_id: uuid.UUID) -> list[LedgerLineOut]:
+    a = await _account(session, account_id)
+    await _viewer(session, actor, a)
+    rows = (await session.scalars(select(LedgerEntry).where(LedgerEntry.account_id == a.id)
+                                  .order_by(LedgerEntry.created_at, LedgerEntry.entry_group_id, LedgerEntry.debit_minor.desc()).limit(500))).all()
+    return [LedgerLineOut(id=r.id, entryGroupId=r.entry_group_id, entryType=r.entry_type, ledgerAccount=r.ledger_account,
+                          debit=_m(r.debit_minor, r.currency), credit=_m(r.credit_minor, r.currency), referenceType=r.reference_type,
+                          referenceId=r.reference_id, milestoneId=r.milestone_id, memo=r.memo, createdAt=r.created_at) for r in rows]
+
+
+# ---- Funding ------------------------------------------------------------------------------------
+
+async def fund(session: AsyncSession, actor: Actor, account_id: uuid.UUID, body: FundIn) -> EscrowOut:
+    a = await _account(session, account_id, lock=True)
+    if await _viewer(session, actor, a) != "BUYER":
+        raise Forbidden("Only the buyer funds escrow")
+    roles = await buyer_facade.get_member_roles(session, a.organization_id, actor.identity_id)
+    if not roles.intersection(FUNDERS):
+        raise Forbidden("Funding needs the Requester, Approver or Budget Owner role", code="ROLE_REQUIRED")
+    allocs = await _allocations(session, a.id, lock=True)
+    wanted = [x for x in allocs if x.state == "UNFUNDED"] if body.all else [x for x in allocs if x.milestone_id in set(body.milestoneIds)]
+    if not body.all and len(wanted) != len(set(body.milestoneIds)):
+        raise NotFound("Milestone not found on this contract")
+    if not wanted:
+        raise Conflict("Every milestone is already funded", code="NOTHING_TO_FUND")
+    busy = [x for x in wanted if x.state != "UNFUNDED"]
+    if busy:
+        raise Conflict(f"M{busy[0].sequence} is already funded or being funded", code="ALREADY_FUNDED")
+    amount = sum(x.amount_minor for x in wanted)
+    if a.funded_minor + amount > a.total_minor:
+        raise Conflict("That would fund more than the contract total", code="OVER_FUNDING")
+    limit = await buyer_facade.get_member_spend_limit(session, a.organization_id, actor.identity_id)
+    if limit is not None and limit.currency == a.currency and amount > limit.minor:
+        raise PolicyBlocked("This funding is above your spend limit; ask a colleague with a higher limit", code="SPEND_LIMIT_EXCEEDED")
+
+    f = Funding(account_id=a.id, organization_id=a.organization_id, requested_by=actor.identity_id,
+                milestone_ids=[str(x.milestone_id) for x in wanted], amount_minor=amount, currency=a.currency, status="REQUESTED")
+    session.add(f)
+    await session.flush()
+    for x in wanted:
+        ALLOCATION_STATES.assert_can(x.state, "FUNDING")
+        x.state, x.funding_id = "FUNDING", f.id
+    _evt(session, E.ESCROW_FUNDING_REQUESTED, a, fundingId=f.id, amountMinor=amount, currency=a.currency,
+         milestoneIds=[x.milestone_id for x in wanted], paymentMethodToken=body.paymentMethodToken)
+    await session.flush()
+    return await _out(session, actor, a, "BUYER")
+
+
+async def payment_captured(session: AsyncSession, payload: dict) -> None:
+    """Consumer of PAYMENT_CAPTURED: hold the money in escrow and start the funded milestones. Idempotent per funding."""
+    f = await session.get(Funding, uuid.UUID(str(payload["fundingId"])), with_for_update=True)
+    if f is None or f.status != "REQUESTED":
+        return
+    a = await _account(session, f.account_id, lock=True)
+    if int(payload["amountMinor"]) != f.amount_minor or payload["currency"] != f.currency:
+        raise ValueError(f"Captured amount does not match funding {f.id}")
+    ids = {uuid.UUID(str(i)) for i in f.milestone_ids}
+    allocs = [x for x in await _allocations(session, a.id, lock=True) if x.milestone_id in ids]
+    now = clock.now()
+    _post(session, a, "FUNDING", f.id, [
+        ("BUYER_FUNDING", "BUYER_CLEARING", f.amount_minor, 0, "Payment captured from buyer"),
+        ("ESCROW_HOLD", "ESCROW_HELD", 0, f.amount_minor, "Held in escrow until acceptance"),
+    ])
+    for x in allocs:
+        ALLOCATION_STATES.assert_can(x.state, "HELD")
+        x.state, x.funded_at = "HELD", now
+    f.status, f.captured_at = "CAPTURED", now
+    a.funded_minor += f.amount_minor
+    a.held_minor += f.amount_minor
+    a.status = _status(a, await _allocations(session, a.id))
+    _evt(session, E.ESCROW_FUNDED, a, fundingId=f.id, milestoneIds=[x.milestone_id for x in allocs], amountMinor=f.amount_minor,
+         currency=f.currency)
+
+
+async def payment_failed(session: AsyncSession, payload: dict) -> None:
+    """Consumer of PAYMENT_FAILED: the milestones go back to unfunded; nothing is held."""
+    f = await session.get(Funding, uuid.UUID(str(payload["fundingId"])), with_for_update=True)
+    if f is None or f.status != "REQUESTED":
+        return
+    await _account(session, f.account_id, lock=True)
+    for x in await _allocations(session, f.account_id, lock=True):
+        if x.funding_id == f.id and x.state == "FUNDING":
+            x.state, x.funding_id = "UNFUNDED", None
+    f.status, f.failure_message = "FAILED", (payload.get("failureMessage") or "Payment was declined")[:300]
+
+
+# ---- Release decision tree (Handbook 15.2) ---------------------------------------------------------
+
+async def milestone_accepted(session: AsyncSession, payload: dict) -> None:
+    """Consumer of MILESTONE_ACCEPTED. Releases the milestone's escrow to the professional, minus the platform fee."""
+    milestone_id = uuid.UUID(str(payload["milestoneId"]))
+    x = await session.scalar(select(Allocation).where(Allocation.milestone_id == milestone_id))
+    if x is None:
+        return
+    a = await _account(session, x.account_id, lock=True)
+    x = await session.get(Allocation, x.id, with_for_update=True)
+
+    def evaluated(decision: str, reason: str) -> None:
+        _evt(session, E.ESCROW_RELEASE_EVALUATED, a, milestoneId=milestone_id, decision=decision, reason=reason)
+
+    if x.state == "RELEASED" or await session.scalar(select(Release.id).where(Release.milestone_id == milestone_id)):
+        return  # already released: idempotent no-op
+    if x.state == "ON_HOLD":
+        evaluated("BLOCKED", "DISPUTE_HOLD")  # while held, no release path may run
+        return
+    if x.state != "HELD":
+        evaluated("BLOCKED", f"NOT_FUNDED:{x.state}")
+        return
+
+    bps = get_settings().platform_fee_bps
+    gross = x.amount_minor
+    fee = Money(gross, a.currency).percentage_bps(bps).minor
+    net = gross - fee
+    r = Release(account_id=a.id, milestone_id=milestone_id, gross_minor=gross, fee_minor=fee, net_minor=net, currency=a.currency, fee_bps=bps)
+    session.add(r)
+    await session.flush()
+    lines = [("ESCROW_RELEASE", "ESCROW_HELD", gross, 0, f"M{x.sequence} accepted: released from escrow"),
+             ("ESCROW_RELEASE", "PRO_PAYABLE", 0, net, f"M{x.sequence}: payable to professional")]
+    if fee:
+        lines.append(("PLATFORM_FEE", "PLATFORM_REVENUE", 0, fee, f"M{x.sequence}: platform fee {bps / 100:.2f}%"))
+    _post(session, a, "RELEASE", r.id, lines, milestone_id)
+    ALLOCATION_STATES.assert_can(x.state, "RELEASED")
+    x.state, x.released_minor, x.fee_minor, x.released_at = "RELEASED", net, fee, clock.now()
+    a.held_minor -= gross
+    a.released_minor += net
+    a.fees_minor += fee
+    a.status = _status(a, await _allocations(session, a.id))
+    evaluated("RELEASE", "ACCEPTED")
+    _evt(session, E.ESCROW_RELEASED, a, milestoneId=milestone_id, professionalId=a.professional_id, grossMinor=gross, feeMinor=fee,
+         netMinor=net, currency=a.currency, releaseId=r.id)
+
+
+async def totals(session: AsyncSession, since, until) -> dict[str, int]:
+    rows = (await session.execute(
+        select(LedgerEntry.entry_type, LedgerEntry.currency, func.sum(LedgerEntry.debit_minor + LedgerEntry.credit_minor))
+        .where(LedgerEntry.created_at >= since, LedgerEntry.created_at < until)
+        .group_by(LedgerEntry.entry_type, LedgerEntry.currency))).all()
+    return {f"{t}:{c}": int(v) for t, c, v in rows}

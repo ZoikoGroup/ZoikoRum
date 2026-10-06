@@ -10,6 +10,7 @@ from zoikorum.domains.professional.schemas import (
     AvailabilityIn,
     CredentialIn,
     CredentialOut,
+    FirmLinkIn,
     JurisdictionsIn,
     OfferingIn,
     OfferingOut,
@@ -76,6 +77,12 @@ async def specializations(body: SpecializationsIn, actor: CurrentActor, session:
 @router.put("/me/jurisdictions", response_model=ProfileOut)
 async def jurisdictions(body: JurisdictionsIn, actor: CurrentActor, session: DbSession):
     return await service.set_jurisdictions(session, actor, body)
+
+
+@router.put("/me/firm", response_model=ProfileOut)
+async def firm(body: FirmLinkIn, actor: CurrentActor, session: DbSession):
+    """Practise under a firm you belong to, or independently."""
+    return await service.set_firm(session, actor, body)
 
 
 @router.put("/me/availability", response_model=ProfileOut)

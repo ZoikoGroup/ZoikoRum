@@ -6,6 +6,8 @@ from fastapi import APIRouter, status
 
 from zoikorum.domains.buyer import service
 from zoikorum.domains.buyer.schemas import (
+    BillingContactOut,
+    BillingContactsIn,
     AcceptByTokenIn,
     BusinessUnitIn,
     BusinessUnitOut,
@@ -59,7 +61,18 @@ async def get_organization(org_id: uuid.UUID, actor: CurrentActor, session: DbSe
 
 @router.patch("/{org_id}", response_model=OrganizationOut)
 async def update_organization(org_id: uuid.UUID, body: OrganizationPatch, actor: CurrentActor, session: DbSession):
-    return await service.update_organization(session, actor, org_id, body.name, body.businessContext)
+    return await service.update_organization(session, actor, org_id, body.name, body.businessContext, body.industry, body.timeZone)
+
+
+@router.get("/{org_id}/billing-contacts", response_model=list[BillingContactOut])
+async def billing_contacts(org_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    return await service.billing_contacts(session, actor, org_id)
+
+
+@router.put("/{org_id}/billing-contacts", response_model=list[BillingContactOut])
+async def set_billing_contacts(org_id: uuid.UUID, body: BillingContactsIn, actor: CurrentActor, session: DbSession):
+    """Org Admin or Budget Owner: primary (and optional backup) billing contact."""
+    return await service.set_billing_contacts(session, actor, org_id, body.primaryIdentityId, body.backupIdentityId)
 
 
 @router.get("/{org_id}/members", response_model=list[MemberOut])

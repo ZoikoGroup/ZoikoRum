@@ -1,6 +1,8 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { firmApi, orgApi } from '../api/orgs'
+import { contractApi } from '../api/contracts'
+import { proposalApi } from '../api/proposals'
 import { DASHBOARD_FOR_PERSONA, ROLE_LABEL } from '../api/auth'
 import { useAuth } from '../auth/AuthContext'
 import { Icon, type IconName } from '../components/dashboard'
@@ -26,6 +28,8 @@ export default function AppShell() {
   const location = useLocation()
   const [inviteCount, setInviteCount] = useState(0)
   const [inFirm, setInFirm] = useState(false)
+  const [newRequests, setNewRequests] = useState(0)
+  const [toSign, setToSign] = useState(0)
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
 
@@ -34,7 +38,11 @@ export default function AppShell() {
     Promise.all([orgApi.myInvitations(), firmApi.myInvitations(), firmApi.mine()])
       .then(([o, f, firms]) => { setInviteCount(o.length + f.length); setInFirm(firms.length > 0) })
       .catch(() => {})
-  }, [location.pathname])
+    if (user?.personas.includes('PROFESSIONAL')) {
+      proposalApi.summary('professional').then((s) => setNewRequests(s.requests.OPEN ?? 0)).catch(() => {})
+      contractApi.list('professional', 'PENDING_SIGNATURE').then((l) => setToSign(l.filter((c) => c.canSign).length)).catch(() => {})
+    }
+  }, [location.pathname, user])
   if (!user) return null
 
   const dashboards = new Set(user.personas.map((p) => DASHBOARD_FOR_PERSONA[p]))
@@ -43,11 +51,13 @@ export default function AppShell() {
   const isOfficer = user.platformRoles.includes('COMPLIANCE_OFFICER')
   const customer = dashboards.has('enterprise') ? 'enterprise' : dashboards.has('buyer') ? 'buyer' : null
   const initials = user.displayName.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase()
-  const roleName = ROLE_LABEL[user.primaryPersona ?? ''] ?? ROLE_LABEL[user.platformRoles[0] ?? ''] ?? ''
+  const roleName = customer && !user.platformRoles.length && !dashboards.has('professional') && !dashboards.has('firm')
+    ? 'Customer' : ROLE_LABEL[user.primaryPersona ?? ''] ?? ROLE_LABEL[user.platformRoles[0] ?? ''] ?? ''
 
   function search(e: FormEvent) {
     e.preventDefault()
-    navigate(q.trim() ? `/professionals?q=${encodeURIComponent(q.trim())}` : '/professionals')
+    const base = customer ? '/app/find' : '/professionals'
+    navigate(q.trim() ? `${base}?q=${encodeURIComponent(q.trim())}` : base)
   }
 
   return (
@@ -58,18 +68,15 @@ export default function AppShell() {
         </NavLink>
 
         {customer && <>
-          <div className="side-group">{customer === 'enterprise' ? 'Enterprise' : 'Hire'}</div>
-          <Item to={`/app/${customer}`} icon="building" end>Dashboard</Item>
-          <Item to="/professionals" icon="search">Browse Professionals</Item>
-          <Item to="/app/saved" icon="star">Saved Professionals</Item>
-          {customer === 'enterprise' && <>
-            <Item to="/app/enterprise/team" icon="team">Team &amp; Roles</Item>
-            <Item to="/app/enterprise/structure" icon="building">Structure</Item>
-          </>}
-          <Soon icon="request">My Requests</Soon>
-          <Soon icon="proposal">Proposals</Soon>
-          <Soon icon="contract">Active Projects</Soon>
-          <Soon icon="shield">Payments</Soon>
+          <div className="side-group">Customer</div>
+          <Item to={`/app/${customer}`} icon="home" end>Dashboard</Item>
+          <Item to="/app/find" icon="search">Find Professionals</Item>
+          <Item to="/app/saved" icon="bookmark">Saved Professionals</Item>
+          <Item to="/app/requests" icon="request">Requests</Item>
+          <Item to="/app/proposals" icon="proposal">Proposals</Item>
+          <Item to="/app/engagements" icon="briefcase">Engagements</Item>
+          <Item to="/app/payments" icon="wallet">Payments &amp; Protection</Item>
+          <Item to="/app/messages" icon="message">Messages</Item>
         </>}
 
         {dashboards.has('professional') && <>
@@ -79,9 +86,9 @@ export default function AppShell() {
           <Item to="/app/professional/offerings" icon="request">Service Offerings</Item>
           <Item to="/app/professional/verification" icon="shield">Verification &amp; Trust</Item>
           {inFirm && !dashboards.has('firm') && <Item to="/app/firm/team" icon="team">My Firm</Item>}
-          <Soon icon="proposal">Requests</Soon>
-          <Soon icon="contract">Engagements</Soon>
-          <Soon icon="clock">Earnings</Soon>
+          <Item to="/app/professional/requests" icon="proposal" count={newRequests}>Requests</Item>
+          <Item to="/app/professional/engagements" icon="briefcase" count={toSign}>Engagements</Item>
+          <Item to="/app/professional/earnings" icon="wallet">Earnings</Item>
         </>}
 
         {dashboards.has('firm') && <>
@@ -103,10 +110,21 @@ export default function AppShell() {
         </>}
 
         <div className="side-group">Account</div>
-        <Soon icon="mail">Messages</Soon>
-        <Item to="/app/invitations" icon="bell" count={inviteCount}>Invitations</Item>
-        <Item to="/app/account" icon="user">Settings</Item>
-        <Item to="/app/security" icon="shield">Security</Item>
+        {customer && <>
+          <Item to="/app/organisation" icon="building">Organisation</Item>
+          {customer === 'enterprise' && <Item to="/app/enterprise/structure" icon="folder">Structure &amp; Budgets</Item>}
+          <Item to="/app/verification" icon="shield">Verification</Item>
+        </>}
+        {!customer && <Soon icon="message">Messages</Soon>}
+        <Item to="/app/invitations" icon="mail" count={inviteCount}>Invitations</Item>
+        <Item to="/app/settings" icon="gear">Settings</Item>
+        <Item to="/app/help" icon="help">Help &amp; Support</Item>
+
+        <div className="side-support">
+          <strong>Need support?</strong>
+          <span>Answers about verification, contracts and payments.</span>
+          <NavLink to="/app/help" className="btn btn-sm">Get help</NavLink>
+        </div>
       </aside>
       {open && <button className="side-backdrop" aria-label="Close menu" onClick={() => setOpen(false)} />}
 
@@ -120,6 +138,7 @@ export default function AppShell() {
             <input aria-label="Search professionals" placeholder="Search professionals and services…" value={q} onChange={(e) => setQ(e.target.value)} />
           </form>
           <div style={{ flex: 1 }} />
+          <NavLink to="/app/help" className="icon-btn" aria-label="Help &amp; support"><Icon name="help" /></NavLink>
           <NavLink to="/app/invitations" className="icon-btn" aria-label={`Notifications${inviteCount ? `: ${inviteCount} new` : ''}`}>
             <Icon name="bell" />{inviteCount > 0 && <span className="dot-count">{inviteCount}</span>}
           </NavLink>
@@ -132,8 +151,9 @@ export default function AppShell() {
               <div className="badges" style={{ padding: '4px 4px 10px' }}>
                 {[...user.personas, ...user.platformRoles].map((r) => <span key={r} className="badge">{ROLE_LABEL[r] ?? r}</span>)}
               </div>
+              <NavLink to="/app/settings">Settings</NavLink>
               <NavLink to="/app/account">Profile &amp; roles</NavLink>
-              <NavLink to="/app/security">Security</NavLink>
+              <NavLink to="/app/security">Two-step verification</NavLink>
               <button onClick={async () => { await logout(); navigate('/login') }}>Sign out</button>
             </div>
           </details>
