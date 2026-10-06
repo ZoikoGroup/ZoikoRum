@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import { contractApi } from '../../api/contracts'
 import { formatMoney } from '../../api/orgs'
 import { LABEL } from '../../api/professional'
 import {
@@ -173,6 +174,7 @@ export function RequestDetailPage() {
   const [req, setReq] = useState<ProposalRequest | null>(null)
   const [members, setMembers] = useState<ProposalRequest[]>([])
   const [proposals, setProposals] = useState<Proposal[]>([])
+  const [contractId, setContractId] = useState<string | null>(null)
   const [error, setError] = useState<unknown>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -184,6 +186,8 @@ export function RequestDetailPage() {
       setReq(r)
       setMembers(all.filter((x) => x.groupId === r.groupId))
       setProposals(props)
+      const won = props.find((x) => x.status === 'ACCEPTED')
+      if (won) setContractId((await contractApi.list('buyer')).find((k) => k.proposalId === won.id)?.id ?? null)
     } catch (err) {
       setError(err)
     }
@@ -218,7 +222,8 @@ export function RequestDetailPage() {
       <ErrorAlert error={error} />
       {accepted && <div className="attention-banner ok"><span className="kpi-icon green"><Icon name="check" /></span>
         <div><strong>You accepted {accepted.professional.displayName}'s proposal ({formatMoney(accepted.total)}).</strong>
-          <div className="muted small">The terms are locked (reference {accepted.termsHash?.slice(0, 12)}…). Contract signing and escrow funding arrive in the next release.</div></div></div>}
+          <div className="muted small">The terms are locked (reference {accepted.termsHash?.slice(0, 12)}…). Next: sign the contract generated from it.</div></div>
+        {contractId && <Link className="btn btn-primary" to={`/app/engagements/${contractId}`}>View &amp; sign contract</Link>}</div>}
 
       <div className="home-grid wide">
         <div>

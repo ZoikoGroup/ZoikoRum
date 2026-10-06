@@ -677,3 +677,32 @@ ul.help-answers strong { color: var(--zk-navy); }
   .builder .input.amount, .builder .input.date { width: 100%; flex: 1; }
 }
 @media (max-width: 560px) { .choice-grid, .choice-grid.two { grid-template-columns: 1fr; } }
+
+/* ---- Engagements & contracts (Step 7) ---- */
+.bar { height: 6px; border-radius: 999px; background: var(--zk-bg); overflow: hidden; min-width: 90px; margin-bottom: 4px; }
+.bar span { display: block; height: 100%; background: var(--zk-green); border-radius: 999px; transition: width 0.3s; }
+.bar.big { height: 10px; margin-bottom: 14px; }
+.milestone-mini { list-style: none; margin: 0; padding: 0; }
+.milestone-mini li { display: grid; grid-template-columns: 40px 1fr auto auto; gap: 12px; align-items: center; padding: 9px 0;
+  border-bottom: 1px solid var(--zk-border); font-size: 14px; }
+.milestone-mini li:last-child { border-bottom: none; }
+.milestone-mini .n { font-weight: 700; color: var(--zk-blue); }
+.doc-full { margin-top: 16px; border: 1px solid var(--zk-border); border-radius: 8px; padding: 10px 14px; }
+.doc-full summary { cursor: pointer; font-weight: 600; color: var(--zk-navy); }
+pre.agreement { white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 1.6;
+  background: var(--zk-bg-soft); padding: 14px; border-radius: 6px; max-height: 520px; overflow: auto; color: var(--zk-text); }
+.sign-panel { border-top: 3px solid var(--zk-green); position: sticky; top: 84px; }
+.milestone-card { border-left: 3px solid var(--zk-border-strong); }
+.milestone-card.done { border-left-color: var(--zk-green); }
+.milestone-card .panel-head h2 { font-size: 17px; }
+.submission-list { list-style: none; margin: 12px 0 0; padding: 0; }
+.submission-list li { display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; border-radius: 6px; background: var(--zk-bg-soft);
+  margin-bottom: 6px; font-size: 14px; }
+.revise-box textarea { border: 0; outline: none; background: transparent; font: inherit; font-size: 14px; resize: vertical; width: 100%; }
+@media (max-width: 1100px) { .sign-panel { position: static; } }
+
+/* ---- Escrow funding (Step 8) ---- */
+.fund-modal { max-width: 520px; }
+.fund-list { list-style: none; margin: 0 0 14px; padding: 0; }
+.fund-list li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--zk-border); }
+.fund-list .checkbox { margin: 0; }

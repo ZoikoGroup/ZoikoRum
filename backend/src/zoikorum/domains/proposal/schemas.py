@@ -227,6 +227,7 @@ class ProposalOut(BaseModel):
     deliverables: list[Deliverable]
     milestones: list[Milestone]
     pricingModel: str
+    currency: str
     total: MoneyDTO
     startDate: date | None
     endDate: date | None

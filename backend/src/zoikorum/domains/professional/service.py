@@ -335,6 +335,19 @@ async def firm_member_removed(session: AsyncSession, firm_id: uuid.UUID, identit
         await _set_firm_link(session, pro, None)
 
 
+async def engagement_count_changed(session: AsyncSession, professional_id: uuid.UUID, delta: int) -> None:
+    """Consumer of CONTRACT_ACTIVATED (+1) and CONTRACT_COMPLETED / TERMINATED (-1). Reaching the professional's
+    maximum shows them as At capacity in search (Onboarding s.12)."""
+    pro = await session.get(Professional, professional_id, with_for_update=True)
+    if pro is None:
+        return
+    before = effective_availability(pro)
+    pro.active_engagements = max(0, pro.active_engagements + delta)
+    _evt(session, E.CAPACITY_CHANGED, pro, activeEngagements=pro.active_engagements, maxConcurrent=pro.max_concurrent_engagements,
+         availability=effective_availability(pro), availabilityChanged=before != effective_availability(pro))
+    await session.flush()
+
+
 async def set_availability(session: AsyncSession, actor: Actor, body: AvailabilityIn) -> ProfileOut:
     pro = await _mine(session, actor, lock=True)
     new = (body.availability, body.maxConcurrentEngagements, body.temporarilyUnavailable)

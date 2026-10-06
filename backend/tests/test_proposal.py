@@ -64,7 +64,7 @@ async def test_request_proposal_accept_happy_path(client, make_user, drain, sf):
     inbox = (await client.get(R, headers=pro_user.h, params={"role": "professional"})).json()["items"]
     assert [i["id"] for i in inbox] == [req["id"]] and inbox[0]["viewerRole"] == "PROFESSIONAL"
     p = (await client.post(f"{R}/{req['id']}/proposals", headers=pro_user.h, json=proposal_body())).json()
-    assert p["status"] == "DRAFT" and p["total"] == {"amountMinor": 1_500_000, "currency": "USD"}
+    assert p["status"] == "DRAFT" and p["total"] == {"amountMinor": 1_500_000, "currency": "USD"} and p["currency"] == "USD"
     assert (await client.get(f"{P}/{p['id']}", headers=buyer.h)).status_code == 404  # buyers never see drafts
 
     r = await client.post(f"{P}/{p['id']}/submit", headers=pro_user.idem())

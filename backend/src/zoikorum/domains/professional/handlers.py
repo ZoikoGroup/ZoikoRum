@@ -1,4 +1,4 @@
-"""Professional reacts to verification outcomes for its credential claims, and to firm membership changes."""
+"""Professional reacts to verification outcomes for its credential claims, firm membership changes, and engagements starting or ending (capacity)."""
 
 from __future__ import annotations
 
@@ -38,3 +38,14 @@ async def on_firm_member_joined(session: AsyncSession, event: EventEnvelope) -> 
 async def on_firm_member_removed(session: AsyncSession, event: EventEnvelope) -> None:
     p = event.payload
     await service.firm_member_removed(session, uuid.UUID(str(p["firmId"])), uuid.UUID(str(p["identityId"])))
+
+
+@subscribe(E.CONTRACT_ACTIVATED, consumer="professional.engagement_started")
+async def on_contract_activated(session: AsyncSession, event: EventEnvelope) -> None:
+    await service.engagement_count_changed(session, uuid.UUID(str(event.payload["professionalId"])), +1)
+
+
+@subscribe(E.CONTRACT_COMPLETED, consumer="professional.engagement_ended")
+@subscribe(E.CONTRACT_TERMINATED, consumer="professional.engagement_ended")
+async def on_contract_ended(session: AsyncSession, event: EventEnvelope) -> None:
+    await service.engagement_count_changed(session, uuid.UUID(str(event.payload["professionalId"])), -1)

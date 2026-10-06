@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import { ApiError } from '../api/client'
 import { formatMoney } from '../api/orgs'
 import { CURRENCIES, LABEL, toMinor } from '../api/professional'
 import {
@@ -88,7 +89,7 @@ const EMPTY = (currency: string): ProposalInput => ({
 
 const fromProposal = (p: Proposal): ProposalInput => ({
   summary: p.summary, scopeAlignment: p.scopeAlignment, scopeNotes: p.scopeNotes, deliverables: p.deliverables, milestones: p.milestones,
-  pricingModel: p.pricingModel, currency: p.currency, startDate: p.startDate, endDate: p.endDate, assumptions: p.assumptions,
+  pricingModel: p.pricingModel, currency: p.currency || p.total.currency || 'USD', startDate: p.startDate, endDate: p.endDate, assumptions: p.assumptions,
   exclusions: p.exclusions, validUntil: p.validUntil,
 })
 
@@ -121,7 +122,26 @@ export function ProfessionalRequestDetail() {
   if (!req || !form) return error ? <ErrorAlert error={error} /> : <p className="muted">Loading…</p>
   const editable = (req.status === 'OPEN' && (!proposal || proposal.status === 'DRAFT')) || proposal?.status === 'REVISION_REQUESTED'
   const set = <K extends keyof ProposalInput>(k: K, v: ProposalInput[K]) => setForm({ ...form, [k]: v })
-  const body = (): ProposalInput => ({ ...form, milestones: form.milestones.map((m, i) => ({ ...m, amountMinor: amounts[i] ? toMinor(amounts[i]) : 0 })) })
+  /** The proposal as sent: completely empty rows are ignored; anything half-filled is explained in plain words. */
+  const body = (): ProposalInput => {
+    const deliverables = form.deliverables.filter((d) => d.title.trim() || d.acceptanceCriteria.trim())
+    const keys = new Set(deliverables.map((d) => d.key))
+    const milestones = form.milestones
+      .map((m, i) => ({ ...m, amountMinor: amounts[i] ? toMinor(amounts[i]) : 0, deliverableKeys: m.deliverableKeys.filter((k) => keys.has(k)) }))
+      .filter((m) => m.title.trim() || m.amountMinor > 0)
+    const problems: string[] = []
+    deliverables.forEach((d, i) => {
+      if (d.title.trim().length < 2) problems.push(`Deliverable ${i + 1}: add a title in the first box (e.g. “Invoice automation”)`)
+      if (d.acceptanceCriteria.trim().length < 2) problems.push(`Deliverable ${i + 1}: add acceptance criteria in the second box (what “done” means)`)
+    })
+    milestones.forEach((m, i) => {
+      if (m.title.trim().length < 2) problems.push(`Milestone ${i + 1}: add a title`)
+      if (m.amountMinor <= 0) problems.push(`Milestone ${i + 1}: add an amount`)
+      if (m.deliverableKeys.length === 0) problems.push(`Milestone ${i + 1}: tick the deliverable(s) it delivers`)
+    })
+    if (problems.length) throw new Error(`Please fix: ${problems.join(' · ')}`)
+    return { ...form, deliverables, milestones }
+  }
   const total = form.milestones.reduce((s, _, i) => s + (amounts[i] ? toMinor(amounts[i]) : 0), 0)
 
   async function run(fn: () => Promise<unknown>, msg: string) {
@@ -130,7 +150,24 @@ export function ProfessionalRequestDetail() {
     setNotice(null)
     try { await fn(); setNotice(msg); await load() } catch (err) { setError(err) } finally { setBusy(false) }
   }
-  const save = async (): Promise<Proposal> => (proposal ? proposalApi.updateProposal(proposal.id, body()) : proposalApi.createProposal(req.id, body()))
+  /** Saves the draft and remembers it, so a failed submit never leaves the page thinking no draft exists. */
+  const save = async (): Promise<Proposal> => {
+    const b = body()
+    let saved: Proposal
+    if (proposal) {
+      saved = await proposalApi.updateProposal(proposal.id, b)
+    } else {
+      try {
+        saved = await proposalApi.createProposal(req.id, b)
+      } catch (err) {
+        if (!(err instanceof ApiError && err.code === 'PROPOSAL_EXISTS')) throw err
+        const existing = (await proposalApi.proposals(req.id))[0]
+        saved = await proposalApi.updateProposal(existing.id, b)
+      }
+    }
+    setProposal(saved)
+    return saved
+  }
   const nextKey = () => `d${Math.max(0, ...form.deliverables.map((d) => Number(d.key.slice(1)) || 0)) + 1}`
   const setDeliverable = (i: number, patch: Partial<Deliverable>) => set('deliverables', form.deliverables.map((d, j) => (j === i ? { ...d, ...patch } : d)))
   const lastRevision = proposal?.revisionRequests[proposal.revisionRequests.length - 1]
@@ -293,7 +330,7 @@ function SentProposal({ p, busy, onWithdraw }: { p: Proposal; busy: boolean; onW
           <td>{formatMoney({ amountMinor: m.amountMinor, currency: p.currency })}</td></tr>)}</tbody></table>
       <p style={{ marginTop: 12 }}><strong>Total {formatMoney(p.total)}</strong> · {fmtDate(p.startDate)} – {fmtDate(p.endDate)} · valid until {fmtDate(p.validUntil)}</p>
       {p.status === 'ACCEPTED' && <div className="protect-note"><Icon name="check" /><div><strong>Accepted by the buyer.</strong>
-        <div className="small">Contract signing and escrow funding arrive in the next release.</div></div></div>}
+        <div className="small">The buyer signs the contract first, then you countersign. <Link to="/app/professional/engagements">Go to Engagements</Link></div></div></div>}
       {['SUBMITTED', 'UNDER_REVIEW'].includes(p.status) && <div className="row"><button className="btn btn-ghost btn-sm danger-text" disabled={busy} onClick={onWithdraw}>Withdraw proposal</button></div>}
     </section>
   )

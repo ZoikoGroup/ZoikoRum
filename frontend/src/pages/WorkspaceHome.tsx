@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { firmApi, orgApi, type Organization } from '../api/orgs'
 import { LABEL } from '../api/professional'
 import { formatMoney } from '../api/orgs'
+import { CONTRACT_STATUS, contractApi, type Contract } from '../api/contracts'
 import { proposalApi, requestStatus, type ProposalRequest } from '../api/proposals'
 import { savedApi, type SavedProfessional } from '../api/saved'
 import { useAuth } from '../auth/AuthContext'
@@ -14,10 +15,8 @@ import { AccountAlerts } from './Dashboards'
    attention strip, engagements, assurance, requests & proposals, saved professionals). Real data only;
    modules waiting on later steps show what will appear there. */
 
-const ENGAGEMENT_TABS = [
-  { key: 'all', label: 'All', count: 0 }, { key: 'proposal', label: 'Proposal', count: 0 }, { key: 'contract', label: 'Contract', count: 0 },
-  { key: 'progress', label: 'In Progress', count: 0 }, { key: 'review', label: 'Under Review', count: 0 }, { key: 'done', label: 'Completed', count: 0 },
-] as const
+type EngTab = 'all' | 'signing' | 'active' | 'completed'
+const engBucket = (c: Contract): EngTab => (c.status === 'PENDING_SIGNATURE' ? 'signing' : c.status === 'ACTIVE' ? 'active' : 'completed')
 type ReqTab = 'all' | 'open' | 'proposals' | 'accepted' | 'declined'
 const reqBucket = (r: ProposalRequest): ReqTab => {
   const s = r.proposal?.status
@@ -46,7 +45,8 @@ export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
   const [units, setUnits] = useState<number | null>(null)
   const [hasExceptionAuthority, setHasExceptionAuthority] = useState(true)
   const [saved, setSaved] = useState<SavedProfessional[]>([])
-  const [engTab, setEngTab] = useState<(typeof ENGAGEMENT_TABS)[number]['key']>('all')
+  const [engTab, setEngTab] = useState<EngTab>('all')
+  const [contracts, setContracts] = useState<Contract[]>([])
   const [reqTab, setReqTab] = useState<ReqTab>('all')
   const [requests, setRequests] = useState<ProposalRequest[]>([])
   const [hideBanner, setHideBanner] = useState(false)
@@ -63,9 +63,9 @@ export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
           if (found) { setOrg(found); break }
           await new Promise((r) => setTimeout(r, 800))
         }
-        const [o, f, s, rq] = await Promise.all([orgApi.myInvitations(), firmApi.myInvitations(), savedApi.list(),
-          proposalApi.list('buyer').catch(() => [])])
-        if (!cancelled) { setMyInvites(o.length + f.length); setSaved(s); setRequests(rq) }
+        const [o, f, s, rq, ct] = await Promise.all([orgApi.myInvitations(), firmApi.myInvitations(), savedApi.list(),
+          proposalApi.list('buyer').catch(() => []), contractApi.list('buyer').catch(() => [])])
+        if (!cancelled) { setMyInvites(o.length + f.length); setSaved(s); setRequests(rq); setContracts(ct) }
       } catch { /* each panel shows its own empty state */ }
       if (!cancelled) setLoading(false)
     })()
@@ -95,6 +95,10 @@ export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
     if (units === 0) actions.push({ title: 'Add business units and cost centers', detail: 'Used for budgets and approval routing', priority: 'Low', to: '/app/enterprise/structure', icon: 'building' })
     if (orgInvites > 0) actions.push({ title: `${orgInvites} invitation${orgInvites > 1 ? 's' : ''} not yet accepted`, detail: 'Remind your colleagues or resend', priority: 'Low', to: '/app/organisation?tab=members', icon: 'mail' })
   }
+  const toSign = contracts.filter((c) => c.canSign)
+  if (toSign.length > 0) actions.unshift({ title: `Sign the contract: ${toSign[0].title}`, detail: `${toSign[0].reference} · then the professional countersigns`, priority: 'High', to: `/app/engagements/${toSign[0].id}`, icon: 'contract' })
+  const toApprove = contracts.flatMap((c) => c.milestones.filter((m) => m.status === 'SUBMITTED').map((m) => ({ c, m })))
+  if (toApprove.length > 0) actions.unshift({ title: `Review submitted work: M${toApprove[0].m.sequence} ${toApprove[0].m.title}`, detail: toApprove[0].c.title, priority: 'High', to: `/app/engagements/${toApprove[0].c.id}`, icon: 'check' })
   const toReview = requests.filter((r) => r.proposal && ['SUBMITTED', 'UNDER_REVIEW'].includes(r.proposal.status))
   if (toReview.length > 0) actions.unshift({ title: `Review ${toReview.length} proposal${toReview.length > 1 ? 's' : ''}`, detail: `${toReview[0].professional.displayName} replied to “${toReview[0].service}”`, priority: 'High', to: `/app/requests/${toReview[0].id}`, icon: 'proposal' })
   const drafts = requests.filter((r) => r.status === 'DRAFT')
@@ -117,8 +121,11 @@ export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
         <StatCard icon="request" tone="blue" label="Open Requests" value={new Set(requests.filter((r) => ['OPEN', 'PROPOSAL_RECEIVED'].includes(r.status)).map((r) => r.groupId)).size}
           sub="Waiting for or receiving proposals" to="/app/requests" />
         <StatCard icon="proposal" tone="violet" label="Proposals" value={toReview.length} sub="Awaiting your review" to="/app/proposals" />
-        <StatCard icon="briefcase" tone="green" label="Active Engagements" value={0} sub="In progress" to="/app/engagements" />
-        <StatCard icon="lock" tone="teal" label="Protected Funds" value="—" sub="Live when payments launch" to="/app/payments" />
+        <StatCard icon="briefcase" tone="green" label="Active Engagements" value={contracts.filter((c) => c.status === 'ACTIVE').length}
+          sub={toSign.length ? `${toSign.length} awaiting your signature` : 'In progress'} to="/app/engagements" />
+        <StatCard icon="lock" tone="teal" label="Protected Funds" to="/app/payments" sub="In escrow, until you accept"
+          value={(() => { const held = contracts.flatMap((c) => c.milestones.filter((m) => ['IN_PROGRESS', 'SUBMITTED', 'REVISION_REQUESTED'].includes(m.status)))
+            return held.length ? formatMoney({ amountMinor: held.reduce((s, m) => s + m.amount.amountMinor, 0), currency: held[0].amount.currency }) : formatMoney({ amountMinor: 0, currency: contracts[0]?.total.currency ?? 'USD' }) })()} />
       </div>
 
       {urgent.length > 0 && !hideBanner && (
@@ -135,11 +142,26 @@ export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
         <div>
           <section className="card panel" id="engagements">
             <div className="panel-head"><h2>Your Engagements</h2><Link className="small" to="/app/engagements">View all</Link></div>
-            <Tabs tabs={[...ENGAGEMENT_TABS]} value={engTab} onChange={setEngTab} />
-            <EmptyTable columns={['Professional', 'Service', 'Stage', 'Next action', 'Due date', 'Protected amount']}>
-              <strong>No engagements yet.</strong> When a proposal is accepted and the contract signed, its milestones,
-              next action and protected amount appear here.
-            </EmptyTable>
+            <Tabs<EngTab> tabs={(['all', 'signing', 'active', 'completed'] as const).map((k) => ({ key: k,
+              label: { all: 'All', signing: 'Awaiting signature', active: 'In progress', completed: 'Completed' }[k],
+              count: k === 'all' ? contracts.length : contracts.filter((c) => engBucket(c) === k).length }))} value={engTab} onChange={setEngTab} />
+            {contracts.filter((c) => engTab === 'all' || engBucket(c) === engTab).length === 0 ? (
+              <EmptyTable columns={['Professional', 'Service', 'Stage', 'Next action', 'Value']}>
+                <strong>No engagements here.</strong> When you accept a proposal, its contract appears here for signing.
+              </EmptyTable>
+            ) : (
+              <table className="data">
+                <thead><tr><th>Professional</th><th>Service</th><th>Stage</th><th>Next action</th><th>Value</th></tr></thead>
+                <tbody>{contracts.filter((c) => engTab === 'all' || engBucket(c) === engTab).slice(0, 6).map((c) => (
+                  <tr key={c.id}>
+                    <td className="small">{c.parties.find((p) => p.role === 'PROFESSIONAL')?.name}</td>
+                    <td><Link to={`/app/engagements/${c.id}`}><strong>{c.title}</strong></Link></td>
+                    <td><span className={`badge ${CONTRACT_STATUS[c.status].tone}`}>{CONTRACT_STATUS[c.status].label}</span></td>
+                    <td className="small">{c.nextAction}</td>
+                    <td className="small">{formatMoney(c.total)}</td>
+                  </tr>))}</tbody>
+              </table>
+            )}
           </section>
 
           <section className="card panel" id="requests">

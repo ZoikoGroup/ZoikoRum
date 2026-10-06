@@ -74,7 +74,11 @@ an explanation of how the step will work. Nothing is invented: no wallet balance
 | `/app/requests/new?pro=…&pro=…` | Buyer, Enterprise | Request a proposal (5 steps: context, scope, commercial, protections, review); 1–3 professionals |
 | `/app/requests`, `/app/requests/:id`, `/app/proposals` | Buyer, Enterprise | Requests and received proposals; side-by-side comparison, request revision, decline, accept |
 | `/app/professional/requests`, `/app/professional/requests/:id` | Professional | Incoming requests inbox; NDA; proposal builder (deliverables, milestones, dates, terms); decline with reason; withdraw |
-| `/app/engagements`, `/app/payments`, `/app/messages` | Buyer, Enterprise | Layout and empty states until Steps 7–8 |
+| `/app/engagements`, `/app/engagements/:id` | Buyer, Enterprise | Contracts: review the agreement, sign (two-step), milestones (review submitted work, request revision, accept), activity |
+| `/app/professional/engagements`, `/app/professional/engagements/:id` | Professional | Countersign, deliver milestones (note + file fingerprints), resubmit after revision |
+| `/app/payments` | Buyer, Enterprise | Payments & Protection: escrow per engagement, payments into escrow, invoices (test mode) |
+| `/app/professional/earnings` | Professional | Payout account (two-step), payouts with gross / fee / net |
+| `/app/messages` | Buyer, Enterprise | Layout until messaging exists |
 | `/app/organisation?tab=` | Buyer, Enterprise | Profile (name, industry, time zone), members & access, roles & authority, billing contacts, audit log + CSV export |
 | `/app/verification` | Buyer, Enterprise | Verification status of the professionals on your shortlist; what each check and Tier means |
 | `/app/settings?tab=` | everyone | Account, security (password, two-step, signed-in devices), notifications, privacy requests, platform preferences |

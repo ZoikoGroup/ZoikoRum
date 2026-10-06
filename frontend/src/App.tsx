@@ -26,7 +26,9 @@ import FindProfessionals from './pages/customer/FindProfessionals'
 import HelpPage from './pages/customer/Help'
 import OrganisationPage from './pages/customer/Organisation'
 import { ProposalsPage, RequestDetailPage, RequestsPage } from './pages/customer/CustomerRequests'
-import { EngagementsPage, MessagesPage, PaymentsPage } from './pages/customer/Pipeline'
+import { MessagesPage } from './pages/customer/Pipeline'
+import { CustomerPaymentsPage, EarningsPage } from './pages/Money'
+import { EngagementDetail, EngagementsPage } from './pages/Engagements'
 import RequestWizard from './pages/customer/RequestWizard'
 import { ProfessionalRequestDetail, ProfessionalRequestsPage } from './pages/ProfessionalRequests'
 import SavedProfessionals from './pages/customer/SavedProfessionals'
@@ -58,6 +60,8 @@ export default function App() {
             <Route path="buyer" element={<RequireRole any={['BUYER']}><BuyerHome /></RequireRole>} />
             <Route path="professional" element={<RequireRole any={['PROFESSIONAL']}><ProfessionalDashboard /></RequireRole>} />
             <Route path="professional/profile" element={<RequireRole any={['PROFESSIONAL']}><ProfileSetupPage /></RequireRole>} />
+            <Route path="professional/engagements" element={<RequireRole any={['PROFESSIONAL']}><EngagementsPage side="professional" /></RequireRole>} />
+            <Route path="professional/engagements/:id" element={<RequireRole any={['PROFESSIONAL']}><EngagementDetail side="professional" /></RequireRole>} />
             <Route path="professional/requests" element={<RequireRole any={['PROFESSIONAL']}><ProfessionalRequestsPage /></RequireRole>} />
             <Route path="professional/requests/:id" element={<RequireRole any={['PROFESSIONAL']}><ProfessionalRequestDetail /></RequireRole>} />
             <Route path="professional/offerings" element={<RequireRole any={['PROFESSIONAL']}><OfferingsPage /></RequireRole>} />
@@ -75,8 +79,10 @@ export default function App() {
             <Route path="requests/new" element={<RequireRole any={CUSTOMER}><RequestWizard /></RequireRole>} />
             <Route path="requests/:id" element={<RequireRole any={CUSTOMER}><RequestDetailPage /></RequireRole>} />
             <Route path="proposals" element={<RequireRole any={CUSTOMER}><ProposalsPage /></RequireRole>} />
-            <Route path="engagements" element={<RequireRole any={CUSTOMER}><EngagementsPage /></RequireRole>} />
-            <Route path="payments" element={<RequireRole any={CUSTOMER}><PaymentsPage /></RequireRole>} />
+            <Route path="engagements" element={<RequireRole any={CUSTOMER}><EngagementsPage side="buyer" /></RequireRole>} />
+            <Route path="engagements/:id" element={<RequireRole any={CUSTOMER}><EngagementDetail side="buyer" /></RequireRole>} />
+            <Route path="payments" element={<RequireRole any={CUSTOMER}><CustomerPaymentsPage /></RequireRole>} />
+            <Route path="professional/earnings" element={<RequireRole any={['PROFESSIONAL']}><EarningsPage /></RequireRole>} />
             <Route path="messages" element={<RequireRole any={CUSTOMER}><MessagesPage /></RequireRole>} />
             <Route path="organisation" element={<RequireRole any={CUSTOMER}><OrganisationPage /></RequireRole>} />
             <Route path="verification" element={<RequireRole any={CUSTOMER}><CustomerVerification /></RequireRole>} />

@@ -138,5 +138,6 @@ export const firmApi = {
 
 export function formatMoney(m: Money | null | undefined): string {
   if (!m) return '—'
+  if (!/^[A-Z]{3}$/.test(m.currency ?? '')) return (m.amountMinor / 100).toLocaleString(undefined, { maximumFractionDigits: 2 })
   return new Intl.NumberFormat(undefined, { style: 'currency', currency: m.currency, maximumFractionDigits: 0 }).format(m.amountMinor / 100)
 }

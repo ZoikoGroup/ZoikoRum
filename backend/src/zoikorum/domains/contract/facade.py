@@ -1,4 +1,4 @@
-"""Contract facade - CONTRACT. Signatures and DTOs are fixed; implement bodies."""
+"""Contract facade - CONTRACT. Signatures and DTOs are fixed."""
 
 from __future__ import annotations
 
@@ -6,7 +6,10 @@ import uuid
 from dataclasses import dataclass
 from datetime import date, datetime
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from zoikorum.domains.contract.models import Contract, Milestone
 
 
 @dataclass(frozen=True)
@@ -39,13 +42,26 @@ class ContractSummary:
     milestones: tuple[MilestoneSummary, ...]
 
 
+def _milestone(m: Milestone) -> MilestoneSummary:
+    return MilestoneSummary(m.id, m.contract_id, m.sequence, m.title, m.amount_minor, m.currency, m.status, m.due_date, m.accepted_at)
+
+
+async def _summary(session: AsyncSession, c: Contract | None) -> ContractSummary | None:
+    if c is None:
+        return None
+    ms = (await session.scalars(select(Milestone).where(Milestone.contract_id == c.id).order_by(Milestone.sequence))).all()
+    return ContractSummary(c.id, c.proposal_id, c.request_id, c.organization_id, c.buyer_identity_id, c.professional_id, c.status,
+                           c.currency, c.total_minor, c.terms_hash, c.contract_version, None, tuple(_milestone(m) for m in ms))
+
+
 async def get_contract(session: AsyncSession, contract_id: uuid.UUID) -> ContractSummary | None:
-    raise NotImplementedError
+    return await _summary(session, await session.get(Contract, contract_id))
 
 
 async def get_contract_by_proposal(session: AsyncSession, proposal_id: uuid.UUID) -> ContractSummary | None:
-    raise NotImplementedError
+    return await _summary(session, await session.scalar(select(Contract).where(Contract.proposal_id == proposal_id)))
 
 
 async def get_milestone(session: AsyncSession, milestone_id: uuid.UUID) -> MilestoneSummary | None:
-    raise NotImplementedError
+    m = await session.get(Milestone, milestone_id)
+    return _milestone(m) if m else None

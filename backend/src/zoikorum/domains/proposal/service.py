@@ -256,7 +256,7 @@ async def _proposals_out(session: AsyncSession, rows: list[Proposal]) -> list[Pr
         id=p.id, requestId=p.request_id, groupId=reqs[p.request_id].group_id, organizationId=p.organization_id,
         professional=briefs[p.professional_id], status="EXPIRED" if _expired(p) else p.status, summary=p.summary,
         scopeAlignment=p.scope_alignment, scopeNotes=p.scope_notes, deliverables=p.deliverables, milestones=p.milestones,
-        pricingModel=p.pricing_model, total=_total(p), startDate=p.start_date, endDate=p.end_date, assumptions=p.assumptions,
+        pricingModel=p.pricing_model, currency=p.currency, total=_total(p), startDate=p.start_date, endDate=p.end_date, assumptions=p.assumptions,
         exclusions=p.exclusions, validUntil=p.valid_until, expired=_expired(p), revisionRequests=p.revision_requests,
         revisionCount=p.revision_count, submittedAt=p.submitted_at, decidedAt=p.decided_at, reasonCode=p.reason_code,
         reasonNote=p.reason_note, termsHash=p.terms_hash, deltas=_deltas(reqs[p.request_id], p),
@@ -657,7 +657,8 @@ async def accept_proposal(session: AsyncSession, actor: Actor, proposal_id: uuid
     _close_request(r, "CLOSED", "PROPOSAL_ACCEPTED")
     _prop_evt(session, E.PROPOSAL_ACCEPTED, p, buyerIdentityId=p.buyer_identity_id, engagementType=r.engagement_type,
               currency=p.currency, totalMinor=p.total_minor, policyVersionId=None, policyVersionLabel=POLICY_LABEL,
-              termsHash=p.terms_hash, terms=terms)
+              termsHash=p.terms_hash, terms=terms, service=r.service, ndaRequired=r.nda_required,
+              pricingModel=p.pricing_model, summary=p.summary)
 
     # Accepting one proposal closes the same requirement sent to other professionals.
     siblings = (await session.scalars(select(ProposalRequest).where(

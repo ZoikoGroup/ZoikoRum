@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = True
     storage_dir: str = "var/storage"  # LocalDiskStorage root (development); S3 bucket in production
 
+    # Contracts (Step 7). Platform defaults until enterprise policy profiles can override them.
+    signature_deadline_days: int = 7  # unsigned contracts escalate after this
+    acceptance_window_days: int = 5  # buyer's review window after a milestone is submitted
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -7,6 +7,8 @@ import {
   RATE_UNIT_LABEL, RATE_UNITS, proApi, taxonomyApi, toMajor, toMinor,
   type Availability, type Credential, type Offering, type Profile, type Readiness, type TaxonomyCategory,
 } from '../api/professional'
+import { CONTRACT_STATUS, contractApi, type Contract } from '../api/contracts'
+import { paymentsApi, type Earnings } from '../api/escrow'
 import { budgetText, proposalApi, requestStatus, type ProposalRequest } from '../api/proposals'
 import { DIMENSION_VALUE, DIMENSIONS, trustApi, verificationApi, type Trust, type VerificationCase } from '../api/verification'
 import { useAuth } from '../auth/AuthContext'
@@ -140,6 +142,8 @@ export function ProfessionalDashboard() {
   const [trust, setTrust] = useState<Trust | null>(null)
   const [cases, setCases] = useState<VerificationCase[]>([])
   const [requests, setRequests] = useState<ProposalRequest[]>([])
+  const [contracts, setContracts] = useState<Contract[]>([])
+  const [earnings, setEarnings] = useState<Earnings | null>(null)
   const [actionError, setActionError] = useState<unknown>(null)
 
   const load = useCallback(async () => {
@@ -148,6 +152,8 @@ export function ProfessionalDashboard() {
       verificationApi.forSubject('PROFESSIONAL', profile.id)])
     setReadiness(r); setOfferings(o); setTrust(t); setCases(v)
     setRequests(await proposalApi.list('professional').catch(() => []))
+    setContracts(await contractApi.list('professional').catch(() => []))
+    setEarnings(await paymentsApi.earnings().catch(() => null))
   }, [profile])
   useEffect(() => { load().catch(() => {}) }, [load])
 
@@ -163,10 +169,23 @@ export function ProfessionalDashboard() {
     startingPrice: o.startingPrice, typicalDuration: o.typicalDuration ?? undefined,
   }))
 
+  const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime()
+  const monthPaid = (earnings?.payouts ?? []).filter((p) => p.status === 'SETTLED' && p.settledAt && new Date(p.settledAt).getTime() >= monthStart)
+    .reduce((s, p) => s + p.net.amountMinor, 0)
   const soon = Date.now() + 30 * 86400_000
   const expiring = cases.filter((c) => c.status === 'VERIFIED' && c.expiresAt && new Date(c.expiresAt).getTime() < soon)
   const actions: Action[] = []
   const newRequests = requests.filter((r) => r.status === 'OPEN')
+  for (const k of contracts.filter((k) => k.canSign)) {
+    actions.push({ title: `Countersign the contract: ${k.title}`, detail: `${k.reference} · the buyer has signed`, priority: 'High',
+      to: `/app/professional/engagements/${k.id}`, icon: 'contract' })
+  }
+  for (const k of contracts) {
+    for (const m of k.milestones.filter((m) => m.status === 'IN_PROGRESS' || m.status === 'REVISION_REQUESTED')) {
+      actions.push({ title: `${m.status === 'IN_PROGRESS' ? 'Deliver' : 'Revise'} M${m.sequence}: ${m.title}`, detail: k.title, priority: 'High',
+        to: `/app/professional/engagements/${k.id}`, icon: 'check' })
+    }
+  }
   const revisions = requests.filter((r) => r.proposal?.status === 'REVISION_REQUESTED')
   for (const q of revisions) {
     actions.push({ title: `Revise your proposal: ${q.service}`, detail: `${q.organizationName ?? 'The buyer'} asked for changes`,
@@ -219,11 +238,11 @@ export function ProfessionalDashboard() {
         <>
           {/* Summary cards (max 6) */}
           <div className="kpi-row six">
-            <a href="#engagements"><Kpi icon="contract" tone="blue" label="Active Engagements" value={0} note="Contracts in progress" /></a>
+            <Link to="/app/professional/engagements"><Kpi icon="contract" tone="blue" label="Active Engagements" value={contracts.filter((k) => k.status === 'ACTIVE').length} note="Contracts in progress" /></Link>
             <Link to="/app/professional/requests"><Kpi icon="proposal" tone="violet" label="New Requests" value={newRequests.length} note="From buyers" /></Link>
             <a href="#actions"><Kpi icon="bell" tone="amber" label="Pending Actions" value={actions.length} note={actions.length ? 'Needs your attention' : 'All caught up'} /></a>
             <a href="#engagements"><Kpi icon="clock" tone="teal" label="Upcoming Milestones" value={0} note="Next 14 days" /></a>
-            <a href="#earnings"><Kpi icon="check" tone="green" label="Earnings This Month" value="—" note="Live when payments launch" /></a>
+            <Link to="/app/professional/earnings"><Kpi icon="check" tone="green" label="Earnings This Month" value={earnings ? formatMoney({ amountMinor: monthPaid, currency: earnings.totals.settled.currency }) : '—'} note="Paid out, after fees" /></Link>
             <a href="#verification"><Kpi icon="shield" tone={trust?.tier === 'C' ? 'amber' : 'green'} label="Verification Status"
               value={trust ? `Tier ${trust.tier}` : '—'} note={trust?.tierLabel ?? 'Loading…'} /></a>
           </div>
@@ -278,12 +297,19 @@ export function ProfessionalDashboard() {
               </section>
 
               <section className="card panel" id="engagements">
-                <div className="panel-head"><h2>Active Engagements</h2></div>
+                <div className="panel-head"><h2>Engagements</h2><Link className="small" to="/app/professional/engagements">View all</Link></div>
                 <table className="data">
-                  <thead><tr><th>Buyer</th><th>Service</th><th>Status</th><th>Milestone</th><th>Payment</th><th>Actions</th></tr></thead>
-                  <tbody><tr><td colSpan={6} className="empty-row">
-                    <strong>No active engagements.</strong> Signed contracts, milestones and submissions appear here.
-                  </td></tr></tbody>
+                  <thead><tr><th>Buyer</th><th>Service</th><th>Status</th><th>Value</th><th>Next action</th></tr></thead>
+                  <tbody>{contracts.length === 0 ? <tr><td colSpan={5} className="empty-row">
+                    <strong>No engagements yet.</strong> When a buyer accepts your proposal, the contract appears here for signing.
+                  </td></tr> : contracts.slice(0, 5).map((k) => (
+                    <tr key={k.id}>
+                      <td className="small">{k.parties.find((p) => p.role === 'BUYER')?.name}</td>
+                      <td><Link to={`/app/professional/engagements/${k.id}`}><strong>{k.title}</strong></Link></td>
+                      <td><span className={`badge ${CONTRACT_STATUS[k.status].tone}`}>{CONTRACT_STATUS[k.status].label}</span></td>
+                      <td className="small">{formatMoney(k.total)}</td>
+                      <td className="small">{k.canSign ? <Link className="btn btn-primary btn-sm" to={`/app/professional/engagements/${k.id}`}>Countersign</Link> : k.nextAction}</td>
+                    </tr>))}</tbody>
                 </table>
               </section>
             </div>
@@ -296,11 +322,13 @@ export function ProfessionalDashboard() {
               <section className="card panel" id="earnings">
                 <div className="panel-head"><h2>Earnings &amp; Payouts</h2></div>
                 <ul className="checklist">
-                  <li><span>Earnings this month</span><strong>—</strong></li>
-                  <li><span>Pending release</span><strong>—</strong></li>
-                  <li><span>Lifetime earnings</span><strong>—</strong></li>
+                  <li><span>Paid out this month</span><strong>{earnings ? formatMoney({ amountMinor: monthPaid, currency: earnings.totals.settled.currency }) : '—'}</strong></li>
+                  <li><span>Waiting for payout</span><strong>{earnings ? formatMoney(earnings.totals.pending) : '—'}</strong></li>
+                  <li><span>Lifetime paid out</span><strong>{earnings ? formatMoney(earnings.totals.settled) : '—'}</strong></li>
                 </ul>
-                <p className="muted small" style={{ margin: '8px 0 0' }}>Live when payments launch: money is released from escrow when buyers accept milestones.</p>
+                <p className="muted small" style={{ margin: '8px 0 0' }}>{earnings && !earnings.payoutAccount
+                  ? <>Add a <Link to="/app/professional/earnings">payout account</Link> so released money can be paid to you.</>
+                  : <>Money is released from escrow when buyers accept milestones. <Link to="/app/professional/earnings">View earnings</Link></>}</p>
               </section>
               {trust && (
                 <section className="card panel" id="verification">

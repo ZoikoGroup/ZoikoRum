@@ -18,12 +18,15 @@ Migrations: `backend/alembic/versions/` (`alembic upgrade head`).
 - [marketplace](#schema-marketplace) — 4 tables
 - [search](#schema-search) — 1 tables
 - [proposal](#schema-proposal) — 2 tables
+- [contract](#schema-contract) — 4 tables
+- [escrow](#schema-escrow) — 5 tables
+- [payments](#schema-payments) — 4 tables
 - [verification](#schema-verification) — 2 tables
 - [trust](#schema-trust) — 3 tables
 - [audit](#schema-audit) — 2 tables
 - [notification](#schema-notification) — 1 tables
 
-Schemas reserved for domains not built yet: `contract`, `escrow`, `payments`, `policy`, `dispute`, `messaging`, `ai`, `admin`, `analytics`.
+Schemas reserved for domains not built yet: `policy`, `dispute`, `messaging`, `ai`, `admin`, `analytics`.
 
 <a id="schema-platform"></a>
 ## Schema `platform`
@@ -649,6 +652,297 @@ DRAFT -> OPEN -> PROPOSAL_RECEIVED -> CLOSED; OPEN -> DECLINED; any open state -
 | `updated_at` | DATETIME | no |  |
 | `created_at` | DATETIME | no |  |
 | `version` | BIGINT | no |  |
+
+<a id="schema-contract"></a>
+## Schema `contract`
+
+### `contract.contracts`
+
+PENDING_SIGNATURE -> ACTIVE -> COMPLETED | TERMINATED; ACTIVE <-> DISPUTED. One per accepted proposal.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `reference` | varchar(20) | no | unique |
+| `proposal_id` | UUID | no | unique |
+| `request_id` | UUID | no |  |
+| `organization_id` | UUID | no |  |
+| `buyer_identity_id` | UUID | no |  |
+| `professional_id` | UUID | no |  |
+| `firm_id` | UUID | yes |  |
+| `title` | varchar(200) | no |  |
+| `engagement_type` | varchar(20) | no |  |
+| `pricing_model` | varchar(20) | yes |  |
+| `status` | varchar(30) | no |  |
+| `currency` | varchar(3) | no |  |
+| `total_minor` | BIGINT | no |  |
+| `terms` | JSONB | no |  |
+| `terms_hash` | varchar(64) | no |  |
+| `contract_version` | INTEGER | no |  |
+| `parties` | JSONB | no |  |
+| `nda_required` | BOOLEAN | no |  |
+| `document` | TEXT | no |  |
+| `document_sha256` | varchar(64) | no |  |
+| `policy_version_label` | varchar(80) | no |  |
+| `signature_deadline` | DATETIME | no |  |
+| `activated_at` | DATETIME | yes |  |
+| `completed_at` | DATETIME | yes |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+| `version` | BIGINT | no |  |
+
+### `contract.milestones`
+
+PENDING_FUNDING -> IN_PROGRESS -> SUBMITTED -> (REVISION_REQUESTED -> SUBMITTED) -> ACCEPTED. No work before funding.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `contract_id` | UUID | no | FK → contract.contracts.id, indexed |
+| `sequence` | INTEGER | no |  |
+| `title` | varchar(200) | no |  |
+| `description` | varchar(1000) | no |  |
+| `amount_minor` | BIGINT | no |  |
+| `currency` | varchar(3) | no |  |
+| `due_date` | DATE | yes |  |
+| `deliverable_keys` | JSONB | no |  |
+| `status` | varchar(30) | no |  |
+| `started_at` | DATETIME | yes |  |
+| `submitted_at` | DATETIME | yes |  |
+| `acceptance_due_at` | DATETIME | yes |  |
+| `accepted_at` | DATETIME | yes |  |
+| `accepted_by` | UUID | yes |  |
+| `revision_count` | INTEGER | no |  |
+| `last_revision_reason` | varchar(1000) | yes |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+| `version` | BIGINT | no |  |
+
+Unique together: (contract_id, sequence)
+
+### `contract.signatures` — append-only
+
+Append-only receipt: who signed which version and terms, how strongly authenticated, from where.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `contract_id` | UUID | no | FK → contract.contracts.id, indexed |
+| `contract_version` | INTEGER | no |  |
+| `party` | varchar(20) | no |  |
+| `signer_identity_id` | UUID | no |  |
+| `signer_name` | varchar(200) | no |  |
+| `terms_hash` | varchar(64) | no |  |
+| `auth_strength` | varchar(20) | no |  |
+| `ip` | varchar(64) | yes |  |
+| `signed_at` | DATETIME | no |  |
+| `id` | UUID | no | PK |
+| `created_at` | DATETIME | no |  |
+
+Unique together: (contract_id, contract_version, party)
+
+### `contract.submissions`
+
+A professional's delivery for a milestone: a note plus file fingerprints. Never edited; resubmitting adds a row.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `milestone_id` | UUID | no | FK → contract.milestones.id, indexed |
+| `submitted_by` | UUID | no |  |
+| `note` | varchar(2000) | no |  |
+| `files` | JSONB | no |  |
+| `id` | UUID | no | PK |
+| `created_at` | DATETIME | no |  |
+
+<a id="schema-escrow"></a>
+## Schema `escrow`
+
+### `escrow.accounts`
+
+UNFUNDED -> FUNDED -> PARTIALLY_RELEASED -> FULLY_RELEASED (DISPUTED / REFUNDED / CLOSED arrive with disputes).
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `contract_id` | UUID | no | unique |
+| `organization_id` | UUID | no | indexed |
+| `professional_id` | UUID | no | indexed |
+| `currency` | varchar(3) | no |  |
+| `total_minor` | BIGINT | no |  |
+| `status` | varchar(30) | no |  |
+| `funded_minor` | BIGINT | no |  |
+| `held_minor` | BIGINT | no |  |
+| `on_hold_minor` | BIGINT | no |  |
+| `released_minor` | BIGINT | no |  |
+| `refunded_minor` | BIGINT | no |  |
+| `fees_minor` | BIGINT | no |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+| `version` | BIGINT | no |  |
+
+### `escrow.allocations`
+
+UNFUNDED -> FUNDING -> HELD -> RELEASED (ON_HOLD / REFUNDED arrive with disputes). FUNDING -> UNFUNDED on payment failure.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `account_id` | UUID | no | FK → escrow.accounts.id, indexed |
+| `milestone_id` | UUID | no | unique |
+| `sequence` | INTEGER | no |  |
+| `title` | varchar(200) | no |  |
+| `amount_minor` | BIGINT | no |  |
+| `state` | varchar(30) | no |  |
+| `funding_id` | UUID | yes |  |
+| `released_minor` | BIGINT | no |  |
+| `fee_minor` | BIGINT | no |  |
+| `refunded_minor` | BIGINT | no |  |
+| `funded_at` | DATETIME | yes |  |
+| `released_at` | DATETIME | yes |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+| `version` | BIGINT | no |  |
+
+### `escrow.fundings`
+
+A buyer's request to fund one or more milestones. REQUESTED -> CAPTURED | FAILED.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `account_id` | UUID | no | FK → escrow.accounts.id |
+| `organization_id` | UUID | no |  |
+| `requested_by` | UUID | no |  |
+| `milestone_ids` | JSONB | no |  |
+| `amount_minor` | BIGINT | no |  |
+| `currency` | varchar(3) | no |  |
+| `status` | varchar(20) | no |  |
+| `failure_message` | varchar(300) | yes |  |
+| `captured_at` | DATETIME | yes |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+
+### `escrow.ledger_entries` — append-only
+
+Append-only double-entry line (database trigger rejects UPDATE/DELETE).
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `entry_group_id` | UUID | no |  |
+| `account_id` | UUID | no | FK → escrow.accounts.id |
+| `entry_type` | varchar(30) | no |  |
+| `ledger_account` | varchar(30) | no |  |
+| `debit_minor` | BIGINT | no |  |
+| `credit_minor` | BIGINT | no |  |
+| `currency` | varchar(3) | no |  |
+| `reference_type` | varchar(30) | no |  |
+| `reference_id` | UUID | no |  |
+| `milestone_id` | UUID | yes |  |
+| `memo` | varchar(200) | no |  |
+| `id` | UUID | no | PK |
+| `created_at` | DATETIME | no |  |
+
+### `escrow.releases`
+
+Money released for an accepted milestone. Unique per milestone, so a release can never run twice.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `account_id` | UUID | no | FK → escrow.accounts.id, indexed |
+| `milestone_id` | UUID | no | unique |
+| `gross_minor` | BIGINT | no |  |
+| `fee_minor` | BIGINT | no |  |
+| `net_minor` | BIGINT | no |  |
+| `currency` | varchar(3) | no |  |
+| `fee_bps` | INTEGER | no |  |
+| `id` | UUID | no | PK |
+| `created_at` | DATETIME | no |  |
+
+<a id="schema-payments"></a>
+## Schema `payments`
+
+### `payments.invoices`
+
+Buyer receipt for released work. Numbers are sequential (database sequence payments.invoice_number_seq).
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `number` | varchar(30) | no | unique |
+| `release_id` | UUID | no | unique |
+| `organization_id` | UUID | no |  |
+| `contract_id` | UUID | no |  |
+| `milestone_id` | UUID | yes |  |
+| `lines` | JSONB | no |  |
+| `tax_minor` | BIGINT | no |  |
+| `total_minor` | BIGINT | no |  |
+| `currency` | varchar(3) | no |  |
+| `issued_at` | DATETIME | no |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+
+### `payments.payment_intents`
+
+CREATED -> CAPTURED | FAILED. One per escrow funding (idempotent).
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `funding_id` | UUID | no | unique |
+| `escrow_account_id` | UUID | no |  |
+| `contract_id` | UUID | no |  |
+| `organization_id` | UUID | no | indexed |
+| `amount_minor` | BIGINT | no |  |
+| `currency` | varchar(3) | no |  |
+| `status` | varchar(20) | no |  |
+| `provider` | varchar(30) | no |  |
+| `provider_ref` | varchar(100) | yes |  |
+| `method_label` | varchar(80) | no |  |
+| `failure_code` | varchar(60) | yes |  |
+| `failure_message` | varchar(300) | yes |  |
+| `captured_at` | DATETIME | yes |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+
+### `payments.payout_accounts`
+
+Base class used for declarative class definitions.  The :class:`_orm.DeclarativeBase` allows for the creation of new declarative bases in such a way that is compatible with type checkers::       from sqlalchemy.orm import DeclarativeBase       class Base(DeclarativeBase):         pass  The above ``Base`` class is now usable as the base for new declarative mappings.  The superclass makes use of the ``__init_subclass__()`` method to set up new classes and metaclasses aren't used.  When first used, the :class:`_orm.DeclarativeBase` class instantiates a new :class:`_orm.registry` to be used with the base, assuming one was not provided explicitly. The :class:`_orm.DeclarativeBase` class supports class-level attributes which act as parameters for the construction of this registry; such as to indicate a specific :class:`_schema.MetaData` collection as well as a specific value for :paramref:`_orm.registry.type_annotation_map`::      from typing import Annotated      from sqlalchemy import BigInteger     from sqlalchemy import MetaData     from sqlalchemy import String     from sqlalchemy.orm import DeclarativeBase      bigint = Annotated[int, "bigint"]     my_metadata = MetaData()       class Base(DeclarativeBase):         metadata = my_metadata         type_annotation_map = {             str: String().with_variant(String(255), "mysql", "mariadb"),             bigint: BigInteger(),         }  Class-level attributes which may be specified include:  :param metadata: optional :class:`_schema.MetaData` collection.  If a :class:`_orm.registry` is constructed automatically, this  :class:`_schema.MetaData` collection will be used to construct it.  Otherwise, the local :class:`_schema.MetaData` collection will supersede  that used by an existing :class:`_orm.registry` passed using the  :paramref:`_orm.DeclarativeBase.registry` parameter. :param type_annotation_map: optional type annotation map that will be  passed to the :class:`_orm.registry` as  :paramref:`_orm.registry.type_annotation_map`. :param registry: supply a pre-existing :class:`_orm.registry` directly.  .. versionadded:: 2.0  Added :class:`.DeclarativeBase`, so that declarative    base classes may be constructed in such a way that is also recognized    by :pep:`484` type checkers.   As a result, :class:`.DeclarativeBase`    and other subclassing-oriented APIs should be seen as    superseding previous "class returned by a function" APIs, namely    :func:`_orm.declarative_base` and :meth:`_orm.registry.generate_base`,    where the base class returned cannot be recognized by type checkers    without using plugins.  **__init__ behavior**  In a plain Python class, the base-most ``__init__()`` method in the class hierarchy is ``object.__init__()``, which accepts no arguments. However, when the :class:`_orm.DeclarativeBase` subclass is first declared, the class is given an ``__init__()`` method that links to the :paramref:`_orm.registry.constructor` constructor function, if no ``__init__()`` method is already present; this is the usual declarative constructor that will assign keyword arguments as attributes on the instance, assuming those attributes are established at the class level (i.e. are mapped, or are linked to a descriptor). This constructor is **never accessed by a mapped class without being called explicitly via super()**, as mapped classes are themselves given an ``__init__()`` method directly which calls :paramref:`_orm.registry.constructor`, so in the default case works independently of what the base-most ``__init__()`` method does.  .. versionchanged:: 2.0.1  :class:`_orm.DeclarativeBase` has a default    constructor that links to :paramref:`_orm.registry.constructor` by    default, so that calls to ``super().__init__()`` can access this    constructor. Previously, due to an implementation mistake, this default    constructor was missing, and calling ``super().__init__()`` would invoke    ``object.__init__()``.  The :class:`_orm.DeclarativeBase` subclass may also declare an explicit ``__init__()`` method which will replace the use of the :paramref:`_orm.registry.constructor` function at this level::      class Base(DeclarativeBase):         def __init__(self, id=None):             self.id = id  Mapped classes still will not invoke this constructor implicitly; it remains only accessible by calling ``super().__init__()``::      class MyClass(Base):         def __init__(self, id=None, name=None):             self.name = name             super().__init__(id=id)  Note that this is a different behavior from what functions like the legacy :func:`_orm.declarative_base` would do; the base created by those functions would always install :paramref:`_orm.registry.constructor` for ``__init__()``.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `professional_id` | UUID | no | unique |
+| `holder_name` | varchar(200) | no |  |
+| `country` | varchar(2) | no |  |
+| `currency` | varchar(3) | no |  |
+| `last4` | varchar(4) | no |  |
+| `provider` | varchar(30) | no |  |
+| `provider_account_ref` | varchar(100) | no |  |
+| `status` | varchar(20) | no |  |
+| `created_by` | UUID | no |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+
+### `payments.payouts`
+
+QUEUED (no payout account yet) -> INITIATED -> SETTLED | FAILED. One per escrow release.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `release_id` | UUID | no | unique |
+| `professional_id` | UUID | no |  |
+| `contract_id` | UUID | no |  |
+| `milestone_id` | UUID | yes |  |
+| `gross_minor` | BIGINT | no |  |
+| `fee_minor` | BIGINT | no |  |
+| `amount_minor` | BIGINT | no |  |
+| `currency` | varchar(3) | no |  |
+| `status` | varchar(20) | no |  |
+| `provider_ref` | varchar(100) | yes |  |
+| `failure_message` | varchar(300) | yes |  |
+| `settled_at` | DATETIME | yes |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
 
 <a id="schema-verification"></a>
 ## Schema `verification`

@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { firmApi, orgApi } from '../api/orgs'
+import { contractApi } from '../api/contracts'
 import { proposalApi } from '../api/proposals'
 import { DASHBOARD_FOR_PERSONA, ROLE_LABEL } from '../api/auth'
 import { useAuth } from '../auth/AuthContext'
@@ -28,6 +29,7 @@ export default function AppShell() {
   const [inviteCount, setInviteCount] = useState(0)
   const [inFirm, setInFirm] = useState(false)
   const [newRequests, setNewRequests] = useState(0)
+  const [toSign, setToSign] = useState(0)
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
 
@@ -36,7 +38,10 @@ export default function AppShell() {
     Promise.all([orgApi.myInvitations(), firmApi.myInvitations(), firmApi.mine()])
       .then(([o, f, firms]) => { setInviteCount(o.length + f.length); setInFirm(firms.length > 0) })
       .catch(() => {})
-    if (user?.personas.includes('PROFESSIONAL')) proposalApi.summary('professional').then((s) => setNewRequests(s.requests.OPEN ?? 0)).catch(() => {})
+    if (user?.personas.includes('PROFESSIONAL')) {
+      proposalApi.summary('professional').then((s) => setNewRequests(s.requests.OPEN ?? 0)).catch(() => {})
+      contractApi.list('professional', 'PENDING_SIGNATURE').then((l) => setToSign(l.filter((c) => c.canSign).length)).catch(() => {})
+    }
   }, [location.pathname, user])
   if (!user) return null
 
@@ -82,8 +87,8 @@ export default function AppShell() {
           <Item to="/app/professional/verification" icon="shield">Verification &amp; Trust</Item>
           {inFirm && !dashboards.has('firm') && <Item to="/app/firm/team" icon="team">My Firm</Item>}
           <Item to="/app/professional/requests" icon="proposal" count={newRequests}>Requests</Item>
-          <Soon icon="contract">Engagements</Soon>
-          <Soon icon="clock">Earnings</Soon>
+          <Item to="/app/professional/engagements" icon="briefcase" count={toSign}>Engagements</Item>
+          <Item to="/app/professional/earnings" icon="wallet">Earnings</Item>
         </>}
 
         {dashboards.has('firm') && <>
