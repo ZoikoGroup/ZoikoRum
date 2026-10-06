@@ -4,8 +4,9 @@ Audience: the Zoikorum engineering team and the CTO office. This explains what w
 18 source documents, why it is shaped this way, where it intentionally differs from the
 long-term target, and what still needs a business decision.
 
-Companion documents: [BUILD_SPEC.md](BUILD_SPEC.md) (per-domain contracts) and the source docs in
-`Downloads/zoikorum/`.
+Companion documents: [BUILD_SPEC.md](BUILD_SPEC.md) (per-domain contracts), [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md)
+(generated table list), [CUSTOMER_DATA.md](CUSTOMER_DATA.md) (customer data vs. the documents) and the source docs in
+[`docs/product/`](../../docs/product/README.md).
 
 ## 1. What the documents ask for
 
@@ -118,7 +119,9 @@ The other domain folders contain only their `facade.py` interface contracts; the
 | 3 Professional profile & taxonomy | Marketplace taxonomy (Finance & Accounting: 7 groups, 43 specializations, credential/regulated flags; seeded by migration; admin add/edit/deprecate with taxonomy versioning) and Professional domain (one profile per account, optional firm link, profile basics with optimistic concurrency, 1 primary + ≤5 secondary specializations, jurisdictions with cross-border acknowledgement, availability/capacity, credential claims shown as "Self-reported" until verified, offerings DRAFT/ACTIVE/PAUSED, readiness checklist, publish with copy rules + attestation, public profile) | Built (backend + frontend). Reactions to contract and enforcement events arrive with those domains |
 | 4 Verification & trust tiers | Verification domain (cases for identity, credentials, jurisdiction, insurance, sanctions screening and firm registration; provider adapter with a deterministic fake; append-only evidence metadata + SHA-256; Compliance Officer review queue with step-up MFA and no self-review; 30/14/7-day expiry reminders and expiry on durable timers; credential claims and firm status follow outcomes) and Trust domain (deterministic Tier A/B/C rules, five verification dimensions, 0-100 score with plain-language reasons, tier history and signals; adverse events downgrade immediately; risk flags never change the tier); frontend verification, firm verification and review-queue screens; real tiers on dashboards and public profiles | Built. Secure document storage (blob uploads) and a real KYC/sanctions provider are still open decisions |
 | 5 Search & discovery | Search projection `search.professional_documents` built only from events (profile, offerings, availability, jurisdictions, trust, verification, enforcement) through facades; Postgres full-text (name/headline A, specializations B, bio/offerings/verified credentials C); filters (specialization any/all, tier, verified dimensions, engagement, delivery, availability, pricing, credential, jurisdiction), 7 sorts, facets; ranking with the Architecture 9.4 weights and a plain-language "why this result" (contract, review, response and policy signals score 0 until those domains exist); SEARCH_PERFORMED / SEARCH_ZERO_RESULT; `count_eligible` for policy impact previews; admin and CLI reindex. Frontend: public Browse page, dashboard "Verified professionals", and one dashboard design for every role | Built. Buyer-organization policy filtering arrives with the policy domain |
-| 6+ | Proposed next: proposals (request → proposal → compare → accept), then contracts, escrow… | Not started |
+| 5a Customer portal | Management designs for Buyer/Enterprise: Find, Saved (collections, compare ≤3), Organisation (profile, members, roles, billing contacts, audit CSV), Verification (shortlist status), Settings (profile, devices, notifications, privacy requests), Help; Requests/Proposals/Engagements/Payments/Messages laid out with empty states. Backend: `PATCH /v1/me`, sessions, data requests, notification preferences, billing contacts, collections, compare | Built. Pipeline screens fill in with Steps 6–8 |
+| 6 Requests & proposals | Proposal domain: a buyer (Requester) sends one structured requirement to 1–3 chosen professionals (`group_id`), with optional budget, NDA and attachment fingerprints; drafts; professionals see NDA-protected details only after accepting the NDA (audited); decline with a structured reason; structured proposals (deliverables with acceptance criteria, milestones mapped to deliverables whose amounts make the total, timeline, assumptions/exclusions, validity); submit needs Tier B and a complete proposal; buyer comparison with deltas vs the request, revision requests, reject, accept (Idempotency, spend limit respected) → `PROPOSAL_ACCEPTED` with the full terms snapshot and `termsHash`; accepting one closes the rest of the group; expiry on a durable timer. Frontend: request wizard (5 steps), Requests/Proposals/request detail with comparison, professional Requests inbox and proposal builder, dashboard counts | Built. Organisation approval workflows (`REQUIRE_APPROVAL`) and messaging threads arrive with the policy and messaging domains |
+| 7+ | Proposed next: contracts generated from `PROPOSAL_ACCEPTED`, signing, then escrow… | Not started |
 
 ## 6a. Product decisions taken (2026-10-05, after the documentation audit)
 
@@ -132,6 +135,18 @@ The other domain folders contain only their `facade.py` interface contracts; the
 | Tier B | Requires identity VERIFIED **and** restrictions screening CLEAR |
 | Verification | VERIFIED needs at least one evidence item (except list-based screening); a provider FAIL goes to human review |
 | Public trust | No raw score; screening shown only when clear; licences marked verified / self-reported |
+
+
+### Step 6 decisions (2026-10-06)
+
+| Topic | Decision |
+|---|---|
+| "Post a job / apply" | Not a job board (Homepage wireframe). "Post requirement" = a request to professionals the buyer chooses; professionals "apply" by sending a proposal from their Requests inbox |
+| One requirement to several professionals | The RFP wireframe allows "Request Proposal for selected professional(s)". `POST /v1/proposal-requests` takes `professionalIds` (1–3, BUILD_SPEC had a single `professionalId`); one request row per professional sharing `group_id`. Accepting one proposal closes the others |
+| Policy before the policy domain exists | Platform baseline only: restricted professionals cannot be engaged; Tier C cannot submit or be accepted; the accepting member's own spend limit applies. `PENDING_APPROVAL` exists in the state machine but is not used yet |
+| One proposal per request | Revisions edit the same proposal (`revisionCount`, history in `revision_requests`); a rejected, withdrawn or expired proposal closes that professional's request |
+| Total price | Always the sum of milestone amounts (a `total` sent by the client must match) |
+| Professional ↔ firm link | `PUT /v1/professionals/me/firm` links a profile to a firm the professional actively belongs to, or `null` for independent. Joining a firm (`FIRM_MEMBER_JOINED`) links an unlinked profile automatically; removal (`FIRM_MEMBER_REMOVED`) unlinks it. The public profile shows the firm's trading or registered name (hidden while the firm is suspended) |
 
 ## 7. Running it
 

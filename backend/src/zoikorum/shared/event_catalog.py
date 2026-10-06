@@ -34,6 +34,8 @@ class E:
     PERSONA_ADDED = _t("identity", "identity", "persona_added")
     PASSWORD_RESET_REQUESTED = _t("identity", "identity", "password_reset_requested")
     PASSWORD_CHANGED = _t("identity", "identity", "password_changed")
+    IDENTITY_PROFILE_UPDATED = _t("identity", "identity", "profile_updated")
+    DATA_REQUEST_CREATED = _t("identity", "data_request", "created")
 
     # ---- Buyer ---------------------------------------------------------------
     BUYER_REGISTERED = _t("buyer", "buyer", "registered")
@@ -47,6 +49,7 @@ class E:
     ORG_INVITATION_REVOKED = _t("buyer", "organization", "invitation_revoked")
     ORGANIZATION_UPDATED = _t("buyer", "organization", "updated")
     SPEND_LIMIT_UPDATED = _t("buyer", "organization", "spend_limit_updated")
+    BILLING_CONTACTS_UPDATED = _t("buyer", "organization", "billing_contacts_updated")
 
     # ---- Firm ----------------------------------------------------------------
     FIRM_REGISTERED = _t("firm", "firm", "registered")
@@ -79,6 +82,7 @@ class E:
     PROFESSIONAL_SAVED = _t("marketplace", "listing", "bookmarked")
     SEARCH_SAVED = _t("marketplace", "saved_search", "created")
     MATCH_REQUESTED = _t("marketplace", "match", "requested")
+    COLLECTION_UPDATED = _t("marketplace", "collection", "updated")
 
     # ---- Search --------------------------------------------------------------
     SEARCH_PERFORMED = _t("search", "query", "performed")
@@ -204,6 +208,7 @@ class E:
     NOTIFICATION_QUEUED = _t("notification", "notification", "queued")
     NOTIFICATION_DELIVERED = _t("notification", "notification", "delivered")
     NOTIFICATION_FAILED = _t("notification", "notification", "failed")
+    NOTIFICATION_PREFERENCES_UPDATED = _t("notification", "preferences", "updated")
 
     # ---- AI ------------------------------------------------------------------
     AI_OUTPUT_GENERATED = _t("ai", "inference", "output_generated")

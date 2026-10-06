@@ -7,6 +7,7 @@ import {
   RATE_UNIT_LABEL, RATE_UNITS, proApi, taxonomyApi, toMajor, toMinor,
   type Availability, type Credential, type Offering, type Profile, type Readiness, type TaxonomyCategory,
 } from '../api/professional'
+import { budgetText, proposalApi, requestStatus, type ProposalRequest } from '../api/proposals'
 import { DIMENSION_VALUE, DIMENSIONS, trustApi, verificationApi, type Trust, type VerificationCase } from '../api/verification'
 import { useAuth } from '../auth/AuthContext'
 import { ActionList, Avatar, greeting, Icon, Kpi, type Action } from '../components/dashboard'
@@ -138,6 +139,7 @@ export function ProfessionalDashboard() {
   const [offerings, setOfferings] = useState<Offering[]>([])
   const [trust, setTrust] = useState<Trust | null>(null)
   const [cases, setCases] = useState<VerificationCase[]>([])
+  const [requests, setRequests] = useState<ProposalRequest[]>([])
   const [actionError, setActionError] = useState<unknown>(null)
 
   const load = useCallback(async () => {
@@ -145,6 +147,7 @@ export function ProfessionalDashboard() {
     const [r, o, t, v] = await Promise.all([proApi.readiness(), proApi.offerings(), trustApi.get(profile.id),
       verificationApi.forSubject('PROFESSIONAL', profile.id)])
     setReadiness(r); setOfferings(o); setTrust(t); setCases(v)
+    setRequests(await proposalApi.list('professional').catch(() => []))
   }, [profile])
   useEffect(() => { load().catch(() => {}) }, [load])
 
@@ -163,6 +166,16 @@ export function ProfessionalDashboard() {
   const soon = Date.now() + 30 * 86400_000
   const expiring = cases.filter((c) => c.status === 'VERIFIED' && c.expiresAt && new Date(c.expiresAt).getTime() < soon)
   const actions: Action[] = []
+  const newRequests = requests.filter((r) => r.status === 'OPEN')
+  const revisions = requests.filter((r) => r.proposal?.status === 'REVISION_REQUESTED')
+  for (const q of revisions) {
+    actions.push({ title: `Revise your proposal: ${q.service}`, detail: `${q.organizationName ?? 'The buyer'} asked for changes`,
+      priority: 'High', to: `/app/professional/requests/${q.id}`, icon: 'proposal' })
+  }
+  for (const q of newRequests.slice(0, 3)) {
+    actions.push({ title: `Respond to ${q.organizationName ?? 'a buyer'}`, detail: `${q.service} · start ${q.desiredStartDate}`,
+      priority: 'High', to: `/app/professional/requests/${q.id}`, icon: 'proposal' })
+  }
   for (const c of cases.filter((c) => c.status === 'NEEDS_INFO')) {
     actions.push({ title: `More information needed: ${c.label}`, detail: c.publicReason ?? 'See the reviewer\'s note',
       priority: 'High', to: '/app/professional/verification', icon: 'shield' })
@@ -207,7 +220,7 @@ export function ProfessionalDashboard() {
           {/* Summary cards (max 6) */}
           <div className="kpi-row six">
             <a href="#engagements"><Kpi icon="contract" tone="blue" label="Active Engagements" value={0} note="Contracts in progress" /></a>
-            <a href="#requests"><Kpi icon="proposal" tone="violet" label="New Requests" value={0} note="From buyers" /></a>
+            <Link to="/app/professional/requests"><Kpi icon="proposal" tone="violet" label="New Requests" value={newRequests.length} note="From buyers" /></Link>
             <a href="#actions"><Kpi icon="bell" tone="amber" label="Pending Actions" value={actions.length} note={actions.length ? 'Needs your attention' : 'All caught up'} /></a>
             <a href="#engagements"><Kpi icon="clock" tone="teal" label="Upcoming Milestones" value={0} note="Next 14 days" /></a>
             <a href="#earnings"><Kpi icon="check" tone="green" label="Earnings This Month" value="—" note="Live when payments launch" /></a>
@@ -244,13 +257,23 @@ export function ProfessionalDashboard() {
               </section>
 
               <section className="card panel" id="requests">
-                <div className="panel-head"><h2>Incoming Requests &amp; Proposals</h2></div>
+                <div className="panel-head"><h2>Incoming Requests &amp; Proposals</h2><Link className="small" to="/app/professional/requests">View all</Link></div>
                 <table className="data">
-                  <thead><tr><th>Buyer</th><th>Service</th><th>Type</th><th>Budget</th><th>Deadline</th><th>Actions</th></tr></thead>
-                  <tbody><tr><td colSpan={6} className="empty-row">
-                    <strong>No requests yet.</strong> Proposal requests from buyers appear here, ready to respond to.
-                    Requests open in the next release; Tier B (verified identity) is needed to reply.
-                  </td></tr></tbody>
+                  <thead><tr><th>Buyer</th><th>Service</th><th>Type</th><th>Budget</th><th>Start</th><th>Actions</th></tr></thead>
+                  <tbody>{requests.length === 0 ? <tr><td colSpan={6} className="empty-row">
+                    <strong>No requests yet.</strong> Buyers find you in search and send requests; they appear here, ready to respond to.
+                    {trust?.tier === 'C' && ' Tier B (verified identity) is needed to send a proposal.'}
+                  </td></tr> : requests.slice(0, 5).map((q) => (
+                    <tr key={q.id}>
+                      <td><strong>{q.organizationName ?? q.buyerName}</strong></td>
+                      <td className="small">{q.service}</td>
+                      <td className="small">{LABEL[q.engagementType]}</td>
+                      <td className="small">{budgetText(q.budget)}</td>
+                      <td className="small">{q.desiredStartDate}</td>
+                      <td>{q.status === 'OPEN' || q.proposal?.status === 'REVISION_REQUESTED'
+                        ? <Link className="btn btn-primary btn-sm" to={`/app/professional/requests/${q.id}`}>{q.status === 'OPEN' ? 'Respond' : 'Revise'}</Link>
+                        : <span className={`badge ${requestStatus(q).tone}`}>{requestStatus(q).label}</span>}</td>
+                    </tr>))}</tbody>
                 </table>
               </section>
 
@@ -389,6 +412,32 @@ function PhotoUploader({ profile, onSaved }: { profile: Profile; onSaved: (p: Pr
   )
 }
 
+/** Practise independently or under a firm you belong to. Joining a firm links an unlinked profile automatically;
+    being removed from the firm unlinks it. Saved on change, separately from the form. */
+function FirmPicker({ profile, onSaved }: { profile: Profile; onSaved: (p: Profile) => void }) {
+  const [firms, setFirms] = useState<Firm[] | null>(null)
+  const [error, setError] = useState<unknown>(null)
+  const [saved, setSaved] = useState(false)
+  useEffect(() => { firmApi.mine().then(setFirms).catch(() => setFirms([])) }, [])
+  if (!firms) return null
+  if (firms.length === 0 && !profile.firmId) {
+    return <p className="muted small">Practising independently. If a firm invites you, accept the invitation to practise under it.</p>
+  }
+  return (
+    <Field label="Practising as" id="b-firm" hint="Buyers see the firm on your public profile. You can only choose firms you are a member of.">
+      <ErrorAlert error={error} />
+      <select id="b-firm" className="input" value={profile.firmId ?? ''} onChange={async (e) => {
+        setError(null); setSaved(false)
+        try { onSaved(await proApi.setFirm(e.target.value || null)); setSaved(true) } catch (err) { setError(err) }
+      }}>
+        <option value="">Independent professional</option>
+        {firms.map((fm) => <option key={fm.id} value={fm.id}>{fm.tradingName || fm.legalName}</option>)}
+      </select>
+      {saved && <span className="ok-text small">Saved</span>}
+    </Field>
+  )
+}
+
 function BasicsStep({ profile, onSaved, next }: StepProps) {
   const [f, setF] = useState({
     displayName: profile.displayName, legalName: profile.legalName ?? '', headline: profile.headline ?? '',
@@ -457,6 +506,7 @@ function BasicsStep({ profile, onSaved, next }: StepProps) {
       <Field label="Website (optional)" id="b-web" hint="Must start with https://">
         <input id="b-web" className="input" value={f.website} onChange={set('website')} placeholder="https://" />
       </Field>
+      <FirmPicker profile={profile} onSaved={onSaved} />
       <StepActions busy={busy} />
     </form>
   )

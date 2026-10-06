@@ -28,6 +28,8 @@ class Organization(Base, UUIDPk, Timestamps, Versioned):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="ACTIVE")
     business_context: Mapped[str | None] = mapped_column(String(30))  # STARTUP|SME|MID_MARKET|ENTERPRISE|INDIVIDUAL
     created_by: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    industry: Mapped[str | None] = mapped_column(String(80))
+    time_zone: Mapped[str | None] = mapped_column(String(64))
 
 
 class OrgMember(Base, UUIDPk, Timestamps):
@@ -95,3 +97,16 @@ class CostCenter(Base, UUIDPk, Timestamps):
     code: Mapped[str] = mapped_column(String(50), nullable=False)
     quarterly_budget_minor: Mapped[int | None] = mapped_column(BigInteger)
     currency: Mapped[str | None] = mapped_column(String(3))
+
+
+class BillingContact(Base, UUIDPk, Timestamps):
+    """Who receives invoices and billing notices for the organisation: one primary, optionally one backup."""
+
+    __tablename__ = "billing_contacts"
+    __table_args__ = (UniqueConstraint("organization_id", "identity_id"), {"schema": SCHEMA})
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.organizations.id"), nullable=False, index=True
+    )
+    identity_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    is_primary: Mapped[bool] = mapped_column(nullable=False, default=False)

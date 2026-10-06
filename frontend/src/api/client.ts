@@ -91,10 +91,11 @@ interface RequestOptions {
   auth?: boolean
   query?: Record<string, string>
   headers?: Record<string, string>
+  text?: boolean  // return the body as text (file downloads) instead of JSON
 }
 
 export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-  const { method = 'GET', body, auth = true, query, headers: extra = {} } = opts
+  const { method = 'GET', body, auth = true, query, headers: extra = {}, text = false } = opts
   const url = query ? `${path}?${new URLSearchParams(query)}` : path
 
   const send = () =>
@@ -121,5 +122,6 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
   }
   if (!res.ok) throw await toError(res)
   if (res.status === 204) return undefined as T
+  if (text) return (await res.text()) as T
   return res.json() as Promise<T>
 }

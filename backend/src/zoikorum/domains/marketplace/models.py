@@ -42,3 +42,23 @@ class SavedProfessional(Base, UUIDPk, CreatedAt):
 
     identity_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
     professional_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+
+
+class Collection(Base, UUIDPk, Timestamps):
+    """A named group of saved professionals ("Data Privacy Project", "Q1 2027 Advisory")."""
+
+    __tablename__ = "collections"
+    __table_args__ = (UniqueConstraint("identity_id", "name"), {"schema": SCHEMA})
+
+    identity_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+
+
+class CollectionItem(Base, UUIDPk, CreatedAt):
+    __tablename__ = "collection_items"
+    __table_args__ = (UniqueConstraint("collection_id", "professional_id"), {"schema": SCHEMA})
+
+    collection_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.collections.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    professional_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)

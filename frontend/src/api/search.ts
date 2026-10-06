@@ -18,6 +18,9 @@ export interface SearchResult {
   tierLabel: string
   trustScore: number
   whyThisResult: string[]
+  dimensions: Record<string, string>
+  languages: string[]
+  yearsExperienceBand: string | null
 }
 
 export interface Facet { value: string; label: string; count: number }

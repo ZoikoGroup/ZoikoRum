@@ -1,0 +1,186 @@
+import { useEffect, useState, type FormEvent } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
+import { formatMoney } from '../../api/orgs'
+import { LABEL, taxonomyApi, type TaxonomyCategory } from '../../api/professional'
+import { searchApi, type SearchResponse, type SearchResult } from '../../api/search'
+import { CompareDialog, CompareTray } from '../../components/CompareDialog'
+import { Avatar, Icon } from '../../components/dashboard'
+import { PortalHeader, TierBadge, VerifyChips } from '../../components/portal'
+import { ErrorAlert } from '../../components/ui'
+import { COUNTRIES } from '../Join'
+import { countryName } from '../ProfessionalPages'
+import { useSavedIds } from '../SavedPage'
+
+const PAGE = 20
+const MAX_COMPARE = 3
+const SORTS: [string, string][] = [
+  ['best', 'Relevance'], ['verified', 'Most verified'], ['availability', 'Soonest available'], ['experience', 'Most experienced'],
+  ['price_asc', 'Price: low to high'], ['price_desc', 'Price: high to low'], ['recent', 'Newest'],
+]
+const VERIFIED: [string, string][] = [
+  ['identity', 'Identity verified'], ['credentials', 'Credentials verified'], ['jurisdiction', 'Eligibility current'], ['insurance', 'Professional indemnity'],
+]
+const PRICING: [string, string][] = [['HOURLY', 'Hourly rate'], ['FIXED', 'Fixed fee'], ['RETAINER', 'Retainer'], ['CUSTOM', 'Request quote']]
+
+/** Find Professionals (management design 2): filter bar, filter panel, verified results, save and compare. */
+export default function FindProfessionals() {
+  const [params, setParams] = useSearchParams()
+  const [taxonomy, setTaxonomy] = useState<TaxonomyCategory[]>([])
+  const [data, setData] = useState<SearchResponse | null>(null)
+  const [items, setItems] = useState<SearchResult[]>([])
+  const [offset, setOffset] = useState(0)
+  const [error, setError] = useState<unknown>(null)
+  const [q, setQ] = useState(params.get('q') ?? '')
+  const [selected, setSelected] = useState<string[]>([])
+  const [comparing, setComparing] = useState(false)
+  const saved = useSavedIds()
+  const key = params.toString()
+
+  useEffect(() => { taxonomyApi.all().then(setTaxonomy).catch(() => {}) }, [])
+  useEffect(() => {
+    let cancelled = false
+    searchApi.professionals({ ...Object.fromEntries(new URLSearchParams(key)), limit: String(PAGE), offset: '0' })
+      .then((r) => { if (!cancelled) { setData(r); setItems(r.items); setOffset(0); setError(null) } })
+      .catch((err) => { if (!cancelled) setError(err) })
+    return () => { cancelled = true }
+  }, [key])
+
+  function set(name: string, value: string | null) {
+    const next = new URLSearchParams(params)
+    if (value) next.set(name, value)
+    else next.delete(name)
+    setParams(next, { replace: true })
+  }
+  const inList = (name: string, value: string) => (params.get(name) ?? '').split(',').includes(value)
+  function toggleList(name: string, value: string) {
+    const list = (params.get(name) ?? '').split(',').filter(Boolean)
+    set(name, (list.includes(value) ? list.filter((v) => v !== value) : [...list, value]).join(','))
+  }
+  function toggleSelect(id: string) {
+    setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : s.length >= MAX_COMPARE ? s : [...s, id]))
+  }
+  async function more() {
+    const next = offset + PAGE
+    const r = await searchApi.professionals({ ...Object.fromEntries(params), limit: String(PAGE), offset: String(next) })
+    setItems([...items, ...r.items])
+    setOffset(next)
+  }
+  function submit(e: FormEvent) { e.preventDefault(); set('q', q.trim() || null) }
+
+  const groups = taxonomy.flatMap((c) => c.groups)
+  const names = Object.fromEntries(items.map((r) => [r.professionalId, { name: r.displayName, photoUrl: r.photoUrl }]))
+  const select = (name: string, label: string, options: [string, string][], any = 'Any') => (
+    <label className="filter-box">
+      <span>{label}</span>
+      <select value={params.get(name) ?? ''} onChange={(e) => set(name, e.target.value || null)}>
+        <option value="">{any}</option>
+        {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+      </select>
+    </label>
+  )
+
+  return (
+    <>
+      <PortalHeader eyebrow="Find professionals" title="Find the right professional"
+        subtitle="Search verified professionals by expertise, jurisdiction and engagement requirements."
+        actions={<div className="trust-points">
+          <span><Icon name="shield" /><span><strong>Verified identities</strong><br />Know who you are engaging with</span></span>
+          <span><Icon name="request" /><span><strong>Credentials checked</strong><br />Qualifications and licences</span></span>
+          <span><Icon name="team" /><span><strong>Engagement ready</strong><br />Eligible and governable</span></span>
+        </div>} />
+
+      <section className="card panel search-panel">
+        <form className="search-bar" onSubmit={submit} role="search">
+          <input className="input" aria-label="Search professionals" value={q} onChange={(e) => setQ(e.target.value)}
+            placeholder="Search by profession, expertise, service or keyword (e.g. fractional CFO, transfer pricing, SOX)" />
+          <button className="btn btn-primary"><Icon name="search" /> Search</button>
+        </form>
+        <div className="filter-row">
+          {select('spec', 'Expertise', groups.flatMap((g) => g.specializations.map((s) => [s.slug, s.name] as [string, string])), 'Any expertise')}
+          {select('jurisdiction', 'Jurisdiction', COUNTRIES, 'Global')}
+          {select('tier', 'Verification', [['A', 'Tier A — Fully verified'], ['B', 'Tier B — Verified identity'], ['A,B', 'Tier A or B']], 'Any status')}
+          {select('pricingModel', 'Engagement model', PRICING, 'Any model')}
+          {select('availability', 'Availability', [['NOW', 'Available now'], ['TWO_WEEKS', 'Within 2 weeks'], ['ONE_MONTH', 'Within a month']], 'Any time')}
+          {select('delivery', 'Delivery', [['REMOTE', 'Remote'], ['ONSITE', 'On-site'], ['HYBRID', 'Hybrid']], 'Any')}
+        </div>
+      </section>
+
+      <div className="browse">
+        <aside className="card panel filters" aria-label="Filters">
+          <div className="panel-head"><h2>Filters</h2>{key && <button className="btn btn-ghost btn-sm" onClick={() => { setQ(''); setParams({}) }}>Clear all</button>}</div>
+          <div className="filter-label">Verification status</div>
+          {VERIFIED.map(([v, label]) => (
+            <label key={v} className="checkbox small"><input type="checkbox" checked={inList('verified', v)} onChange={() => toggleList('verified', v)} /><span>{label}</span></label>
+          ))}
+          <div className="filter-label">Engagement type</div>
+          {(['ADVISORY', 'PROJECT', 'RETAINER', 'FRACTIONAL'] as const).map((t) => (
+            <label key={t} className="checkbox small"><input type="radio" name="et" checked={params.get('engagementType') === t}
+              onChange={() => set('engagementType', t)} /><span>{LABEL[t]}</span></label>
+          ))}
+          {params.get('engagementType') && <button className="btn btn-ghost btn-sm" onClick={() => set('engagementType', null)}>Any engagement type</button>}
+          <div className="filter-label">Trust Tier</div>
+          {['A', 'B', 'C'].map((t) => (
+            <label key={t} className="checkbox small"><input type="checkbox" checked={inList('tier', t)} onChange={() => toggleList('tier', t)} />
+              <span>Tier {t} <span className="muted">({data?.facets.tier?.find((f) => f.value === t)?.count ?? 0})</span></span></label>
+          ))}
+        </aside>
+
+        <section className="card panel results-panel">
+          <div className="results-head">
+            <h2 style={{ margin: 0 }}>{data ? `${data.total} professional${data.total === 1 ? '' : 's'} found` : 'Searching…'}</h2>
+            <label className="small">Sort by{' '}
+              <select className="input" value={params.get('sort') ?? 'best'} onChange={(e) => set('sort', e.target.value === 'best' ? null : e.target.value)}>
+                {SORTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </select>
+            </label>
+          </div>
+          <ErrorAlert error={error} />
+          {data && data.total === 0 && <p className="muted">No published professionals match these filters yet. Try fewer filters or a broader search.</p>}
+          {items.map((r) => (
+            <article key={r.professionalId} className="pro-row">
+              <input type="checkbox" aria-label={`Select ${r.displayName} to compare`} checked={selected.includes(r.professionalId)}
+                disabled={!selected.includes(r.professionalId) && selected.length >= MAX_COMPARE} onChange={() => toggleSelect(r.professionalId)} />
+              <Avatar name={r.displayName} photoUrl={r.photoUrl} size={64} />
+              <div className="pro-main">
+                <div className="name-line"><Link to={`/professionals/${r.professionalId}`}><strong>{r.displayName}</strong></Link> <TierBadge tier={r.tier} /></div>
+                {r.headline && <div className="small">{r.headline}</div>}
+                <div className="muted small"><Icon name="globe" /> {[r.city, countryName(r.country)].filter(Boolean).join(', ')}
+                  {r.languages.length > 0 && ` · ${r.languages.join(', ')}`}</div>
+              </div>
+              <VerifyChips dimensions={r.dimensions} compact />
+              <div className="pro-expertise">
+                <div className="muted small">Key expertise</div>
+                <div className="chips">{r.specializations.slice(0, 4).map((s) => <span key={s.slug} className="chip">{s.name}</span>)}</div>
+              </div>
+              <div className="pro-facts small">
+                {r.yearsExperienceBand && <div><Icon name="clock" /> {r.yearsExperienceBand} years experience</div>}
+                <div><Icon name="check" /> {LABEL[r.availability] ?? r.availability}</div>
+              </div>
+              <div className="pro-cta">
+                <div className="price">{r.startingPrice ? <>From <strong>{formatMoney(r.startingPrice)}</strong></> : r.pricingModels.includes('CUSTOM') ? 'Quote on request' : ''}</div>
+                <div className="row">
+                  <Link className="btn btn-primary btn-sm" to={`/professionals/${r.professionalId}`}>View profile</Link>
+                  {saved.canSave && saved.ids && (
+                    <button className="btn btn-secondary btn-sm" onClick={() => saved.toggle(r.professionalId).catch(setError)}>
+                      <Icon name="bookmark" /> {saved.ids.has(r.professionalId) ? 'Saved' : 'Save'}</button>
+                  )}
+                  <button className="btn btn-secondary btn-sm" onClick={() => toggleSelect(r.professionalId)}
+                    disabled={!selected.includes(r.professionalId) && selected.length >= MAX_COMPARE}><Icon name="compare" /> Compare</button>
+                </div>
+              </div>
+              {r.whyThisResult.length > 0 && <ul className="why-inline">{r.whyThisResult.map((w) => <li key={w}>{w}</li>)}</ul>}
+            </article>
+          ))}
+          {data && items.length < data.total && <button className="btn btn-secondary" onClick={() => more().catch(setError)}>Show more</button>}
+        </section>
+      </div>
+
+      <CompareTray selected={selected} names={names} onRemove={(id) => setSelected(selected.filter((x) => x !== id))}
+        onCompare={() => setComparing(true)} extra={<>
+          <Link className="btn btn-secondary" to="/app/saved"><Icon name="bookmark" /> View shortlist</Link>
+          <Link className="btn btn-secondary" to={`/app/requests/new?${selected.map((id) => `pro=${id}`).join('&')}`}><Icon name="request" /> Request proposal{selected.length > 1 ? 's' : ''}</Link>
+        </>} />
+      {comparing && <CompareDialog ids={selected} onClose={() => setComparing(false)} />}
+    </>
+  )
+}

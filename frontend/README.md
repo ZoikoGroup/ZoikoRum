@@ -61,6 +61,27 @@ Documents: the browser computes each file's SHA-256; only name, size and fingerp
 | `/professionals` | anyone (no sign-in) | Browse and filter published professionals; each result shows its Trust Tier and why it matched. Filters live in the URL |
 | `/app/buyer`, `/app/enterprise`, `/app/professional`, `/app/firm`, `/app/ops` | by role | One dashboard design: greeting, summary cards, pending actions with priority, plus role panels (recent activity, verified professionals, verification). Only real data; future areas say when they arrive |
 
+## Customer portal (management designs; built)
+
+Buyers and enterprise users get a "Customer / Account" sidebar. Screens whose records arrive in later steps
+(requests, proposals, contracts, escrow, messaging) already have their final layout, with real zero counts and
+an explanation of how the step will work. Nothing is invented: no wallet balance, no star ratings, no partner logos.
+
+| Route | Who | Purpose |
+|---|---|---|
+| `/app/find` | Buyer, Enterprise | Search verified professionals: filter bar and panel, verification chips, save, compare up to 3 |
+| `/app/saved` | Buyer, Enterprise | Shortlist with collections, filters, bulk add-to-collection, compare, remove |
+| `/app/requests/new?pro=…&pro=…` | Buyer, Enterprise | Request a proposal (5 steps: context, scope, commercial, protections, review); 1–3 professionals |
+| `/app/requests`, `/app/requests/:id`, `/app/proposals` | Buyer, Enterprise | Requests and received proposals; side-by-side comparison, request revision, decline, accept |
+| `/app/professional/requests`, `/app/professional/requests/:id` | Professional | Incoming requests inbox; NDA; proposal builder (deliverables, milestones, dates, terms); decline with reason; withdraw |
+| `/app/engagements`, `/app/payments`, `/app/messages` | Buyer, Enterprise | Layout and empty states until Steps 7–8 |
+| `/app/organisation?tab=` | Buyer, Enterprise | Profile (name, industry, time zone), members & access, roles & authority, billing contacts, audit log + CSV export |
+| `/app/verification` | Buyer, Enterprise | Verification status of the professionals on your shortlist; what each check and Tier means |
+| `/app/settings?tab=` | everyone | Account, security (password, two-step, signed-in devices), notifications, privacy requests, platform preferences |
+| `/app/help` | everyone | Searchable help from the product docs, service status (`/health`), support cases (empty until engagements) |
+
+Shared building blocks live in `src/components/portal.tsx` and `src/components/CompareDialog.tsx`; the screens are in `src/pages/customer/`.
+
 Rules the UI follows:
 - Staff, Firm Admins and Enterprise Admins are sent to `/app/security` until two-step verification is on.
 - Pages are gated by role (`RequireRole`). The API applies the same check to every call.

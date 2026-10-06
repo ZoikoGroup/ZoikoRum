@@ -1,21 +1,41 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { auditApi, type AuditRecord } from '../api/audit'
 import { firmApi, orgApi, type Organization } from '../api/orgs'
 import { LABEL } from '../api/professional'
+import { formatMoney } from '../api/orgs'
+import { proposalApi, requestStatus, type ProposalRequest } from '../api/proposals'
 import { savedApi, type SavedProfessional } from '../api/saved'
 import { useAuth } from '../auth/AuthContext'
-import { ActivityList } from '../components/activity'
-import { ActionList, greeting, Icon, Kpi, type Action } from '../components/dashboard'
+import { ActionList, Avatar, greeting, Icon, type Action } from '../components/dashboard'
+import { EmptyTable, PortalHeader, StatCard, Tabs } from '../components/portal'
 import { AccountAlerts } from './Dashboards'
 
-/* Customer dashboard (Buyer Dashboard & Engagement Management wireframe): five summary cards, then
-   engagements, requests, payments, activity and saved professionals. Every figure is real; modules whose
-   feature is not live yet show an empty state that says what will appear there. */
+/* Customer dashboard: management design + Buyer Dashboard & Engagement wireframe (5 summary cards,
+   attention strip, engagements, assurance, requests & proposals, saved professionals). Real data only;
+   modules waiting on later steps show what will appear there. */
 
-function EmptyRow({ cols, children }: { cols: number; children: ReactNode }) {
-  return <tr><td colSpan={cols} className="empty-row">{children}</td></tr>
+const ENGAGEMENT_TABS = [
+  { key: 'all', label: 'All', count: 0 }, { key: 'proposal', label: 'Proposal', count: 0 }, { key: 'contract', label: 'Contract', count: 0 },
+  { key: 'progress', label: 'In Progress', count: 0 }, { key: 'review', label: 'Under Review', count: 0 }, { key: 'done', label: 'Completed', count: 0 },
+] as const
+type ReqTab = 'all' | 'open' | 'proposals' | 'accepted' | 'declined'
+const reqBucket = (r: ProposalRequest): ReqTab => {
+  const s = r.proposal?.status
+  if (s === 'ACCEPTED') return 'accepted'
+  if (s && ['SUBMITTED', 'UNDER_REVIEW', 'REVISION_REQUESTED'].includes(s)) return 'proposals'
+  if (['DRAFT', 'OPEN', 'PROPOSAL_RECEIVED'].includes(r.status)) return 'open'
+  return 'declined'
 }
+
+// How every engagement is protected (Buyer Dashboard s.9, Payments & Escrow). Rules, not statuses.
+const ASSURANCE: { icon: 'shield' | 'contract' | 'lock' | 'check' | 'help' | 'request'; label: string; value: string }[] = [
+  { icon: 'shield', label: 'Professional verification', value: 'Checked before contracting' },
+  { icon: 'contract', label: 'Agreement', value: 'Signed contract required' },
+  { icon: 'lock', label: 'Payment protection', value: 'Escrow for every milestone' },
+  { icon: 'check', label: 'Release condition', value: 'Your milestone approval' },
+  { icon: 'help', label: 'Dispute route', value: 'Available, funds held' },
+  { icon: 'request', label: 'Engagement record', value: 'Audit-grade, exportable' },
+]
 
 export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
   const { user } = useAuth()
@@ -25,8 +45,11 @@ export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
   const [orgInvites, setOrgInvites] = useState(0)
   const [units, setUnits] = useState<number | null>(null)
   const [hasExceptionAuthority, setHasExceptionAuthority] = useState(true)
-  const [activity, setActivity] = useState<AuditRecord[] | null>(null)
   const [saved, setSaved] = useState<SavedProfessional[]>([])
+  const [engTab, setEngTab] = useState<(typeof ENGAGEMENT_TABS)[number]['key']>('all')
+  const [reqTab, setReqTab] = useState<ReqTab>('all')
+  const [requests, setRequests] = useState<ProposalRequest[]>([])
+  const [hideBanner, setHideBanner] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -40,8 +63,9 @@ export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
           if (found) { setOrg(found); break }
           await new Promise((r) => setTimeout(r, 800))
         }
-        const [o, f, s] = await Promise.all([orgApi.myInvitations(), firmApi.myInvitations(), savedApi.list()])
-        if (!cancelled) { setMyInvites(o.length + f.length); setSaved(s) }
+        const [o, f, s, rq] = await Promise.all([orgApi.myInvitations(), firmApi.myInvitations(), savedApi.list(),
+          proposalApi.list('buyer').catch(() => [])])
+        if (!cancelled) { setMyInvites(o.length + f.length); setSaved(s); setRequests(rq) }
       } catch { /* each panel shows its own empty state */ }
       if (!cancelled) setLoading(false)
     })()
@@ -49,143 +73,134 @@ export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
   }, [kind])
 
   const isAdmin = !!org?.myRoles.includes('ORG_ADMIN')
-  const canSeeActivity = !!org && (isAdmin || org.myRoles.includes('LEGAL_REVIEWER'))
   useEffect(() => {
-    if (!org) return
-    if (canSeeActivity) auditApi.recent(org.id, 15).then(setActivity).catch(() => setActivity([]))
-    if (kind === 'enterprise') {
-      orgApi.businessUnits(org.id).then((u) => setUnits(u.length)).catch(() => {})
-      if (isAdmin) {
-        orgApi.invitations(org.id).then((i) => setOrgInvites(i.length)).catch(() => {})
-        orgApi.members(org.id).then((ms) => setHasExceptionAuthority(ms.some((m) =>
-          m.roles.includes('EXCEPTION_AUTHORITY') && !m.roles.includes('ORG_ADMIN')))).catch(() => {})
-      }
+    if (!org || kind !== 'enterprise') return
+    orgApi.businessUnits(org.id).then((u) => setUnits(u.length)).catch(() => {})
+    if (isAdmin) {
+      orgApi.invitations(org.id).then((i) => setOrgInvites(i.length)).catch(() => {})
+      orgApi.members(org.id).then((ms) => setHasExceptionAuthority(ms.some((m) =>
+        m.roles.includes('EXCEPTION_AUTHORITY') && !m.roles.includes('ORG_ADMIN')))).catch(() => {})
     }
-  }, [org, kind, isAdmin, canSeeActivity])
+  }, [org, kind, isAdmin])
 
   if (!user) return null
   if (loading) return <p className="muted">Loading…</p>
 
   const actions: Action[] = []
-  if (!user.emailConfirmed) actions.push({ title: 'Confirm your email address', detail: 'Needed before you can accept invitations', priority: 'High', to: '/app/account', icon: 'mail' })
+  if (!user.emailConfirmed) actions.push({ title: 'Confirm your email address', detail: 'Needed before you can accept invitations', priority: 'High', to: '/app/settings', icon: 'mail' })
   if (myInvites > 0) actions.push({ title: `Respond to ${myInvites} invitation${myInvites > 1 ? 's' : ''}`, detail: 'You were invited to join a team', priority: 'Medium', to: '/app/invitations', icon: 'bell' })
   if (kind === 'enterprise' && org && isAdmin) {
-    if (org.memberCount <= 1) actions.push({ title: 'Invite your team', detail: 'Add requesters, approvers and budget owners', priority: 'Medium', to: '/app/enterprise/team', icon: 'team' })
-    if (!hasExceptionAuthority) actions.push({ title: 'Name an Exception Authority', detail: 'Must be someone other than an Org Admin', priority: 'Medium', to: '/app/enterprise/team', icon: 'shield' })
+    if (org.memberCount <= 1) actions.push({ title: 'Invite your team', detail: 'Add requesters, approvers and budget owners', priority: 'Medium', to: '/app/organisation?tab=members', icon: 'team' })
+    if (!hasExceptionAuthority) actions.push({ title: 'Name an Exception Authority', detail: 'Must be someone other than an Org Admin', priority: 'Medium', to: '/app/organisation?tab=roles', icon: 'shield' })
     if (units === 0) actions.push({ title: 'Add business units and cost centers', detail: 'Used for budgets and approval routing', priority: 'Low', to: '/app/enterprise/structure', icon: 'building' })
-    if (orgInvites > 0) actions.push({ title: `${orgInvites} invitation${orgInvites > 1 ? 's' : ''} not yet accepted`, detail: 'Remind your colleagues or resend', priority: 'Low', to: '/app/enterprise/team', icon: 'mail' })
+    if (orgInvites > 0) actions.push({ title: `${orgInvites} invitation${orgInvites > 1 ? 's' : ''} not yet accepted`, detail: 'Remind your colleagues or resend', priority: 'Low', to: '/app/organisation?tab=members', icon: 'mail' })
   }
-  if (saved.length === 0) actions.push({ title: 'Find and save professionals', detail: 'Build a shortlist by specialization and Trust Tier', priority: 'Low', to: '/professionals', icon: 'search' })
+  const toReview = requests.filter((r) => r.proposal && ['SUBMITTED', 'UNDER_REVIEW'].includes(r.proposal.status))
+  if (toReview.length > 0) actions.unshift({ title: `Review ${toReview.length} proposal${toReview.length > 1 ? 's' : ''}`, detail: `${toReview[0].professional.displayName} replied to “${toReview[0].service}”`, priority: 'High', to: `/app/requests/${toReview[0].id}`, icon: 'proposal' })
+  const drafts = requests.filter((r) => r.status === 'DRAFT')
+  if (drafts.length > 0) actions.push({ title: 'Finish your draft request', detail: drafts[0].service, priority: 'Medium', to: `/app/requests/${drafts[0].id}`, icon: 'request' })
+  if (saved.length === 0) actions.push({ title: 'Find and save professionals', detail: 'Build a shortlist by specialization and Trust Tier', priority: 'Low', to: '/app/find', icon: 'search' })
+  const urgent = actions.filter((a) => a.priority !== 'Low')
 
   return (
     <>
-      <div className="home-head">
-        <div>
-          <h1>{greeting(user.displayName)}</h1>
-          <p className="muted" style={{ margin: 0 }}>
-            {org && kind === 'enterprise' ? `${org.name} · ` : ''}Find the right professionals and get your work done — governed from start to finish.
-          </p>
-        </div>
-        <Link className="btn btn-primary" to="/professionals"><Icon name="search" /> Find a Professional</Link>
-      </div>
+      <PortalHeader eyebrow="Welcome back" title={greeting(user.displayName)}
+        subtitle={<>{org && kind === 'enterprise' ? `${org.name} · ` : ''}Manage professional engagements from verified selection through protected completion.</>}
+        actions={<>
+          <Link className="btn btn-primary" to="/app/find"><Icon name="search" /> Find a Professional</Link>
+          <Link className="btn btn-secondary" to="/app/requests/new"><Icon name="request" /> Create a Request</Link>
+        </>} />
       <AccountAlerts />
 
-      {/* s.4 Summary cards (max 5, each clickable) */}
-      <div className="kpi-row five">
-        <a href="#engagements"><Kpi icon="contract" tone="blue" label="Active Engagements" value={0} note="Contracts in progress" /></a>
-        <a href="#actions"><Kpi icon="bell" tone="amber" label="Pending Actions" value={actions.length} note={actions.length ? 'Needs your attention' : 'All caught up'} /></a>
-        <a href="#proposals"><Kpi icon="proposal" tone="violet" label="Open Proposals" value={0} note="Awaiting your decision" /></a>
-        <a href="#payments"><Kpi icon="shield" tone="teal" label="Funds in Protection" value="—" note="Live when payments launch" /></a>
-        <a href="#saved"><Kpi icon="star" tone="green" label="Saved Professionals" value={saved.length} note="Your shortlist" /></a>
+      <div className="stat-row five">
+        <StatCard icon="bell" tone="amber" label="Action Required" value={urgent.length} sub={urgent.length ? 'Needs your attention' : 'All caught up'} to="#actions" />
+        <StatCard icon="request" tone="blue" label="Open Requests" value={new Set(requests.filter((r) => ['OPEN', 'PROPOSAL_RECEIVED'].includes(r.status)).map((r) => r.groupId)).size}
+          sub="Waiting for or receiving proposals" to="/app/requests" />
+        <StatCard icon="proposal" tone="violet" label="Proposals" value={toReview.length} sub="Awaiting your review" to="/app/proposals" />
+        <StatCard icon="briefcase" tone="green" label="Active Engagements" value={0} sub="In progress" to="/app/engagements" />
+        <StatCard icon="lock" tone="teal" label="Protected Funds" value="—" sub="Live when payments launch" to="/app/payments" />
       </div>
 
-      {/* s.11 Pending actions: highlighted strip */}
-      <section className="card panel attention" id="actions">
-        <div className="panel-head"><h2>Pending Actions</h2></div>
-        <ActionList actions={actions} empty="You're all caught up." />
-      </section>
+      {urgent.length > 0 && !hideBanner && (
+        <div className="attention-banner" role="status">
+          <span className="kpi-icon amber"><Icon name="bell" /></span>
+          <div><strong>{urgent.length} action{urgent.length > 1 ? 's' : ''} require{urgent.length === 1 ? 's' : ''} your attention</strong>
+            <div className="muted small">{urgent[0].title}: {urgent[0].detail}</div></div>
+          <Link className="btn btn-warn" to={urgent[0].to}>Review now</Link>
+          <button className="icon-btn" aria-label="Dismiss" onClick={() => setHideBanner(true)}>×</button>
+        </div>
+      )}
 
-      <div className="home-grid">
+      <div className="home-grid wide">
         <div>
-          {/* s.5 Active engagements */}
           <section className="card panel" id="engagements">
-            <div className="panel-head"><h2>Active Engagements</h2></div>
-            <table className="data">
-              <thead><tr><th>Professional</th><th>Service</th><th>Status</th><th>Milestone</th><th>Payment</th><th>Actions</th></tr></thead>
-              <tbody><EmptyRow cols={6}>
-                <strong>No active engagements.</strong> Once a proposal is accepted and the contract signed, track milestones,
-                approvals and payments here.
-              </EmptyRow></tbody>
-            </table>
+            <div className="panel-head"><h2>Your Engagements</h2><Link className="small" to="/app/engagements">View all</Link></div>
+            <Tabs tabs={[...ENGAGEMENT_TABS]} value={engTab} onChange={setEngTab} />
+            <EmptyTable columns={['Professional', 'Service', 'Stage', 'Next action', 'Due date', 'Protected amount']}>
+              <strong>No engagements yet.</strong> When a proposal is accepted and the contract signed, its milestones,
+              next action and protected amount appear here.
+            </EmptyTable>
           </section>
 
-          {/* s.10 Proposals & requests */}
-          <section className="card panel" id="proposals">
-            <div className="panel-head"><h2>Proposals &amp; Requests</h2></div>
-            <table className="data">
-              <thead><tr><th>Professional</th><th>Service</th><th>Price</th><th>Status</th><th>Response deadline</th><th>Actions</th></tr></thead>
-              <tbody><EmptyRow cols={6}>
-                <strong>No requests yet.</strong> Requests you send, proposals you receive and expired proposals appear here.
-                Requesting proposals opens in the next release.
-              </EmptyRow></tbody>
-            </table>
-          </section>
-
-          {/* s.13 Saved & monitoring */}
-          <section className="card panel" id="saved">
-            <div className="panel-head"><h2>Saved Professionals</h2>{saved.length > 0 && <Link className="small" to="/app/saved">View all</Link>}</div>
-            {saved.length === 0 ? (
-              <p className="muted small" style={{ margin: 0 }}>Nothing saved yet. <Link to="/professionals">Browse professionals</Link> and use ☆ Save to build a shortlist.</p>
+          <section className="card panel" id="requests">
+            <div className="panel-head"><h2>Requests &amp; Proposals</h2><Link className="small" to="/app/requests">View all</Link></div>
+            <Tabs<ReqTab> tabs={(['all', 'open', 'proposals', 'accepted', 'declined'] as const).map((k) => ({ key: k,
+              label: { all: 'All', open: 'Open Requests', proposals: 'Proposals', accepted: 'Accepted', declined: 'Closed' }[k],
+              count: k === 'all' ? requests.length : requests.filter((r) => reqBucket(r) === k).length }))} value={reqTab} onChange={setReqTab} />
+            {requests.filter((r) => reqTab === 'all' || reqBucket(r) === reqTab).length === 0 ? (
+              <EmptyTable columns={['Request', 'Professional', 'Status', 'Proposal', 'Sent']}>
+                <strong>Nothing here yet.</strong> Choose professionals in <Link to="/app/find">Find</Link> and select <strong>Request proposal</strong>.
+              </EmptyTable>
             ) : (
-              <ul className="pro-list">
-                {saved.slice(0, 5).map((s) => (
-                  <li key={s.professionalId}>
-                    <span className="avatar" aria-hidden>{s.displayName.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase()}</span>
-                    <span><Link to={`/professionals/${s.professionalId}`}><strong>{s.displayName}</strong></Link>
-                      <span className="muted small"> · {s.primarySpecialization ?? s.headline} · {LABEL[s.availability] ?? s.availability}</span></span>
-                    <span className={`badge ${s.tier === 'C' ? 'warn' : 'green'}`}>Tier {s.tier}</span>
-                  </li>
-                ))}
-              </ul>
+              <table className="data">
+                <thead><tr><th>Request</th><th>Professional</th><th>Status</th><th>Proposal</th><th>Sent</th></tr></thead>
+                <tbody>{requests.filter((r) => reqTab === 'all' || reqBucket(r) === reqTab).slice(0, 6).map((r) => (
+                  <tr key={r.id}>
+                    <td><Link to={`/app/requests/${r.id}`}><strong>{r.service}</strong></Link></td>
+                    <td className="small">{r.professional.displayName}</td>
+                    <td><span className={`badge ${requestStatus(r).tone}`}>{requestStatus(r).label}</span></td>
+                    <td className="small">{r.proposal ? formatMoney(r.proposal.total) : '—'}</td>
+                    <td className="small">{r.sentAt ? new Date(r.sentAt).toLocaleDateString() : 'Draft'}</td>
+                  </tr>))}</tbody>
+              </table>
             )}
           </section>
         </div>
 
         <aside>
-          {/* s.9 Payments & protection */}
-          <section className="card panel" id="payments">
-            <div className="panel-head"><h2>Payments &amp; Protection</h2></div>
-            <ul className="checklist">
-              <li><span>Held in escrow</span><strong>—</strong></li>
-              <li><span>Scheduled for release</span><strong>—</strong></li>
-              <li><span>Released</span><strong>—</strong></li>
-            </ul>
-            <ul className="why-inline" style={{ marginTop: 10 }}>
-              <li>Escrow-style holding</li><li>Conditional release</li><li>Dispute path available</li>
-            </ul>
-            <p className="muted small" style={{ margin: '8px 0 0' }}>Live when payments launch.</p>
+          <section className="card panel attention" id="actions">
+            <div className="panel-head"><h2>Pending Actions</h2></div>
+            <ActionList actions={actions} empty="You're all caught up." />
           </section>
 
-          {/* s.12 Messages & activity */}
           <section className="card panel">
-            <div className="panel-head"><h2>Messages &amp; Activity</h2></div>
-            {!canSeeActivity ? <p className="muted small" style={{ margin: 0 }}>Activity is visible to Org Admins and Legal Reviewers.</p>
-              : activity === null ? <p className="muted small" style={{ margin: 0 }}>Loading…</p> : <ActivityList records={activity} />}
-            <p className="muted small" style={{ margin: '10px 0 0' }}>Engagement messages arrive with contracts.</p>
+            <div className="panel-head"><h2><Icon name="shield" /> Engagement Assurance</h2></div>
+            <ul className="assurance">
+              {ASSURANCE.map((a) => (
+                <li key={a.label}><Icon name={a.icon} /><span>{a.label}</span><span className="ok">✓ {a.value}</span></li>
+              ))}
+            </ul>
+            <div className="protect-note"><Icon name="lock" /><div><strong>Your work is protected</strong>
+              <div className="small">Funds are held under protection and released only when agreed conditions are met.</div></div></div>
           </section>
 
-          {/* s.14 Enterprise controls (contextual) */}
-          {kind === 'enterprise' && (
-            <section className="card panel">
-              <div className="panel-head"><h2>Enterprise Controls</h2><Link className="small" to="/app/enterprise/team">View enterprise controls →</Link></div>
-              <ul className="checklist">
-                <li><Link to="/app/enterprise/team">Team &amp; roles</Link><span className="muted small">{org?.memberCount ?? 0} members</span></li>
-                <li><Link to="/app/enterprise/structure">Business units &amp; cost centers</Link><span className="muted small">{units ?? 0} units</span></li>
-                <li><span>Policy profiles &amp; approval workflows</span><span className="badge">Soon</span></li>
-                <li><span>Audit log export</span><span className="badge">Soon</span></li>
+          <section className="card panel" id="saved">
+            <div className="panel-head"><h2>Saved Professionals</h2><Link className="small" to="/app/saved">View all</Link></div>
+            {saved.length === 0 ? (
+              <p className="muted small" style={{ margin: 0 }}>Nothing saved yet. <Link to="/app/find">Find professionals</Link> and save them to compare.</p>
+            ) : (
+              <ul className="pro-list">
+                {saved.slice(0, 4).map((s) => (
+                  <li key={s.professionalId}>
+                    <Avatar name={s.displayName} photoUrl={s.photoUrl} size={36} />
+                    <span><strong>{s.displayName}</strong>
+                      <span className="muted small"> · {s.primarySpecialization ?? s.headline} · {LABEL[s.availability] ?? s.availability}</span></span>
+                    <Link className="btn btn-secondary btn-sm" to={`/professionals/${s.professionalId}`}>View profile</Link>
+                  </li>
+                ))}
               </ul>
-            </section>
-          )}
+            )}
+          </section>
         </aside>
       </div>
     </>

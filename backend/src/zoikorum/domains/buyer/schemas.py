@@ -18,6 +18,8 @@ class OrganizationOut(BaseModel):
     country: str
     status: str
     businessContext: str | None
+    industry: str | None = None
+    timeZone: str | None = None
     myRoles: list[str]
     memberCount: int
     createdAt: datetime
@@ -26,6 +28,8 @@ class OrganizationOut(BaseModel):
 class OrganizationPatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     businessContext: Literal["STARTUP", "SME", "MID_MARKET", "ENTERPRISE"] | None = None
+    industry: str | None = Field(default=None, max_length=80)
+    timeZone: str | None = Field(default=None, max_length=64)
 
 
 class MemberOut(BaseModel):
@@ -36,6 +40,7 @@ class MemberOut(BaseModel):
     spendLimit: MoneyDTO | None
     businessUnitId: uuid.UUID | None
     joinedAt: datetime
+    lastActiveAt: datetime | None = None
 
 
 class MemberPatch(BaseModel):
@@ -94,3 +99,15 @@ class CostCenterOut(BaseModel):
     code: str
     businessUnitId: uuid.UUID | None
     quarterlyBudget: MoneyDTO | None
+
+
+class BillingContactsIn(BaseModel):
+    primaryIdentityId: uuid.UUID
+    backupIdentityId: uuid.UUID | None = None
+
+
+class BillingContactOut(BaseModel):
+    identityId: uuid.UUID
+    displayName: str
+    email: str
+    isPrimary: bool

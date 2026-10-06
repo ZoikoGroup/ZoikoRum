@@ -7,6 +7,10 @@ from fastapi import APIRouter, Request, status
 from zoikorum.config import get_settings
 from zoikorum.domains.identity import service
 from zoikorum.domains.identity.schemas import (
+    DataRequestIn,
+    DataRequestOut,
+    MePatch,
+    SessionOut,
     AddPersonaIn,
     AuthOut,
     ConfirmEmailIn,
@@ -115,6 +119,34 @@ async def step_up(body: StepUpIn, request: Request, actor: CurrentActor, session
 @router.get("/me", response_model=IdentityOut)
 async def me(actor: CurrentActor, session: DbSession) -> IdentityOut:
     return await service.get_me(session, actor)
+
+
+@router.patch("/me", response_model=IdentityOut)
+async def update_me(body: MePatch, actor: CurrentActor, session: DbSession) -> IdentityOut:
+    """Settings > Account: display name, phone (stored encrypted), language, time zone."""
+    return await service.update_me(session, actor, body)
+
+
+@router.get("/me/sessions", response_model=list[SessionOut])
+async def my_sessions(actor: CurrentActor, session: DbSession):
+    """Settings > Security: devices currently signed in."""
+    return await service.list_sessions(session, actor)
+
+
+@router.delete("/me/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def sign_out_device(session_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> None:
+    await service.revoke_session(session, actor, session_id)
+
+
+@router.post("/me/data-requests", response_model=DataRequestOut, status_code=status.HTTP_201_CREATED)
+async def create_data_request(body: DataRequestIn, actor: CurrentActor, session: DbSession):
+    """Settings > Privacy: download my data (ACCESS) or delete my account (ERASURE)."""
+    return await service.create_data_request(session, actor, body.requestType)
+
+
+@router.get("/me/data-requests", response_model=list[DataRequestOut])
+async def data_requests(actor: CurrentActor, session: DbSession):
+    return await service.list_data_requests(session, actor)
 
 
 @router.post("/me/account-types", response_model=AuthOut)

@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Query, status
 
 from zoikorum.domains.marketplace import service
-from zoikorum.domains.marketplace.schemas import SavedOut, SaveIn, SpecializationAdminOut, SpecializationIn, SpecializationPatch
+from zoikorum.domains.marketplace.schemas import (
+    CollectionIn, CollectionItemsIn, CollectionOut, CompareItem, SavedOut, SaveIn, SpecializationAdminOut, SpecializationIn,
+    SpecializationPatch,
+)
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
 
@@ -59,3 +62,46 @@ async def save(body: SaveIn, actor: CurrentActor, session: DbSession) -> None:
 @router.delete("/v1/saved/professionals/{professional_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def unsave(professional_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> None:
     await service.unsave_professional(session, actor, professional_id)
+
+
+@router.get("/v1/saved/collections", response_model=list[CollectionOut])
+async def collections(actor: CurrentActor, session: DbSession):
+    return await service.list_collections(session, actor)
+
+
+@router.post("/v1/saved/collections", response_model=CollectionOut, status_code=status.HTTP_201_CREATED)
+async def create_collection(body: CollectionIn, actor: CurrentActor, session: DbSession):
+    return await service.create_collection(session, actor, body.name)
+
+
+@router.patch("/v1/saved/collections/{collection_id}", response_model=CollectionOut)
+async def rename_collection(collection_id: uuid.UUID, body: CollectionIn, actor: CurrentActor, session: DbSession):
+    return await service.rename_collection(session, actor, collection_id, body.name)
+
+
+@router.delete("/v1/saved/collections/{collection_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_collection(collection_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> None:
+    await service.delete_collection(session, actor, collection_id)
+
+
+@router.post("/v1/saved/collections/{collection_id}/items", response_model=CollectionOut)
+async def add_to_collection(collection_id: uuid.UUID, body: CollectionItemsIn, actor: CurrentActor, session: DbSession):
+    """Adds professionals to a collection (and saves them, if not saved yet)."""
+    return await service.add_to_collection(session, actor, collection_id, body.professionalIds)
+
+
+@router.delete("/v1/saved/collections/{collection_id}/items/{professional_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_from_collection(collection_id: uuid.UUID, professional_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> None:
+    await service.remove_from_collection(session, actor, collection_id, professional_id)
+
+
+@router.get("/v1/compare", response_model=list[CompareItem])
+async def compare(session: DbSession, ids: str = Query(description="Comma-separated professional ids (max 3)")):
+    """Side-by-side comparison of up to 3 published professionals."""
+    try:
+        parsed = [uuid.UUID(i.strip()) for i in ids.split(",") if i.strip()]
+    except ValueError as exc:
+        from zoikorum.shared.errors import ValidationFailed
+
+        raise ValidationFailed("ids must be professional ids", code="INVALID_IDS") from exc
+    return await service.compare(session, parsed)

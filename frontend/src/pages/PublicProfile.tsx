@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { formatMoney } from '../api/orgs'
 import { LABEL, RATE_UNIT_LABEL, proApi, type PublicProfile } from '../api/professional'
 import { DIMENSION_VALUE, DIMENSIONS } from '../api/verification'
+import { useAuth } from '../auth/AuthContext'
 import { Avatar } from '../components/dashboard'
 import { ErrorAlert, SiteFooter, SiteHeader } from '../components/ui'
 import { countryName, priceText } from './ProfessionalPages'
@@ -19,6 +20,7 @@ export default function PublicProfilePage() {
   const [error, setError] = useState<unknown>(null)
   useEffect(() => { proApi.publicProfile(id).then(setP).catch(setError) }, [id])
   const savedIds = useSavedIds()
+  const { user } = useAuth()
 
   const keyCredentials = p?.credentials.filter((c) => c.status === 'VERIFIED').slice(0, 2) ?? []
   return (
@@ -44,6 +46,8 @@ export default function PublicProfilePage() {
               <div>
                 <div className="name-row"><Avatar name={p.displayName} photoUrl={p.photoUrl} size={72} /><h1>{p.displayName}</h1></div>
                 {p.headline && <p className="headline">{p.headline}</p>}
+                {p.firm && <p className="small" style={{ margin: '0 0 6px' }}>Practises with <strong>{p.firm.name}</strong>
+                  {p.firm.verified ? <span className="badge green" style={{ marginLeft: 8 }}>Firm verified</span> : null}</p>}
                 <p className="muted small" style={{ margin: 0 }}>
                   {[p.city, countryName(p.country)].filter(Boolean).join(', ')}
                   {p.primaryCategoryName && ` · ${p.primaryCategoryName}`}
@@ -61,9 +65,12 @@ export default function PublicProfilePage() {
                 {savedIds.canSave && savedIds.ids && !p.isOwnProfile && (
                   <SaveButton id={p.id} saved={savedIds.ids.has(p.id)} onToggle={(pid) => { savedIds.toggle(pid).catch(setError) }} />
                 )}
-                <span className="badge">Coming soon</span>
+                {savedIds.canSave && !p.isOwnProfile && (
+                  <Link className="btn btn-primary" to={`/app/requests/new?pro=${p.id}`}>Request proposal</Link>
+                )}
+                {!user && <Link className="btn btn-primary" to="/login">Sign in to request a proposal</Link>}
                 <span className="muted small" style={{ maxWidth: 220, textAlign: 'right' }}>
-                  Requesting a proposal, contracts and protected payments are on the way.
+                  No payment until you accept a proposal and sign the contract.
                 </span>
               </div>
             </section>
@@ -90,6 +97,9 @@ export default function PublicProfilePage() {
                           {o.typicalDuration && ` · ${o.typicalDuration}`}</div>
                         {o.summary && <p style={{ marginTop: 8 }}>{o.summary}</p>}
                         {o.deliverables.length > 0 && <ul className="deliverables">{o.deliverables.map((d) => <li key={d}>{d}</li>)}</ul>}
+                        {savedIds.canSave && !p.isOwnProfile && (
+                          <Link className="btn btn-secondary btn-sm" to={`/app/requests/new?pro=${p.id}&offering=${o.id}`}>Request this service</Link>
+                        )}
                       </article>
                     ))}
                   </section>

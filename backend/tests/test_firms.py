@@ -80,3 +80,36 @@ async def test_firm_member_cannot_manage_and_last_admin_is_protected(client, mak
     assert r.status_code == 409 and r.json()["code"] == "LAST_ADMIN"
     # A member may leave on their own.
     assert (await client.delete(f"/v1/firms/{firm['id']}/members/{m.id}", headers=m.h)).status_code == 204
+
+
+async def test_professional_links_to_firm_after_joining_and_unlinks_on_removal(client, make_user, drain):
+    """A professional who joins a firm after creating their profile practises under it; leaving ends the link."""
+    from test_search import publish
+
+    pro_user, pro = await publish(client, make_user, drain, "ann", headline="Tax adviser", primary="transfer-pricing")
+    assert pro["firmId"] is None
+    admin, firm = await firm_admin(make_user, drain, client)
+    inv = (await client.post(f"/v1/firms/{firm['id']}/invitations", headers=admin.h, json={"email": pro_user.email})).json()
+    await client.post("/v1/firms/invitations/accept", headers=pro_user.h, json={"token": token_of(inv)})
+    await drain()
+
+    assert (await client.get("/v1/professionals/me", headers=pro_user.h)).json()["firmId"] == firm["id"]
+    public = (await client.get(f"/v1/professionals/{pro['id']}")).json()
+    assert public["firm"] == {"id": firm["id"], "name": "Smith & Co Advisory LLP", "verified": False}
+
+    # Practise independently, then link again by choice.
+    r = await client.put("/v1/professionals/me/firm", headers=pro_user.h, json={"firmId": None})
+    assert r.status_code == 200 and r.json()["firmId"] is None
+    assert (await client.get(f"/v1/professionals/{pro['id']}")).json()["firm"] is None
+    r = await client.put("/v1/professionals/me/firm", headers=pro_user.h, json={"firmId": firm["id"]})
+    assert r.json()["firmId"] == firm["id"]
+
+    # Only firms you belong to; removal from the firm ends the link.
+    other_admin = await make_user("oz", account_type="FIRM", organization="Other Partners")
+    await drain()
+    other = (await client.get("/v1/firms/mine", headers=other_admin.h)).json()[0]
+    r = await client.put("/v1/professionals/me/firm", headers=pro_user.h, json={"firmId": other["id"]})
+    assert r.status_code == 403 and r.json()["code"] == "NOT_FIRM_MEMBER"
+    assert (await client.delete(f"/v1/firms/{firm['id']}/members/{pro_user.id}", headers=admin.h)).status_code == 204
+    await drain()
+    assert (await client.get("/v1/professionals/me", headers=pro_user.h)).json()["firmId"] is None

@@ -14,8 +14,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.config import get_settings
-from zoikorum.domains.buyer.models import BusinessUnit, CostCenter, Invitation, OrgMember, Organization
+from zoikorum.domains.buyer.models import BillingContact, BusinessUnit, CostCenter, Invitation, OrgMember, Organization
 from zoikorum.domains.buyer.schemas import (
+    BillingContactOut,
     BusinessUnitOut,
     CostCenterOut,
     InvitationOut,
@@ -120,7 +121,8 @@ async def _out(session: AsyncSession, org: Organization, my_roles: list[str]) ->
         select(func.count()).select_from(OrgMember).where(OrgMember.organization_id == org.id, OrgMember.status == "ACTIVE")
     )
     return OrganizationOut(id=org.id, name=org.name, orgType=org.org_type, country=org.country, status=org.status,
-                           businessContext=org.business_context, myRoles=sorted(my_roles), memberCount=count or 0,
+                           businessContext=org.business_context, industry=org.industry, timeZone=org.time_zone,
+                           myRoles=sorted(my_roles), memberCount=count or 0,
                            createdAt=org.created_at)
 
 
@@ -141,7 +143,8 @@ async def get_organization(session: AsyncSession, actor: Actor, org_id: uuid.UUI
     return await _out(session, await _org(session, org_id), m.roles)
 
 
-async def update_organization(session: AsyncSession, actor: Actor, org_id: uuid.UUID, name: str | None, ctx: str | None) -> OrganizationOut:
+async def update_organization(session: AsyncSession, actor: Actor, org_id: uuid.UUID, name: str | None, ctx: str | None,
+                              industry: str | None = None, time_zone: str | None = None) -> OrganizationOut:
     m = await _require_member(session, actor, org_id, OrgRole.ORG_ADMIN)
     org = await _org(session, org_id, lock=True)
     changes = {}
@@ -149,6 +152,17 @@ async def update_organization(session: AsyncSession, actor: Actor, org_id: uuid.
         org.name = changes["name"] = name.strip()
     if ctx and ctx != org.business_context:
         org.business_context = changes["businessContext"] = ctx
+    if industry is not None and (industry.strip() or None) != org.industry:
+        org.industry = changes["industry"] = industry.strip() or None
+    if time_zone is not None and (time_zone or None) != org.time_zone:
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+        if time_zone:
+            try:
+                ZoneInfo(time_zone)
+            except (ZoneInfoNotFoundError, ValueError) as exc:
+                raise ValidationFailed("Unknown time zone", code="INVALID_TIME_ZONE") from exc
+        org.time_zone = changes["timeZone"] = time_zone or None
     if changes:
         _evt(session, E.ORGANIZATION_UPDATED, org, changes=changes, updatedBy=actor.identity_id)
     return await _out(session, org, m.roles)
@@ -158,10 +172,10 @@ async def update_organization(session: AsyncSession, actor: Actor, org_id: uuid.
 # Members, roles, approval authority
 # ---------------------------------------------------------------------------
 
-def _member_out(m: OrgMember) -> MemberOut:
+def _member_out(m: OrgMember, last_active=None) -> MemberOut:
     return MemberOut(identityId=m.identity_id, email=m.email, displayName=m.display_name, roles=sorted(m.roles),
                      spendLimit=_money(m.spend_limit_minor, m.spend_limit_currency),
-                     businessUnitId=m.business_unit_id, joinedAt=m.created_at)
+                     businessUnitId=m.business_unit_id, joinedAt=m.created_at, lastActiveAt=last_active)
 
 
 async def list_members(session: AsyncSession, actor: Actor, org_id: uuid.UUID) -> list[MemberOut]:
@@ -174,7 +188,8 @@ async def list_members(session: AsyncSession, actor: Actor, org_id: uuid.UUID) -
             .limit(1000)
         )
     ).all()
-    return [_member_out(m) for m in rows]
+    seen = await identity_facade.last_active(session, [m.identity_id for m in rows])
+    return [_member_out(m, seen.get(m.identity_id)) for m in rows]
 
 
 async def _admin_count(session: AsyncSession, org_id: uuid.UUID) -> int:
@@ -443,3 +458,41 @@ async def list_cost_centers(session: AsyncSession, actor: Actor, org_id: uuid.UU
     await _require_member(session, actor, org_id)
     rows = (await session.scalars(select(CostCenter).where(CostCenter.organization_id == org_id).order_by(CostCenter.code))).all()
     return [_cc_out(c) for c in rows]
+
+
+# ---------------------------------------------------------------------------
+# Billing contacts (Organisation > Billing contacts)
+# ---------------------------------------------------------------------------
+
+async def billing_contacts(session: AsyncSession, actor: Actor, org_id: uuid.UUID) -> list[BillingContactOut]:
+    await _require_member(session, actor, org_id)
+    rows = (await session.execute(
+        select(BillingContact, OrgMember).join(OrgMember, (OrgMember.identity_id == BillingContact.identity_id)
+                                               & (OrgMember.organization_id == BillingContact.organization_id))
+        .where(BillingContact.organization_id == org_id).order_by(BillingContact.is_primary.desc())
+    )).all()
+    return [BillingContactOut(identityId=b.identity_id, displayName=m.display_name, email=m.email, isPrimary=b.is_primary)
+            for b, m in rows]
+
+
+async def set_billing_contacts(session: AsyncSession, actor: Actor, org_id: uuid.UUID, primary: uuid.UUID,
+                               backup: uuid.UUID | None) -> list[BillingContactOut]:
+    """Org Admins and Budget Owners choose the billing contacts; both must be active members."""
+    await _require_member(session, actor, org_id, OrgRole.ORG_ADMIN, OrgRole.BUDGET_OWNER)
+    org = await _org(session, org_id, lock=True)
+    if backup == primary:
+        backup = None
+    for identity_id in filter(None, (primary, backup)):
+        if not await session.scalar(select(OrgMember.id).where(OrgMember.organization_id == org_id,
+                                                                 OrgMember.identity_id == identity_id, OrgMember.status == "ACTIVE")):
+            raise ValidationFailed("Billing contacts must be members of the organisation", code="NOT_A_MEMBER")
+    existing = (await session.scalars(select(BillingContact).where(BillingContact.organization_id == org_id))).all()
+    for b in existing:
+        await session.delete(b)
+    await session.flush()
+    session.add(BillingContact(organization_id=org_id, identity_id=primary, is_primary=True))
+    if backup:
+        session.add(BillingContact(organization_id=org_id, identity_id=backup, is_primary=False))
+    await session.flush()
+    _evt(session, E.BILLING_CONTACTS_UPDATED, org, primaryIdentityId=primary, backupIdentityId=backup, updatedBy=actor.identity_id)
+    return await billing_contacts(session, actor, org_id)

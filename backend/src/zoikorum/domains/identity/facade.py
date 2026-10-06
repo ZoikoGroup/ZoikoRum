@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -58,3 +59,16 @@ async def count_accounts(session: AsyncSession) -> dict[str, int]:
     persona = func.unnest(Identity.personas).label("persona")
     rows = (await session.execute(select(persona, func.count()).group_by(persona))).all()
     return {"total": total, **{p: n for p, n in rows}}
+
+
+async def last_active(session: AsyncSession, ids: list[uuid.UUID]) -> dict[uuid.UUID, datetime]:
+    """Most recent sign-in or token refresh per identity (team lists: "Last active")."""
+    from sqlalchemy import func
+
+    from zoikorum.domains.identity.models import Session
+
+    if not ids:
+        return {}
+    rows = await session.execute(select(Session.identity_id, func.max(Session.created_at))
+                                 .where(Session.identity_id.in_(ids)).group_by(Session.identity_id))
+    return dict(rows.all())

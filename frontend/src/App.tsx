@@ -21,9 +21,19 @@ import SignIn from './pages/SignIn'
 import StaffAdmin from './pages/StaffAdmin'
 import { StaffHome } from './pages/StaffHome'
 import { BuyerHome, EnterpriseHome } from './pages/WorkspaceHome'
-import { SavedPage } from './pages/SavedPage'
+import CustomerVerification from './pages/customer/CustomerVerification'
+import FindProfessionals from './pages/customer/FindProfessionals'
+import HelpPage from './pages/customer/Help'
+import OrganisationPage from './pages/customer/Organisation'
+import { ProposalsPage, RequestDetailPage, RequestsPage } from './pages/customer/CustomerRequests'
+import { EngagementsPage, MessagesPage, PaymentsPage } from './pages/customer/Pipeline'
+import RequestWizard from './pages/customer/RequestWizard'
+import { ProfessionalRequestDetail, ProfessionalRequestsPage } from './pages/ProfessionalRequests'
+import SavedProfessionals from './pages/customer/SavedProfessionals'
+import SettingsPage from './pages/customer/Settings'
 
 const ENTERPRISE: ('ENTERPRISE_ADMIN' | 'ENTERPRISE_MEMBER')[] = ['ENTERPRISE_ADMIN', 'ENTERPRISE_MEMBER']
+const CUSTOMER: ('BUYER' | 'ENTERPRISE_ADMIN' | 'ENTERPRISE_MEMBER')[] = ['BUYER', ...ENTERPRISE]
 
 export default function App() {
   return (
@@ -48,6 +58,8 @@ export default function App() {
             <Route path="buyer" element={<RequireRole any={['BUYER']}><BuyerHome /></RequireRole>} />
             <Route path="professional" element={<RequireRole any={['PROFESSIONAL']}><ProfessionalDashboard /></RequireRole>} />
             <Route path="professional/profile" element={<RequireRole any={['PROFESSIONAL']}><ProfileSetupPage /></RequireRole>} />
+            <Route path="professional/requests" element={<RequireRole any={['PROFESSIONAL']}><ProfessionalRequestsPage /></RequireRole>} />
+            <Route path="professional/requests/:id" element={<RequireRole any={['PROFESSIONAL']}><ProfessionalRequestDetail /></RequireRole>} />
             <Route path="professional/offerings" element={<RequireRole any={['PROFESSIONAL']}><OfferingsPage /></RequireRole>} />
             <Route path="professional/verification" element={<RequireRole any={['PROFESSIONAL']}><ProfessionalVerificationPage /></RequireRole>} />
             <Route path="firm" element={<RequireRole any={['FIRM_ADMIN']}><FirmDashboard /></RequireRole>} />
@@ -57,7 +69,19 @@ export default function App() {
             <Route path="enterprise" element={<RequireRole any={ENTERPRISE}><EnterpriseHome /></RequireRole>} />
             <Route path="enterprise/team" element={<RequireRole any={ENTERPRISE}><EnterpriseTeamPage /></RequireRole>} />
             <Route path="enterprise/structure" element={<RequireRole any={ENTERPRISE}><EnterpriseStructurePage /></RequireRole>} />
-            <Route path="saved" element={<RequireRole any={['BUYER', ...ENTERPRISE]}><SavedPage /></RequireRole>} />
+            <Route path="find" element={<RequireRole any={CUSTOMER}><FindProfessionals /></RequireRole>} />
+            <Route path="saved" element={<RequireRole any={CUSTOMER}><SavedProfessionals /></RequireRole>} />
+            <Route path="requests" element={<RequireRole any={CUSTOMER}><RequestsPage /></RequireRole>} />
+            <Route path="requests/new" element={<RequireRole any={CUSTOMER}><RequestWizard /></RequireRole>} />
+            <Route path="requests/:id" element={<RequireRole any={CUSTOMER}><RequestDetailPage /></RequireRole>} />
+            <Route path="proposals" element={<RequireRole any={CUSTOMER}><ProposalsPage /></RequireRole>} />
+            <Route path="engagements" element={<RequireRole any={CUSTOMER}><EngagementsPage /></RequireRole>} />
+            <Route path="payments" element={<RequireRole any={CUSTOMER}><PaymentsPage /></RequireRole>} />
+            <Route path="messages" element={<RequireRole any={CUSTOMER}><MessagesPage /></RequireRole>} />
+            <Route path="organisation" element={<RequireRole any={CUSTOMER}><OrganisationPage /></RequireRole>} />
+            <Route path="verification" element={<RequireRole any={CUSTOMER}><CustomerVerification /></RequireRole>} />
+            <Route path="settings" element={<SettingsPage />} />
+            <Route path="help" element={<HelpPage />} />
             <Route path="invitations" element={<InvitationsPage />} />
             <Route path="ops" element={<RequireRole any={[...PLATFORM_ROLES]}><StaffHome /></RequireRole>} />
             <Route path="ops/staff" element={<RequireRole any={['PLATFORM_ADMIN']}><StaffAdmin /></RequireRole>} />
