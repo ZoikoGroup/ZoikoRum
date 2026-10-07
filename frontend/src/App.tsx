@@ -18,6 +18,7 @@ import BrowseProfessionals from './pages/BrowseProfessionals'
 import { FirmVerificationPage, ProfessionalVerificationPage, ReviewQueuePage } from './pages/VerificationPages'
 import Security from './pages/Security'
 import SignIn from './pages/SignIn'
+import ReconciliationPage from './pages/Reconciliation'
 import StaffAdmin from './pages/StaffAdmin'
 import { StaffHome } from './pages/StaffHome'
 import { BuyerHome, EnterpriseHome } from './pages/WorkspaceHome'
@@ -28,6 +29,7 @@ import OrganisationPage from './pages/customer/Organisation'
 import { ProposalsPage, RequestDetailPage, RequestsPage } from './pages/customer/CustomerRequests'
 import { MessagesPage } from './pages/customer/Pipeline'
 import { CustomerPaymentsPage, EarningsPage } from './pages/Money'
+import { DisputeDetail, DisputesPage } from './pages/Disputes'
 import { EngagementDetail, EngagementsPage } from './pages/Engagements'
 import RequestWizard from './pages/customer/RequestWizard'
 import { ProfessionalRequestDetail, ProfessionalRequestsPage } from './pages/ProfessionalRequests'
@@ -84,6 +86,10 @@ export default function App() {
             <Route path="payments" element={<RequireRole any={CUSTOMER}><CustomerPaymentsPage /></RequireRole>} />
             <Route path="professional/earnings" element={<RequireRole any={['PROFESSIONAL']}><EarningsPage /></RequireRole>} />
             <Route path="messages" element={<RequireRole any={CUSTOMER}><MessagesPage /></RequireRole>} />
+            <Route path="disputes" element={<RequireRole any={CUSTOMER}><DisputesPage role="buyer" /></RequireRole>} />
+            <Route path="professional/disputes" element={<RequireRole any={['PROFESSIONAL']}><DisputesPage role="professional" /></RequireRole>} />
+            <Route path="ops/disputes" element={<RequireRole any={['MEDIATOR', 'LEGAL', 'PLATFORM_ADMIN']}><DisputesPage role="operator" /></RequireRole>} />
+            <Route path="disputes/:id" element={<DisputeDetail />} />
             <Route path="organisation" element={<RequireRole any={CUSTOMER}><OrganisationPage /></RequireRole>} />
             <Route path="verification" element={<RequireRole any={CUSTOMER}><CustomerVerification /></RequireRole>} />
             <Route path="settings" element={<SettingsPage />} />
@@ -91,6 +97,7 @@ export default function App() {
             <Route path="invitations" element={<InvitationsPage />} />
             <Route path="ops" element={<RequireRole any={[...PLATFORM_ROLES]}><StaffHome /></RequireRole>} />
             <Route path="ops/staff" element={<RequireRole any={['PLATFORM_ADMIN']}><StaffAdmin /></RequireRole>} />
+            <Route path="ops/reconciliation" element={<RequireRole any={['FINANCIAL_OPS', 'PLATFORM_ADMIN']}><ReconciliationPage /></RequireRole>} />
             <Route path="ops/verification" element={<RequireRole any={['COMPLIANCE_OFFICER']}><ReviewQueuePage /></RequireRole>} />
             <Route path="account" element={<AccountPage />} />
             <Route path="security" element={<Security />} />

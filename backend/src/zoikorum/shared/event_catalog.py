@@ -120,6 +120,9 @@ class E:
     MILESTONE_REVISION_REQUESTED = _t("contract", "milestone", "revision_requested")
     MILESTONE_ACCEPTED = _t("contract", "milestone", "accepted")
     MILESTONE_ACCEPTANCE_PENDING_APPROVAL = _t("contract", "milestone", "acceptance_pending_approval")
+    MILESTONE_ACCEPTANCE_REMINDER = _t("contract", "milestone", "acceptance_reminder")  # review window closes soon
+    MILESTONE_ACCEPTANCE_OVERDUE = _t("contract", "milestone", "acceptance_overdue")  # review window passed: escalate
+    MILESTONE_FUNDING_REVERSED = _t("contract", "milestone", "funding_reversed")  # back to pending funding after a chargeback
 
     # ---- Escrow (financial) --------------------------------------------------
     ESCROW_OPENED = _t("escrow", "account", "opened")
@@ -132,6 +135,7 @@ class E:
     ESCROW_RELEASED = _t("escrow", "account", "released")
     ESCROW_REFUNDED = _t("escrow", "account", "refunded")
     ESCROW_RESOLUTION_EXECUTED = _t("escrow", "account", "resolution_executed")
+    ESCROW_FUNDING_REVERSED = _t("escrow", "account", "funding_reversed")  # a chargeback took held money back
 
     # ---- Payments (financial) ------------------------------------------------
     PAYMENT_INTENT_CREATED = _t("payments", "payment_intent", "created")
@@ -143,6 +147,9 @@ class E:
     REFUND_INITIATED = _t("payments", "refund", "initiated")
     REFUND_SETTLED = _t("payments", "refund", "settled")
     INVOICE_ISSUED = _t("payments", "invoice", "issued")
+    PAYMENT_CHARGED_BACK = _t("payments", "payment_intent", "charged_back")  # card issuer reversed a captured payment
+    RECONCILIATION_COMPLETED = _t("payments", "reconciliation", "completed")
+    RECONCILIATION_MISMATCH = _t("payments", "reconciliation", "mismatch")  # P0 financial incident (Handbook 15.4)
     CHARGEBACK_RECEIVED = _t("payments", "payment_intent", "chargeback_received")
     RECONCILIATION_COMPLETED = _t("payments", "reconciliation", "completed")
     RECONCILIATION_MISMATCH = _t("payments", "reconciliation", "mismatch_detected")

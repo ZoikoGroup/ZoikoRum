@@ -77,6 +77,7 @@ export default function AppShell() {
           <Item to="/app/engagements" icon="briefcase">Engagements</Item>
           <Item to="/app/payments" icon="wallet">Payments &amp; Protection</Item>
           <Item to="/app/messages" icon="message">Messages</Item>
+          <Item to="/app/disputes" icon="shield">Disputes</Item>
         </>}
 
         {dashboards.has('professional') && <>
@@ -89,6 +90,7 @@ export default function AppShell() {
           <Item to="/app/professional/requests" icon="proposal" count={newRequests}>Requests</Item>
           <Item to="/app/professional/engagements" icon="briefcase" count={toSign}>Engagements</Item>
           <Item to="/app/professional/earnings" icon="wallet">Earnings</Item>
+          <Item to="/app/professional/disputes" icon="shield">Disputes</Item>
         </>}
 
         {dashboards.has('firm') && <>
@@ -104,8 +106,9 @@ export default function AppShell() {
           <Item to="/app/ops" icon="building" end>Admin Dashboard</Item>
           {isOfficer && <Item to="/app/ops/verification" icon="shield">Verification Reviews</Item>}
           {isAdmin && <Item to="/app/ops/staff" icon="team">Staff &amp; Roles</Item>}
+          {user.platformRoles.some((r) => ['FINANCIAL_OPS', 'PLATFORM_ADMIN'].includes(r)) && <Item to="/app/ops/reconciliation" icon="wallet">Reconciliation</Item>}
           {!customer && <Item to="/professionals" icon="search">Professionals</Item>}
-          <Soon icon="bell">Disputes</Soon>
+          {user.platformRoles.some((r) => ['MEDIATOR', 'LEGAL', 'PLATFORM_ADMIN'].includes(r)) && <Item to="/app/ops/disputes" icon="shield">Disputes</Item>}
           <Soon icon="contract">Reports</Soon>
         </>}
 

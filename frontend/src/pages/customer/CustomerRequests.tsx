@@ -4,10 +4,11 @@ import { contractApi } from '../../api/contracts'
 import { formatMoney } from '../../api/orgs'
 import { LABEL } from '../../api/professional'
 import {
-  budgetText, DURATION_LABEL, PROPOSAL_STATUS, proposalApi, requestStatus, type Proposal, type ProposalRequest,
+  attachmentUrl, budgetText, CADENCES, DEPENDENCIES, DURATION_LABEL, PRICING_PREFS, PROPOSAL_STATUS, proposalApi, requestStatus, type Proposal, type ProposalRequest,
 } from '../../api/proposals'
 import { Avatar, Icon } from '../../components/dashboard'
 import { EmptyTable, PortalHeader, SidePanel, StatCard, Tabs, TierBadge } from '../../components/portal'
+import { FileLink } from '../../components/FileLink'
 import { ErrorAlert } from '../../components/ui'
 
 /* Customer side of Step 6: requests (one requirement sent to 1–3 professionals), the proposals that come back,
@@ -241,8 +242,15 @@ export function RequestDetailPage() {
                   <span className={`badge ${requestStatus(m).tone}`} style={{ marginLeft: 'auto' }}>{requestStatus(m).label}</span></div>
                 {m.status === 'DECLINED' && <p className="muted small" style={{ margin: '10px 0 0' }}>Declined{m.reasonCode ? `: ${m.reasonCode.replace(/_/g, ' ').toLowerCase()}` : ''}{m.reasonNote ? ` — “${m.reasonNote}”` : ''}</p>}
                 {['OPEN'].includes(m.status) && <p className="muted small" style={{ margin: '10px 0 0' }}>No proposal yet.{m.professional.tier === 'C' ? ' This professional must verify their identity before they can send one.' : ''}</p>}
+                {m.jurisdictionConflict && <p className="small warn-text" style={{ margin: '10px 0 0' }}>This professional does not serve your country, so an engagement cannot be agreed.
+                  {' '}<Link to="/app/find">Find professionals who serve you</Link></p>}
+                {['DECLINED', 'CANCELLED', 'CLOSED'].includes(m.status) && !accepted && <div className="row card-actions" style={{ justifyContent: 'flex-start' }}>
+                  <Link className="btn btn-secondary btn-sm" to={`/app/requests/new?pro=${m.professional.id}&from=${m.id}`}>Request again</Link></div>}
               </section>
           })}
+          {group.members.some((m) => m.proposal?.status === 'EXPIRED') && !accepted && <section className="card panel">
+            <p style={{ margin: 0 }}>A proposal expired before you decided. You can <Link to={`/app/requests/new?${group.members.map((m) => `pro=${m.professional.id}`).join('&')}&from=${req.id}`}>
+              request again with the same scope</Link>.</p></section>}
         </div>
         <aside>
           <SidePanel title="Your request">
@@ -253,10 +261,16 @@ export function RequestDetailPage() {
               <dt>Delivery</dt><dd>{LABEL[req.deliveryMode]}{req.location ? ` · ${req.location}` : ''}</dd>
               <dt>Budget</dt><dd>{budgetText(req.budget)}</dd>
               <dt>NDA</dt><dd>{req.ndaRequired ? 'Required before proposal' : 'Not required'}</dd>
+              {req.pricingPreferences.length > 0 && <><dt>Prefers</dt><dd>{req.pricingPreferences.map((p) => PRICING_PREFS.find(([v]) => v === p)?.[1]).join(' / ')}</dd></>}
+              {req.paymentCadence && <><dt>Payments</dt><dd>{CADENCES.find(([v]) => v === req.paymentCadence)?.[1]}</dd></>}
               <dt>Organisation</dt><dd>{req.organizationName}</dd>
             </dl>
+            {req.deliverables.length > 0 && <><h3 style={{ margin: '12px 0 4px' }}>Deliverables</h3>
+              <ul className="why" style={{ margin: 0 }}>{req.deliverables.map((d) => <li key={d}>{d}</li>)}</ul></>}
+            {req.dependencies.length > 0 && <p className="muted small" style={{ marginTop: 8 }}>
+              Depends on: {req.dependencies.map((d) => DEPENDENCIES.find(([v]) => v === d)?.[1]).join(', ')}</p>}
             {req.details && <p className="small" style={{ whiteSpace: 'pre-wrap', marginTop: 12 }}>{req.details}</p>}
-            {req.attachments.length > 0 && <ul className="pro-list">{req.attachments.map((a) => <li key={a.sha256}><Icon name="request" /><span className="small">{a.name}</span><span /></li>)}</ul>}
+            {req.attachments.length > 0 && <ul className="pro-list">{req.attachments.map((a) => <li key={a.sha256}><Icon name="request" /><span className="small"><FileLink file={a} url={attachmentUrl(req.id, a.sha256)} /></span><span /></li>)}</ul>}
           </SidePanel>
           <SidePanel title="After you accept">
             <ol className="side-steps">{[['Contract generated', 'From the accepted scope, milestones and price.'], ['Both parties sign', 'Terms are then locked.'],

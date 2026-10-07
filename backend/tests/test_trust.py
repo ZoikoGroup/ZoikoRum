@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import uuid
 
 from sqlalchemy import text
@@ -12,6 +13,13 @@ from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_event
 
 PHOTO = {"contentType": "image/png", "dataBase64": base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"0" * 64).decode()}
+
+
+def pdf(name: str, body: bytes = b"scan") -> dict:
+    """A small but real PDF evidence upload: bytes, type and the matching fingerprint."""
+    data = b"%PDF-1.4\n" + body
+    return {"name": name, "sha256": hashlib.sha256(data).hexdigest(), "size": len(data), "contentType": "application/pdf",
+            "dataBase64": base64.b64encode(data).decode()}
 BIO = (
 "Former Big Four audit manager. I help growing companies set up month-end close, "
        "board reporting and cash forecasting that their investors can rely on.")
@@ -82,7 +90,7 @@ async def published_pro(client, make_user, drain):
 async def verify(client, make_user, u, pro, vtype, **extra):
     case = (await client.post("/v1/verification/cases", headers=u.h, json={
         "verificationType": vtype, "subjectType": "PROFESSIONAL", "subjectId": pro["id"], **extra})).json()
-    await client.post(f"/v1/verification/cases/{case['id']}/evidence", headers=u.h, json={"evidenceType": "ID_DOCUMENT", "items": [{"name": "doc.pdf", "sha256": "d" * 64, "size": 1000}]})
+    await client.post(f"/v1/verification/cases/{case['id']}/evidence", headers=u.h, json={"evidenceType": "ID_DOCUMENT", "items": [pdf("doc.pdf")]})
     o = await make_user(f"officer-{vtype.lower()}", platform_roles=("COMPLIANCE_OFFICER",))
     await o.step_up()
     r = await client.post(f"/v1/verification/cases/{case['id']}/decision", headers=o.h, json={"decision": "VERIFIED", "reasonCode": "OK"})

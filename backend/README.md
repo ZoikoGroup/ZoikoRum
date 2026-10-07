@@ -44,8 +44,13 @@ python -m zoikorum.cli reindex-search
 ## Test
 ```bash
 cd backend
-pytest                       # uses database "zoikorum_test" on localhost:5434 (created automatically)
+pytest                       # everything; uses database "zoikorum_test" on localhost:5434 (created automatically)
+pytest -m unit               # pure business rules, no database (under a second)
+pytest -m integration        # one feature through the API + database
+pytest -m regression         # end-to-end journeys across Steps 1-9 (tests/test_regression.py)
 ```
+Plain (non-async) tests that use no database fixture are marked `unit` automatically and skip the database;
+everything else is `integration` unless marked `regression`. `--strict-markers` rejects unknown markers.
 Useful env vars for isolated runs: `ZK_TEST_DATABASE=<db>` and `ZK_DOMAINS=identity,audit,<domain>`.
 
 ## Dependencies

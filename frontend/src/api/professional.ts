@@ -178,6 +178,7 @@ export interface PublicProfile {
   verifiedJurisdictions: string[]
   publishedAt: string | null
   isOwnProfile: boolean
+  history: { completedEngagements: number; onTimeRate: number | null; medianResponseHours: number | null; newToPlatform: boolean } | null
   firm: { id: string; name: string; verified: boolean } | null
 }
 

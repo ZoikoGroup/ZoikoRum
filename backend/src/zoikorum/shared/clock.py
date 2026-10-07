@@ -23,3 +23,13 @@ def advance(delta: timedelta) -> datetime:
     global _override
     _override = now() + delta
     return _override
+
+
+def add_business_days(start: datetime, days: int) -> datetime:
+    """Adds working days (Monday-Friday). Used for dispute deadlines and expected payout dates."""
+    d = start
+    while days > 0:
+        d += timedelta(days=1)
+        if d.weekday() < 5:
+            days -= 1
+    return d

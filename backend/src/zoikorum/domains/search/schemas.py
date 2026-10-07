@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel
@@ -23,6 +24,8 @@ class SearchParams(BaseModel):
     pricingModel: str | None = None
     credential: str | None = None
     jurisdiction: str | None = None
+    experience: str | None = None  # years band, e.g. 6-10
+    publishedAfter: datetime | None = None  # saved searches: "new since you last looked"
     sort: Sort = "best"
     limit: int = 20
     offset: int = 0

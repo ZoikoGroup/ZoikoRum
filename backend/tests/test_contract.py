@@ -9,6 +9,7 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import text
 
+from filehelp import upload
 from test_proposal import P, R, buyer_org, proposal_body, request_body, tier_b
 from zoikorum.shared import clock
 from zoikorum.shared.event_catalog import E
@@ -114,7 +115,7 @@ async def test_milestones_wait_for_funding_then_deliver_revise_accept_complete(c
     c = (await client.get(f"{C}/{c['id']}", headers=pro_user.h)).json()
     assert [m["status"] for m in c["milestones"]] == ["IN_PROGRESS", "PENDING_FUNDING"] and c["nextAction"].startswith("Deliver M1")
 
-    file = {"name": "master-file.pdf", "sha256": "b" * 64, "size": 1200}
+    file = upload("master-file.pdf", b"master")
     r = await client.post(f"/v1/milestones/{m1['id']}/submit", headers=pro_user.h, json={"note": "Master file attached", "files": [file]})
     assert r.json()["milestones"][0]["status"] == "SUBMITTED" and r.json()["milestones"][0]["acceptanceDueAt"]
     assert (await client.post(f"/v1/milestones/{m1['id']}/accept", headers=pro_user.idem())).status_code == 403

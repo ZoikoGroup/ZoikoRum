@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 from zoikorum.shared.money import MoneyDTO
+from zoikorum.shared.uploads import StoredFileOut, UploadIn
 
 EngagementType = Literal["ADVISORY", "PROJECT", "RETAINER", "FRACTIONAL"]
 Duration = Literal["ONE_TWO_WEEKS", "THREE_SIX_WEEKS", "TWO_THREE_MONTHS", "THREE_SIX_MONTHS", "ONGOING"]
@@ -38,6 +39,17 @@ class Attachment(BaseModel):
         return self
 
 
+def _clean_deliverables(items: list[str]) -> list[str]:
+    out = []
+    for d in items:
+        d = d.strip()
+        if not 2 <= len(d) <= 200:
+            raise ValueError("each deliverable is 2-200 characters")
+        if d not in out:
+            out.append(d)
+    return out
+
+
 class RequestIn(BaseModel):
     organizationId: uuid.UUID
     professionalIds: list[uuid.UUID] = Field(min_length=1, max_length=3)
@@ -54,12 +66,17 @@ class RequestIn(BaseModel):
     deliveryMode: Literal["REMOTE", "ONSITE", "HYBRID"] = "REMOTE"
     location: str | None = Field(default=None, max_length=200)
     ndaRequired: bool = False
-    attachments: list[Attachment] = Field(default_factory=list, max_length=3)
+    attachments: list[UploadIn] = Field(default_factory=list, max_length=3)  # PDF, Word, Excel, CSV, JPG or PNG
+    deliverables: list[str] = Field(default_factory=list, max_length=15)
+    dependencies: list[Literal["BUYER_DATA", "THIRD_PARTY_ACCESS", "INTERNAL_APPROVALS"]] = Field(default_factory=list, max_length=3)
+    pricingPreferences: list[Literal["HOURLY", "FIXED", "RETAINER", "OPEN"]] = Field(default_factory=list, max_length=4)
+    paymentCadence: Literal["MILESTONE", "MONTHLY", "COMPLETION"] | None = None
     acknowledged: bool = False  # "Zoikorum facilitates the engagement but does not provide professional services"
     draft: bool = False
 
     @model_validator(mode="after")
     def _rules(self):
+        self.deliverables = _clean_deliverables(self.deliverables)
         if len(set(self.professionalIds)) != len(self.professionalIds):
             raise ValueError("each professional can be chosen once")
         if self.offeringId and len(self.professionalIds) > 1:
@@ -113,7 +130,7 @@ class RequestOut(BaseModel):
     objective: str | None
     details: str | None
     location: str | None
-    attachments: list[Attachment]
+    attachments: list[StoredFileOut]
     desiredStartDate: date
     estimatedDuration: str
     budget: Budget | None
@@ -127,6 +144,11 @@ class RequestOut(BaseModel):
     reasonNote: str | None
     proposal: ProposalBrief | None
     groupSize: int
+    deliverables: list[str]  # hidden with the details until the NDA is accepted
+    dependencies: list[str]
+    pricingPreferences: list[str]
+    paymentCadence: str | None
+    jurisdictionConflict: bool  # the professional does not serve the buyer's country (block before agreement)
     viewerRole: Literal["BUYER", "PROFESSIONAL", "OPERATOR"]
     createdAt: datetime
     version: int

@@ -173,6 +173,7 @@ export function ProfessionalDashboard() {
   const monthPaid = (earnings?.payouts ?? []).filter((p) => p.status === 'SETTLED' && p.settledAt && new Date(p.settledAt).getTime() >= monthStart)
     .reduce((s, p) => s + p.net.amountMinor, 0)
   const soon = Date.now() + 30 * 86400_000
+  const soon14 = Date.now() + 14 * 86400_000
   const expiring = cases.filter((c) => c.status === 'VERIFIED' && c.expiresAt && new Date(c.expiresAt).getTime() < soon)
   const actions: Action[] = []
   const newRequests = requests.filter((r) => r.status === 'OPEN')
@@ -241,7 +242,10 @@ export function ProfessionalDashboard() {
             <Link to="/app/professional/engagements"><Kpi icon="contract" tone="blue" label="Active Engagements" value={contracts.filter((k) => k.status === 'ACTIVE').length} note="Contracts in progress" /></Link>
             <Link to="/app/professional/requests"><Kpi icon="proposal" tone="violet" label="New Requests" value={newRequests.length} note="From buyers" /></Link>
             <a href="#actions"><Kpi icon="bell" tone="amber" label="Pending Actions" value={actions.length} note={actions.length ? 'Needs your attention' : 'All caught up'} /></a>
-            <a href="#engagements"><Kpi icon="clock" tone="teal" label="Upcoming Milestones" value={0} note="Next 14 days" /></a>
+            <Link to="/app/professional/engagements"><Kpi icon="clock" tone="teal" label="Upcoming Milestones" value={contracts.filter((k) => k.status === 'ACTIVE')
+              .flatMap((k) => k.milestones).filter((m) => ['IN_PROGRESS', 'REVISION_REQUESTED'].includes(m.status)
+                && (!m.dueDate || new Date(`${m.dueDate}T00:00:00`).getTime() <= soon14)).length}
+              note="Open, due in the next 14 days" /></Link>
             <Link to="/app/professional/earnings"><Kpi icon="check" tone="green" label="Earnings This Month" value={earnings ? formatMoney({ amountMinor: monthPaid, currency: earnings.totals.settled.currency }) : '—'} note="Paid out, after fees" /></Link>
             <a href="#verification"><Kpi icon="shield" tone={trust?.tier === 'C' ? 'amber' : 'green'} label="Verification Status"
               value={trust ? `Tier ${trust.tier}` : '—'} note={trust?.tierLabel ?? 'Loading…'} /></a>
@@ -842,6 +846,32 @@ function CredentialsStep({ profile, next }: StepProps) {
   )
 }
 
+/** Completion screen (Onboarding s.18, Peak-End Rule): your tier, what you can do now, what to do next. */
+function PublishedCompletion({ profile }: { profile: Profile }) {
+  const [trust, setTrust] = useState<Trust | null>(null)
+  useEffect(() => { trustApi.get(profile.id).then(setTrust).catch(() => {}) }, [profile.id])
+  const tier = trust?.tier ?? 'C'
+  const can: Record<string, string[]> = {
+    A: ['Appear in search with the highest trust badge', 'Send proposals, including enterprise and regulated work', 'Sign contracts and receive protected payments'],
+    B: ['Appear in search with a verified identity', 'Send proposals and sign standard engagements', 'Receive protected payments for accepted work'],
+    C: ['Appear in search as Discovery (limited)', 'Receive requests from buyers', 'Verify your identity to send proposals'],
+  }
+  return (
+    <section className="card panel confirm-state" style={{ margin: '0 0 16px', maxWidth: 'none' }}>
+      <span className="kpi-icon green big"><Icon name="check" /></span>
+      <h2 style={{ margin: 0 }}>Your profile is live</h2>
+      <p style={{ margin: 0 }}><span className={`badge ${tier === 'C' ? 'warn' : 'green'}`}>Tier {tier}</span>{' '}
+        <span className="muted small">{trust?.tierLabel ?? 'Discovery'}</span></p>
+      <ul className="assurance compact">{can[tier].map((t) => <li key={t}><Icon name="check" /><span>{t}</span></li>)}</ul>
+      <div className="row" style={{ justifyContent: 'center' }}>
+        <Link className="btn btn-primary" to="/app/professional">Go to Dashboard</Link>
+        {tier !== 'A' && <Link className="btn btn-secondary" to="/app/professional/verification">Improve verification</Link>}
+        <Link className="btn btn-ghost" to={`/professionals/${profile.id}`}>View profile</Link>
+      </div>
+    </section>
+  )
+}
+
 function PublishStep({ profile, onSaved }: StepProps) {
   const [readiness, setReadiness] = useState<Readiness | null>(null)
   const [attest, setAttest] = useState(false)
@@ -854,11 +884,7 @@ function PublishStep({ profile, onSaved }: StepProps) {
   return (
     <>
       <ErrorAlert error={error} />
-      {published && (
-        <div className="alert alert-success" role="status">
-          Your profile is live. <Link to={`/professionals/${profile.id}`}>See it as buyers do</Link>.
-        </div>
-      )}
+      {published && <PublishedCompletion profile={profile} />}
       {profile.status === 'SUSPENDED' && (
         <div className="alert alert-warn">Your profile is suspended. You will have received a notice explaining why and what you can do.</div>
       )}

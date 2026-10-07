@@ -31,7 +31,11 @@ class Settings(BaseSettings):
 
     payment_provider: str = "fake"
     webhook_secret: str = "dev-webhook-secret"
+    webhook_tolerance_seconds: int = 300  # signed webhooks older than this are refused (replay protection)
     platform_fee_bps: int = 1000  # 10.00% platform fee, basis points
+    payout_settlement_business_days: int = 2  # expected bank arrival after a payout starts (shown to professionals)
+    provider_breaker_failures: int = 5  # consecutive provider errors before the circuit opens
+    provider_breaker_reset_seconds: int = 30  # how long an open circuit waits before a trial call
 
     ai_provider: str = "offline"  # offline | anthropic
     ai_model: str = "claude-sonnet-5"
@@ -43,6 +47,11 @@ class Settings(BaseSettings):
     # Contracts (Step 7). Platform defaults until enterprise policy profiles can override them.
     signature_deadline_days: int = 7  # unsigned contracts escalate after this
     acceptance_window_days: int = 5  # buyer's review window after a milestone is submitted
+
+    # Disputes (Step 9). Direct resolution default is from the Dispute Resolution doc s.10; the evidence window is not
+    # stated in the documents (management to confirm).
+    dispute_evidence_days: int = 3
+    dispute_direct_resolution_business_days: int = 5
 
 
 @lru_cache

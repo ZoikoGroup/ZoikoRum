@@ -9,6 +9,7 @@ import { Icon } from '../components/dashboard'
 import { EmptyTable, PortalHeader, SidePanel, StatCard, Tabs } from '../components/portal'
 import { ErrorAlert, Field, useStepUp } from '../components/ui'
 import { COUNTRIES } from './Join'
+import { csv, downloadFile, printReceipt } from '../lib/exports'
 
 /* Money screens (Step 8): the professional's Earnings (payout account + payouts) and the customer's Payments
    & Protection (escrow across engagements, charges, invoices). Test mode: a fake payment provider, no real money. */
@@ -68,7 +69,7 @@ export function EarningsPage() {
               <strong>No payouts yet.</strong> When a buyer accepts a funded milestone, the money is released and paid out here.
             </EmptyTable>
           ) : (
-            <table className="data"><thead><tr><th>Engagement</th><th>Milestone</th><th>Gross</th><th>Fee</th><th>Net</th><th>Status</th><th>Date</th></tr></thead>
+            <table className="data"><thead><tr><th>Engagement</th><th>Milestone</th><th>Gross</th><th>Fee</th><th>Net</th><th>Status</th><th>Expected</th></tr></thead>
               <tbody>{(data?.payouts ?? []).map((p) => {
                 const m = ms(p.contractId, p.milestoneId)
                 return (
@@ -76,9 +77,10 @@ export function EarningsPage() {
                     <td><Link to={`/app/professional/engagements/${p.contractId}`}>{title(p.contractId)}</Link></td>
                     <td className="small">{m ? `M${m.sequence} ${m.title}` : '—'}</td>
                     <td>{formatMoney(p.gross)}</td><td className="small">−{formatMoney(p.fee)}</td><td><strong>{formatMoney(p.net)}</strong></td>
-                    <td><span className={`badge ${PAYOUT_STATUS[p.status].tone}`}>{PAYOUT_STATUS[p.status].label}</span>
-                      {p.failureMessage && <div className="muted small">{p.failureMessage}</div>}</td>
-                    <td className="small">{new Date(p.settledAt ?? p.createdAt).toLocaleDateString()}</td>
+                    <td><span className={`badge ${p.delayReason ? 'warn' : PAYOUT_STATUS[p.status].tone}`}>{p.delayReason && p.status !== 'QUEUED' ? 'Delayed' : PAYOUT_STATUS[p.status].label}</span>
+                      {p.delayReason && <div className="muted small">{p.delayReason}</div>}</td>
+                    <td className="small">{p.settledAt ? <>Arrived {new Date(p.settledAt).toLocaleDateString()}</>
+                      : p.expectedAt ? <>By {new Date(p.expectedAt).toLocaleDateString()}</> : '—'}</td>
                   </tr>
                 )
               })}</tbody></table>
@@ -127,6 +129,7 @@ export function EarningsPage() {
 
 /** Payments & Protection (management design 7), now with real escrow data. */
 export function CustomerPaymentsPage() {
+  const { user } = useAuth()
   const [contracts, setContracts] = useState<Contract[] | null>(null)
   const [escrows, setEscrows] = useState<Escrow[]>([])
   const [charges, setCharges] = useState<Charge[]>([])
@@ -184,16 +187,29 @@ export function CustomerPaymentsPage() {
           <table className="data"><thead><tr><th>Date</th><th>Engagement</th><th>Amount</th><th>Method</th><th>Status</th></tr></thead>
             <tbody>{charges.map((c) => <tr key={c.id}><td className="small">{new Date(c.createdAt).toLocaleString()}</td><td className="small">{title(c.contractId)}</td>
               <td>{formatMoney(c.amount)}</td><td className="small">{c.methodLabel}</td>
-              <td><span className={`badge ${c.status === 'CAPTURED' ? 'green' : ''}`}>{c.status === 'CAPTURED' ? 'Paid into escrow' : c.status === 'FAILED' ? `Failed: ${c.failureMessage}` : 'Processing'}</span></td></tr>)}</tbody></table>
+              <td><span className={`badge ${c.status === 'CAPTURED' ? 'green' : c.status === 'CHARGED_BACK' ? 'warn' : ''}`}>{c.status === 'CAPTURED' ? 'Paid into escrow'
+                : c.status === 'CHARGED_BACK' ? 'Reversed by your card issuer' : c.status === 'FAILED' ? `Failed: ${c.failureMessage}` : 'Processing'}</span></td></tr>)}</tbody></table>
         ))}
         {tab === 'invoices' && (invoices.length === 0 ? (
           <EmptyTable columns={['Invoice', 'Engagement', 'Description', 'Amount', 'Issued']}><strong>No invoices yet.</strong> An invoice is issued each time you accept a milestone.</EmptyTable>
         ) : (
-          <table className="data"><thead><tr><th>Invoice</th><th>Engagement</th><th>Description</th><th>Amount</th><th>Issued</th></tr></thead>
+          <table className="data"><thead><tr><th>Invoice</th><th>Engagement</th><th>Description</th><th>Amount</th><th>Issued</th><th /></tr></thead>
             <tbody>{invoices.map((i) => <tr key={i.id}><td><code>{i.number}</code></td><td className="small">{title(i.contractId)}</td>
               <td className="small">{i.lines.map((l) => l.description).join(', ')}</td><td>{formatMoney(i.total)}</td>
-              <td className="small">{new Date(i.issuedAt).toLocaleDateString()}</td></tr>)}</tbody></table>
+              <td className="small">{new Date(i.issuedAt).toLocaleDateString()}</td>
+              <td><button className="btn btn-ghost btn-sm" onClick={() => printReceipt(i, title(i.contractId), user?.displayName ?? '')}>
+                <Icon name="download" /> Receipt</button></td></tr>)}</tbody></table>
         ))}
+        {(charges.length > 0 || invoices.length > 0) && (
+          <div className="row" style={{ justifyContent: 'flex-end', marginTop: 12 }}>
+            <button className="btn btn-secondary btn-sm" onClick={() => downloadFile(`zoikorum-payments-${new Date().toISOString().slice(0, 10)}.csv`, csv([
+              ['Type', 'Date', 'Reference', 'Engagement', 'Description', 'Amount', 'Currency', 'Status'],
+              ...charges.map((c) => ['Payment', c.createdAt, c.id, title(c.contractId), c.methodLabel, (c.amount.amountMinor / 100).toFixed(2), c.amount.currency, c.status]),
+              ...invoices.map((i) => ['Invoice', i.issuedAt, i.number, title(i.contractId), i.lines.map((l) => l.description).join('; '),
+                (i.total.amountMinor / 100).toFixed(2), i.total.currency, 'ISSUED']),
+            ]), 'text/csv')}><Icon name="download" /> Export CSV</button>
+          </div>
+        )}
       </section>
     </>
   )

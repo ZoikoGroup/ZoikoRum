@@ -48,6 +48,14 @@ async def get_by_contract(session: AsyncSession, contract_id: uuid.UUID) -> Escr
                          tuple(AllocationSummary(x.milestone_id, x.amount_minor, x.state, x.released_minor, x.refunded_minor) for x in allocs))
 
 
+async def ledger_movements(session: AsyncSession, since: datetime, until: datetime) -> dict[tuple[str, str], tuple[int, int]]:
+    """Daily reconciliation input: (ledger account, currency) -> (debits, credits) posted in [since, until).
+    Accounts: BUYER_CLEARING, ESCROW_HELD, PRO_PAYABLE, PLATFORM_REVENUE, BUYER_REFUND_PAYABLE, CHARGEBACK_REVERSAL, ..."""
+    from zoikorum.domains.escrow.service import movements
+
+    return await movements(session, since, until)
+
+
 async def ledger_totals(session: AsyncSession, since: datetime, until: datetime) -> dict[str, int]:
     """Totals per entry type (BUYER_FUNDING, ESCROW_RELEASE, PLATFORM_FEE, REFUND, PAYOUT) per
     currency, keyed "<TYPE>:<CCY>", for daily reconciliation against payments."""

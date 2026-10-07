@@ -7,12 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from zoikorum.shared.money import MoneyDTO
-
-
-class FileRef(BaseModel):
-    name: str = Field(min_length=1, max_length=255)
-    sha256: str = Field(pattern="^[a-f0-9]{64}$")
-    size: int = Field(gt=0, le=100 * 1024 * 1024)
+from zoikorum.shared.uploads import StoredFileOut, UploadIn
 
 
 class SignIn(BaseModel):
@@ -21,7 +16,7 @@ class SignIn(BaseModel):
 
 class SubmitIn(BaseModel):
     note: str = Field(default="", max_length=2000)
-    files: list[FileRef] = Field(default_factory=list, max_length=10)
+    files: list[UploadIn] = Field(default_factory=list, max_length=10)
 
 
 class RevisionIn(BaseModel):
@@ -46,7 +41,7 @@ class SignatureOut(BaseModel):
 class SubmissionOut(BaseModel):
     id: uuid.UUID
     note: str
-    files: list[FileRef]
+    files: list[StoredFileOut]
     submittedAt: datetime
 
 
@@ -62,6 +57,7 @@ class MilestoneOut(BaseModel):
     startedAt: datetime | None
     submittedAt: datetime | None
     acceptanceDueAt: datetime | None
+    reviewOverdue: bool = False  # submitted work not reviewed within the window
     acceptedAt: datetime | None
     revisionCount: int
     lastRevisionReason: str | None

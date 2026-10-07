@@ -92,10 +92,11 @@ interface RequestOptions {
   query?: Record<string, string>
   headers?: Record<string, string>
   text?: boolean  // return the body as text (file downloads) instead of JSON
+  blob?: boolean  // return the body as a Blob (binary files such as PDFs)
 }
 
 export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-  const { method = 'GET', body, auth = true, query, headers: extra = {}, text = false } = opts
+  const { method = 'GET', body, auth = true, query, headers: extra = {}, text = false, blob = false } = opts
   const url = query ? `${path}?${new URLSearchParams(query)}` : path
 
   const send = () =>
@@ -123,5 +124,6 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
   if (!res.ok) throw await toError(res)
   if (res.status === 204) return undefined as T
   if (text) return (await res.text()) as T
+  if (blob) return (await res.blob()) as T
   return res.json() as Promise<T>
 }

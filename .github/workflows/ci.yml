@@ -1,4 +1,5 @@
-# Runs on every push and pull request: backend tests + migration drift check, frontend type-check, lint and build.
+# Runs on every push and pull request: backend unit, integration and regression tests + migration drift check;
+# frontend lint, unit tests, type-check and build.
 name: CI
 
 on:
@@ -39,8 +40,12 @@ jobs:
         run: |
           alembic upgrade head
           alembic check
-      - name: Tests
-        run: pytest
+      - name: Unit tests (no database)
+        run: pytest -m unit
+      - name: Integration tests
+        run: pytest -m integration
+      - name: Regression tests (end-to-end flows, Steps 1-9)
+        run: pytest -m regression
 
   frontend:
     runs-on: ubuntu-latest
@@ -56,4 +61,5 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
       - run: npm run lint
+      - run: npm test
       - run: npm run build

@@ -20,7 +20,7 @@ from zoikorum.config import get_settings
 from zoikorum.domains.buyer import facade as buyer_facade
 from zoikorum.domains.contract.models import Contract, Milestone, Signature, Submission
 from zoikorum.domains.contract.schemas import (
-    ContractOut, ContractSummaryOut, FileRef, MilestoneOut, PartyOut, RevisionIn, SignatureOut, SignIn, SubmissionOut, SubmitIn,
+    ContractOut, ContractSummaryOut, MilestoneOut, PartyOut, RevisionIn, SignatureOut, SignIn, SubmissionOut, SubmitIn,
 )
 from zoikorum.domains.firm import facade as firm_facade
 from zoikorum.domains.identity import facade as identity_facade
@@ -34,28 +34,32 @@ from zoikorum.shared.http import page_of, paginate
 from zoikorum.shared.money import MoneyDTO
 from zoikorum.shared.relay import cancel_timer, schedule_timer
 from zoikorum.shared.state_machine import StateMachine
+from zoikorum.shared.uploads import file_out, find_file, read_file, store_uploads
 
 CONTRACT_STATES = StateMachine("Contract", {
     "GENERATED": {"PENDING_SIGNATURE"},
     "PENDING_SIGNATURE": {"ACTIVE", "TERMINATED"},
     "ACTIVE": {"COMPLETED", "TERMINATED", "DISPUTED"},
-    "DISPUTED": {"ACTIVE"},
+    "DISPUTED": {"ACTIVE", "COMPLETED", "TERMINATED"},
     "COMPLETED": set(),
     "TERMINATED": set(),
 })
 MILESTONE_STATES = StateMachine("Milestone", {
     "PENDING_FUNDING": {"IN_PROGRESS", "CANCELLED", "DISPUTED"},
-    "IN_PROGRESS": {"SUBMITTED", "CANCELLED", "DISPUTED"},
-    "SUBMITTED": {"REVISION_REQUESTED", "ACCEPTANCE_PENDING_APPROVAL", "ACCEPTED", "DISPUTED"},
-    "REVISION_REQUESTED": {"IN_PROGRESS", "SUBMITTED", "DISPUTED"},
-    "ACCEPTANCE_PENDING_APPROVAL": {"ACCEPTED", "REVISION_REQUESTED", "DISPUTED"},
-    "DISPUTED": {"IN_PROGRESS", "ACCEPTED", "CANCELLED"},
+    # -> PENDING_FUNDING only when a chargeback reverses the funding ("no work without funding").
+    "IN_PROGRESS": {"SUBMITTED", "CANCELLED", "DISPUTED", "PENDING_FUNDING"},
+    "SUBMITTED": {"REVISION_REQUESTED", "ACCEPTANCE_PENDING_APPROVAL", "ACCEPTED", "DISPUTED", "PENDING_FUNDING"},
+    "REVISION_REQUESTED": {"IN_PROGRESS", "SUBMITTED", "DISPUTED", "PENDING_FUNDING"},
+    "ACCEPTANCE_PENDING_APPROVAL": {"ACCEPTED", "REVISION_REQUESTED", "DISPUTED", "PENDING_FUNDING"},
+    "DISPUTED": {"IN_PROGRESS", "ACCEPTED", "CANCELLED", "PENDING_FUNDING"},
     "ACCEPTED": set(),
     "CANCELLED": set(),
 })
 DECIDERS = (OrgRole.REQUESTER, OrgRole.APPROVER)
 VIEWERS = (PlatformRole.PLATFORM_ADMIN, PlatformRole.COMPLIANCE_OFFICER, PlatformRole.LEGAL, PlatformRole.MEDIATOR)
 TIMER_SIGNATURE = "contract.signature_deadline"
+TIMER_REVIEW_REMINDER = "contract.review_reminder"  # one day before the buyer's review window closes
+TIMER_REVIEW_DUE = "contract.review_due"  # the review window has passed
 LABEL = {"ADVISORY": "Advisory", "PROJECT": "Project", "RETAINER": "Retainer", "FRACTIONAL": "Fractional",
          "HOURLY": "Hourly", "FIXED": "Fixed fee"}
 
@@ -239,6 +243,9 @@ def _next_action(c: Contract, ms: list[Milestone], signed: set[str], viewer: str
     by = {s: [m for m in ms if m.status == s] for s in ("SUBMITTED", "REVISION_REQUESTED", "IN_PROGRESS", "PENDING_FUNDING")}
     if by["SUBMITTED"]:
         m = by["SUBMITTED"][0]
+        if _review_overdue(m):
+            return (f"Review overdue: M{m.sequence} {m.title}. Accept it or request a revision" if viewer == "BUYER"
+                    else f"The review of M{m.sequence} is overdue. The buyer has been reminded; payment stays protected in escrow")
         return f"Review submitted work: M{m.sequence} {m.title}" if viewer == "BUYER" else f"Waiting for review of M{m.sequence}"
     if by["REVISION_REQUESTED"]:
         m = by["REVISION_REQUESTED"][0]
@@ -248,7 +255,7 @@ def _next_action(c: Contract, ms: list[Milestone], signed: set[str], viewer: str
         return f"Deliver M{m.sequence} {m.title}" if viewer == "PROFESSIONAL" else f"Work in progress on M{m.sequence}"
     if by["PENDING_FUNDING"]:
         m = by["PENDING_FUNDING"][0]
-        return (f"Fund M{m.sequence} to start work (payment protection opens in the next release)" if viewer == "BUYER"
+        return (f"Fund M{m.sequence} to start work" if viewer == "BUYER"
                 else f"Waiting for the buyer to fund M{m.sequence}")
     return "In progress"
 
@@ -283,8 +290,9 @@ async def _out(session: AsyncSession, actor: Actor, c: Contract, viewer: str) ->
             id=m.id, sequence=m.sequence, title=m.title, description=m.description,
             amount=MoneyDTO(amountMinor=m.amount_minor, currency=m.currency), dueDate=m.due_date, deliverableKeys=m.deliverable_keys,
             status=m.status, startedAt=m.started_at, submittedAt=m.submitted_at, acceptanceDueAt=m.acceptance_due_at,
+            reviewOverdue=_review_overdue(m),
             acceptedAt=m.accepted_at, revisionCount=m.revision_count, lastRevisionReason=m.last_revision_reason,
-            submissions=[SubmissionOut(id=s.id, note=s.note, files=[FileRef(**f) for f in s.files], submittedAt=s.created_at)
+            submissions=[SubmissionOut(id=s.id, note=s.note, files=[file_out(f) for f in s.files], submittedAt=s.created_at)
                          for s in subs if s.milestone_id == m.id],
         ) for m in ms],
         viewerRole=viewer, nextAction=_next_action(c, ms, signed, viewer, p["professional"]["name"]), canSign=can_sign,
@@ -391,6 +399,75 @@ async def _milestone_ctx(session: AsyncSession, actor: Actor, milestone_id: uuid
     return m, c, viewer
 
 
+async def funding_reversed(session: AsyncSession, payload: dict) -> None:
+    """Consumer of ESCROW_FUNDING_REVERSED (chargeback): the affected milestones wait for funding again."""
+    ids = {uuid.UUID(str(i)) for i in payload.get("milestoneIds", [])}
+    if not ids:
+        return
+    c = await session.get(Contract, uuid.UUID(str(payload["contractId"])), with_for_update=True)
+    if c is None:
+        return
+    for m in await _milestones(session, c.id, lock=True):
+        if m.id in ids and MILESTONE_STATES.can(m.status, "PENDING_FUNDING"):
+            m.status, m.acceptance_due_at = "PENDING_FUNDING", None
+            _evt(session, E.MILESTONE_FUNDING_REVERSED, c, milestoneId=m.id, reason=payload.get("reason") or "")
+    if c.status == "DISPUTED" and not any(m.status == "DISPUTED" for m in await _milestones(session, c.id)):
+        c.status = "ACTIVE"
+
+
+async def dispute_initiated(session: AsyncSession, payload: dict) -> None:
+    """Consumer of DISPUTE_INITIATED: the disputed milestones and the contract pause; no one can act unilaterally."""
+    c = await session.get(Contract, uuid.UUID(str(payload["contractId"])), with_for_update=True)
+    if c is None or c.status not in ("ACTIVE", "DISPUTED"):
+        return
+    ids = {uuid.UUID(str(i)) for i in payload.get("milestoneIds", [])}
+    for m in await _milestones(session, c.id, lock=True):
+        if m.id in ids and MILESTONE_STATES.can(m.status, "DISPUTED"):
+            m.status = "DISPUTED"
+    if c.status == "ACTIVE":
+        c.status = "DISPUTED"
+        _evt(session, E.CONTRACT_DISPUTED, c, disputeId=payload["disputeId"])
+
+
+async def dispute_resolved(session: AsyncSession, payload: dict) -> None:
+    """Consumer of DISPUTE_RESOLVED: apply each milestone's outcome; terminate, complete or resume the contract."""
+    c = await session.get(Contract, uuid.UUID(str(payload["contractId"])), with_for_update=True)
+    if c is None or c.status != "DISPUTED":
+        return
+    now = clock.now()
+    outcomes = {str(a["milestoneId"]): a["milestoneOutcome"] for a in payload.get("allocations", [])}
+    ms = await _milestones(session, c.id, lock=True)
+    for m in ms:
+        o = outcomes.get(str(m.id))
+        if o is None or m.status != "DISPUTED":
+            continue
+        if o == "ACCEPT":
+            m.status, m.accepted_at = "ACCEPTED", now
+        elif o == "CANCEL":
+            m.status = "CANCELLED"
+        else:  # REWORK / EXTEND: back to work; the money stays held
+            m.status = "IN_PROGRESS"
+    if payload.get("outcome") == "TERMINATION":
+        for m in ms:
+            if m.status in ("PENDING_FUNDING", "IN_PROGRESS", "SUBMITTED", "REVISION_REQUESTED"):
+                m.status = "CANCELLED"
+        c.status = "TERMINATED"
+        _evt(session, E.CONTRACT_TERMINATED, c, reason="DISPUTE_DECISION", disputeId=payload["disputeId"])
+        return
+    if any(m.status == "DISPUTED" for m in ms):
+        return  # another dispute on this contract is still open
+    if all(m.status in ("ACCEPTED", "CANCELLED") for m in ms):
+        if any(m.status == "ACCEPTED" for m in ms):
+            c.status, c.completed_at = "COMPLETED", now
+            _evt(session, E.CONTRACT_COMPLETED, c, reason="ALL_MILESTONES_SETTLED")
+        else:
+            c.status = "TERMINATED"
+            _evt(session, E.CONTRACT_TERMINATED, c, reason="ALL_MILESTONES_CANCELLED", disputeId=payload["disputeId"])
+        return
+    c.status = "ACTIVE"
+    _evt(session, E.CONTRACT_DISPUTE_CLEARED, c, disputeId=payload["disputeId"])
+
+
 async def escrow_funded(session: AsyncSession, payload: dict) -> None:
     """Consumer of ESCROW_FUNDED: funded milestones start (no work without funding). Idempotent."""
     c = await session.get(Contract, uuid.UUID(str(payload["contractId"])), with_for_update=True)
@@ -404,6 +481,19 @@ async def escrow_funded(session: AsyncSession, payload: dict) -> None:
             _evt(session, E.MILESTONE_STARTED, c, milestoneId=m.id)
 
 
+async def submission_file(session: AsyncSession, actor: Actor, contract_id: uuid.UUID, sha256: str) -> tuple[bytes, str | None, str]:
+    """A delivered file, for the parties and for operators (e.g. a mediator in a dispute). Every opening is audited."""
+    c = await _contract(session, contract_id)
+    viewer = await _viewer(session, actor, c)
+    subs = (await session.scalars(select(Submission).join(Milestone, Milestone.id == Submission.milestone_id)
+                                  .where(Milestone.contract_id == c.id))).all()
+    rec = find_file([f for s in subs for f in s.files], sha256)
+    data = read_file(rec)
+    record_audit(session, "contract.deliverable.viewed", object_type="Contract", object_id=c.id, tenant_id=c.organization_id,
+                 evidence_hash=rec["sha256"], details={"viewer": viewer})
+    return data, rec.get("contentType"), rec["name"]
+
+
 async def submit_milestone(session: AsyncSession, actor: Actor, milestone_id: uuid.UUID, body: SubmitIn) -> ContractOut:
     m, c, viewer = await _milestone_ctx(session, actor, milestone_id)
     if viewer != "PROFESSIONAL":
@@ -415,15 +505,51 @@ async def submit_milestone(session: AsyncSession, actor: Actor, milestone_id: uu
     if not body.note.strip() and not body.files:
         raise Conflict("Add a note or at least one file describing what you delivered", code="EMPTY_SUBMISSION")
     now = clock.now()
-    sub = Submission(milestone_id=m.id, submitted_by=actor.identity_id, note=body.note.strip(), files=[f.model_dump() for f in body.files])
+    sub = Submission(milestone_id=m.id, submitted_by=actor.identity_id, note=body.note.strip(),
+                     files=store_uploads(f"contracts/{c.id}/{m.id}", body.files))
     session.add(sub)
     await session.flush()
     MILESTONE_STATES.assert_can(m.status, "SUBMITTED")
     m.status, m.submitted_at = "SUBMITTED", now
     m.acceptance_due_at = now + timedelta(days=get_settings().acceptance_window_days)
     _evt(session, E.MILESTONE_SUBMITTED, c, milestoneId=m.id, submissionId=sub.id, acceptanceDueAt=m.acceptance_due_at)
+    # Acceptance timer (Payments & Escrow s.10). Keyed per submission, so a resubmission starts a fresh window.
+    timer = {"milestoneId": str(m.id), "submissionId": str(sub.id)}
+    if m.acceptance_due_at - timedelta(days=1) > now:
+        await schedule_timer(session, TIMER_REVIEW_REMINDER, str(sub.id), m.acceptance_due_at - timedelta(days=1), timer)
+    await schedule_timer(session, TIMER_REVIEW_DUE, str(sub.id), m.acceptance_due_at, timer)
     await session.flush()
     return await _out(session, actor, c, viewer)
+
+
+async def _awaiting_review(session: AsyncSession, payload: dict) -> tuple[Milestone, Contract] | None:
+    """The milestone still waits for review of this very submission (not accepted, revised, disputed or resubmitted)."""
+    m = await session.get(Milestone, uuid.UUID(payload["milestoneId"]))
+    if m is None or m.status != "SUBMITTED":
+        return None
+    latest = await session.scalar(select(Submission.id).where(Submission.milestone_id == m.id)
+                                  .order_by(Submission.created_at.desc()).limit(1))
+    if str(latest) != payload["submissionId"]:
+        return None
+    return m, await _contract(session, m.contract_id)
+
+
+async def review_reminder(session: AsyncSession, payload: dict) -> None:
+    if found := await _awaiting_review(session, payload):
+        m, c = found
+        _evt(session, E.MILESTONE_ACCEPTANCE_REMINDER, c, milestoneId=m.id, acceptanceDueAt=m.acceptance_due_at)
+
+
+async def review_overdue(session: AsyncSession, payload: dict) -> None:
+    """The window passed without a decision. The money stays in escrow: auto-release is an enterprise policy rule
+    (Payments & Escrow s.17) that is off until a policy profile turns it on. The engagement is flagged for follow-up."""
+    if found := await _awaiting_review(session, payload):
+        m, c = found
+        _evt(session, E.MILESTONE_ACCEPTANCE_OVERDUE, c, milestoneId=m.id, acceptanceDueAt=m.acceptance_due_at)
+
+
+def _review_overdue(m: Milestone) -> bool:
+    return m.status == "SUBMITTED" and m.acceptance_due_at is not None and m.acceptance_due_at <= clock.now()
 
 
 async def _require_decider(session: AsyncSession, actor: Actor, c: Contract, viewer: str) -> None:

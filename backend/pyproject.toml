@@ -36,4 +36,9 @@ asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
 pythonpath = ["src"]
-addopts = "-q"
+addopts = "-q --strict-markers"
+markers = [
+    "unit: pure business logic, no database or HTTP (fast)",
+    "integration: one feature through the API and a real database",
+    "regression: end-to-end business flows across Steps 1-9 (run before every merge)",
+]

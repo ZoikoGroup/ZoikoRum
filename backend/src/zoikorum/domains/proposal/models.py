@@ -52,6 +52,11 @@ class ProposalRequest(Base, UUIDPk, Timestamps, Versioned):
     nda_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     nda_accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     attachments: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)  # [{name, sha256, size}] metadata only
+    # Scope builder (RFP wireframe s.6-7): deliverables checklist, dependencies, commercial preferences.
+    deliverables: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)  # titles, from templates or custom
+    dependencies: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)  # BUYER_DATA | THIRD_PARTY_ACCESS | INTERNAL_APPROVALS
+    pricing_preferences: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)  # HOURLY | FIXED | RETAINER | OPEN
+    payment_cadence: Mapped[str | None] = mapped_column(String(20))  # MILESTONE | MONTHLY | COMPLETION
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="DRAFT")
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

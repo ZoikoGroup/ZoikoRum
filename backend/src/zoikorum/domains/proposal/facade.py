@@ -51,3 +51,24 @@ async def get_proposal(session: AsyncSession, proposal_id: uuid.UUID) -> Proposa
     return ProposalSummary(id=p.id, request_id=p.request_id, organization_id=p.organization_id,
                            buyer_identity_id=p.buyer_identity_id, professional_id=p.professional_id, status=p.status,
                            total_minor=p.total_minor, currency=p.currency, policy_version_id=None)
+
+
+async def response_stats(session: AsyncSession, professional_id: uuid.UUID) -> dict[str, float | int | None]:
+    """How quickly a professional answers requests (first proposal sent, or a decline), for the public profile."""
+    from statistics import median
+
+    from sqlalchemy import select
+
+    reqs = (await session.scalars(select(ProposalRequest).where(
+        ProposalRequest.professional_id == professional_id, ProposalRequest.sent_at.is_not(None)))).all()
+    if not reqs:
+        return {"requests": 0, "responded": 0, "medianHours": None}
+    sent = {r.id: r.sent_at for r in reqs}
+    first = {p.request_id: p.submitted_at for p in (await session.scalars(select(Proposal).where(
+        Proposal.request_id.in_(list(sent)), Proposal.submitted_at.is_not(None)))).all()}
+    hours = []
+    for r in reqs:
+        answered = first.get(r.id) or (r.closed_at if r.status == "DECLINED" else None)
+        if answered:
+            hours.append(max(0.0, (answered - r.sent_at).total_seconds() / 3600))
+    return {"requests": len(reqs), "responded": len(hours), "medianHours": round(median(hours), 1) if hours else None}

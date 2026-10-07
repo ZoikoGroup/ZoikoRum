@@ -102,3 +102,20 @@ class CompareItem(BaseModel):
     servedJurisdictions: list[str]
     licensedJurisdictions: list[str]
     languages: list[str]
+
+
+SEARCH_KEYS = ("q", "spec", "specMatch", "tier", "verified", "engagementType", "delivery", "availability", "pricingModel",
+               "credential", "jurisdiction", "experience", "sort")
+
+
+class SavedSearchIn(BaseModel):
+    name: str = Field(min_length=2, max_length=80)
+    params: dict[str, str] = Field(default_factory=dict)
+
+
+class SavedSearchOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    params: dict[str, str]
+    lastViewedAt: datetime
+    createdAt: datetime
