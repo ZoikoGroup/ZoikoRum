@@ -15,6 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.config import get_settings
 from zoikorum.domains.buyer import facade as buyer_facade
+from zoikorum.domains.contract import facade as contract_facade
+from zoikorum.domains.policy import facade as policy_facade
 from zoikorum.domains.escrow.models import Allocation, EscrowAccount, Funding, LedgerEntry, Release
 from zoikorum.domains.escrow.schemas import AllocationOut, EscrowOut, FundingOut, FundIn, LedgerLineOut
 from zoikorum.domains.professional import facade as professional_facade
@@ -31,7 +33,7 @@ ALLOCATION_STATES = StateMachine("Allocation", {
     "FUNDING": {"HELD", "UNFUNDED"},
     "HELD": {"RELEASED", "ON_HOLD", "RELEASE_PENDING_APPROVAL", "REFUNDED", "UNFUNDED"},  # UNFUNDED: chargeback
     "ON_HOLD": {"HELD", "RELEASED", "PARTIALLY_RELEASED", "REFUNDED", "UNFUNDED"},
-    "RELEASE_PENDING_APPROVAL": {"RELEASED", "HELD"},
+    "RELEASE_PENDING_APPROVAL": {"RELEASED", "HELD", "ON_HOLD", "REFUNDED", "UNFUNDED"},
     "PARTIALLY_RELEASED": set(),
     "RELEASED": set(),
     "REFUNDED": set(),
@@ -222,6 +224,14 @@ async def fund(session: AsyncSession, actor: Actor, account_id: uuid.UUID, body:
     if limit is not None and limit.currency == a.currency and amount > limit.minor:
         raise PolicyBlocked("This funding is above your spend limit; ask a colleague with a higher limit", code="SPEND_LIMIT_EXCEEDED")
 
+    contract = await contract_facade.get_contract(session, a.contract_id)
+    await policy_facade.require_allowed(session, await policy_facade.commercial_context(session,
+        org_id=a.organization_id, professional_id=a.professional_id, action=policy_facade.PolicyAction.ESCROW_FUND,
+        subject_type="EscrowAccount", subject_id=a.id, actor_identity_id=actor.identity_id,
+        amount=amount, currency=a.currency, pinned_version_id=contract.policy_version_id,
+        platform_default_pinned=contract.policy_version_id is None,
+        extra={"contract.termsHash": contract.terms_hash, "contract.version": contract.contract_version,
+            "funding.milestoneIds": sorted(str(x.milestone_id) for x in wanted)}))
     f = Funding(account_id=a.id, organization_id=a.organization_id, requested_by=actor.identity_id,
                 milestone_ids=[str(x.milestone_id) for x in wanted], amount_minor=amount, currency=a.currency, status="REQUESTED")
     session.add(f)
@@ -292,10 +302,34 @@ async def milestone_accepted(session: AsyncSession, payload: dict) -> None:
     if x.state == "ON_HOLD":
         evaluated("BLOCKED", "DISPUTE_HOLD")  # while held, no release path may run
         return
-    if x.state != "HELD":
+    if x.state not in ("HELD", "RELEASE_PENDING_APPROVAL"):
         evaluated("BLOCKED", f"NOT_FUNDED:{x.state}")
         return
 
+    contract = await contract_facade.get_contract(session, a.contract_id)
+    milestone = next((m for m in contract.milestones if m.id == milestone_id), None)
+    if milestone is None or milestone.status != "ACCEPTED":
+        evaluated("BLOCKED", "MILESTONE_NOT_ACCEPTED")
+        return
+    settings = await policy_facade.get_settings_for_org(session,
+        a.organization_id if contract.policy_version_id else None, contract.policy_version_id)
+    if not settings.partial_release_allowed and any(m.status != "ACCEPTED" for m in contract.milestones):
+        evaluated("BLOCKED", "ALL_MILESTONES_MUST_BE_ACCEPTED")
+        return
+    decision = await policy_facade.evaluate(session, await policy_facade.commercial_context(session,
+        org_id=a.organization_id, professional_id=a.professional_id, action=policy_facade.PolicyAction.ESCROW_RELEASE,
+        subject_type="Milestone", subject_id=milestone_id,
+        actor_identity_id=await contract_facade.milestone_acceptor(session, milestone_id),
+        amount=x.amount_minor, currency=a.currency, pinned_version_id=contract.policy_version_id,
+        platform_default_pinned=contract.policy_version_id is None,
+        extra={"contract.termsHash": contract.terms_hash, "contract.version": contract.contract_version,
+            "engagement.allMilestonesAccepted": all(m.status == "ACCEPTED" for m in contract.milestones)}))
+    if not decision.allowed:
+        if decision.decision == policy_facade.Decision.REQUIRE_APPROVAL and x.state == "HELD":
+            ALLOCATION_STATES.assert_can(x.state, "RELEASE_PENDING_APPROVAL")
+            x.state = "RELEASE_PENDING_APPROVAL"
+        evaluated(decision.decision, decision.first_reason.code if decision.first_reason else "POLICY")
+        return
     bps = get_settings().platform_fee_bps
     gross = x.amount_minor
     fee = Money(gross, a.currency).percentage_bps(bps).minor
@@ -320,6 +354,16 @@ async def milestone_accepted(session: AsyncSession, payload: dict) -> None:
 
 
 # ---- Chargebacks (Payments & Escrow s.18) ----------------------------------------------------------------
+
+async def release_accepted_siblings(session, contract_id):
+    contract = await contract_facade.get_contract(session, uuid.UUID(str(contract_id)))
+    if not contract or any(m.status != "ACCEPTED" for m in contract.milestones):
+        return
+    controls = await contract_facade.policy_controls(session, contract.id)
+    if controls.get("partialReleaseAllowed", True):
+        return
+    for milestone in contract.milestones:
+        await milestone_accepted(session, {"milestoneId": milestone.id})
 
 async def payment_charged_back(session: AsyncSession, payload: dict) -> None:
     """Consumer of PAYMENT_CHARGED_BACK. The card issuer took money back, so it can no longer be in escrow:
@@ -378,7 +422,7 @@ async def dispute_initiated(session: AsyncSession, payload: dict) -> None:
     ids = {uuid.UUID(str(i)) for i in payload.get("milestoneIds", [])}
     frozen = []
     for x in await _allocations(session, a.id, lock=True):
-        if x.milestone_id in ids and x.state == "HELD":
+        if x.milestone_id in ids and x.state in ("HELD", "RELEASE_PENDING_APPROVAL"):
             ALLOCATION_STATES.assert_can(x.state, "ON_HOLD")
             x.state = "ON_HOLD"
             frozen.append(x)

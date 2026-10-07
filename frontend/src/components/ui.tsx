@@ -99,6 +99,11 @@ export function ErrorAlert({ error }: { error: unknown }) {
   return (
     <div className="alert alert-error" role="alert">
       {msg}
+      {error instanceof ApiError && ['APPROVAL_REQUIRED', 'EXCEPTION_REQUIRED'].includes(error.code) &&
+        <Link to={`/app/policies?${new URLSearchParams({ orgId: String(error.extra?.organizationId || ''),
+          tab: error.code === 'EXCEPTION_REQUIRED' ? 'exceptions' : 'approvals',
+          subjectType: String(error.extra?.subjectType || ''), subjectId: String(error.extra?.subjectId || ''),
+          action: String(error.extra?.action || '') })}`}>View policy authorisation</Link>}
       {ref && <span className="ref">Reference: {ref}</span>}
     </div>
   )

@@ -35,6 +35,7 @@ import RequestWizard from './pages/customer/RequestWizard'
 import { ProfessionalRequestDetail, ProfessionalRequestsPage } from './pages/ProfessionalRequests'
 import SavedProfessionals from './pages/customer/SavedProfessionals'
 import SettingsPage from './pages/customer/Settings'
+import PoliciesPage from './pages/Policies'
 
 const ENTERPRISE: ('ENTERPRISE_ADMIN' | 'ENTERPRISE_MEMBER')[] = ['ENTERPRISE_ADMIN', 'ENTERPRISE_MEMBER']
 const CUSTOMER: ('BUYER' | 'ENTERPRISE_ADMIN' | 'ENTERPRISE_MEMBER')[] = ['BUYER', ...ENTERPRISE]
@@ -59,6 +60,7 @@ export default function App() {
 
           {/* Signed in: each workspace is gated by role (the API enforces the same rules). */}
           <Route path="/app" element={<RequireAuth><AppShell /></RequireAuth>}>
+            <Route path="policies" element={<RequireRole any={CUSTOMER}><PoliciesPage /></RequireRole>} />
             <Route path="buyer" element={<RequireRole any={['BUYER']}><BuyerHome /></RequireRole>} />
             <Route path="professional" element={<RequireRole any={['PROFESSIONAL']}><ProfessionalDashboard /></RequireRole>} />
             <Route path="professional/profile" element={<RequireRole any={['PROFESSIONAL']}><ProfileSetupPage /></RequireRole>} />

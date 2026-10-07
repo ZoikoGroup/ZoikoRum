@@ -66,6 +66,7 @@ export interface ProposalRequest {
 }
 
 export interface RequestInput {
+  costCenterId?: string | null
   organizationId: string
   professionalIds: string[]
   offeringId?: string | null

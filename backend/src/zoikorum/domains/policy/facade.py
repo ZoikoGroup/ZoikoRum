@@ -150,21 +150,66 @@ class ApprovalSummary:
 
 
 async def evaluate(session: AsyncSession, ctx: PolicyContext) -> PolicyDecision:
-    raise NotImplementedError
+    from zoikorum.domains.policy import service
+    return await service.evaluate(session, ctx)
 
 
 async def get_settings_for_org(
     session: AsyncSession, org_id: uuid.UUID | None, pinned_version_id: uuid.UUID | None = None
 ) -> ProfileSettings:
     """Effective settings; platform defaults when the org has no active profile."""
-    raise NotImplementedError
+    from zoikorum.domains.policy import service
+    return await service.settings_for_org(session, org_id, pinned_version_id)
 
 
 async def get_approval(session: AsyncSession, approval_id: uuid.UUID) -> ApprovalSummary | None:
-    raise NotImplementedError
+    from zoikorum.domains.policy.models import ApprovalRequest
+    request = await session.get(ApprovalRequest, approval_id)
+    return ApprovalSummary(request.id, request.organization_id, request.subject_type,
+        request.subject_id, request.action, request.status) if request else None
 
 
 async def search_eligibility(session: AsyncSession, org_id: uuid.UUID | None) -> dict[str, Any]:
     """Filter that search must apply for a buyer org:
     {"minTier": "B", "requiredDimensions": [...], "jurisdictions": [...]|None}"""
-    raise NotImplementedError
+    from zoikorum.domains.policy import service
+    profile, version = await service.effective_version(session, org_id)
+    if not version:
+        return {"minTier": "C", "requiredDimensions": [], "jurisdictions": None}
+    return {"minTier": version.settings["minTrustTier"],
+        "requiredDimensions": version.settings["requiredDimensions"],
+        "jurisdictions": version.settings.get("allowedJurisdictions")}
+
+
+async def commercial_context(session, *, org_id, professional_id, action, subject_type,
+    subject_id, actor_identity_id, amount=0, currency=None, engagement_type=None,
+    specialization=None, cost_center_id=None, pinned_version_id=None, extra=None, platform_default_pinned=False):
+    """Gather authoritative cross-domain facts; callers never accept these from a client."""
+    from zoikorum.domains.policy import service
+    attrs = await service.attributes_for(session, org_id, professional_id, amount=amount,
+        currency=currency, engagement_type=engagement_type, specialization=specialization,
+        cost_center_id=cost_center_id, extra=extra)
+    if platform_default_pinned:
+        attrs["policy.platformDefaultPinned"] = True
+    return PolicyContext(org_id, action, subject_type, subject_id, actor_identity_id, attrs, pinned_version_id)
+
+
+async def require_allowed(session: AsyncSession, ctx: PolicyContext) -> PolicyDecision:
+    from zoikorum.shared.errors import ApprovalRequired, ExceptionRequired, PolicyBlocked
+    result = await evaluate(session, ctx)
+    if result.allowed:
+        return result
+    reason = result.first_reason
+    extra = {"organizationId": str(ctx.org_id), "subjectType": ctx.subject_type,
+        "subjectId": str(ctx.subject_id), "action": ctx.action,
+        "approvalRequestId": str(result.approval_request_id) if result.approval_request_id else None,
+        "policyVersionLabel": result.policy_version_label}
+    error = {Decision.BLOCK: PolicyBlocked, Decision.REQUIRE_APPROVAL: ApprovalRequired,
+        Decision.REQUIRE_EXCEPTION: ExceptionRequired}[result.decision]
+    raise error(reason.message if reason else "Organization policy requires authorization", extra=extra)
+
+
+async def contract_terms(session: AsyncSession, org_id: uuid.UUID, version_id: uuid.UUID) -> dict:
+    from zoikorum.domains.policy import service
+    _, version = await service.effective_version(session, org_id, version_id)
+    return {"governingLaw": version.settings.get("governingLaw"), "clauseTexts": version.settings.get("clauseTexts", {})}

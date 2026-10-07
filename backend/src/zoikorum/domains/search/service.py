@@ -15,13 +15,15 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.domains.marketplace import facade as marketplace_facade
+from zoikorum.domains.buyer import facade as buyer_facade
+from zoikorum.domains.policy import facade as policy_facade
 from zoikorum.domains.professional import facade as professional_facade
 from zoikorum.domains.search.models import ProfessionalDocument as Doc
 from zoikorum.domains.search.schemas import FacetValue, ResultItem, SearchOut, SearchParams, SpecRef
 from zoikorum.domains.trust import facade as trust_facade
 from zoikorum.domains.verification import facade as verification_facade
 from zoikorum.shared.auth import Actor, PlatformRole
-from zoikorum.shared.errors import ValidationFailed
+from zoikorum.shared.errors import Forbidden, ValidationFailed
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_event
 from zoikorum.shared.money import MoneyDTO
@@ -249,6 +251,22 @@ async def search(session: AsyncSession, actor: Actor | None, p: SearchParams) ->
     p = p.model_copy(update={"q": q})
     tsquery = func.websearch_to_tsquery(EN, q) if q else None
     conds = _conditions(p, tsquery)
+    org_id = p.organizationId
+    if org_id:
+        if actor is None or not await buyer_facade.get_member_roles(session, org_id, actor.identity_id):
+            raise Forbidden("This organization search requires active membership")
+    elif actor:
+        organizations = await buyer_facade.list_identity_organizations(session, actor.identity_id)
+        if len(organizations) == 1:
+            org_id = organizations[0]
+    if org_id:
+        eligibility = await policy_facade.search_eligibility(session, org_id)
+        conds.append(Doc.tier.in_([t for t in TIER_RANK if TIER_RANK[t] >= TIER_RANK[eligibility['minTier']]]))
+        dimension_values = {**GOOD, "credentials": ("VALIDATED", "NOT_APPLICABLE"), "insurance": ("VERIFIED", "NOT_REQUIRED")}
+        for dim in eligibility['requiredDimensions']:
+            conds.append(Doc.dimensions[dim].astext.in_(dimension_values[dim]))
+        if eligibility.get('jurisdictions'):
+            conds.append(Doc.served_jurisdictions.overlap(eligibility['jurisdictions']))
     total = await session.scalar(select(func.count()).select_from(Doc).where(*conds)) or 0
 
     # The candidate cap keeps the strongest matches: most relevant first, then most trusted.

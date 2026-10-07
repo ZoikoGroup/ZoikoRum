@@ -92,6 +92,7 @@ export default function AppShell() {
           <Item to="/app/payments" icon="wallet">Payments &amp; Protection</Item>
           <Item to="/app/messages" icon="message" count={unreadMessages}>Messages</Item>
           <Item to="/app/disputes" icon="shield">Disputes</Item>
+          <Item to="/app/policies" icon="contract">Policies &amp; Approvals</Item>
         </>}
 
         {dashboards.has('professional') && <>

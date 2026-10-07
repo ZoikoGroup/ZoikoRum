@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.config import get_settings
 from zoikorum.domains.buyer import facade as buyer_facade
+from zoikorum.domains.policy import facade as policy_facade
 from zoikorum.domains.contract.models import ChangeOrder, Contract, ContractRevision, Milestone, Signature, Submission
 from zoikorum.domains.contract.schemas import (
     ChangeOrderIn, ChangePreviewOut, ContractOut, ContractRevisionOut, ContractSummaryOut, MilestoneOut,
@@ -61,6 +62,7 @@ VIEWERS = (PlatformRole.PLATFORM_ADMIN, PlatformRole.COMPLIANCE_OFFICER, Platfor
 TIMER_SIGNATURE = "contract.signature_deadline"
 TIMER_REVIEW_REMINDER = "contract.review_reminder"  # one day before the buyer's review window closes
 TIMER_REVIEW_DUE = "contract.review_due"  # the review window has passed
+TIMER_AUTO_ACCEPT = "contract.policy_auto_accept"
 LABEL = {"ADVISORY": "Advisory", "PROJECT": "Project", "RETAINER": "Retainer", "FRACTIONAL": "Fractional",
          "HOURLY": "Hourly", "FIXED": "Fixed fee"}
 MAX_MONEY_MINOR = 9_223_372_036_854_775_807
@@ -456,7 +458,7 @@ def render_document(c: Contract, milestones: list[Milestone]) -> str:
         lines += ["", "5. ASSUMPTIONS"] + [f"  - {a}" for a in t["assumptions"]]
     if t.get("exclusions"):
         lines += ["", "6. EXCLUSIONS (OUT OF SCOPE)"] + [f"  - {x}" for x in t["exclusions"]]
-    window = get_settings().acceptance_window_days
+    window = c.terms.get("policySettings", {}).get("acceptanceWindowDays", get_settings().acceptance_window_days)
     lines += [
         "",
         "7. PAYMENT PROTECTION",
@@ -475,7 +477,7 @@ def render_document(c: Contract, milestones: list[Milestone]) -> str:
         "Either party may open a dispute through Zoikorum. Funds for the affected milestone are held until the dispute is resolved "
         "through the platform's dispute resolution process.",
     ]
-    if c.nda_required:
+    if c.nda_required or "CONFIDENTIALITY" in t.get("clauses", []):
         lines += ["", "11. CONFIDENTIALITY",
                   "The professional keeps the buyer's confidential information confidential and uses it only for this engagement, "
                   "as accepted before the proposal was written."]
@@ -483,6 +485,18 @@ def render_document(c: Contract, milestones: list[Milestone]) -> str:
               "The Zoikorum Terms of Service apply to this agreement. Governing law and jurisdiction follow those terms unless an "
               "enterprise policy profile sets them.",
               "", f"Terms reference (SHA-256): {c.terms_hash}", f"Policy: {c.policy_version_label}"]
+    if t.get("governingLaw"):
+        lines.extend(["Governing law: " + t["governingLaw"]])
+    if "IP_OWNERSHIP" in t.get("clauses", []):
+        lines.extend(["IP ownership: rights and licences follow the Zoikorum Terms of Service and any ownership terms expressly included in this agreement."])
+    if "TERMINATION" in t.get("clauses", []):
+        lines.extend(["Termination: cancellation and outstanding funds follow the Zoikorum termination and dispute procedures."])
+    auto_days = t.get("policySettings", {}).get("autoAcceptAfterDays")
+    if auto_days:
+        lines.extend([f"Policy-authorised automatic acceptance: unanswered submissions may be accepted after {auto_days} days, subject to policy checks and dispute holds."])
+    for clause, clause_text in t.get("clauseTexts", {}).items():
+        if clause in t.get("clauses", []):
+            lines.extend(["", f"ENTERPRISE CLAUSE — {clause.replace('_', ' ')}", clause_text])
     return "\n".join(lines)
 
 
@@ -514,7 +528,8 @@ async def generate_from_proposal(session: AsyncSession, payload: dict) -> None:
                                   "country": pro.country if pro else None}},
         nda_required=bool(payload.get("ndaRequired")), document="", document_sha256="",
         policy_version_label=payload.get("policyVersionLabel") or "platform-default@1",
-        signature_deadline=now + timedelta(days=get_settings().signature_deadline_days),
+        policy_version_id=uuid.UUID(str(payload["policyVersionId"])) if payload.get("policyVersionId") else None,
+        signature_deadline=now + timedelta(days=terms.get("policySettings", {}).get("signatureDeadlineDays", get_settings().signature_deadline_days)),
     )
     session.add(c)
     await session.flush()
@@ -762,6 +777,14 @@ async def decide_change_order(
     if c.status != "ACTIVE" or c.contract_version != change.base_contract_version:
         raise Conflict("The contract changed after this proposal; create a new change order", code="CHANGE_ORDER_STALE")
     actor.require_step_up()
+    if approve:
+        await policy_facade.require_allowed(session, await policy_facade.commercial_context(session,
+            org_id=c.organization_id, professional_id=c.professional_id, action=policy_facade.PolicyAction.CHANGE_ORDER_APPROVE,
+            subject_type="ChangeOrder", subject_id=change.id, actor_identity_id=actor.identity_id,
+            amount=c.total_minor + (int(change.delta.get("totalDeltaMinor", 0)) if change.change_type == "PRICING_CHANGE" else 0),
+            currency=c.currency, engagement_type=c.engagement_type,
+            pinned_version_id=c.policy_version_id, platform_default_pinned=c.policy_version_id is None,
+            extra={"contract.termsHash": c.terms_hash, "contract.version": c.contract_version}))
     now = clock.now()
     change.decided_by_identity_id = actor.identity_id
     change.decided_at = now
@@ -827,6 +850,12 @@ async def sign(session: AsyncSession, actor: Actor, contract_id: uuid.UUID, body
     actor.require_step_up()
 
     who = await identity_facade.get_identity(session, actor.identity_id)
+    await policy_facade.require_allowed(session, await policy_facade.commercial_context(session,
+        org_id=c.organization_id, professional_id=c.professional_id, action=policy_facade.PolicyAction.CONTRACT_SIGN,
+        subject_type="Contract", subject_id=c.id, actor_identity_id=actor.identity_id,
+        amount=c.total_minor, currency=c.currency, engagement_type=c.engagement_type,
+        pinned_version_id=c.policy_version_id, platform_default_pinned=c.policy_version_id is None,
+        extra={"contract.termsHash": c.terms_hash, "contract.version": c.contract_version, "contract.signerParty": viewer}))
     now = clock.now()
     session.add(Signature(contract_id=c.id, contract_version=c.contract_version, party=viewer, signer_identity_id=actor.identity_id,
                           signer_name=who.display_name if who else "Signer", terms_hash=c.terms_hash,
@@ -856,7 +885,7 @@ async def sign(session: AsyncSession, actor: Actor, contract_id: uuid.UUID, body
         else:
             c.activated_at = now
             _evt(session, E.CONTRACT_ACTIVATED, c, buyerIdentityId=c.buyer_identity_id, currency=c.currency,
-                 totalMinor=c.total_minor, policyVersionId=None, milestones=_milestone_list(await _milestones(session, c.id)))
+                 totalMinor=c.total_minor, policyVersionId=c.policy_version_id, milestones=_milestone_list(await _milestones(session, c.id)))
     await session.flush()
     return await _out(session, actor, c, viewer)
 
@@ -986,13 +1015,16 @@ async def submit_milestone(session: AsyncSession, actor: Actor, milestone_id: uu
     await session.flush()
     MILESTONE_STATES.assert_can(m.status, "SUBMITTED")
     m.status, m.submitted_at = "SUBMITTED", now
-    m.acceptance_due_at = now + timedelta(days=get_settings().acceptance_window_days)
+    m.acceptance_due_at = now + timedelta(days=c.terms.get("policySettings", {}).get("acceptanceWindowDays", get_settings().acceptance_window_days))
     _evt(session, E.MILESTONE_SUBMITTED, c, milestoneId=m.id, submissionId=sub.id, acceptanceDueAt=m.acceptance_due_at)
     # Acceptance timer (Payments & Escrow s.10). Keyed per submission, so a resubmission starts a fresh window.
     timer = {"milestoneId": str(m.id), "submissionId": str(sub.id)}
     if m.acceptance_due_at - timedelta(days=1) > now:
         await schedule_timer(session, TIMER_REVIEW_REMINDER, str(sub.id), m.acceptance_due_at - timedelta(days=1), timer)
     await schedule_timer(session, TIMER_REVIEW_DUE, str(sub.id), m.acceptance_due_at, timer)
+    auto_days = c.terms.get("policySettings", {}).get("autoAcceptAfterDays")
+    if auto_days:
+        await schedule_timer(session, TIMER_AUTO_ACCEPT, str(sub.id), now + timedelta(days=auto_days), timer)
     await session.flush()
     return await _out(session, actor, c, viewer)
 
@@ -1027,6 +1059,39 @@ def _review_overdue(m: Milestone) -> bool:
     return m.status == "SUBMITTED" and m.acceptance_due_at is not None and m.acceptance_due_at <= clock.now()
 
 
+async def policy_auto_accept(session, payload):
+    found = await _awaiting_review(session, payload)
+    if not found:
+        return
+    m, c = found
+    c = await _contract(session, c.id, lock=True)
+    m = await session.get(Milestone, m.id, with_for_update=True)
+    if c.status != "ACTIVE" or m.status != "SUBMITTED":
+        return
+    auto_days = c.terms.get("policySettings", {}).get("autoAcceptAfterDays")
+    if not auto_days or not m.submitted_at or m.submitted_at + timedelta(days=auto_days) > clock.now():
+        return
+    from zoikorum.domains.dispute import facade as dispute_facade
+    if await dispute_facade.open_disputes_for_contract(session, c.id):
+        return
+    decision = await policy_facade.evaluate(session, await policy_facade.commercial_context(session,
+        org_id=c.organization_id, professional_id=c.professional_id, action=policy_facade.PolicyAction.MILESTONE_ACCEPT,
+        subject_type="Milestone", subject_id=m.id, actor_identity_id=None, amount=m.amount_minor, currency=m.currency,
+        engagement_type=c.engagement_type, pinned_version_id=c.policy_version_id,
+        platform_default_pinned=c.policy_version_id is None,
+        extra={"contract.termsHash": c.terms_hash, "contract.version": c.contract_version}))
+    if not decision.allowed:
+        return
+    m.status, m.accepted_at = "ACCEPTED", clock.now()
+    _evt(session, E.MILESTONE_ACCEPTED, c, milestoneId=m.id, amountMinor=m.amount_minor, currency=m.currency,
+        acceptedBy=None, onTime=m.due_date is None or m.submitted_at.date() <= m.due_date, auto=True)
+    await session.flush()
+    if all(x.status == "ACCEPTED" for x in await _milestones(session, c.id)):
+        CONTRACT_STATES.assert_can(c.status, "COMPLETED")
+        c.status, c.completed_at = "COMPLETED", clock.now()
+        _evt(session, E.CONTRACT_COMPLETED, c, reason="ALL_MILESTONES_ACCEPTED")
+
+
 async def _require_decider(session: AsyncSession, actor: Actor, c: Contract, viewer: str) -> None:
     if viewer != "BUYER":
         raise Forbidden("Only the buyer reviews submitted work")
@@ -1039,6 +1104,13 @@ async def accept_milestone(session: AsyncSession, actor: Actor, milestone_id: uu
     await _require_decider(session, actor, c, viewer)
     if m.status != "SUBMITTED":
         raise Conflict("Only submitted work can be accepted", code="MILESTONE_NOT_SUBMITTED")
+    await policy_facade.require_allowed(session, await policy_facade.commercial_context(session,
+        org_id=c.organization_id, professional_id=c.professional_id, action=policy_facade.PolicyAction.MILESTONE_ACCEPT,
+        subject_type="Milestone", subject_id=m.id, actor_identity_id=actor.identity_id,
+        amount=m.amount_minor, currency=m.currency, engagement_type=c.engagement_type,
+        pinned_version_id=c.policy_version_id, platform_default_pinned=c.policy_version_id is None,
+        extra={"contract.termsHash": c.terms_hash, "contract.version": c.contract_version,
+            "milestone.submissionId": str(await session.scalar(select(Submission.id).where(Submission.milestone_id == m.id).order_by(Submission.created_at.desc()).limit(1)))}))
     now = clock.now()
     MILESTONE_STATES.assert_can(m.status, "ACCEPTED")
     m.status, m.accepted_at, m.accepted_by = "ACCEPTED", now, actor.identity_id

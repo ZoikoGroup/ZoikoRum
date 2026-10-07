@@ -12,6 +12,7 @@ Sort = Literal["best", "verified", "availability", "experience", "price_asc", "p
 
 
 class SearchParams(BaseModel):
+    organizationId: uuid.UUID | None = None
     q: str | None = None
     category: str | None = None
     spec: list[str] = []

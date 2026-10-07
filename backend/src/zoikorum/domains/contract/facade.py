@@ -52,7 +52,7 @@ async def _summary(session: AsyncSession, c: Contract | None) -> ContractSummary
         return None
     ms = (await session.scalars(select(Milestone).where(Milestone.contract_id == c.id).order_by(Milestone.sequence))).all()
     return ContractSummary(c.id, c.proposal_id, c.request_id, c.organization_id, c.buyer_identity_id, c.professional_id, c.status,
-                           c.currency, c.total_minor, c.terms_hash, c.contract_version, None, tuple(_milestone(m) for m in ms),
+                           c.currency, c.total_minor, c.terms_hash, c.contract_version, c.policy_version_id, tuple(_milestone(m) for m in ms),
                            c.reference)
 
 
@@ -71,6 +71,16 @@ async def get_contract_by_proposal(session: AsyncSession, proposal_id: uuid.UUID
 async def get_milestone(session: AsyncSession, milestone_id: uuid.UUID) -> MilestoneSummary | None:
     m = await session.get(Milestone, milestone_id)
     return _milestone(m) if m else None
+
+
+async def milestone_acceptor(session: AsyncSession, milestone_id: uuid.UUID) -> uuid.UUID | None:
+    milestone = await session.get(Milestone, milestone_id)
+    return milestone.accepted_by if milestone else None
+
+
+async def policy_controls(session: AsyncSession, contract_id: uuid.UUID) -> dict:
+    contract = await session.get(Contract, contract_id)
+    return dict(contract.terms.get("policySettings", {})) if contract else {}
 
 
 async def delivery_stats(session: AsyncSession, professional_id: uuid.UUID) -> dict[str, int]:

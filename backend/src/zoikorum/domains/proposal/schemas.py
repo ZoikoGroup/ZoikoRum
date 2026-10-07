@@ -52,6 +52,7 @@ def _clean_deliverables(items: list[str]) -> list[str]:
 
 class RequestIn(BaseModel):
     organizationId: uuid.UUID
+    costCenterId: uuid.UUID | None = None
     professionalIds: list[uuid.UUID] = Field(min_length=1, max_length=3)
     offeringId: uuid.UUID | None = None
     service: str = Field(min_length=2, max_length=200)

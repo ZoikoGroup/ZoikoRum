@@ -137,8 +137,18 @@ async def dispose_engine() -> None:
 async def _transactional_session() -> AsyncIterator[AsyncSession]:
     """One request = one transaction. Commits before the response is sent."""
     async with session_factory()() as session:
-        async with session.begin():
-            yield session
+        try:
+            async with session.begin():
+                yield session
+        except Exception:
+            # Domain-owned audit callbacks run only after the business transaction
+            # has rolled back. They must never replay the commercial command.
+            callbacks = session.info.pop("after_rollback_audit", [])
+            for callback in callbacks:
+                async with session_factory()() as audit_session:
+                    async with audit_session.begin():
+                        await callback(audit_session)
+            raise
 
 
 # scope="function" -> commit happens BEFORE the HTTP response is returned, so a

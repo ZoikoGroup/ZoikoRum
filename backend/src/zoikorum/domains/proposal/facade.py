@@ -51,7 +51,7 @@ async def get_proposal(session: AsyncSession, proposal_id: uuid.UUID) -> Proposa
         return None
     return ProposalSummary(id=p.id, request_id=p.request_id, organization_id=p.organization_id,
                            buyer_identity_id=p.buyer_identity_id, professional_id=p.professional_id, status=p.status,
-                           total_minor=p.total_minor, currency=p.currency, policy_version_id=None)
+                           total_minor=p.total_minor, currency=p.currency, policy_version_id=p.policy_version_id)
 
 
 async def messaging_access(session: AsyncSession, request_id: uuid.UUID) -> tuple[str, bool, bool] | None:

@@ -261,7 +261,8 @@ async def open_dispute(session: AsyncSession, actor: Actor, body: DisputeIn) -> 
                     category=body.category, summary=body.summary.strip(), desired_outcome=body.desiredOutcome, context=body.context.strip(),
                     initiated_by=actor.identity_id, initiator_party=party, status="EVIDENCE_COLLECTION", currency=k.currency,
                     disputed_minor=sum(ms[i].amount_minor for i in wanted),
-                    evidence_deadline=now + timedelta(days=get_settings().dispute_evidence_days), evidence_complete=[])
+                    evidence_deadline=now + timedelta(days=(await contract_facade.policy_controls(session, k.id)).get(
+                        "disputeEvidenceDays", get_settings().dispute_evidence_days)), evidence_complete=[])
     session.add(c)
     await session.flush()
     label = await _actor_label(session, actor, party)
@@ -324,7 +325,8 @@ async def _after_evidence(session: AsyncSession, c: DisputeCase) -> None:
         return
     CASE_STATES.assert_can(c.status, "DIRECT_RESOLUTION")
     c.status = "DIRECT_RESOLUTION"
-    c.direct_deadline = add_business_days(clock.now(), get_settings().dispute_direct_resolution_business_days)
+    controls = await contract_facade.policy_controls(session, c.contract_id)
+    c.direct_deadline = add_business_days(clock.now(), controls.get("directResolutionBusinessDays", get_settings().dispute_direct_resolution_business_days))
     _log(session, c, "DIRECT", "System", f"Direct resolution window open until {c.direct_deadline:%d %b %Y}. Use structured proposals.")
     await schedule_timer(session, TIMER_DIRECT, str(c.id), c.direct_deadline, {"disputeId": str(c.id)})
 

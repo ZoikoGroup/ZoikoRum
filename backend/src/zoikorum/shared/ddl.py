@@ -17,6 +17,7 @@ APPEND_ONLY_TABLES: tuple[str, ...] = (
     "messaging.messages",
     "messaging.attachments",
     "policy.policy_evaluations",
+    "policy.approval_votes",
 )
 
 PREVENT_MUTATION_FN = """
@@ -24,6 +25,17 @@ CREATE OR REPLACE FUNCTION platform.prevent_mutation() RETURNS trigger AS $$
 BEGIN
   RAISE EXCEPTION 'table %.% is append-only (% rejected)', TG_TABLE_SCHEMA, TG_TABLE_NAME, TG_OP
     USING ERRCODE = 'insufficient_privilege';
+END;
+$$ LANGUAGE plpgsql;
+"""
+
+POLICY_VERSION_GUARD = """
+CREATE OR REPLACE FUNCTION policy.guard_active_version() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'DELETE' OR OLD.status = 'ACTIVE' THEN
+    RAISE EXCEPTION 'active policy versions are immutable' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 """
@@ -82,6 +94,11 @@ def append_only_trigger(qualified_table: str) -> list[str]:
 
 def all_statements(existing_tables: set[str]) -> list[str]:
     stmts = [PREVENT_MUTATION_FN]
+    if "policy.versions" in existing_tables:
+        stmts.extend([POLICY_VERSION_GUARD,
+            "DROP TRIGGER IF EXISTS trg_policy_versions_immutable ON policy.versions;",
+            "CREATE TRIGGER trg_policy_versions_immutable BEFORE UPDATE OR DELETE ON policy.versions "
+            "FOR EACH ROW EXECUTE FUNCTION policy.guard_active_version();"])
     for t in APPEND_ONLY_TABLES:
         if t in existing_tables:
             stmts.extend(append_only_trigger(t))

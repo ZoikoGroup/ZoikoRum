@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { orgApi, type Organization } from '../../api/orgs'
+import { orgApi, type Organization, type CostCenter } from '../../api/orgs'
 import { CURRENCIES, LABEL, proApi, taxonomyApi, toMinor, type PublicProfile } from '../../api/professional'
 import {
   budgetText, CADENCES, DEPENDENCIES, DURATION_LABEL, DURATIONS, PRICING_PREFS, proposalApi,
@@ -33,6 +33,8 @@ export default function RequestWizard() {
   const offeringId = params.get('offering')
   const [pros, setPros] = useState<PublicProfile[]>([])
   const [org, setOrg] = useState<Organization | null>(null)
+  const [costCenters, setCostCenters] = useState<CostCenter[]>([])
+  const [costCenterId, setCostCenterId] = useState('')
   const [step, setStep] = useState(0)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
@@ -79,6 +81,7 @@ export default function RequestWizard() {
     return () => { live = false }
   }, [ids, offeringId, fromId])
   const toggle = <T,>(list: T[], v: T) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v])
+  useEffect(() => { if (org) orgApi.costCenters(org.id).then(setCostCenters).catch(setError) }, [org])
   // Buyer location vs professional eligibility (Onboarding s.13, RFP s.16): surfaced before sending, blocked at agreement.
   const outOfArea = org ? pros.filter((p) => p.servedJurisdictions.length > 0 && !p.servedJurisdictions.includes(org.country)) : []
 
@@ -114,7 +117,7 @@ export default function RequestWizard() {
     setError(null)
     try {
       const result = await proposalApi.createRequests({
-        organizationId: org.id, professionalIds: ids, offeringId: ids.length === 1 ? offeringId : null, service: f.service.trim(),
+        organizationId: org.id, costCenterId: costCenterId || null, professionalIds: ids, offeringId: ids.length === 1 ? offeringId : null, service: f.service.trim(),
         engagementType: f.engagementType, businessContext: f.businessContext || null, objective: f.objective.trim(), details: f.details.trim(),
         desiredStartDate: f.desiredStartDate, estimatedDuration: f.estimatedDuration, deliveryMode: f.deliveryMode,
         location: f.deliveryMode === 'REMOTE' ? null : f.location.trim(),
@@ -229,6 +232,7 @@ export default function RequestWizard() {
             <Field label="Payment cadence (optional)" id="w-cad"><select id="w-cad" className="input" value={f.paymentCadence} onChange={(e) => set('paymentCadence', e.target.value as PaymentCadence | '')}>
               <option value="">No preference</option>{CADENCES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field>
             <label className="checkbox"><input type="checkbox" checked={f.budgetOn} onChange={(e) => set('budgetOn', e.target.checked)} /><span>Share a budget range (optional — helps professionals propose accurately)</span></label>
+            {!!costCenters.length && <Field label="Cost center" id="w-cost-center"><select id="w-cost-center" className="input" value={costCenterId} onChange={e => setCostCenterId(e.target.value)}><option value="">Organisation policy</option>{costCenters.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>}
             {f.budgetOn && <div className="row">
               <Field label="Currency" id="w-cur"><select id="w-cur" className="input" value={f.currency} onChange={(e) => set('currency', e.target.value)}>{CURRENCIES.map((c) => <option key={c}>{c}</option>)}</select></Field>
               <Field label="Minimum (optional)" id="w-min"><input id="w-min" className="input" inputMode="decimal" value={f.budgetMin} onChange={(e) => set('budgetMin', e.target.value.replace(/[^0-9.]/g, ''))} /></Field>

@@ -37,6 +37,14 @@ async def on_payment_charged_back(session: AsyncSession, event: EventEnvelope) -
 @subscribe(E.MILESTONE_ACCEPTED, consumer="escrow.release_decision")
 async def on_milestone_accepted(session: AsyncSession, event: EventEnvelope) -> None:
     await service.milestone_accepted(session, event.payload)
+    await service.release_accepted_siblings(session, event.payload["contractId"])
+
+
+@subscribe(E.APPROVAL_GRANTED, consumer="escrow.resume_approved_release")
+@subscribe(E.EXCEPTION_GRANTED, consumer="escrow.resume_excepted_release")
+async def on_policy_authorized(session: AsyncSession, event: EventEnvelope) -> None:
+    if event.payload.get("action") == "ESCROW_RELEASE" and event.payload.get("subjectType") == "Milestone":
+        await service.milestone_accepted(session, {"milestoneId": event.payload["subjectId"]})
 
 
 @subscribe(E.DISPUTE_INITIATED, consumer="escrow.dispute_hold")

@@ -172,6 +172,8 @@ class E:
 
     # ---- Policy --------------------------------------------------------------
     POLICY_CREATED = _t("policy", "profile", "created")
+    POLICY_DRAFT_UPDATED = _t("policy", "profile", "draft_updated")
+    APPROVAL_EXPIRED = _t("policy", "approval", "expired")
     POLICY_VERSION_ACTIVATED = _t("policy", "profile", "version_activated")
     POLICY_EVALUATED = _t("policy", "evaluation", "completed")
     POLICY_VIOLATION_DETECTED = _t("policy", "evaluation", "violation_detected")

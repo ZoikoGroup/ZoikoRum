@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import uuid
 
 from fastapi import APIRouter, Query
 
@@ -19,6 +20,7 @@ def _csv(value: str | None) -> list[str]:
 @router.get("/v1/search/professionals", response_model=SearchOut)
 async def search_professionals(
     session: DbSession, actor: OptionalActor,
+    organizationId: uuid.UUID | None = None,
     q: str | None = Query(default=None, max_length=200),
     category: str | None = None,
     spec: str | None = Query(default=None, description="Comma-separated specialization slugs"),
@@ -38,7 +40,7 @@ async def search_professionals(
     offset: int = Query(default=0, ge=0, le=1000),
 ):
     """Public discovery. Only published, non-suspended professionals; every result says why it matched."""
-    params = SearchParams(q=q, category=category, spec=_csv(spec), specMatch=specMatch, tier=_csv(tier), verified=_csv(verified),
+    params = SearchParams(organizationId=organizationId, q=q, category=category, spec=_csv(spec), specMatch=specMatch, tier=_csv(tier), verified=_csv(verified),
                           engagementType=engagementType, delivery=delivery, availability=availability, pricingModel=pricingModel,
                           credential=credential, jurisdiction=jurisdiction, experience=experience, publishedAfter=publishedAfter,
                           sort=sort, limit=limit, offset=offset)

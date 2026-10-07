@@ -35,6 +35,11 @@ async def on_review_due(session: AsyncSession, key: str, payload: dict) -> None:
     await service.review_overdue(session, payload)
 
 
+@on_timer(service.TIMER_AUTO_ACCEPT)
+async def on_policy_auto_accept(session: AsyncSession, key: str, payload: dict) -> None:
+    await service.policy_auto_accept(session, payload)
+
+
 @subscribe(E.ESCROW_FUNDING_REVERSED, consumer="contract.funding_reversed")
 async def on_funding_reversed(session: AsyncSession, event: EventEnvelope) -> None:
     await service.funding_reversed(session, event.payload)
