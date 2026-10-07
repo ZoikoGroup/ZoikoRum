@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { CONTRACT_STATUS, contractApi, MILESTONE_STATUS, type Contract, type ContractMilestone, type FileRef } from '../api/contracts'
+import { CONTRACT_STATUS, contractApi, MILESTONE_STATUS, type ChangeOrder, type Contract, type ContractMilestone, type FileRef } from '../api/contracts'
 import { escrowApi, type Escrow } from '../api/escrow'
 import { FundDialog, PaymentsPanel } from '../components/EscrowPanels'
 import { formatMoney } from '../api/orgs'
@@ -84,7 +84,7 @@ export function EngagementDetail({ side }: { side: Side }) {
   const [c, setC] = useState<Contract | null>(null)
   const [error, setError] = useState<unknown>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  const [tab, setTab] = useState<'overview' | 'agreement' | 'milestones' | 'payments' | 'activity'>('overview')
+  const [tab, setTab] = useState<'overview' | 'agreement' | 'changes' | 'milestones' | 'payments' | 'activity'>('overview')
   const [doc, setDoc] = useState<string | null>(null)
   const [read, setRead] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -117,7 +117,8 @@ export function EngagementDetail({ side }: { side: Side }) {
     <>
       {modal}
       <PortalHeader eyebrow={<Link to={base(side)}>← Engagements</Link>} title={c.title}
-        subtitle={<><span className={`badge ${st.tone}`}>{st.label}</span> · {c.reference} · {formatMoney(c.total)} · version {c.contractVersion}</>} />
+        subtitle={<><span className={`badge ${st.tone}`}>{st.label}</span> · {c.reference} · {formatMoney(c.total)} · version {c.contractVersion}</>}
+        actions={<Link className="btn btn-secondary" to={`/app/messages?contextType=CONTRACT&contextId=${c.id}`}><Icon name="message" /> Messages</Link>} />
       {notice && <div className="alert alert-success" role="status">{notice}</div>}
       <ErrorAlert error={error} />
 
@@ -130,7 +131,8 @@ export function EngagementDetail({ side }: { side: Side }) {
       </div>
 
       <Tabs tabs={[{ key: 'overview', label: 'Overview' }, { key: 'agreement', label: 'Agreement' }, { key: 'milestones', label: 'Milestones', count: c.milestones.length },
-        { key: 'payments', label: 'Payments' }, { key: 'activity', label: 'Activity' }]} value={tab} onChange={setTab} />
+        { key: 'changes', label: 'Change orders', count: c.changeOrders.length }, { key: 'payments', label: 'Payments' },
+        { key: 'activity', label: 'Activity' }]} value={tab} onChange={setTab} />
 
       {tab === 'overview' && (
         <div className="home-grid wide">
@@ -217,6 +219,26 @@ export function EngagementDetail({ side }: { side: Side }) {
 
       {fundFor && escrow && <FundDialog escrow={escrow} preselect={fundFor} onClose={() => setFundFor(null)}
         onFunded={(e) => { setEscrow(e); setFundFor(null); setNotice('Payment submitted. The funds are held in escrow as soon as the payment is captured.'); refreshSoon() }} />}
+      {tab === 'changes' && <ChangeOrdersPanel c={c} side={side} busy={busy}
+        onPropose={(body) => act(() => contractApi.proposeChange(c.id, body), 'Change order proposed. The other party must review it.')}
+        onApprove={(changeId) => {
+          setError(null); setNotice(null)
+          run(async () => {
+            setBusy(true)
+            try {
+              setC(await contractApi.approveChange(changeId))
+              setNotice('Change order approved. Material changes now need both parties to sign the new contract version.')
+            } finally { setBusy(false) }
+          })
+        }}
+        onReject={(changeId, reason) => {
+          setError(null); setNotice(null)
+          run(async () => {
+            setBusy(true)
+            try { setC(await contractApi.rejectChange(changeId, reason)); setNotice('Change order rejected.') }
+            finally { setBusy(false) }
+          })
+        }} />}
       {tab === 'milestones' && (
         <>
           {c.status === 'PENDING_SIGNATURE' && <p className="muted">Milestones start after both parties sign and each milestone is funded.</p>}
@@ -246,6 +268,194 @@ export function EngagementDetail({ side }: { side: Side }) {
           <p className="muted small">Every step is also recorded in the tamper-evident audit log.</p></section>
       )}
     </>
+  )
+}
+
+function ChangeOrdersPanel({ c, side, busy, onPropose, onApprove, onReject }: {
+  c: Contract; side: Side; busy: boolean
+  onPropose: (body: { type: ChangeOrder['type']; delta: Record<string, unknown>; impact: string }) => Promise<void>
+  onApprove: (changeId: string) => void; onReject: (changeId: string, reason: string) => void
+}) {
+  const [type, setType] = useState<ChangeOrder['type']>('ADD_DELIVERABLE')
+  const [milestoneId, setMilestoneId] = useState(c.milestones.find((m) => m.status === 'PENDING_FUNDING')?.id ?? '')
+  const [deliverableKey, setDeliverableKey] = useState(c.terms.deliverables[0]?.key ?? '')
+  const [title, setTitle] = useState('')
+  const [description, setDescription] = useState('')
+  const [criteria, setCriteria] = useState('')
+  const [endDate, setEndDate] = useState(c.terms.endDate ?? '')
+  const [newAmount, setNewAmount] = useState('')
+  const [impact, setImpact] = useState('')
+  const [rejectReason, setRejectReason] = useState('')
+  const [formError, setFormError] = useState<string | null>(null)
+  const pendingMilestones = c.milestones.filter((m) => m.status === 'PENDING_FUNDING')
+  const party = side === 'buyer' ? 'BUYER' : 'PROFESSIONAL'
+  const editableDeliverables = c.terms.deliverables.filter((d) =>
+    c.milestones.some((m) => m.status === 'PENDING_FUNDING' && m.deliverableKeys.includes(d.key)))
+  const delta = (): Record<string, unknown> => {
+    if (type === 'ADD_DELIVERABLE') return {
+      milestoneId,
+      deliverable: { key: `co-${Date.now()}`, title: title.trim(), description: description.trim(), acceptanceCriteria: criteria.trim() },
+    }
+    if (type === 'MODIFY_DELIVERABLE') return {
+      key: deliverableKey,
+      changes: { ...(title.trim() ? { title: title.trim() } : {}), ...(description.trim() ? { description: description.trim() } : {}),
+        ...(criteria.trim() ? { acceptanceCriteria: criteria.trim() } : {}) },
+    }
+    if (type === 'EXTEND_TIMELINE') return { endDate }
+    const milestone = c.milestones.find((m) => m.id === milestoneId)
+    const [whole = '0', fraction = ''] = newAmount.split('.')
+    const amountMinor = Number(whole) * 100 + Number((fraction + '00').slice(0, 2))
+    return { totalDeltaMinor: amountMinor - (milestone?.amount.amountMinor ?? 0), milestoneAmounts: [{ milestoneId, amountMinor }] }
+  }
+  const submit = async () => {
+    const value = delta()
+    if (type === 'ADD_DELIVERABLE' && (!milestoneId || !title.trim() || !criteria.trim())) return setFormError('Choose a milestone and provide a title and acceptance criteria.')
+    if (type === 'MODIFY_DELIVERABLE' && (!deliverableKey || !Object.keys(value.changes as object).length)) return setFormError('Choose a deliverable and enter at least one updated field.')
+    if (type === 'EXTEND_TIMELINE' && !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) return setFormError('Enter the new contract end date.')
+    if (type === 'PRICING_CHANGE' && (!milestoneId || !/^\d+(\.\d{1,2})?$/.test(newAmount) ||
+      Number(newAmount) <= 0 || value.totalDeltaMinor === 0)) return setFormError('Choose an unfunded milestone and enter a different positive amount with at most two decimals.')
+    if (impact.trim().length < 5) return setFormError('Describe the expected impact (at least 5 characters).')
+    setFormError(null)
+    await onPropose({ type, delta: value, impact: impact.trim() })
+  }
+  const draftPreview = (): { label: string; before: string; after: string }[] => {
+    if (type === 'ADD_DELIVERABLE') {
+      const milestone = c.milestones.find((m) => m.id === milestoneId)
+      return [{ label: `M${milestone?.sequence ?? '—'} deliverables`, before: 'No such deliverable',
+        after: `${title.trim() || 'New deliverable'} — ${criteria.trim() || 'Acceptance criteria not entered'}` }]
+    }
+    if (type === 'MODIFY_DELIVERABLE') {
+      const deliverable = c.terms.deliverables.find((d) => d.key === deliverableKey)
+      return [
+        ...(title.trim() ? [{ label: 'Title', before: deliverable?.title ?? '—', after: title.trim() }] : []),
+        ...(description.trim() ? [{ label: 'Description', before: deliverable?.description || '—', after: description.trim() }] : []),
+        ...(criteria.trim() ? [{ label: 'Acceptance criteria', before: deliverable?.acceptanceCriteria ?? '—', after: criteria.trim() }] : []),
+      ]
+    }
+    if (type === 'EXTEND_TIMELINE') {
+      return [{ label: 'Contract end date', before: c.terms.endDate ?? 'Not set', after: endDate || 'Enter a date' }]
+    }
+    const milestone = c.milestones.find((m) => m.id === milestoneId)
+    const parsedAmount = /^\d+(\.\d{1,2})?$/.test(newAmount) ? Math.round(Number(newAmount) * 100) : null
+    const newTotal = parsedAmount !== null && milestone
+      ? c.total.amountMinor + parsedAmount - milestone.amount.amountMinor
+      : null
+    return [
+      { label: 'Contract total', before: formatMoney(c.total),
+        after: newTotal !== null ? formatMoney({ amountMinor: newTotal, currency: c.total.currency }) : 'Enter a new amount' },
+      { label: `M${milestone?.sequence ?? '—'} · ${milestone?.title ?? 'Milestone'}`,
+        before: milestone ? formatMoney(milestone.amount) : '—',
+        after: parsedAmount !== null ? formatMoney({ amountMinor: parsedAmount, currency: c.total.currency }) : 'Enter a new amount' },
+    ]
+  }
+  return (
+    <section className="card panel">
+      <div className="panel-head"><h2>Change orders</h2><span className="muted small">Contract version {c.contractVersion}</span></div>
+      <p className="muted">Changes are recorded against the signed agreement. The other party must approve or reject each proposal.
+        Scope and price changes take effect only after both parties sign the new version; timeline changes apply after approval.</p>
+      {c.status === 'ACTIVE' && <div className="revise-box">
+        <label className="filter-box"><span>Change type</span><select value={type} onChange={(e) => setType(e.target.value as ChangeOrder['type'])}>
+          <option value="ADD_DELIVERABLE">Add deliverable</option><option value="MODIFY_DELIVERABLE">Modify deliverable</option>
+          <option value="EXTEND_TIMELINE">Extend timeline</option><option value="PRICING_CHANGE">Change pricing</option>
+        </select></label>
+        {(type === 'ADD_DELIVERABLE' || type === 'PRICING_CHANGE') && <label className="filter-box"><span>Unfunded milestone</span>
+          <select value={milestoneId} onChange={(e) => setMilestoneId(e.target.value)}>
+            <option value="">Select milestone</option>{pendingMilestones.map((m) => <option key={m.id} value={m.id}>M{m.sequence} · {m.title}</option>)}
+          </select></label>}
+        {type === 'ADD_DELIVERABLE' && <>
+          <label className="filter-box"><span>Deliverable title</span><input className="input" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={200} /></label>
+          <label className="filter-box"><span>Description</span><input className="input" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={1000} /></label>
+          <label className="filter-box"><span>Acceptance criteria</span><textarea rows={2} value={criteria} onChange={(e) => setCriteria(e.target.value)} maxLength={1000} /></label>
+        </>}
+        {type === 'MODIFY_DELIVERABLE' && <>
+          <label className="filter-box"><span>Deliverable</span><select value={deliverableKey} onChange={(e) => setDeliverableKey(e.target.value)}>
+            {editableDeliverables.map((d) => <option key={d.key} value={d.key}>{d.title}</option>)}</select></label>
+          <label className="filter-box"><span>New title (optional)</span><input className="input" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={200} /></label>
+          <label className="filter-box"><span>New description (optional)</span><input className="input" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={1000} /></label>
+          <label className="filter-box"><span>New acceptance criteria (optional)</span><textarea rows={2} value={criteria} onChange={(e) => setCriteria(e.target.value)} maxLength={1000} /></label>
+        </>}
+        {type === 'EXTEND_TIMELINE' && <label className="filter-box"><span>New contract end date</span>
+          <input className="input" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} /></label>}
+        {type === 'PRICING_CHANGE' && <>
+          <label className="filter-box"><span>New milestone amount ({c.total.currency})</span>
+            <input className="input" type="number" min="0.01" step="0.01" value={newAmount} onChange={(e) => setNewAmount(e.target.value)} />
+          </label>
+          {c.milestones.find((m) => m.id === milestoneId) &&
+            <span className="muted small">Current amount: {formatMoney(c.milestones.find((m) => m.id === milestoneId)!.amount)}</span>}
+        </>}
+        <div className="tip" aria-live="polite">
+          <Icon name="contract" /><span><strong>Before and after preview</strong>
+            <ul className="change-preview">{draftPreview().map((item) => <li key={item.label}>
+              <span>{item.label}</span><span>{item.before}</span><span aria-hidden="true">→</span><strong>{item.after}</strong>
+            </li>)}</ul>
+          </span>
+        </div>
+        <label className="filter-box"><span>Expected impact</span><textarea rows={2} maxLength={1000} value={impact} onChange={(e) => setImpact(e.target.value)}
+          placeholder="Explain the effect on scope, price, or delivery." /></label>
+        {formError && <p className="error-text" role="alert">{formError}</p>}
+        <button className="btn btn-primary" disabled={busy} onClick={() => { void submit() }}>Propose change</button>
+      </div>}
+      {c.changeOrders.length === 0 ? <p className="muted">No change orders yet.</p> : <ul className="activity">
+        {[...c.changeOrders].reverse().map((change) => {
+          const canDecide = change.status === 'PROPOSED' && change.proposerParty !== party && c.status === 'ACTIVE'
+          return <li key={change.id} style={{ alignItems: 'flex-start' }}><span className="dot" />
+            <div style={{ flex: 1 }}><strong>{change.type.replaceAll('_', ' ')}</strong> · <span className={`badge ${change.status === 'APPROVED' ? 'green' : change.status === 'PROPOSED' ? 'warn' : ''}`}>{change.status}</span>
+              <p style={{ margin: '4px 0' }}>{change.impact}</p><details><summary className="small">Change details</summary><pre className="agreement">{JSON.stringify(change.delta, null, 2)}</pre></details>
+              {change.preview.length > 0 && <div className="change-preview-saved"><strong>Before and after</strong>
+                <ul className="change-preview">{change.preview.map((item) => <li key={item.label}>
+                  <span>{item.label}</span><span>{item.before}</span><span aria-hidden="true">→</span><strong>{item.after}</strong>
+                </li>)}</ul>
+              </div>}
+              <span className="muted small">Proposed by {change.proposerParty === 'BUYER' ? 'buyer' : 'professional'} · base version {change.baseContractVersion}
+                {change.appliedVersion ? ` · applied as version ${change.appliedVersion}` : ''}</span>
+              {change.decisionReason && <p className="small">Decision note: {change.decisionReason}</p>}
+              {canDecide && <div className="row card-actions">
+                <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => onApprove(change.id)}>Approve</button>
+                <input className="input" style={{ maxWidth: 280 }} placeholder="Optional rejection reason" maxLength={1000} value={rejectReason}
+                  onChange={(e) => setRejectReason(e.target.value)} />
+                <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => onReject(change.id, rejectReason)}>Reject</button>
+              </div>}
+            </div><span className="muted small">{new Date(change.createdAt).toLocaleDateString()}</span>
+          </li>
+        })}
+      </ul>}
+      <div className="version-history">
+        <h3>Contract version history</h3>
+        {[...c.revisions].reverse().map((revision) => {
+          const signedParties = new Set(c.signatures.filter((signature) => signature.contractVersion === revision.contractVersion).map((signature) => signature.party))
+          const pendingSignature = revision.contractVersion === c.contractVersion && c.status === 'PENDING_SIGNATURE'
+          const amendment = revision.changeOrderId
+            ? c.changeOrders.find((change) => change.id === revision.changeOrderId)
+            : undefined
+          return <details key={revision.contractVersion} className="version-record">
+            <summary><strong>Version {revision.contractVersion}</strong> · {formatMoney(revision.total)}
+              {revision.contractVersion === c.contractVersion && <span className={`badge ${pendingSignature ? 'warn' : 'green'}`}>
+                {pendingSignature ? 'Awaiting signatures' : 'Current'}
+              </span>}
+              <span className="muted small">{new Date(revision.createdAt).toLocaleString()}</span>
+            </summary>
+            {amendment?.type === 'EXTEND_TIMELINE' && amendment.appliedVersion === revision.contractVersion
+              ? <p className="muted small">Timeline amendment approved by both parties; re-signing was not required.</p>
+              : <p className="muted small">Signatures for this version: {(['BUYER', 'PROFESSIONAL'] as const)
+                .map((partyName) => `${partyName === 'BUYER' ? 'Buyer' : 'Professional'} ${signedParties.has(partyName) ? 'signed' : 'not signed'}`)
+                .join(' · ')}</p>}
+            <h4>Deliverables</h4>
+            <ul className="why">{revision.terms.deliverables.map((deliverable) => <li key={deliverable.key}>
+              <strong>{deliverable.title}</strong> — {deliverable.acceptanceCriteria}
+            </li>)}</ul>
+            <h4>Milestones and pricing</h4>
+            <ul className="why">{revision.milestones.map((milestone) => <li key={milestone.id}>
+              M{milestone.sequence} · {milestone.title} · {formatMoney({ amountMinor: milestone.amountMinor, currency: milestone.currency })}
+              {milestone.dueDate ? ` · due ${fmtDate(milestone.dueDate)}` : ''}
+            </li>)}</ul>
+            <p className="muted small">Terms SHA-256: <code>{revision.termsHash}</code><br />
+              Agreement SHA-256: <code>{revision.documentSha256}</code></p>
+          </details>
+        })}
+      </div>
+      {c.status === 'PENDING_SIGNATURE' && c.pendingChangeOrderId && <p className="tip"><Icon name="contract" /><span>Approved material change: review and sign the updated agreement in the Agreement tab.</span></p>}
+      <p className="muted small">Approving or rejecting requires a fresh two-step confirmation.</p>
+    </section>
   )
 }
 

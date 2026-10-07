@@ -38,6 +38,36 @@ export interface ContractTerms {
   endDate: string | null
 }
 
+export interface ChangeOrder {
+  id: string
+  contractId: string
+  proposedByIdentityId: string
+  proposerParty: 'BUYER' | 'PROFESSIONAL'
+  type: 'ADD_DELIVERABLE' | 'MODIFY_DELIVERABLE' | 'EXTEND_TIMELINE' | 'PRICING_CHANGE'
+  delta: Record<string, unknown>
+  impact: string
+  baseContractVersion: number
+  status: 'PROPOSED' | 'APPROVED' | 'REJECTED'
+  decidedByIdentityId: string | null
+  decisionReason: string | null
+  decidedAt: string | null
+  appliedVersion: number | null
+  createdAt: string
+  preview: { label: string; before: string; after: string }[]
+}
+
+export interface ContractRevision {
+  contractVersion: number
+  changeOrderId: string | null
+  currency: string
+  total: Money
+  terms: ContractTerms
+  milestones: { id: string; sequence: number; title: string; amountMinor: number; currency: string; dueDate: string | null; deliverableKeys: string[] }[]
+  termsHash: string
+  documentSha256: string
+  createdAt: string
+}
+
 export interface Contract {
   id: string
   reference: string
@@ -49,6 +79,7 @@ export interface Contract {
   engagementType: string
   pricingModel: string | null
   status: ContractStatus
+  pendingChangeOrderId: string | null
   total: Money
   termsHash: string
   contractVersion: number
@@ -61,6 +92,8 @@ export interface Contract {
   activatedAt: string | null
   completedAt: string | null
   signatures: { party: 'BUYER' | 'PROFESSIONAL'; signerName: string; contractVersion: number; termsHash: string; authStrength: string; signedAt: string }[]
+  changeOrders: ChangeOrder[]
+  revisions: ContractRevision[]
   milestones: ContractMilestone[]
   viewerRole: 'BUYER' | 'PROFESSIONAL' | 'OPERATOR'
   nextAction: string
@@ -80,8 +113,16 @@ export const contractApi = {
     api<{ items: Contract[] }>(C, { query: { role, limit: '100', ...(status ? { status } : {}) } }).then((r) => r.items),
   summary: (role: 'buyer' | 'professional') => api<ContractSummary>(`${C}/summary`, { query: { role } }),
   get: (id: string) => api<Contract>(`${C}/${id}`),
-  document: (id: string) => api<string>(`${C}/${id}/document`, { text: true }),
+  document: (id: string, version?: number) => api<string>(
+    version ? `${C}/${id}/versions/${version}/document` : `${C}/${id}/document`, { text: true },
+  ),
   sign: (id: string, termsHash: string) => api<Contract>(`${C}/${id}/sign`, { method: 'POST', body: { termsHash }, headers: idem() }),
+  proposeChange: (id: string, body: { type: ChangeOrder['type']; delta: Record<string, unknown>; impact: string }) =>
+    api<Contract>(`${C}/${id}/change-orders`, { method: 'POST', body, headers: idem() }),
+  approveChange: (changeOrderId: string) =>
+    api<Contract>(`/v1/change-orders/${changeOrderId}/approve`, { method: 'POST', headers: idem() }),
+  rejectChange: (changeOrderId: string, reason?: string) =>
+    api<Contract>(`/v1/change-orders/${changeOrderId}/reject`, { method: 'POST', body: reason ? { reason } : {}, headers: idem() }),
   submit: (milestoneId: string, note: string, files: FileRef[]) =>
     api<Contract>(`/v1/milestones/${milestoneId}/submit`, { method: 'POST', body: { note, files } }),
   accept: (milestoneId: string) => api<Contract>(`/v1/milestones/${milestoneId}/accept`, { method: 'POST', headers: idem() }),

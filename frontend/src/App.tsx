@@ -83,7 +83,7 @@ export default function App() {
             <Route path="engagements/:id" element={<RequireRole any={CUSTOMER}><EngagementDetail side="buyer" /></RequireRole>} />
             <Route path="payments" element={<RequireRole any={CUSTOMER}><CustomerPaymentsPage /></RequireRole>} />
             <Route path="professional/earnings" element={<RequireRole any={['PROFESSIONAL']}><EarningsPage /></RequireRole>} />
-            <Route path="messages" element={<RequireRole any={CUSTOMER}><MessagesPage /></RequireRole>} />
+            <Route path="messages" element={<RequireRole any={[...CUSTOMER, 'PROFESSIONAL']}><MessagesPage /></RequireRole>} />
             <Route path="organisation" element={<RequireRole any={CUSTOMER}><OrganisationPage /></RequireRole>} />
             <Route path="verification" element={<RequireRole any={CUSTOMER}><CustomerVerification /></RequireRole>} />
             <Route path="settings" element={<SettingsPage />} />

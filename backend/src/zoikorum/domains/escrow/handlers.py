@@ -14,6 +14,11 @@ async def on_contract_activated(session: AsyncSession, event: EventEnvelope) -> 
     await service.open_account(session, event.payload)
 
 
+@subscribe(E.CONTRACT_AMENDED, consumer="escrow.apply_contract_amendment")
+async def on_contract_amended(session: AsyncSession, event: EventEnvelope) -> None:
+    await service.contract_amended(session, event.payload)
+
+
 @subscribe(E.PAYMENT_CAPTURED, consumer="escrow.hold_captured_funds")
 async def on_payment_captured(session: AsyncSession, event: EventEnvelope) -> None:
     await service.payment_captured(session, event.payload)

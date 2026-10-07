@@ -3,7 +3,7 @@
 
 Rules: no HTTP endpoint releases money; release happens only when a milestone is accepted. Every movement writes a
 balanced append-only double-entry group in the same transaction as the balance change, under a row lock on the
-account. Dispute holds, refunds and amendments arrive with the dispute and change-order steps.
+account. Dispute holds and refunds arrive with the dispute step; contract amendments update only unfunded allocations.
 """
 
 from __future__ import annotations
@@ -132,6 +132,40 @@ async def open_account(session: AsyncSession, payload: dict) -> None:
     session.add_all([Allocation(account_id=a.id, milestone_id=uuid.UUID(str(m["milestoneId"])), sequence=m["sequence"], title=m["title"],
                                 amount_minor=int(m["amountMinor"]), state="UNFUNDED") for m in payload.get("milestones", [])])
     _evt(session, E.ESCROW_OPENED, a, professionalId=a.professional_id, currency=a.currency, totalMinor=a.total_minor)
+
+
+async def contract_amended(session: AsyncSession, payload: dict) -> None:
+    """Apply signed contract amendments without rewriting any allocation with money or work in flight."""
+    contract_id = uuid.UUID(str(payload["contractId"]))
+    account = await session.scalar(
+        select(EscrowAccount).where(EscrowAccount.contract_id == contract_id).with_for_update()
+    )
+    if account is None:
+        raise NotFound("Escrow account not found for amended contract")
+    allocations = await _allocations(session, account.id, lock=True)
+    requested = {
+        uuid.UUID(str(item["milestoneId"])): int(item["amountMinor"])
+        for item in payload.get("milestones", [])
+    }
+    by_id = {item.milestone_id: item for item in allocations}
+    if requested.keys() != by_id.keys():
+        raise Conflict("Amended milestone schedule does not match the escrow allocations", code="AMENDMENT_ALLOCATION_MISMATCH")
+    for milestone_id, amount in requested.items():
+        allocation = by_id[milestone_id]
+        if allocation.amount_minor == amount:
+            continue
+        if allocation.state != "UNFUNDED":
+            raise Conflict("An amendment cannot change a funded or released escrow allocation",
+                           code="AMENDED_ALLOCATION_HAS_FUNDS")
+        allocation.amount_minor = amount
+        allocation.title = str(next(
+            item["title"] for item in payload["milestones"] if uuid.UUID(str(item["milestoneId"])) == milestone_id
+        ))
+    total = int(payload["totalMinor"])
+    if sum(item.amount_minor for item in allocations) != total or total < account.funded_minor:
+        raise Conflict("Amended escrow total does not reconcile with the allocations and funds already captured",
+                       code="AMENDMENT_TOTAL_MISMATCH")
+    account.total_minor = total
 
 
 # ---- Reads --------------------------------------------------------------------------------------

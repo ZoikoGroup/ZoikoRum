@@ -58,6 +58,10 @@ async def get_contract(session: AsyncSession, contract_id: uuid.UUID) -> Contrac
     return await _summary(session, await session.get(Contract, contract_id))
 
 
+async def get_contract_by_request(session: AsyncSession, request_id: uuid.UUID) -> ContractSummary | None:
+    return await _summary(session, await session.scalar(select(Contract).where(Contract.request_id == request_id)))
+
+
 async def get_contract_by_proposal(session: AsyncSession, proposal_id: uuid.UUID) -> ContractSummary | None:
     return await _summary(session, await session.scalar(select(Contract).where(Contract.proposal_id == proposal_id)))
 

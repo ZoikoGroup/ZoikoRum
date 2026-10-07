@@ -112,6 +112,7 @@ class E:
     CONTRACT_DISPUTE_CLEARED = _t("contract", "contract", "dispute_cleared")
     SIGNATURE_DEADLINE_ESCALATED = _t("contract", "contract", "signature_deadline_escalated")
     CHANGE_ORDER_REQUESTED = _t("contract", "change_order", "requested")
+    CHANGE_ORDER_APPROVED = _t("contract", "change_order", "approved")
     CHANGE_ORDER_REJECTED = _t("contract", "change_order", "rejected")
     CONTRACT_AMENDED = _t("contract", "contract", "amended")
     MILESTONE_CREATED = _t("contract", "milestone", "created")
@@ -203,6 +204,7 @@ class E:
     MESSAGE_SENT = _t("messaging", "message", "sent")
     MESSAGE_FLAGGED = _t("messaging", "message", "flagged")
     THREAD_LOCKED = _t("messaging", "thread", "locked")
+    THREAD_UNLOCKED = _t("messaging", "thread", "unlocked")
 
     # ---- Notification --------------------------------------------------------
     NOTIFICATION_QUEUED = _t("notification", "notification", "queued")

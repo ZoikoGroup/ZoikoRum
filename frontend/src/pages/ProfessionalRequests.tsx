@@ -176,8 +176,11 @@ export function ProfessionalRequestDetail() {
     <>
       <PortalHeader eyebrow={<Link to="/app/professional/requests">← Incoming requests</Link>} title={req.service}
         subtitle={<>From <strong>{req.organizationName ?? req.buyerName}</strong> · <span className={`badge ${requestStatus(req).tone}`}>{requestStatus(req).label}</span></>}
-        actions={req.status === 'OPEN' && (!proposal || proposal.status === 'DRAFT')
-          ? <button className="btn btn-secondary" onClick={() => setDeclining(true)}>Decline request</button> : undefined} />
+        actions={<>
+          {(!req.ndaRequired || req.ndaAccepted) && <Link className="btn btn-secondary" to={`/app/messages?contextType=PROPOSAL_REQUEST&contextId=${req.id}`}><Icon name="message" /> Messages</Link>}
+          {req.status === 'OPEN' && (!proposal || proposal.status === 'DRAFT')
+            && <button className="btn btn-secondary" onClick={() => setDeclining(true)}>Decline request</button>}
+        </>} />
       {notice && <div className="alert alert-success" role="status">{notice}</div>}
       <ErrorAlert error={error} />
 

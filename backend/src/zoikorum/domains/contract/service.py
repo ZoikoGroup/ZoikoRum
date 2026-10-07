@@ -1,5 +1,4 @@
-"""Contract domain (Step 7): agreement generated from the accepted proposal, buyer signs then professional countersigns,
-milestones wait for funding, then deliver -> review -> accept (Request Proposal & Engagement Flow s.10-13, BUILD_SPEC).
+"""Contract domain: signatures, immutable amendments, and milestone lifecycle.
 
 Every signature needs a fresh two-step confirmation and is stored as an append-only receipt bound to the exact terms
 hash the signer saw. Change orders and dispute hooks arrive in a follow-up step; policy-required clauses arrive with
@@ -18,10 +17,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.config import get_settings
 from zoikorum.domains.buyer import facade as buyer_facade
-from zoikorum.domains.contract.models import Contract, Milestone, Signature, Submission
+from zoikorum.domains.contract.models import ChangeOrder, Contract, ContractRevision, Milestone, Signature, Submission
 from zoikorum.domains.contract.schemas import (
-    ContractOut, ContractSummaryOut, FileRef, MilestoneOut, PartyOut, RevisionIn, SignatureOut, SignIn, SubmissionOut, SubmitIn,
+    ChangeOrderIn, ChangePreviewOut, ContractOut, ContractRevisionOut, ContractSummaryOut, FileRef, MilestoneOut,
+    PartyOut, RevisionIn, SignatureOut, SignIn, SubmissionOut, SubmitIn,
 )
+from zoikorum.domains.escrow import facade as escrow_facade
 from zoikorum.domains.firm import facade as firm_facade
 from zoikorum.domains.identity import facade as identity_facade
 from zoikorum.domains.professional import facade as professional_facade
@@ -38,7 +39,7 @@ from zoikorum.shared.state_machine import StateMachine
 CONTRACT_STATES = StateMachine("Contract", {
     "GENERATED": {"PENDING_SIGNATURE"},
     "PENDING_SIGNATURE": {"ACTIVE", "TERMINATED"},
-    "ACTIVE": {"COMPLETED", "TERMINATED", "DISPUTED"},
+    "ACTIVE": {"COMPLETED", "TERMINATED", "DISPUTED", "PENDING_SIGNATURE"},
     "DISPUTED": {"ACTIVE"},
     "COMPLETED": set(),
     "TERMINATED": set(),
@@ -58,6 +59,7 @@ VIEWERS = (PlatformRole.PLATFORM_ADMIN, PlatformRole.COMPLIANCE_OFFICER, Platfor
 TIMER_SIGNATURE = "contract.signature_deadline"
 LABEL = {"ADVISORY": "Advisory", "PROJECT": "Project", "RETAINER": "Retainer", "FRACTIONAL": "Fractional",
          "HOURLY": "Hourly", "FIXED": "Fixed fee"}
+MAX_MONEY_MINOR = 9_223_372_036_854_775_807
 
 
 def _hash(terms: dict) -> str:
@@ -76,6 +78,318 @@ def _evt(session: AsyncSession, event_type: str, c: Contract, **payload) -> None
 
 def _milestone_list(ms: list[Milestone]) -> list[dict]:
     return [{"milestoneId": m.id, "sequence": m.sequence, "amountMinor": m.amount_minor, "title": m.title} for m in ms]
+
+
+def _change_order_out(change: ChangeOrder, preview: list[ChangePreviewOut]) -> dict:
+    return {
+        "id": change.id,
+        "contractId": change.contract_id,
+        "proposedByIdentityId": change.proposed_by_identity_id,
+        "proposerParty": change.proposer_party,
+        "type": change.change_type,
+        "delta": change.delta,
+        "impact": change.impact,
+        "baseContractVersion": change.base_contract_version,
+        "status": change.status,
+        "decidedByIdentityId": change.decided_by_identity_id,
+        "decisionReason": change.decision_reason,
+        "decidedAt": change.decided_at,
+        "appliedVersion": change.applied_version,
+        "createdAt": change.created_at,
+        "preview": preview,
+    }
+
+
+def _revision_milestone_snapshot(milestones: list[Milestone]) -> list[dict]:
+    return [
+        {
+            "id": str(m.id),
+            "sequence": m.sequence,
+            "title": m.title,
+            "amountMinor": m.amount_minor,
+            "currency": m.currency,
+            "dueDate": m.due_date.isoformat() if m.due_date else None,
+            "deliverableKeys": list(m.deliverable_keys),
+        }
+        for m in milestones
+    ]
+
+
+async def _store_contract_revision(
+    session: AsyncSession, c: Contract, milestones: list[Milestone], change_order_id: uuid.UUID | None = None
+) -> ContractRevision:
+    revision = ContractRevision(
+        contract_id=c.id,
+        contract_version=c.contract_version,
+        change_order_id=change_order_id,
+        currency=c.currency,
+        total_minor=c.total_minor,
+        terms=dict(c.terms),
+        milestones=_revision_milestone_snapshot(milestones),
+        terms_hash=c.terms_hash,
+        document=c.document,
+        document_sha256=c.document_sha256,
+    )
+    session.add(revision)
+    await session.flush()
+    return revision
+
+
+def _change_preview(change: ChangeOrder, revision: ContractRevision | None) -> list[ChangePreviewOut]:
+    if revision is None:
+        return []
+    delta = change.delta
+    terms = revision.terms
+    milestones = {item["id"]: item for item in revision.milestones}
+    if change.change_type == "ADD_DELIVERABLE":
+        item = delta["deliverable"]
+        milestone = milestones[str(delta["milestoneId"])]
+        return [
+            ChangePreviewOut(
+                label=f"M{milestone['sequence']} deliverables",
+                before="No such deliverable",
+                after=f"{item['title']} — {item['acceptanceCriteria']}",
+            )
+        ]
+    if change.change_type == "MODIFY_DELIVERABLE":
+        existing = next((item for item in terms.get("deliverables", []) if item["key"] == delta["key"]), {})
+        labels = {"title": "Title", "description": "Description", "acceptanceCriteria": "Acceptance criteria"}
+        return [
+            ChangePreviewOut(
+                label=f"{labels[field]} · {existing.get('title', delta['key'])}",
+                before=str(existing.get(field) or "—"),
+                after=value,
+            )
+            for field, value in delta["changes"].items()
+        ]
+    if change.change_type == "EXTEND_TIMELINE":
+        result = [
+            ChangePreviewOut(
+                label="Contract end date",
+                before=str(terms.get("endDate") or "Not set"),
+                after=delta["endDate"],
+            )
+        ]
+        for item in delta.get("milestoneDueDates", []):
+            milestone = milestones[item["milestoneId"]]
+            result.append(
+                ChangePreviewOut(
+                    label=f"M{milestone['sequence']} due date",
+                    before=str(milestone.get("dueDate") or "Not set"),
+                    after=item["dueDate"],
+                )
+            )
+        return result
+    if change.change_type == "PRICING_CHANGE":
+        result = [
+            ChangePreviewOut(
+                label="Contract total",
+                before=_money(revision.total_minor, revision.currency),
+                after=_money(revision.total_minor + delta["totalDeltaMinor"], revision.currency),
+            )
+        ]
+        for item in delta["milestoneAmounts"]:
+            milestone = milestones[item["milestoneId"]]
+            result.append(
+                ChangePreviewOut(
+                    label=f"M{milestone['sequence']} · {milestone['title']}",
+                    before=_money(milestone["amountMinor"], revision.currency),
+                    after=_money(item["amountMinor"], revision.currency),
+                )
+            )
+        return result
+    return []
+
+
+def _change_error(message: str) -> Conflict:
+    return Conflict(message, code="INVALID_CHANGE_ORDER")
+
+
+async def _assert_allocations_unfunded(
+    session: AsyncSession, c: Contract, milestone_ids: set[uuid.UUID]
+) -> None:
+    states = await escrow_facade.get_allocation_states_for_amendment(session, c.id, milestone_ids)
+    if states is None or states.keys() != milestone_ids:
+        raise Conflict("Escrow allocations are not available for this active contract", code="AMENDMENT_ESCROW_MISSING")
+    if any(state != "UNFUNDED" for state in states.values()):
+        raise _change_error("Scope or price can only change before the affected milestone enters funding")
+
+
+async def _change_order_delta(
+    session: AsyncSession, c: Contract, kind: str, delta: dict, *, apply: bool
+) -> tuple[bool, list[Milestone]]:
+    """Validate and optionally apply the documented delta shape for each supported change type."""
+    milestones = await _milestones(session, c.id, lock=True)
+    by_id = {str(m.id): m for m in milestones}
+    terms = {**c.terms, "deliverables": [dict(d) for d in c.terms.get("deliverables", [])]}
+    material = kind in {"ADD_DELIVERABLE", "MODIFY_DELIVERABLE", "PRICING_CHANGE"}
+
+    if kind == "ADD_DELIVERABLE":
+        item = delta.get("deliverable")
+        milestone_id = delta.get("milestoneId")
+        if set(delta) != {"milestoneId", "deliverable"}:
+            raise _change_error("ADD_DELIVERABLE accepts only milestoneId and deliverable")
+        if not isinstance(item, dict) or not milestone_id or not all(
+            isinstance(item.get(key), str) and item[key].strip()
+            for key in ("key", "title", "acceptanceCriteria")
+        ):
+            raise _change_error("ADD_DELIVERABLE needs milestoneId and a deliverable with key, title and acceptanceCriteria")
+        if set(item) - {"key", "title", "description", "acceptanceCriteria"}:
+            raise _change_error("Deliverable has unsupported fields")
+        if len(item["key"].strip()) > 100 or len(item["title"].strip()) > 200 or len(item["acceptanceCriteria"].strip()) > 1000:
+            raise _change_error("Deliverable key, title or acceptance criteria exceeds its maximum length")
+        if item.get("description") is not None and not isinstance(item["description"], str):
+            raise _change_error("Deliverable description must be text")
+        if len((item.get("description") or "").strip()) > 1000:
+            raise _change_error("Deliverable description exceeds 1000 characters")
+        target = by_id.get(str(milestone_id))
+        if target is None or target.status != "PENDING_FUNDING":
+            raise _change_error("New deliverables can only be assigned to a milestone that has not started")
+        await _assert_allocations_unfunded(session, c, {target.id})
+        if any(d.get("key") == item["key"] for d in terms["deliverables"]):
+            raise _change_error("Deliverable key already exists")
+        if apply:
+            terms["deliverables"].append({
+                "key": item["key"].strip(),
+                "title": item["title"].strip(),
+                "description": (item.get("description") or "").strip(),
+                "acceptanceCriteria": item["acceptanceCriteria"].strip(),
+            })
+            target.deliverable_keys = [*target.deliverable_keys, item["key"].strip()]
+            c.terms = terms
+    elif kind == "MODIFY_DELIVERABLE":
+        key = delta.get("key")
+        changes = delta.get("changes")
+        if set(delta) != {"key", "changes"}:
+            raise _change_error("MODIFY_DELIVERABLE accepts only key and changes")
+        if not isinstance(key, str) or not isinstance(changes, dict) or not changes:
+            raise _change_error("MODIFY_DELIVERABLE needs key and a non-empty changes object")
+        if set(changes) - {"title", "description", "acceptanceCriteria"} or any(
+            not isinstance(value, str) or not value.strip() for value in changes.values()
+        ):
+            raise _change_error("Changes may only set non-empty title, description or acceptanceCriteria values")
+        if len(key.strip()) > 100 or any(
+            len(value.strip()) > limit
+            for field, value in changes.items()
+            for limit in [{"title": 200, "description": 1000, "acceptanceCriteria": 1000}[field]]
+        ):
+            raise _change_error("Deliverable key or changed field exceeds its maximum length")
+        target = next((d for d in terms["deliverables"] if d.get("key") == key), None)
+        if target is None:
+            raise _change_error("Deliverable key does not exist")
+        linked = [m for m in milestones if key in m.deliverable_keys]
+        if not linked or any(m.status != "PENDING_FUNDING" for m in linked):
+            raise _change_error("Deliverables can only be modified before their linked milestone work starts")
+        await _assert_allocations_unfunded(session, c, {m.id for m in linked})
+        if apply:
+            target.update({field: value.strip() for field, value in changes.items()})
+            c.terms = terms
+    elif kind == "EXTEND_TIMELINE":
+        end_date = delta.get("endDate")
+        if set(delta) - {"endDate", "milestoneDueDates"}:
+            raise _change_error("EXTEND_TIMELINE has unsupported fields")
+        if not isinstance(end_date, str):
+            raise _change_error("EXTEND_TIMELINE needs an ISO endDate")
+        try:
+            new_end = date.fromisoformat(end_date)
+        except ValueError as exc:
+            raise _change_error("endDate must be an ISO calendar date") from exc
+        old_end = date.fromisoformat(c.terms["endDate"]) if c.terms.get("endDate") else None
+        if new_end <= clock.now().date() or (old_end is not None and new_end <= old_end):
+            raise _change_error("The new contract end date must extend the existing date and remain in the future")
+        due_dates = delta.get("milestoneDueDates", [])
+        if not isinstance(due_dates, list) or len(due_dates) > len(milestones):
+            raise _change_error("milestoneDueDates must be a list")
+        changes: list[tuple[Milestone, date]] = []
+        for item in due_dates:
+            if not isinstance(item, dict) or not isinstance(item.get("milestoneId"), str) or not isinstance(item.get("dueDate"), str):
+                raise _change_error("Each milestoneDueDates entry needs milestoneId and dueDate")
+            if set(item) != {"milestoneId", "dueDate"} or item["milestoneId"] in {str(m.id) for m, _ in changes}:
+                raise _change_error("Milestone due-date entries must be unique and contain only milestoneId and dueDate")
+            milestone = by_id.get(item["milestoneId"])
+            try:
+                due = date.fromisoformat(item["dueDate"])
+            except ValueError as exc:
+                raise _change_error("Milestone dueDate must be an ISO calendar date") from exc
+            if milestone is None or milestone.status in {"ACCEPTED", "CANCELLED"}:
+                raise _change_error("Only open milestones can have their due date extended")
+            if milestone.due_date and due < milestone.due_date:
+                raise _change_error("Timeline change orders cannot move a milestone deadline earlier")
+            changes.append((milestone, due))
+        if apply:
+            terms["endDate"] = new_end.isoformat()
+            if due_dates:
+                by_sequence = {m.sequence: m for m in milestones}
+                due_by_id = {m.id: due.isoformat() for m, due in changes}
+                terms["milestones"] = [
+                    {**item, "dueDate": due_by_id[by_sequence[item["sequence"]].id]}
+                    if item.get("sequence") in by_sequence and by_sequence[item["sequence"]].id in due_by_id
+                    else item
+                    for item in terms.get("milestones", [])
+                ]
+            c.terms = terms
+            for milestone, due in changes:
+                milestone.due_date = due
+    elif kind == "PRICING_CHANGE":
+        if set(delta) != {"totalDeltaMinor", "milestoneAmounts"}:
+            raise _change_error("PRICING_CHANGE accepts only totalDeltaMinor and milestoneAmounts")
+        delta_minor = delta.get("totalDeltaMinor")
+        amounts = delta.get("milestoneAmounts")
+        if not isinstance(delta_minor, int) or isinstance(delta_minor, bool) or delta_minor == 0 or not isinstance(amounts, list) or not amounts:
+            raise _change_error("PRICING_CHANGE needs non-zero totalDeltaMinor and milestoneAmounts")
+        parsed: list[tuple[Milestone, int]] = []
+        for item in amounts:
+            if not isinstance(item, dict) or not isinstance(item.get("milestoneId"), str):
+                raise _change_error("Each milestone amount needs milestoneId and amountMinor")
+            if set(item) != {"milestoneId", "amountMinor"} or item["milestoneId"] in {str(m.id) for m, _ in parsed}:
+                raise _change_error("Milestone amount entries must be unique and contain only milestoneId and amountMinor")
+            amount = item.get("amountMinor")
+            milestone = by_id.get(item["milestoneId"])
+            if not isinstance(amount, int) or isinstance(amount, bool) or amount <= 0 or amount > MAX_MONEY_MINOR:
+                raise _change_error("Milestone amountMinor must be a positive 64-bit integer")
+            if milestone is None or milestone.status != "PENDING_FUNDING":
+                raise _change_error("Pricing can only change on milestones that have not been funded or started")
+            parsed.append((milestone, amount))
+        await _assert_allocations_unfunded(session, c, {milestone.id for milestone, _ in parsed})
+        if sum(new - milestone.amount_minor for milestone, new in parsed) != delta_minor:
+            raise _change_error("Milestone amount changes must add up to totalDeltaMinor")
+        if c.total_minor + delta_minor <= 0 or c.total_minor + delta_minor > MAX_MONEY_MINOR:
+            raise _change_error("The resulting contract total must be a positive 64-bit integer")
+        if apply:
+            for milestone, amount in parsed:
+                milestone.amount_minor = amount
+            c.total_minor += delta_minor
+            by_sequence = {m.sequence: m for m in milestones}
+            terms["milestones"] = [
+                {**item, "amountMinor": by_sequence[item["sequence"]].amount_minor}
+                if item.get("sequence") in by_sequence else item
+                for item in terms.get("milestones", [])
+            ]
+            c.terms = terms
+    else:
+        raise _change_error("Unsupported change order type")
+    return material, milestones
+
+
+async def _refresh_contract_document(session: AsyncSession, c: Contract) -> list[Milestone]:
+    milestones = await _milestones(session, c.id, lock=True)
+    c.terms_hash = _hash(c.terms)
+    c.contract_version += 1
+    c.document = render_document(c, milestones)
+    c.document_sha256 = hashlib.sha256(c.document.encode()).hexdigest()
+    return milestones
+
+
+def _amendment_payload(c: Contract, change: ChangeOrder, milestones: list[Milestone]) -> dict:
+    return {
+        "changeOrderId": change.id,
+        "changeOrderType": change.change_type,
+        "contractVersion": c.contract_version,
+        "termsHash": c.terms_hash,
+        "totalMinor": c.total_minor,
+        "currency": c.currency,
+        "milestones": _milestone_list(milestones),
+    }
 
 
 async def _contract(session: AsyncSession, contract_id: uuid.UUID, lock: bool = False) -> Contract:
@@ -209,6 +523,7 @@ async def generate_from_proposal(session: AsyncSession, payload: dict) -> None:
     await session.flush()
     c.document = render_document(c, milestones)
     c.document_sha256 = hashlib.sha256(c.document.encode()).hexdigest()
+    await _store_contract_revision(session, c, milestones)
     _evt(session, E.CONTRACT_GENERATED, c, proposalId=proposal_id, buyerIdentityId=buyer_id, totalMinor=c.total_minor,
          currency=c.currency, termsHash=c.terms_hash, signatureDeadline=c.signature_deadline)
     for m in milestones:
@@ -256,6 +571,13 @@ def _next_action(c: Contract, ms: list[Milestone], signed: set[str], viewer: str
 async def _out(session: AsyncSession, actor: Actor, c: Contract, viewer: str) -> ContractOut:
     ms = await _milestones(session, c.id)
     sigs = list((await session.scalars(select(Signature).where(Signature.contract_id == c.id).order_by(Signature.signed_at))).all())
+    changes = list((await session.scalars(
+        select(ChangeOrder).where(ChangeOrder.contract_id == c.id).order_by(ChangeOrder.created_at)
+    )).all())
+    revisions = list((await session.scalars(
+        select(ContractRevision).where(ContractRevision.contract_id == c.id).order_by(ContractRevision.contract_version)
+    )).all())
+    revisions_by_version = {revision.contract_version: revision for revision in revisions}
     subs = list((await session.scalars(select(Submission).where(Submission.milestone_id.in_([m.id for m in ms]))
                                        .order_by(Submission.created_at.desc()))).all()) if ms else []
     signed = {s.party for s in sigs if s.contract_version == c.contract_version}
@@ -271,7 +593,8 @@ async def _out(session: AsyncSession, actor: Actor, c: Contract, viewer: str) ->
     return ContractOut(
         id=c.id, reference=c.reference, proposalId=c.proposal_id, requestId=c.request_id, organizationId=c.organization_id,
         professionalId=c.professional_id, title=c.title, engagementType=c.engagement_type, pricingModel=c.pricing_model,
-        status=c.status, total=MoneyDTO(amountMinor=c.total_minor, currency=c.currency), termsHash=c.terms_hash,
+        status=c.status, pendingChangeOrderId=c.pending_change_order_id,
+        total=MoneyDTO(amountMinor=c.total_minor, currency=c.currency), termsHash=c.terms_hash,
         contractVersion=c.contract_version,
         parties=[PartyOut(role="BUYER", name=p["buyer"]["name"], detail=f"Signatory: {p['buyer']['signatory']}"),
                  PartyOut(role="PROFESSIONAL", name=p["professional"]["name"], detail=firm_line)],
@@ -279,6 +602,24 @@ async def _out(session: AsyncSession, actor: Actor, c: Contract, viewer: str) ->
         signatureDeadline=c.signature_deadline, activatedAt=c.activated_at, completedAt=c.completed_at,
         signatures=[SignatureOut(party=s.party, signerName=s.signer_name, contractVersion=s.contract_version, termsHash=s.terms_hash,
                                  authStrength=s.auth_strength, signedAt=s.signed_at) for s in sigs],
+        changeOrders=[
+            _change_order_out(change, _change_preview(change, revisions_by_version.get(change.base_contract_version)))
+            for change in changes
+        ],
+        revisions=[
+            ContractRevisionOut(
+                contractVersion=revision.contract_version,
+                changeOrderId=revision.change_order_id,
+                currency=revision.currency,
+                total=MoneyDTO(amountMinor=revision.total_minor, currency=revision.currency),
+                terms=revision.terms,
+                milestones=revision.milestones,
+                termsHash=revision.terms_hash,
+                documentSha256=revision.document_sha256,
+                createdAt=revision.created_at,
+            )
+            for revision in revisions
+        ],
         milestones=[MilestoneOut(
             id=m.id, sequence=m.sequence, title=m.title, description=m.description,
             amount=MoneyDTO(amountMinor=m.amount_minor, currency=m.currency), dueDate=m.due_date, deliverableKeys=m.deliverable_keys,
@@ -297,12 +638,26 @@ async def get_contract(session: AsyncSession, actor: Actor, contract_id: uuid.UU
     return await _out(session, actor, c, await _viewer(session, actor, c))
 
 
-async def get_document(session: AsyncSession, actor: Actor, contract_id: uuid.UUID) -> tuple[str, str]:
+async def get_document(
+    session: AsyncSession, actor: Actor, contract_id: uuid.UUID, version: int | None = None
+) -> tuple[str, str]:
     c = await _contract(session, contract_id)
     await _viewer(session, actor, c)
+    if version is None or version == c.contract_version:
+        document, document_hash, selected_version = c.document, c.document_sha256, c.contract_version
+    else:
+        revision = await session.scalar(
+            select(ContractRevision).where(
+                ContractRevision.contract_id == c.id,
+                ContractRevision.contract_version == version,
+            )
+        )
+        if revision is None:
+            raise NotFound("Contract version not found")
+        document, document_hash, selected_version = revision.document, revision.document_sha256, version
     record_audit(session, "contract.document.viewed", object_type="Contract", object_id=c.id, tenant_id=c.organization_id,
-                 evidence_hash=c.document_sha256, details={"version": c.contract_version})
-    return c.document, c.document_sha256
+                 evidence_hash=document_hash, details={"version": selected_version})
+    return document, document_hash
 
 
 async def _scope(session: AsyncSession, actor: Actor, role: str):
@@ -334,6 +689,107 @@ async def summary(session: AsyncSession, actor: Actor, role: str) -> ContractSum
     milestones = dict((await session.execute(select(Milestone.status, func.count()).join(Contract, Contract.id == Milestone.contract_id)
                                              .where(where, Contract.status != "TERMINATED").group_by(Milestone.status))).all())
     return ContractSummaryOut(role=role, contracts=contracts, milestones=milestones)
+
+
+async def propose_change_order(
+    session: AsyncSession, actor: Actor, contract_id: uuid.UUID, body: ChangeOrderIn
+) -> ContractOut:
+    c = await _contract(session, contract_id, lock=True)
+    viewer = await _viewer(session, actor, c)
+    if viewer == "OPERATOR":
+        raise Forbidden("Only the contract parties can propose a change")
+    if c.status != "ACTIVE" or c.pending_change_order_id is not None:
+        raise Conflict("A change order can only be proposed on an active contract with no amendment awaiting signatures",
+                       code="CONTRACT_NOT_AMENDABLE")
+    if await session.scalar(select(ChangeOrder.id).where(
+        ChangeOrder.contract_id == c.id, ChangeOrder.status == "PROPOSED"
+    )):
+        raise Conflict("Resolve the existing proposed change order before proposing another", code="CHANGE_ORDER_PENDING")
+    if viewer == "BUYER":
+        roles = await buyer_facade.get_member_roles(session, c.organization_id, actor.identity_id)
+        if not roles.intersection(DECIDERS):
+            raise Forbidden("Proposing a change needs the Requester or Approver role", code="ROLE_REQUIRED")
+    await _change_order_delta(session, c, body.type, body.delta, apply=False)
+    change = ChangeOrder(
+        contract_id=c.id,
+        proposed_by_identity_id=actor.identity_id,
+        proposer_party=viewer,
+        change_type=body.type,
+        delta=body.delta,
+        impact=body.impact.strip(),
+        base_contract_version=c.contract_version,
+        status="PROPOSED",
+    )
+    session.add(change)
+    await session.flush()
+    _evt(session, E.CHANGE_ORDER_REQUESTED, c, changeOrderId=change.id, proposedByParty=viewer,
+         changeType=body.type, impact=change.impact, baseContractVersion=c.contract_version)
+    record_audit(session, "contract.change_order.proposed", object_type="ChangeOrder", object_id=change.id,
+                 tenant_id=c.organization_id, policy_version=c.policy_version_label,
+                 details={"contractId": str(c.id), "type": body.type, "delta": body.delta, "impact": change.impact})
+    await session.flush()
+    return await _out(session, actor, c, viewer)
+
+
+async def decide_change_order(
+    session: AsyncSession,
+    actor: Actor,
+    change_order_id: uuid.UUID,
+    approve: bool,
+    reason: str | None,
+) -> ContractOut:
+    change = await session.get(ChangeOrder, change_order_id, with_for_update=True)
+    if change is None:
+        raise NotFound("Change order not found")
+    c = await _contract(session, change.contract_id, lock=True)
+    viewer = await _viewer(session, actor, c)
+    if viewer == "OPERATOR" or viewer == change.proposer_party:
+        raise Forbidden("Only the other contract party can decide a change order")
+    if viewer == "BUYER":
+        roles = await buyer_facade.get_member_roles(session, c.organization_id, actor.identity_id)
+        if not roles.intersection(DECIDERS):
+            raise Forbidden("Deciding a change needs the Requester or Approver role", code="ROLE_REQUIRED")
+    if change.status != "PROPOSED":
+        raise Conflict("This change order has already been decided", code="CHANGE_ORDER_ALREADY_DECIDED")
+    if c.status != "ACTIVE" or c.contract_version != change.base_contract_version:
+        raise Conflict("The contract changed after this proposal; create a new change order", code="CHANGE_ORDER_STALE")
+    actor.require_step_up()
+    now = clock.now()
+    change.decided_by_identity_id = actor.identity_id
+    change.decided_at = now
+    change.decision_reason = reason.strip() if reason else None
+    if not approve:
+        change.status = "REJECTED"
+        _evt(session, E.CHANGE_ORDER_REJECTED, c, changeOrderId=change.id, decidedByIdentityId=actor.identity_id,
+             reason=change.decision_reason)
+        record_audit(session, "contract.change_order.rejected", object_type="ChangeOrder", object_id=change.id,
+                     tenant_id=c.organization_id, policy_version=c.policy_version_label,
+                     details={"contractId": str(c.id), "reason": change.decision_reason})
+        await session.flush()
+        return await _out(session, actor, c, viewer)
+
+    change.status = "APPROVED"
+    material, _ = await _change_order_delta(session, c, change.change_type, change.delta, apply=True)
+    milestones = await _refresh_contract_document(session, c)
+    await _store_contract_revision(session, c, milestones, change.id)
+    record_audit(session, "contract.change_order.approved", object_type="ChangeOrder", object_id=change.id,
+                 tenant_id=c.organization_id, evidence_hash=c.terms_hash, policy_version=c.policy_version_label,
+                 details={"contractId": str(c.id), "version": c.contract_version, "material": material,
+                          "awaitingSignatures": material})
+    _evt(session, E.CHANGE_ORDER_APPROVED, c, changeOrderId=change.id, decidedByIdentityId=actor.identity_id,
+         contractVersion=c.contract_version, awaitingSignatures=material)
+    if material:
+        CONTRACT_STATES.assert_can(c.status, "PENDING_SIGNATURE")
+        c.status = "PENDING_SIGNATURE"
+        c.pending_change_order_id = change.id
+        c.signature_deadline = now + timedelta(days=get_settings().signature_deadline_days)
+        await cancel_timer(session, TIMER_SIGNATURE, str(c.id))
+        await schedule_timer(session, TIMER_SIGNATURE, str(c.id), c.signature_deadline, {"contractId": str(c.id)})
+    else:
+        change.applied_version = c.contract_version
+        _evt(session, E.CONTRACT_AMENDED, c, **_amendment_payload(c, change, milestones))
+    await session.flush()
+    return await _out(session, actor, c, viewer)
 
 
 # ---- Signing ------------------------------------------------------------------------------------
@@ -370,10 +826,29 @@ async def sign(session: AsyncSession, actor: Actor, contract_id: uuid.UUID, body
     _evt(session, E.CONTRACT_SIGNED, c, signerIdentityId=actor.identity_id, party=viewer, termsHash=c.terms_hash)
     if signed | {viewer} == {"BUYER", "PROFESSIONAL"}:
         CONTRACT_STATES.assert_can(c.status, "ACTIVE")
-        c.status, c.activated_at = "ACTIVE", now
+        c.status = "ACTIVE"
         await cancel_timer(session, TIMER_SIGNATURE, str(c.id))
-        _evt(session, E.CONTRACT_ACTIVATED, c, buyerIdentityId=c.buyer_identity_id, currency=c.currency, totalMinor=c.total_minor,
-             policyVersionId=None, milestones=_milestone_list(await _milestones(session, c.id)))
+        if c.pending_change_order_id is not None:
+            change = await session.get(ChangeOrder, c.pending_change_order_id)
+            if change is None or change.status != "APPROVED":
+                raise Conflict("The pending contract amendment could not be verified", code="CHANGE_ORDER_STATE_INVALID")
+            c.pending_change_order_id = None
+            change.applied_version = c.contract_version
+            record_audit(
+                session,
+                "contract.change_order.executed",
+                object_type="ChangeOrder",
+                object_id=change.id,
+                tenant_id=c.organization_id,
+                evidence_hash=c.terms_hash,
+                policy_version=c.policy_version_label,
+                details={"contractId": str(c.id), "version": c.contract_version},
+            )
+            _evt(session, E.CONTRACT_AMENDED, c, **_amendment_payload(c, change, await _milestones(session, c.id)))
+        else:
+            c.activated_at = now
+            _evt(session, E.CONTRACT_ACTIVATED, c, buyerIdentityId=c.buyer_identity_id, currency=c.currency,
+                 totalMinor=c.total_minor, policyVersionId=None, milestones=_milestone_list(await _milestones(session, c.id)))
     await session.flush()
     return await _out(session, actor, c, viewer)
 

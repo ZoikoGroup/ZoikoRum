@@ -3,6 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { firmApi, orgApi } from '../api/orgs'
 import { contractApi } from '../api/contracts'
 import { proposalApi } from '../api/proposals'
+import { messagingApi } from '../api/messaging'
 import { DASHBOARD_FOR_PERSONA, ROLE_LABEL } from '../api/auth'
 import { useAuth } from '../auth/AuthContext'
 import { Icon, type IconName } from '../components/dashboard'
@@ -30,6 +31,7 @@ export default function AppShell() {
   const [inFirm, setInFirm] = useState(false)
   const [newRequests, setNewRequests] = useState(0)
   const [toSign, setToSign] = useState(0)
+  const [unreadMessages, setUnreadMessages] = useState(0)
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
 
@@ -43,6 +45,14 @@ export default function AppShell() {
       contractApi.list('professional', 'PENDING_SIGNATURE').then((l) => setToSign(l.filter((c) => c.canSign).length)).catch(() => {})
     }
   }, [location.pathname, user])
+  useEffect(() => {
+    if (!user?.personas.some(role => ['BUYER', 'PROFESSIONAL', 'ENTERPRISE_ADMIN', 'ENTERPRISE_MEMBER'].includes(role))) return
+    let active = true
+    const load = () => { messagingApi.summary().then(summary => { if (active) setUnreadMessages(summary.unreadThreads) }).catch(() => { if (active) setUnreadMessages(0) }) }
+    load()
+    const timer = window.setInterval(load, 12000)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [user?.id, location.pathname])
   if (!user) return null
 
   const dashboards = new Set(user.personas.map((p) => DASHBOARD_FOR_PERSONA[p]))
@@ -56,6 +66,10 @@ export default function AppShell() {
 
   function search(e: FormEvent) {
     e.preventDefault()
+    if (location.pathname === '/app/messages') {
+      navigate(q.trim() ? `/app/messages?search=${encodeURIComponent(q.trim())}` : '/app/messages')
+      return
+    }
     const base = customer ? '/app/find' : '/professionals'
     navigate(q.trim() ? `${base}?q=${encodeURIComponent(q.trim())}` : base)
   }
@@ -76,7 +90,7 @@ export default function AppShell() {
           <Item to="/app/proposals" icon="proposal">Proposals</Item>
           <Item to="/app/engagements" icon="briefcase">Engagements</Item>
           <Item to="/app/payments" icon="wallet">Payments &amp; Protection</Item>
-          <Item to="/app/messages" icon="message">Messages</Item>
+          <Item to="/app/messages" icon="message" count={unreadMessages}>Messages</Item>
         </>}
 
         {dashboards.has('professional') && <>
@@ -88,6 +102,7 @@ export default function AppShell() {
           {inFirm && !dashboards.has('firm') && <Item to="/app/firm/team" icon="team">My Firm</Item>}
           <Item to="/app/professional/requests" icon="proposal" count={newRequests}>Requests</Item>
           <Item to="/app/professional/engagements" icon="briefcase" count={toSign}>Engagements</Item>
+          <Item to="/app/messages" icon="message" count={unreadMessages}>Messages</Item>
           <Item to="/app/professional/earnings" icon="wallet">Earnings</Item>
         </>}
 
@@ -115,7 +130,6 @@ export default function AppShell() {
           {customer === 'enterprise' && <Item to="/app/enterprise/structure" icon="folder">Structure &amp; Budgets</Item>}
           <Item to="/app/verification" icon="shield">Verification</Item>
         </>}
-        {!customer && <Soon icon="message">Messages</Soon>}
         <Item to="/app/invitations" icon="mail" count={inviteCount}>Invitations</Item>
         <Item to="/app/settings" icon="gear">Settings</Item>
         <Item to="/app/help" icon="help">Help &amp; Support</Item>
@@ -135,7 +149,7 @@ export default function AppShell() {
           </button>
           <form className="top-search" role="search" onSubmit={search}>
             <Icon name="search" />
-            <input aria-label="Search professionals" placeholder="Search professionals and services…" value={q} onChange={(e) => setQ(e.target.value)} />
+            <input aria-label={location.pathname === '/app/messages' ? 'Search conversations' : 'Search professionals'} placeholder={location.pathname === '/app/messages' ? 'Search conversations and workspaces…' : 'Search professionals and services…'} value={q} onChange={(e) => setQ(e.target.value)} />
           </form>
           <div style={{ flex: 1 }} />
           <NavLink to="/app/help" className="icon-btn" aria-label="Help &amp; support"><Icon name="help" /></NavLink>
