@@ -1,4 +1,5 @@
 import { api } from './client'
+import type { StoredFile, Upload } from './files'
 import type { Money } from './orgs'
 
 /* Requests & proposals (Step 6). A buyer sends one requirement to 1–3 chosen professionals; each answers with a
@@ -10,6 +11,14 @@ export type ProposalStatus = 'DRAFT' | 'SUBMITTED' | 'UNDER_REVIEW' | 'REVISION_
 export type EngagementType = 'ADVISORY' | 'PROJECT' | 'RETAINER' | 'FRACTIONAL'
 export type Duration = 'ONE_TWO_WEEKS' | 'THREE_SIX_WEEKS' | 'TWO_THREE_MONTHS' | 'THREE_SIX_MONTHS' | 'ONGOING'
 export type DeclineReason = 'OUT_OF_SCOPE' | 'NO_CAPACITY' | 'TIMELINE' | 'BUDGET' | 'CONFLICT_OF_INTEREST' | 'JURISDICTION' | 'OTHER'
+
+export type Dependency = 'BUYER_DATA' | 'THIRD_PARTY_ACCESS' | 'INTERNAL_APPROVALS'
+export type PricingPreference = 'HOURLY' | 'FIXED' | 'RETAINER' | 'OPEN'
+export type PaymentCadence = 'MILESTONE' | 'MONTHLY' | 'COMPLETION'
+export const DEPENDENCIES: [Dependency, string][] = [['BUYER_DATA', 'Data or documents we provide'], ['THIRD_PARTY_ACCESS', 'Access to third-party systems'],
+  ['INTERNAL_APPROVALS', 'Our internal approvals']]
+export const PRICING_PREFS: [PricingPreference, string][] = [['HOURLY', 'Hourly'], ['FIXED', 'Fixed project fee'], ['RETAINER', 'Monthly retainer'], ['OPEN', 'Open to proposal']]
+export const CADENCES: [PaymentCadence, string][] = [['MILESTONE', 'Milestone-based'], ['MONTHLY', 'Monthly'], ['COMPLETION', 'On completion']]
 
 export interface Budget { minMinor: number | null; maxMinor: number; currency: string }
 export interface Attachment { name: string; sha256: string; size: number }
@@ -32,7 +41,7 @@ export interface ProposalRequest {
   objective: string | null
   details: string | null
   location: string | null
-  attachments: Attachment[]
+  attachments: StoredFile[]
   desiredStartDate: string
   estimatedDuration: Duration
   budget: Budget | null
@@ -46,6 +55,11 @@ export interface ProposalRequest {
   reasonNote: string | null
   proposal: { id: string; status: ProposalStatus; total: Money; submittedAt: string | null; validUntil: string | null } | null
   groupSize: number
+  deliverables: string[]
+  dependencies: Dependency[]
+  pricingPreferences: PricingPreference[]
+  paymentCadence: PaymentCadence | null
+  jurisdictionConflict: boolean
   viewerRole: 'BUYER' | 'PROFESSIONAL' | 'OPERATOR'
   createdAt: string
   version: number
@@ -67,7 +81,11 @@ export interface RequestInput {
   deliveryMode: 'REMOTE' | 'ONSITE' | 'HYBRID'
   location?: string | null
   ndaRequired: boolean
-  attachments: Attachment[]
+  attachments: Upload[]
+  deliverables: string[]
+  dependencies: Dependency[]
+  pricingPreferences: PricingPreference[]
+  paymentCadence: PaymentCadence | null
   acknowledged: boolean
   draft: boolean
 }
@@ -118,6 +136,8 @@ export interface RequestSummary { role: 'buyer' | 'professional'; requests: Part
 const R = '/v1/proposal-requests'
 const P = '/v1/proposals'
 const idem = () => ({ 'Idempotency-Key': crypto.randomUUID() })
+
+export const attachmentUrl = (requestId: string, sha256: string) => `${R}/${requestId}/attachments/${sha256}`
 
 export const proposalApi = {
   createRequests: (body: RequestInput) => api<ProposalRequest[]>(R, { method: 'POST', body, headers: idem() }),

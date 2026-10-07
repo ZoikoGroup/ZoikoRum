@@ -1,4 +1,5 @@
 import { api } from './client'
+import type { StoredFile, Upload } from './files'
 import type { Money } from './orgs'
 
 /* Contracts & engagements (Step 7): the agreement generated from an accepted proposal, signatures (buyer first,
@@ -8,7 +9,6 @@ export type ContractStatus = 'PENDING_SIGNATURE' | 'ACTIVE' | 'COMPLETED' | 'TER
 export type MilestoneStatus = 'PENDING_FUNDING' | 'IN_PROGRESS' | 'SUBMITTED' | 'REVISION_REQUESTED' | 'ACCEPTANCE_PENDING_APPROVAL'
   | 'ACCEPTED' | 'DISPUTED' | 'CANCELLED'
 
-export interface FileRef { name: string; sha256: string; size: number }
 export interface ContractMilestone {
   id: string
   sequence: number
@@ -21,10 +21,11 @@ export interface ContractMilestone {
   startedAt: string | null
   submittedAt: string | null
   acceptanceDueAt: string | null
+  reviewOverdue: boolean
   acceptedAt: string | null
   revisionCount: number
   lastRevisionReason: string | null
-  submissions: { id: string; note: string; files: FileRef[]; submittedAt: string }[]
+  submissions: { id: string; note: string; files: StoredFile[]; submittedAt: string }[]
 }
 
 export interface ContractTerms {
@@ -108,6 +109,8 @@ export interface ContractSummary { role: 'buyer' | 'professional'; contracts: Pa
 const C = '/v1/contracts'
 const idem = () => ({ 'Idempotency-Key': crypto.randomUUID() })
 
+export const deliveredFileUrl = (contractId: string, sha256: string) => `${C}/${contractId}/files/${sha256}`
+
 export const contractApi = {
   list: (role: 'buyer' | 'professional', status?: string) =>
     api<{ items: Contract[] }>(C, { query: { role, limit: '100', ...(status ? { status } : {}) } }).then((r) => r.items),
@@ -123,7 +126,7 @@ export const contractApi = {
     api<Contract>(`/v1/change-orders/${changeOrderId}/approve`, { method: 'POST', headers: idem() }),
   rejectChange: (changeOrderId: string, reason?: string) =>
     api<Contract>(`/v1/change-orders/${changeOrderId}/reject`, { method: 'POST', body: reason ? { reason } : {}, headers: idem() }),
-  submit: (milestoneId: string, note: string, files: FileRef[]) =>
+  submit: (milestoneId: string, note: string, files: Upload[]) =>
     api<Contract>(`/v1/milestones/${milestoneId}/submit`, { method: 'POST', body: { note, files } }),
   accept: (milestoneId: string) => api<Contract>(`/v1/milestones/${milestoneId}/accept`, { method: 'POST', headers: idem() }),
   requestRevision: (milestoneId: string, reason: string) =>

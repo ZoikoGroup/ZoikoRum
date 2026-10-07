@@ -182,6 +182,12 @@ async def test_dispute_events_lock_and_unlock_after_last_open_case(client, make_
     still_locked = (await client.get("/v1/threads", headers=buyer.h)).json()["items"]
     assert next(t for t in still_locked if t["id"] == contract_thread["id"])["locked"] is True
 
+    # The real dispute pipeline resolves the contract before closing the last case.
+    async with sf() as session, session.begin():
+        record_event(session, E.DISPUTE_RESOLVED, aggregate_type="Dispute", aggregate_id=second,
+            tenant_id=contract["organizationId"], payload={"disputeId": second, "contractId": contract["id"],
+                "outcome": "REWORK", "allocations": []})
+    await drain()
     await publish(E.DISPUTE_CLOSED, second)
     unlocked = (await client.get("/v1/threads", headers=buyer.h)).json()["items"]
     assert next(t for t in unlocked if t["id"] == contract_thread["id"])["locked"] is False

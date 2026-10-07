@@ -6,6 +6,8 @@ from fastapi import APIRouter, Query, status
 
 from zoikorum.domains.marketplace import service
 from zoikorum.domains.marketplace.schemas import (
+    SavedSearchIn,
+    SavedSearchOut,
     CollectionIn, CollectionItemsIn, CollectionOut, CompareItem, SavedOut, SaveIn, SpecializationAdminOut, SpecializationIn,
     SpecializationPatch,
 )
@@ -105,3 +107,24 @@ async def compare(session: DbSession, ids: str = Query(description="Comma-separa
 
         raise ValidationFailed("ids must be professional ids", code="INVALID_IDS") from exc
     return await service.compare(session, parsed)
+
+
+@router.get("/v1/saved/searches", response_model=list[SavedSearchOut])
+async def list_searches(actor: CurrentActor, session: DbSession):
+    return await service.list_searches(session, actor)
+
+
+@router.post("/v1/saved/searches", response_model=SavedSearchOut, status_code=status.HTTP_201_CREATED)
+async def save_search(body: SavedSearchIn, actor: CurrentActor, session: DbSession):
+    """Save the current filters; re-run later and see what is new since you last looked."""
+    return await service.save_search(session, actor, body)
+
+
+@router.post("/v1/saved/searches/{search_id}/viewed", response_model=SavedSearchOut)
+async def search_viewed(search_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    return await service.mark_search_viewed(session, actor, search_id)
+
+
+@router.delete("/v1/saved/searches/{search_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_search(search_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    await service.delete_search(session, actor, search_id)

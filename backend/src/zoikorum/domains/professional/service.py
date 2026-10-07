@@ -11,9 +11,11 @@ import uuid
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from zoikorum.domains.contract import facade as contract_facade
 from zoikorum.domains.firm import facade as firm_facade
 from zoikorum.domains.identity import facade as identity_facade
 from zoikorum.domains.marketplace import facade as marketplace_facade
+from zoikorum.domains.proposal import facade as proposal_facade
 from zoikorum.domains.trust import facade as trust_facade
 from zoikorum.domains.verification import facade as verification_facade
 from zoikorum.domains.professional.models import CredentialClaim, Offering, Professional
@@ -29,6 +31,7 @@ from zoikorum.domains.professional.schemas import (
     ProfileOut,
     ProfilePatch,
     PublicCredentialOut,
+    HistoryOut,
     PublicFirmOut,
     PublicProfileOut,
     PublicTrustOut,
@@ -71,7 +74,9 @@ _SUPERLATIVES = re.compile(r"#\s?1\b|\bno\.\s?1\b|\bnumber one\b|\b(best|leading
 # Owner labels follow Onboarding s.12 (Validated / Pending / Not validated); buyers see "Self-reported" until validated (s.17).
 _LABELS = {"SELF_REPORTED": "Self-reported", "PENDING": "Pending", "VERIFIED": "Validated",
            "FAILED": "Not validated", "EXPIRED": "Expired", "REVOKED": "Revoked", "WITHDRAWN": "Withdrawn"}
-_PUBLIC_CLAIM_STATES = ("SELF_REPORTED", "PENDING", "VERIFIED")
+# Expired credentials stay visible as "Expired" (Trust & Safety Charter s.7.2: expired credentials cannot be hidden);
+# failed or revoked claims are removed from public display (Onboarding s.17).
+_PUBLIC_CLAIM_STATES = ("SELF_REPORTED", "PENDING", "VERIFIED", "EXPIRED")
 
 
 def _evt(session: AsyncSession, event_type: str, pro: Professional, *, aggregate_type: str = "Professional",
@@ -669,7 +674,15 @@ async def public_profile(session: AsyncSession, actor: Actor | None, professiona
     verified_jurisdictions = sorted({c.jurisdiction[:2].upper() for c in checks if c.status == "VERIFIED" and c.jurisdiction
                                      and c.verification_type in ("JURISDICTION", "CREDENTIAL")})
     firm = await firm_facade.get_firm(session, pro.firm_id) if pro.firm_id else None
+    delivery = await contract_facade.delivery_stats(session, pro.id)
+    response = await proposal_facade.response_stats(session, pro.id)
+    history = HistoryOut(
+        completedEngagements=delivery["completed"],
+        onTimeRate=round(100 * delivery["onTime"] / delivery["milestonesWithDueDate"]) if delivery["milestonesWithDueDate"] else None,
+        medianResponseHours=response["medianHours"],
+        newToPlatform=delivery["completed"] == 0 and (pro.published_at is None or (clock.now() - pro.published_at).days < 30))
     return PublicProfileOut(
+        history=history,
         firm=PublicFirmOut(id=firm.id, name=firm.trading_name or firm.legal_name, verified=firm.status == "VERIFIED")
         if firm and firm.status != "SUSPENDED" else None,
         id=pro.id, photoUrl=photo_url(pro), displayName=pro.display_name, headline=pro.headline,
@@ -682,8 +695,9 @@ async def public_profile(session: AsyncSession, actor: Actor | None, professiona
         servedJurisdictions=list(pro.served_jurisdictions), licensedJurisdictions=list(pro.licensed_jurisdictions),
         verifiedJurisdictions=verified_jurisdictions,
         credentials=[PublicCredentialOut(name=c.name, issuingBody=c.issuing_body, jurisdiction=c.jurisdiction,
-                                         status="VERIFIED" if c.status == "VERIFIED" else "SELF_REPORTED",
-                                         displayLabel="Validated" if c.status == "VERIFIED" else "Self-reported") for c in claims],
+                                         status=c.status if c.status in ("VERIFIED", "EXPIRED") else "SELF_REPORTED",
+                                         displayLabel={"VERIFIED": "Validated", "EXPIRED": "Expired"}.get(c.status, "Self-reported"))
+                     for c in claims],
         offerings=[_offering_out(o, names) for o in offerings],
         trust=PublicTrustOut(tier=trust.tier, dimensions=public_dimensions(trust.dimensions),
                              explanation=public_explanation(trust.explanation), updatedAt=trust.updated_at),

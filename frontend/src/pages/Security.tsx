@@ -1,8 +1,20 @@
-import { useState, type FormEvent } from 'react'
+import QRCode from 'qrcode'
+import { useEffect, useState, type FormEvent } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { authApi } from '../api/auth'
 import { useAuth } from '../auth/AuthContext'
 import { ErrorAlert, Field } from '../components/ui'
+
+/** QR code for the authenticator app, drawn in the browser: the secret never leaves this page. */
+function SetupQr({ uri }: { uri: string }) {
+  const [src, setSrc] = useState<string | null>(null)
+  useEffect(() => {
+    let live = true
+    QRCode.toDataURL(uri, { margin: 1, width: 220, errorCorrectionLevel: 'M' }).then((url) => { if (live) setSrc(url) }).catch(() => setSrc(null))
+    return () => { live = false }
+  }, [uri])
+  return <div className="qr-box">{src ? <img src={src} width={220} height={220} alt="QR code to add Zoikorum to your authenticator app" /> : <span className="muted small">Preparing QR code…</span>}</div>
+}
 
 /** Two-step verification (TOTP). Required for staff, Firm Admins and Enterprise Admins. */
 export default function Security() {
@@ -64,11 +76,15 @@ export default function Security() {
           </>
         ) : (
           <form onSubmit={verify}>
-            <p><strong>1.</strong> In your authenticator app, add an account using this setup key:</p>
-            <div className="secret" aria-label="Setup key">{setup.secret}</div>
-            <p className="small muted" style={{ marginTop: 8 }}>
-              On a phone with an authenticator installed you can also <a href={setup.otpauthUri}>open the setup link</a>.
-            </p>
+            <p><strong>1.</strong> Open your authenticator app, tap <strong>+</strong> → <strong>Scan a QR code</strong>, and scan this:</p>
+            <SetupQr uri={setup.otpauthUri} />
+            <details className="small" style={{ marginTop: 8 }}>
+              <summary>Can't scan? Enter the setup key instead</summary>
+              <div className="secret" aria-label="Setup key" style={{ marginTop: 8 }}>{setup.secret}</div>
+              <p className="muted" style={{ margin: '8px 0 0' }}>
+                On a phone with an authenticator installed you can also <a href={setup.otpauthUri}>open the setup link</a>.
+              </p>
+            </details>
             <p style={{ marginTop: 16 }}><strong>2.</strong> Enter the 6-digit code the app shows:</p>
             <Field label="Authentication code" id="mfa-code">
               <input id="mfa-code" className="input code-input" inputMode="numeric" autoComplete="one-time-code"

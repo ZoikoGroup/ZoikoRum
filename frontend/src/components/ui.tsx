@@ -2,6 +2,7 @@ import { useState, type FormEvent, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
+import { PASSWORD_LABEL, passwordScore } from '../lib/password'
 
 /** Public header. Every link stays inside the Zoikorum app. */
 export function SiteHeader() {
@@ -116,6 +117,19 @@ export function Field(props: {
       {props.children}
       {props.error ? <span className="error" id={`${props.id}-err`}>{props.error}</span>
         : props.hint && <span className="hint" id={`${props.id}-hint`}>{props.hint}</span>}
+    </div>
+  )
+}
+
+/** Password strength meter (Onboarding s.6). Text + bar, never colour alone. */
+export function PasswordStrength({ value }: { value: string }) {
+  if (!value) return null
+  const score = passwordScore(value)
+  const label = PASSWORD_LABEL[score]
+  return (
+    <div className={`pw-strength s${score}`} aria-live="polite">
+      <span className="pw-bar"><span style={{ width: `${(score + 1) * 25}%` }} /></span>
+      <span className="small">Password strength: <strong>{label}</strong></span>
     </div>
   )
 }

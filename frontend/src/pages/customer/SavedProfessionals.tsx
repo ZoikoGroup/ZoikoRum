@@ -6,6 +6,7 @@ import { savedApi, type Collection, type SavedProfessional } from '../../api/sav
 import { CompareDialog } from '../../components/CompareDialog'
 import { Avatar, Icon } from '../../components/dashboard'
 import { PortalHeader, SidePanel, StatCard, Tabs, TierBadge, VerifyChips } from '../../components/portal'
+import { SavedSearchesPanel } from '../../components/SavedSearches'
 import { ErrorAlert } from '../../components/ui'
 import { countryName } from '../ProfessionalPages'
 
@@ -171,6 +172,7 @@ export default function SavedProfessionals() {
         </section>
 
         <aside>
+          <SavedSearchesPanel />
           <SidePanel title="Collections">
             <form className="row" onSubmit={createCollection} style={{ marginBottom: 12 }}>
               <input className="input" style={{ flex: 1, height: 38 }} aria-label="New collection name" placeholder="New collection" maxLength={80}

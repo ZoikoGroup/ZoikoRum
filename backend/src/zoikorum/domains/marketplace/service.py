@@ -8,14 +8,18 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from zoikorum.domains.marketplace.models import Collection, CollectionItem, SavedProfessional, TaxonomyNode
+from zoikorum.domains.marketplace.models import Collection, CollectionItem, SavedProfessional, SavedSearch, TaxonomyNode
 from zoikorum.domains.marketplace.schemas import (
+    SEARCH_KEYS,
+    SavedSearchIn,
+    SavedSearchOut,
     CollectionOut, CompareItem, SavedOut, SpecializationAdminOut, SpecializationIn, SpecializationPatch,
 )
 from zoikorum.domains.marketplace.taxonomy_data import default_taxonomy_rows, slugify
 from zoikorum.domains.professional import facade as professional_facade
 from zoikorum.domains.trust import facade as trust_facade
 from zoikorum.domains.verification import facade as verification_facade
+from zoikorum.shared import clock
 from zoikorum.shared.auth import Actor, PlatformRole
 from zoikorum.shared.errors import Conflict, NotFound, ValidationFailed
 from zoikorum.shared.event_catalog import E
@@ -310,3 +314,51 @@ async def compare(session: AsyncSession, ids: list[uuid.UUID]) -> list[CompareIt
             yearsExperienceBand=p.years_experience_band, servedJurisdictions=list(p.jurisdictions_served),
             licensedJurisdictions=list(p.licensed_jurisdictions), languages=list(p.languages)))
     return out
+
+
+# ---- Saved searches (Buyer Dashboard s.13) ---------------------------------------------------------------
+
+MAX_SEARCHES = 25
+
+
+def _search_out(s: SavedSearch) -> SavedSearchOut:
+    return SavedSearchOut(id=s.id, name=s.name, params=s.params, lastViewedAt=s.last_viewed_at, createdAt=s.created_at)
+
+
+async def list_searches(session: AsyncSession, actor: Actor) -> list[SavedSearchOut]:
+    rows = (await session.scalars(select(SavedSearch).where(SavedSearch.identity_id == actor.identity_id)
+                                  .order_by(SavedSearch.created_at.desc()))).all()
+    return [_search_out(s) for s in rows]
+
+
+async def save_search(session: AsyncSession, actor: Actor, body: SavedSearchIn) -> SavedSearchOut:
+    params = {k: v.strip()[:200] for k, v in body.params.items() if k in SEARCH_KEYS and v and v.strip()}
+    if not params:
+        raise ValidationFailed("Add a search term or at least one filter before saving", code="EMPTY_SEARCH")
+    name = body.name.strip()
+    if await session.scalar(select(func.count()).select_from(SavedSearch).where(SavedSearch.identity_id == actor.identity_id)) >= MAX_SEARCHES:
+        raise Conflict(f"You can save up to {MAX_SEARCHES} searches", code="TOO_MANY_SEARCHES")
+    if await session.scalar(select(SavedSearch.id).where(SavedSearch.identity_id == actor.identity_id, SavedSearch.name == name)):
+        raise Conflict("You already have a saved search with that name", code="SEARCH_EXISTS")
+    s = SavedSearch(identity_id=actor.identity_id, name=name, params=params, last_viewed_at=clock.now())
+    session.add(s)
+    await session.flush()
+    return _search_out(s)
+
+
+async def _my_search(session: AsyncSession, actor: Actor, search_id: uuid.UUID) -> SavedSearch:
+    s = await session.get(SavedSearch, search_id)
+    if s is None or s.identity_id != actor.identity_id:
+        raise NotFound("Saved search not found")
+    return s
+
+
+async def mark_search_viewed(session: AsyncSession, actor: Actor, search_id: uuid.UUID) -> SavedSearchOut:
+    s = await _my_search(session, actor, search_id)
+    s.last_viewed_at = clock.now()
+    await session.flush()
+    return _search_out(s)
+
+
+async def delete_search(session: AsyncSession, actor: Actor, search_id: uuid.UUID) -> None:
+    await session.delete(await _my_search(session, actor, search_id))

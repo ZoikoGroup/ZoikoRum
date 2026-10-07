@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -62,3 +64,15 @@ class CollectionItem(Base, UUIDPk, CreatedAt):
         PG_UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.collections.id", ondelete="CASCADE"), nullable=False, index=True
     )
     professional_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+
+
+class SavedSearch(Base, UUIDPk, Timestamps):
+    """A buyer's saved search (Buyer Dashboard s.13): filters persist; "new since you last looked" uses last_viewed_at."""
+
+    __tablename__ = "saved_searches"
+    __table_args__ = (UniqueConstraint("identity_id", "name"), {"schema": SCHEMA})
+
+    identity_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    params: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)  # search query parameters
+    last_viewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

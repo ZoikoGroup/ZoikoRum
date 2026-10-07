@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { orgApi, type Organization } from '../../api/orgs'
-import { CURRENCIES, LABEL, proApi, toMinor, type PublicProfile } from '../../api/professional'
-import { budgetText, DURATION_LABEL, DURATIONS, proposalApi, type Attachment, type Duration, type EngagementType, type ProposalRequest } from '../../api/proposals'
-import { sha256OfFile } from '../../api/verification'
+import { CURRENCIES, LABEL, proApi, taxonomyApi, toMinor, type PublicProfile } from '../../api/professional'
+import {
+  budgetText, CADENCES, DEPENDENCIES, DURATION_LABEL, DURATIONS, PRICING_PREFS, proposalApi,
+  type Dependency, type Duration, type EngagementType, type PaymentCadence, type PricingPreference, type ProposalRequest,
+} from '../../api/proposals'
+import { DOC_ACCEPT, toUpload, type Upload } from '../../api/files'
 import { Avatar, Icon } from '../../components/dashboard'
 import { PortalHeader, TierBadge } from '../../components/portal'
 import { ErrorAlert, Field } from '../../components/ui'
@@ -13,13 +16,13 @@ import { ErrorAlert, Field } from '../../components/ui'
 
 const STEPS = ['Engagement context', 'Scope', 'Commercial', 'Protections', 'Review & send']
 const CONTEXTS: [string, string][] = [['STARTUP', 'Startup'], ['SME', 'SME'], ['MID_MARKET', 'Mid-market'], ['ENTERPRISE', 'Enterprise'], ['INDIVIDUAL', 'Individual']]
-const ALLOWED = '.pdf,.docx,.xlsx,.png,.jpg,.jpeg'
 const today = () => new Date().toISOString().slice(0, 10)
 
 interface Form {
   service: string; engagementType: EngagementType; businessContext: string; objective: string; details: string
   desiredStartDate: string; estimatedDuration: Duration; deliveryMode: 'REMOTE' | 'ONSITE' | 'HYBRID'; location: string
-  budgetOn: boolean; budgetMin: string; budgetMax: string; currency: string; ndaRequired: boolean; attachments: Attachment[]
+  budgetOn: boolean; budgetMin: string; budgetMax: string; currency: string; ndaRequired: boolean; attachments: Upload[]
+  deliverables: string[]; dependencies: Dependency[]; pricingPreferences: PricingPreference[]; paymentCadence: PaymentCadence | ''
   acknowledged: boolean
 }
 
@@ -37,27 +40,47 @@ export default function RequestWizard() {
   const [f, setF] = useState<Form>({
     service: '', engagementType: 'PROJECT', businessContext: '', objective: '', details: '', desiredStartDate: '',
     estimatedDuration: 'THREE_SIX_WEEKS', deliveryMode: 'REMOTE', location: '', budgetOn: false, budgetMin: '', budgetMax: '',
-    currency: 'USD', ndaRequired: false, attachments: [], acknowledged: false,
+    currency: 'USD', ndaRequired: false, attachments: [], deliverables: [], dependencies: [], pricingPreferences: [], paymentCadence: '',
+    acknowledged: false,
   })
+  const [templates, setTemplates] = useState<string[]>([])
+  const [custom, setCustom] = useState('')
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setF((x) => ({ ...x, [k]: v }))
+  const fromId = params.get('from')
 
   useEffect(() => {
     let live = true
-    Promise.all(ids.map((id) => proApi.publicProfile(id))).then((list) => {
+    Promise.all([Promise.all(ids.map((id) => proApi.publicProfile(id))), taxonomyApi.all().catch(() => []),
+      fromId ? proposalApi.get(fromId).catch(() => null) : Promise.resolve(null)]).then(([list, taxonomy, previous]) => {
       if (!live) return
       setPros(list)
       const offering = offeringId ? list[0]?.offerings.find((o) => o.id === offeringId) : undefined
       const first = list[0]
-      setF((x) => ({
+      // Deliverable templates (RFP s.6): from the chosen service, else the professional's specialisations.
+      const bySlug = Object.fromEntries(taxonomy.flatMap((c) => c.groups.flatMap((g) => g.specializations)).map((s) => [s.slug, s.deliverableTemplates]))
+      setTemplates([...new Set([...(offering?.deliverables ?? []), ...(first?.specializations ?? []).flatMap((s) => bySlug[s.slug] ?? [])])].slice(0, 12))
+      setF((x) => previous ? {
+        // "Request again" keeps the earlier scope (RFP s.16: re-request with preserved scope).
+        ...x, service: previous.service, engagementType: previous.engagementType, businessContext: previous.businessContext ?? '',
+        objective: previous.objective ?? '', details: previous.details ?? '', estimatedDuration: previous.estimatedDuration,
+        deliveryMode: previous.deliveryMode, location: previous.location ?? '', ndaRequired: previous.ndaRequired,
+        budgetOn: !!previous.budget, budgetMin: previous.budget?.minMinor ? String(previous.budget.minMinor / 100) : '',
+        budgetMax: previous.budget ? String(previous.budget.maxMinor / 100) : '', currency: previous.budget?.currency ?? x.currency,
+        deliverables: previous.deliverables, dependencies: previous.dependencies, pricingPreferences: previous.pricingPreferences,
+        paymentCadence: previous.paymentCadence ?? '',
+      } : {
         ...x,
         service: x.service || offering?.title || first?.specializations[0]?.name || first?.headline || '',
         engagementType: (offering?.engagementTypes[0] ?? first?.engagementTypes[0] ?? x.engagementType) as EngagementType,
         currency: first?.indicativeRate?.currency ?? x.currency,
-      }))
+      })
     }).catch(setError)
     orgApi.mine().then((orgs) => { if (live) setOrg(orgs.find((o) => o.myRoles.includes('REQUESTER')) ?? null) }).catch(setError)
     return () => { live = false }
-  }, [ids, offeringId])
+  }, [ids, offeringId, fromId])
+  const toggle = <T,>(list: T[], v: T) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v])
+  // Buyer location vs professional eligibility (Onboarding s.13, RFP s.16): surfaced before sending, blocked at agreement.
+  const outOfArea = org ? pros.filter((p) => p.servedJurisdictions.length > 0 && !p.servedJurisdictions.includes(org.country)) : []
 
   if (ids.length === 0) {
     return (
@@ -81,7 +104,7 @@ export default function RequestWizard() {
     if (!files) return
     const room = 3 - f.attachments.length
     const picked = Array.from(files).slice(0, room)
-    const hashed = await Promise.all(picked.map(async (file) => ({ name: file.name, size: file.size, sha256: await sha256OfFile(file) })))
+    const hashed = await Promise.all(picked.map((file) => toUpload(file)))
     set('attachments', [...f.attachments, ...hashed])
   }
 
@@ -96,7 +119,8 @@ export default function RequestWizard() {
         desiredStartDate: f.desiredStartDate, estimatedDuration: f.estimatedDuration, deliveryMode: f.deliveryMode,
         location: f.deliveryMode === 'REMOTE' ? null : f.location.trim(),
         budget: f.budgetOn ? { minMinor: f.budgetMin ? toMinor(f.budgetMin) : null, maxMinor: toMinor(f.budgetMax), currency: f.currency } : null,
-        ndaRequired: f.ndaRequired, attachments: f.attachments, acknowledged: f.acknowledged, draft,
+        ndaRequired: f.ndaRequired, attachments: f.attachments, deliverables: f.deliverables, dependencies: f.dependencies,
+        pricingPreferences: f.pricingPreferences, paymentCadence: f.paymentCadence || null, acknowledged: f.acknowledged, draft,
       })
       if (draft) navigate(`/app/requests/${result[0].id}`)
       else setSent(result)
@@ -141,6 +165,10 @@ export default function RequestWizard() {
           <button disabled={i > step && problems.some((p) => p < i)} onClick={() => setStep(i)}><span className="n">{i < step ? '✓' : i + 1}</span>{s}</button>
         </li>))}</ol>
       {!org && <div className="alert alert-error" role="alert">You need the Requester role in an organisation to send requests. Ask your Org Admin.</div>}
+      {outOfArea.length > 0 && <div className="alert alert-warn" role="status">
+        {outOfArea.map((p) => p.displayName).join(', ')} {outOfArea.length > 1 ? 'do' : 'does'} not list your country ({org?.country}) among the places they serve.
+        You can still ask, but an engagement cannot be agreed unless they serve your country. <Link to={`/app/find?jurisdiction=${org?.country ?? ''}`}>Show professionals who serve {org?.country}</Link>
+      </div>}
       <ErrorAlert error={error} />
 
       <div className="home-grid wide">
@@ -160,6 +188,16 @@ export default function RequestWizard() {
 
           {step === 1 && <>
             <h2>Scope and timing</h2>
+            <div className="field"><span className="label">Deliverables (what you expect to receive)</span>
+              <div className="chips">{[...new Set([...templates, ...f.deliverables])].map((d) => (
+                <label key={d} className={`chip pick ${f.deliverables.includes(d) ? 'on' : ''}`}>
+                  <input type="checkbox" checked={f.deliverables.includes(d)} onChange={() => set('deliverables', toggle(f.deliverables, d))} />{d}</label>))}</div>
+              <div className="row" style={{ marginTop: 8, alignItems: 'center' }}>
+                <input className="input" style={{ flex: 1 }} placeholder="Add your own deliverable" maxLength={200} value={custom} onChange={(e) => setCustom(e.target.value)} />
+                <button type="button" className="btn btn-secondary btn-sm" disabled={custom.trim().length < 2 || f.deliverables.length >= 15}
+                  onClick={() => { set('deliverables', [...new Set([...f.deliverables, custom.trim()])]); setCustom('') }}>Add</button>
+              </div>
+              <p className="muted small" style={{ margin: '4px 0 0' }}>Suggestions come from the professional's services. Custom deliverables are flagged for clarity in the proposal.</p></div>
             <Field label="Details" id="w-details" hint={`${f.details.length}/1200 · What does “done” look like? How will success be measured? What will you provide?`}>
               <textarea id="w-details" className="input" rows={6} maxLength={1200} value={f.details} onChange={(e) => set('details', e.target.value)} /></Field>
             <div className="row">
@@ -175,12 +213,21 @@ export default function RequestWizard() {
             <div className="field"><span className="label">Attachments (optional, up to 3)</span>
               {f.attachments.map((a) => <div key={a.sha256} className="file-row"><Icon name="request" /><span>{a.name}</span>
                 <button className="btn btn-ghost btn-sm" onClick={() => set('attachments', f.attachments.filter((x) => x !== a))}>Remove</button></div>)}
-              {f.attachments.length < 3 && <input type="file" accept={ALLOWED} multiple onChange={(e) => addFiles(e.target.files).catch(setError)} />}
-              <p className="muted small" style={{ margin: '4px 0 0' }}>PDF, DOCX, XLSX, PNG or JPG. Each file is fingerprinted in your browser; secure upload arrives with document storage.</p></div>
+              {f.attachments.length < 3 && <input type="file" accept={DOC_ACCEPT} multiple onChange={(e) => addFiles(e.target.files).catch(setError)} />}
+              <p className="muted small" style={{ margin: '4px 0 0' }}>PDF, Word, Excel, CSV, JPG or PNG, up to 10 MB each. Stored securely; only you and the invited professional (after any NDA) can open them.</p></div>
+            <details><summary className="small">Dependencies (optional)</summary>
+              {DEPENDENCIES.map(([v, l]) => <label key={v} className="checkbox" style={{ marginTop: 6 }}>
+                <input type="checkbox" checked={f.dependencies.includes(v)} onChange={() => set('dependencies', toggle(f.dependencies, v))} /><span>{l}</span></label>)}</details>
           </>}
 
           {step === 2 && <>
             <h2>Commercial preferences</h2>
+            <div className="field"><span className="label">Pricing model you prefer (choose any)</span>
+              <div className="chips">{PRICING_PREFS.map(([v, l]) => (
+                <label key={v} className={`chip pick ${f.pricingPreferences.includes(v) ? 'on' : ''}`}>
+                  <input type="checkbox" checked={f.pricingPreferences.includes(v)} onChange={() => set('pricingPreferences', toggle(f.pricingPreferences, v))} />{l}</label>))}</div></div>
+            <Field label="Payment cadence (optional)" id="w-cad"><select id="w-cad" className="input" value={f.paymentCadence} onChange={(e) => set('paymentCadence', e.target.value as PaymentCadence | '')}>
+              <option value="">No preference</option>{CADENCES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field>
             <label className="checkbox"><input type="checkbox" checked={f.budgetOn} onChange={(e) => set('budgetOn', e.target.checked)} /><span>Share a budget range (optional — helps professionals propose accurately)</span></label>
             {f.budgetOn && <div className="row">
               <Field label="Currency" id="w-cur"><select id="w-cur" className="input" value={f.currency} onChange={(e) => set('currency', e.target.value)}>{CURRENCIES.map((c) => <option key={c}>{c}</option>)}</select></Field>
@@ -204,10 +251,14 @@ export default function RequestWizard() {
             <h2>Review and send</h2>
             {review('Professionals', 0, <p className="small">{pros.map((p) => p.displayName).join(', ')}</p>)}
             {review('Service & objective', 0, <p className="small"><strong>{f.service}</strong> · {LABEL[f.engagementType]}<br />{f.objective}</p>)}
-            {review('Scope & timeline', 1, <p className="small" style={{ whiteSpace: 'pre-wrap' }}>{f.details || <span className="muted">No extra details</span>}<br />
+            {review('Scope & timeline', 1, <p className="small" style={{ whiteSpace: 'pre-wrap' }}>
+              {f.deliverables.length > 0 && <>Deliverables: {f.deliverables.join(' · ')}<br /></>}
+              {f.details || <span className="muted">No extra details</span>}<br />
               Start {f.desiredStartDate} · {DURATION_LABEL[f.estimatedDuration]} · {LABEL[f.deliveryMode]}{f.location ? ` (${f.location})` : ''}
               {f.attachments.length > 0 && <><br />{f.attachments.length} attachment{f.attachments.length > 1 ? 's' : ''}</>}</p>)}
             {review('Commercial preferences', 2, <p className="small">{f.budgetOn && f.budgetMax ? budgetText({ minMinor: f.budgetMin ? toMinor(f.budgetMin) : null, maxMinor: toMinor(f.budgetMax), currency: f.currency }) : 'Open to proposal'}
+              {f.pricingPreferences.length > 0 && ` · Prefers ${f.pricingPreferences.map((p) => PRICING_PREFS.find(([v]) => v === p)?.[1]).join(' / ')}`}
+              {f.paymentCadence && ` · ${CADENCES.find(([v]) => v === f.paymentCadence)?.[1]} payments`}
               {f.ndaRequired && ' · NDA required'}</p>)}
             {review('Protections', 3, <p className="small">{f.acknowledged ? 'Acknowledged' : <span className="danger-text">Please confirm the acknowledgement</span>}</p>)}
           </>}

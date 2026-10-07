@@ -2,12 +2,19 @@
 triggers, and helpers for users and event draining.
 
 Set ZK_TEST_DATABASE (default zoikorum_test) to isolate parallel test runs.
+
+Every test carries one kind marker (see pyproject.toml):
+  unit         pure logic: no database, no HTTP (set automatically for plain functions without DB fixtures)
+  integration  API + database for one feature (set automatically for the rest)
+  regression   end-to-end business flows across steps (marked explicitly)
+Run one kind with  pytest -m unit  /  pytest -m integration  /  pytest -m regression
 """
 
 from __future__ import annotations
 
 import importlib
 import importlib.util
+import inspect
 import os
 import tempfile
 import uuid
@@ -21,6 +28,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 os.environ.setdefault("ZK_ENV", "test")
 os.environ.setdefault("ZK_RATE_LIMIT_ENABLED", "false")
+os.environ["ZK_WEBHOOK_SECRET"] = "dev-webhook-secret"  # deterministic fixture signing; ignore local .env secrets
 os.environ.setdefault("ZK_STORAGE_DIR", tempfile.mkdtemp(prefix="zk-storage-"))  # uploads never touch the repo
 
 ADMIN_URL = os.environ.get("ZK_TEST_ADMIN_URL", "postgresql+asyncpg://zoikorum:zoikorum@localhost:5434/zoikorum")
@@ -62,9 +70,31 @@ async def engine():
     await eng.dispose()
 
 
+_DB_FIXTURES = {"client", "sf", "engine", "app", "make_user", "drain"}
+
+
+def pytest_collection_modifyitems(items):
+    for item in items:
+        if item.get_closest_marker("regression") or item.get_closest_marker("unit"):
+            continue
+        fn = getattr(item, "function", None)
+        params = set(inspect.signature(fn).parameters) if fn else set()
+        pure = fn is not None and not inspect.iscoroutinefunction(fn) and not params & _DB_FIXTURES
+        item.add_marker(pytest.mark.unit if pure else pytest.mark.integration)
+
+
 @pytest.fixture(autouse=True)
-async def clean_db(engine):
+def clean_db(request):
+    """Unit tests never touch the database; every other test starts from empty tables."""
     clock.set_now(None)
+    if not request.node.get_closest_marker("unit"):
+        request.getfixturevalue("_fresh_db")
+    yield
+    clock.set_now(None)
+
+
+@pytest.fixture
+async def _fresh_db(engine):
     async with engine.connect() as conn:
         rows = await conn.execute(text(
             "SELECT table_schema, table_name FROM information_schema.tables "

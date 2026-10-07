@@ -2,13 +2,14 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import { formatMoney } from '../api/orgs'
-import { CURRENCIES, LABEL, toMinor } from '../api/professional'
+import { CURRENCIES, LABEL, proApi, toMinor, type Offering } from '../api/professional'
 import {
-  budgetText, DECLINE_REASONS, DURATION_LABEL, PROPOSAL_STATUS, proposalApi, requestStatus,
+  attachmentUrl, budgetText, CADENCES, DECLINE_REASONS, DEPENDENCIES, DURATION_LABEL, PRICING_PREFS, PROPOSAL_STATUS, proposalApi, requestStatus,
   type DeclineReason, type Deliverable, type Proposal, type ProposalInput, type ProposalRequest,
 } from '../api/proposals'
 import { Avatar, Icon } from '../components/dashboard'
 import { EmptyTable, PortalHeader, SidePanel, StatCard, Tabs } from '../components/portal'
+import { FileLink } from '../components/FileLink'
 import { ErrorAlert, Field } from '../components/ui'
 
 /* Professional side of Step 6 (Professional Dashboard doc s.7–8): incoming requests, NDA, the structured proposal
@@ -103,6 +104,8 @@ export function ProfessionalRequestDetail() {
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [declining, setDeclining] = useState(false)
+  const [offerings, setOfferings] = useState<Offering[]>([])
+  useEffect(() => { proApi.offerings().then(setOfferings).catch(() => {}) }, [])
 
   const load = useCallback(async () => {
     try {
@@ -120,6 +123,12 @@ export function ProfessionalRequestDetail() {
   useEffect(() => { load() }, [load])
 
   if (!req || !form) return error ? <ErrorAlert error={error} /> : <p className="muted">Loading…</p>
+  // Service alignment indicator (Professional Dashboard s.8): does this request match one of your structured services?
+  const matched = offerings.find((o) => o.id === req.offeringId)
+    ?? offerings.find((o) => o.status === 'ACTIVE' && (o.specialization === req.specialization || o.title.toLowerCase() === req.service.toLowerCase()))
+  const alignment = offerings.length === 0 ? null : matched
+    ? { ok: true, text: `Matches your service “${matched.title}”${matched.deliverables.length ? `: ${matched.deliverables.slice(0, 3).join(', ')}` : ''}.` }
+    : { ok: false, text: 'This request does not match one of your listed services; make your scope and exclusions explicit.' }
   const editable = (req.status === 'OPEN' && (!proposal || proposal.status === 'DRAFT')) || proposal?.status === 'REVISION_REQUESTED'
   const set = <K extends keyof ProposalInput>(k: K, v: ProposalInput[K]) => setForm({ ...form, [k]: v })
   /** The proposal as sent: completely empty rows are ignored; anything half-filled is explained in plain words. */
@@ -308,9 +317,18 @@ export function ProfessionalRequestDetail() {
               <dt>Delivery</dt><dd>{LABEL[req.deliveryMode]}{req.location ? ` · ${req.location}` : ''}</dd>
               <dt>Budget</dt><dd>{budgetText(req.budget)}</dd>
               {req.groupSize > 1 && <><dt>Competition</dt><dd>Sent to {req.groupSize} professionals</dd></>}
+              {req.pricingPreferences.length > 0 && <><dt>Prefers</dt><dd>{req.pricingPreferences.map((p) => PRICING_PREFS.find(([v]) => v === p)?.[1]).join(' / ')}</dd></>}
+              {req.paymentCadence && <><dt>Payments</dt><dd>{CADENCES.find(([v]) => v === req.paymentCadence)?.[1]}</dd></>}
             </dl>
+            {req.jurisdictionConflict && <div className="tip" style={{ marginTop: 12 }}><Icon name="globe" /><span>This buyer is in a country you do not list as served.
+              An engagement cannot be agreed unless you serve it. Update <Link to="/app/professional/profile?step=jurisdictions">your jurisdictions</Link> if you can.</span></div>}
+            {alignment && <div className={`tip ${alignment.ok ? '' : 'muted'}`} style={{ marginTop: 12 }}><Icon name="check" /><span>{alignment.text}</span></div>}
+            {!req.detailsHidden && req.deliverables.length > 0 && <><h3 style={{ margin: '12px 0 4px' }}>Deliverables requested</h3>
+              <ul className="why" style={{ margin: 0 }}>{req.deliverables.map((d) => <li key={d}>{d}</li>)}</ul></>}
+            {!req.detailsHidden && req.dependencies.length > 0 && <p className="muted small" style={{ marginTop: 8 }}>
+              Depends on: {req.dependencies.map((d) => DEPENDENCIES.find(([v]) => v === d)?.[1]).join(', ')}</p>}
             {!req.detailsHidden && req.details && <p className="small" style={{ whiteSpace: 'pre-wrap', marginTop: 12 }}>{req.details}</p>}
-            {req.attachments.length > 0 && <ul className="pro-list">{req.attachments.map((a) => <li key={a.sha256}><Icon name="request" /><span className="small">{a.name}</span><span /></li>)}</ul>}
+            {req.attachments.length > 0 && <ul className="pro-list">{req.attachments.map((a) => <li key={a.sha256}><Icon name="request" /><span className="small"><FileLink file={a} url={attachmentUrl(req.id, a.sha256)} /></span><span /></li>)}</ul>}
           </SidePanel>
           <SidePanel title="Good proposals">
             <ul className="assurance compact">{['Map every deliverable to a milestone', 'Write acceptance criteria the buyer can check',

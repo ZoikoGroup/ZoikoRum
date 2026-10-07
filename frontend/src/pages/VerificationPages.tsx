@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  CASE_STATUS, DIMENSION_VALUE, DIMENSIONS, sha256OfFile, trustApi, verificationApi,
+  CASE_STATUS, DIMENSION_VALUE, DIMENSIONS, evidenceFileUrl, trustApi, verificationApi,
   type EvidenceType, type QueueItem, type SelfServiceType, type SubjectType, type Trust, type VerificationCase,
 } from '../api/verification'
+import { toUpload } from '../api/files'
+import { FileLink } from '../components/FileLink'
 import { ErrorAlert, Field, useStepUp } from '../components/ui'
 import { useMyFirm } from './FirmPages'
 import { COUNTRIES } from './Join'
@@ -76,7 +78,7 @@ function EvidenceUpload({ c, onDone }: { c: VerificationCase; onDone: (c: Verifi
     setBusy(true)
     setError(null)
     try {
-      const items = await Promise.all(files.map(async (f) => ({ name: f.name, sha256: await sha256OfFile(f), size: f.size })))
+      const items = await Promise.all(files.map((f) => toUpload(f, ['pdf', 'jpg', 'jpeg', 'png'])))
       onDone(await verificationApi.addEvidence(c.id, hint.type, items))
       setFiles([])
     } catch (err) {
@@ -89,7 +91,7 @@ function EvidenceUpload({ c, onDone }: { c: VerificationCase; onDone: (c: Verifi
   return (
     <form onSubmit={submit} className="evidence-form">
       <ErrorAlert error={error} />
-      <Field label={hint.label} id={`ev-${c.id}`} hint="Up to 5 files, 25 MB each.">
+      <Field label={hint.label} id={`ev-${c.id}`} hint="PDF, JPG or PNG. Up to 5 files, 10 MB each. Only you and the compliance reviewer can open them.">
         <input id={`ev-${c.id}`} type="file" multiple accept=".pdf,.jpg,.jpeg,.png"
           onChange={(e) => setFiles([...(e.target.files ?? [])].slice(0, 5))} />
       </Field>
@@ -116,7 +118,7 @@ function CaseCard({ c, onChange }: { c: VerificationCase; onChange: (c: Verifica
         <div className="alert alert-warn" style={{ marginTop: 10 }}>{c.publicReason}</div>
       )}
       {c.evidence.length > 0 && (
-        <ul className="deliverables">{c.evidence.map((e) => <li key={e.id}>{e.fileName} <span className="muted small">· {fmtDate(e.uploadedAt)}</span></li>)}</ul>
+        <ul className="deliverables">{c.evidence.map((e) => <li key={e.id}><FileLink file={{ name: e.fileName, hasFile: e.hasFile }} url={evidenceFileUrl(e.id)} /> <span className="muted small">· {fmtDate(e.uploadedAt)}</span></li>)}</ul>
       )}
       {c.isMine && OPEN.includes(c.status) && c.verificationType !== 'RESTRICTIONS' && <EvidenceUpload c={c} onDone={onChange} />}
     </article>
@@ -307,7 +309,7 @@ export function ReviewQueuePage() {
             <table className="data" style={{ marginBottom: 16 }}>
               <thead><tr><th>File</th><th>Type</th><th>SHA-256</th><th>Received</th></tr></thead>
               <tbody>{selected.evidence.map((e) => (
-                <tr key={e.id}><td>{e.fileName}</td><td>{e.evidenceType}</td><td><code>{e.sha256.slice(0, 16)}…</code></td><td>{fmtDate(e.uploadedAt)}</td></tr>
+                <tr key={e.id}><td><FileLink file={{ name: e.fileName, hasFile: e.hasFile }} url={evidenceFileUrl(e.id)} /></td><td>{e.evidenceType}</td><td><code>{e.sha256.slice(0, 16)}…</code></td><td>{fmtDate(e.uploadedAt)}</td></tr>
               ))}</tbody>
             </table>
           )}

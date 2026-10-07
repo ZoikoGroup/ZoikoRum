@@ -9,6 +9,7 @@ slate text). All business rules are enforced by the backend; the UI only mirrors
 # 2. frontend
 npm install
 npm run dev        # http://localhost:5173  (proxies /v1/* to the API on :8000)
+npm test             # unit tests (Vitest): upload helpers, CSV export, password strength, money format
 npm run build      # type-check + production build into dist/
 ```
 
@@ -22,6 +23,7 @@ npm run build      # type-check + production build into dist/
 | `/forgot-password`, `/reset-password`, `/confirm-email` | everyone | Account recovery and email confirmation |
 | `/app/buyer` · `/app/professional` · `/app/firm` · `/app/enterprise` | by account role | Role workspaces (summary cards fill in later steps) |
 | `/app/ops`, `/app/ops/staff` | platform staff / Platform Admin | Operations home; grant/revoke staff roles (step-up MFA) |
+| `/app/ops/reconciliation` | Financial Ops, Platform Admin | Nightly reconciliation results per day; re-run a day; mismatch details |
 | `/app/account`, `/app/security` | signed in | Roles held, add Buyer/Professional role, set up two-step verification |
 
 ## Step 2 — organizations, firms & team roles (built)
@@ -69,15 +71,16 @@ an explanation of how the step will work. Nothing is invented: no wallet balance
 
 | Route | Who | Purpose |
 |---|---|---|
-| `/app/find` | Buyer, Enterprise | Search verified professionals: filter bar and panel, verification chips, save, compare up to 3 |
-| `/app/saved` | Buyer, Enterprise | Shortlist with collections, filters, bulk add-to-collection, compare, remove |
+| `/app/find` | Buyer, Enterprise | Search verified professionals: filter bar and panel (incl. experience), active filter pills, save this search, verification chips, compare up to 3 |
+| `/app/saved` | Buyer, Enterprise | Shortlist with collections, filters, bulk add-to-collection, compare, remove; saved searches with new-match counts |
 | `/app/requests/new?pro=…&pro=…` | Buyer, Enterprise | Request a proposal (5 steps: context, scope, commercial, protections, review); 1–3 professionals |
 | `/app/requests`, `/app/requests/:id`, `/app/proposals` | Buyer, Enterprise | Requests and received proposals; side-by-side comparison, request revision, decline, accept |
 | `/app/professional/requests`, `/app/professional/requests/:id` | Professional | Incoming requests inbox; NDA; proposal builder (deliverables, milestones, dates, terms); decline with reason; withdraw |
-| `/app/engagements`, `/app/engagements/:id` | Buyer, Enterprise | Contracts: review the agreement, sign (two-step), milestones (review submitted work, request revision, accept), activity |
+| `/app/engagements`, `/app/engagements/:id` | Buyer, Enterprise | Contracts: review the agreement, sign (two-step), milestones (review submitted work, request revision, accept), activity, open delivered files, overdue-review notice, export engagement record (JSON) |
 | `/app/professional/engagements`, `/app/professional/engagements/:id` | Professional | Countersign, deliver milestones (note + file fingerprints), resubmit after revision |
-| `/app/payments` | Buyer, Enterprise | Payments & Protection: escrow per engagement, payments into escrow, invoices (test mode) |
+| `/app/payments` | Buyer, Enterprise | Payments & Protection: escrow per engagement, payments into escrow, invoices with printable receipts, CSV export (test mode) |
 | `/app/professional/earnings` | Professional | Payout account (two-step), payouts with gross / fee / net |
+| `/app/disputes`, `/app/professional/disputes`, `/app/ops/disputes`, `/app/disputes/:id` | Parties; Mediator / Legal / Platform Admin | Raise a dispute from an engagement; evidence, structured proposals, escalation, mediation, two-person platform decision, decision package and timeline |
 | `/app/messages` | Buyer, Enterprise | Layout until messaging exists |
 | `/app/organisation?tab=` | Buyer, Enterprise | Profile (name, industry, time zone), members & access, roles & authority, billing contacts, audit log + CSV export |
 | `/app/verification` | Buyer, Enterprise | Verification status of the professionals on your shortlist; what each check and Tier means |

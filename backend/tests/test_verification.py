@@ -3,6 +3,8 @@ revocation, firm registration, and the controls around human review."""
 
 from __future__ import annotations
 
+import base64
+import hashlib
 from datetime import timedelta
 
 import pytest
@@ -11,8 +13,16 @@ from sqlalchemy.exc import DBAPIError
 
 from zoikorum.shared import clock
 
-SHA = "a" * 64
-DOC = {"evidenceType": "ID_DOCUMENT", "items": [{"name": "doc.pdf", "sha256": "d" * 64, "size": 1000}]}
+def pdf(name: str, body: bytes = b"scan") -> dict:
+    """A small but real PDF evidence upload: bytes, type and the matching fingerprint."""
+    data = b"%PDF-1.4\n" + body
+    return {"name": name, "sha256": hashlib.sha256(data).hexdigest(), "size": len(data), "contentType": "application/pdf",
+            "dataBase64": base64.b64encode(data).decode()}
+
+
+PASSPORT = pdf("passport.pdf", b"passport")
+SHA = PASSPORT["sha256"]
+DOC = {"evidenceType": "ID_DOCUMENT", "items": [pdf("doc.pdf")]}
 
 
 async def new_pro(client, make_user, drain, name="pia", **kw):
@@ -63,7 +73,7 @@ async def test_identity_review_flow(client, make_user, drain, sf):
     assert (await client.post("/v1/verification/cases", headers=u.h, json=body)).json()["code"] == "CASE_EXISTS"
 
     r = await client.post(f"/v1/verification/cases/{case['id']}/evidence", headers=u.h,
-                          json={"evidenceType": "ID_DOCUMENT", "items": [{"name": "passport.pdf", "sha256": SHA, "size": 120000}]})
+                          json={"evidenceType": "ID_DOCUMENT", "items": [PASSPORT]})
     assert r.status_code == 200 and r.json()["status"] == "IN_REVIEW" and r.json()["evidence"][0]["sha256"] == SHA
 
     # The professional cannot decide their own case; reviewers need the role and a fresh step-up.
@@ -81,7 +91,7 @@ async def test_identity_review_flow(client, make_user, drain, sf):
     assert owner_view["publicReason"].startswith("The photo page") and owner_view["isMine"] is True
 
     await client.post(f"/v1/verification/cases/{case['id']}/evidence", headers=u.h,
-                      json={"evidenceType": "ID_DOCUMENT", "items": [{"name": "passport-2.pdf", "sha256": "b" * 64, "size": 99000}]})
+                      json={"evidenceType": "ID_DOCUMENT", "items": [pdf("passport-2.pdf", b"clearer")]})
     r = await client.post(decide, headers=o.h, json={"decision": "VERIFIED", "reasonCode": "DOCUMENT_MATCH"})
     assert r.json()["status"] == "VERIFIED" and r.json()["verifiedAt"]
     (done,) = [e for e in await outbox(sf, "zoikorum.verification.case.completed.v1") if e["verificationType"] == "IDENTITY"]
@@ -184,7 +194,7 @@ async def test_evidence_is_append_only(client, make_user, drain, sf):
     case = (await client.post("/v1/verification/cases", headers=u.h, json={
         "verificationType": "IDENTITY", "subjectType": "PROFESSIONAL", "subjectId": pro["id"]})).json()
     await client.post(f"/v1/verification/cases/{case['id']}/evidence", headers=u.h,
-                      json={"evidenceType": "ID_DOCUMENT", "items": [{"name": "id.pdf", "sha256": SHA, "size": 10}]})
+                      json={"evidenceType": "ID_DOCUMENT", "items": [pdf("id.pdf")]})
     with pytest.raises(DBAPIError):
         async with sf() as s, s.begin():
             await s.execute(text("UPDATE verification.evidence_items SET sha256 = :x"), {"x": "c" * 64})
@@ -229,3 +239,36 @@ async def test_screening_flag_is_private_and_hides_the_profile(client, make_user
     assert not any("screening" in line for line in public["trust"]["explanation"])
     owner = (await client.get(f"/v1/trust/professionals/{pro['id']}", headers=u.h)).json()
     assert owner["dimensions"]["restrictions"] == "FLAGGED"  # the professional still sees why
+
+
+async def test_evidence_files_are_stored_checked_and_viewable(client, make_user, drain, sf):
+    """The document itself is stored; its type and fingerprint are checked; owner and reviewers can open it (audited)."""
+    u, pro = await new_pro(client, make_user, drain)
+    case = (await client.post("/v1/verification/cases", headers=u.h, json={
+        "verificationType": "IDENTITY", "subjectType": "PROFESSIONAL", "subjectId": pro["id"]})).json()
+    url = f"/v1/verification/cases/{case['id']}/evidence"
+
+    tampered = {**pdf("a.pdf"), "sha256": "e" * 64}
+    assert (await client.post(url, headers=u.h, json={"evidenceType": "ID_DOCUMENT", "items": [tampered]})).json()["code"] == "FINGERPRINT_MISMATCH"
+    fake = pdf("b.pdf")
+    exe = b"MZ not a pdf"
+    fake.update(dataBase64=base64.b64encode(exe).decode(), size=len(exe), sha256=hashlib.sha256(exe).hexdigest())
+    assert (await client.post(url, headers=u.h, json={"evidenceType": "ID_DOCUMENT", "items": [fake]})).json()["code"] == "INVALID_FILE_TYPE"
+
+    r = await client.post(url, headers=u.h, json={"evidenceType": "ID_DOCUMENT", "items": [PASSPORT]})
+    (ev,) = r.json()["evidence"]
+    assert ev["hasFile"] is True and ev["contentType"] == "application/pdf"
+    file_url = f"/v1/verification/evidence/{ev['id']}/file"
+
+    own = await client.get(file_url, headers=u.h)
+    assert own.status_code == 200 and own.content == base64.b64decode(PASSPORT["dataBase64"])
+    assert own.headers["content-type"] == "application/pdf" and own.headers["cache-control"] == "no-store"
+    o = await officer(make_user)
+    assert (await client.get(file_url, headers=o.h)).status_code == 200
+    stranger = await make_user("sam")
+    assert (await client.get(file_url, headers=stranger.h)).status_code == 404
+
+    await drain()
+    async with sf() as s:
+        viewed = await s.scalar(text("SELECT count(*) FROM audit.audit_records WHERE action LIKE '%verification.evidence.viewed%'"))
+    assert viewed == 2

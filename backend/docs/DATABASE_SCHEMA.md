@@ -15,18 +15,19 @@ Migrations: `backend/alembic/versions/` (`alembic upgrade head`).
 - [buyer](#schema-buyer) — 6 tables
 - [firm](#schema-firm) — 3 tables
 - [professional](#schema-professional) — 3 tables
-- [marketplace](#schema-marketplace) — 4 tables
+- [marketplace](#schema-marketplace) — 5 tables
 - [search](#schema-search) — 1 tables
 - [proposal](#schema-proposal) — 2 tables
 - [contract](#schema-contract) — 4 tables
 - [escrow](#schema-escrow) — 5 tables
-- [payments](#schema-payments) — 4 tables
+- [payments](#schema-payments) — 7 tables
 - [verification](#schema-verification) — 2 tables
 - [trust](#schema-trust) — 3 tables
+- [dispute](#schema-dispute) — 4 tables
 - [audit](#schema-audit) — 2 tables
 - [notification](#schema-notification) — 1 tables
 
-Schemas reserved for domains not built yet: `policy`, `dispute`, `messaging`, `ai`, `admin`, `analytics`.
+Schemas reserved for domains not built yet: `policy`, `messaging`, `ai`, `admin`, `analytics`.
 
 <a id="schema-platform"></a>
 ## Schema `platform`
@@ -508,6 +509,22 @@ A buyer's shortlist ("Saved & Monitoring" on the buyer dashboard).
 
 Unique together: (identity_id, professional_id)
 
+### `marketplace.saved_searches`
+
+A buyer's saved search (Buyer Dashboard s.13): filters persist; "new since you last looked" uses last_viewed_at.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `identity_id` | UUID | no | indexed |
+| `name` | varchar(80) | no |  |
+| `params` | JSONB | no |  |
+| `last_viewed_at` | DATETIME | no |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+
+Unique together: (identity_id, name)
+
 ### `marketplace.taxonomy_nodes`
 
 Capability taxonomy: CATEGORY -> GROUP -> SPECIALIZATION (Architecture 12.2). Hierarchical and versioned; specializations are never deleted, only DEPRECATED.
@@ -643,6 +660,10 @@ DRAFT -> OPEN -> PROPOSAL_RECEIVED -> CLOSED; OPEN -> DECLINED; any open state -
 | `nda_required` | BOOLEAN | no |  |
 | `nda_accepted_at` | DATETIME | yes |  |
 | `attachments` | JSONB | no |  |
+| `deliverables` | JSONB | no |  |
+| `dependencies` | JSONB | no |  |
+| `pricing_preferences` | JSONB | no |  |
+| `payment_cadence` | varchar(20) | yes |  |
 | `status` | varchar(20) | no |  |
 | `sent_at` | DATETIME | yes |  |
 | `closed_at` | DATETIME | yes |  |
@@ -882,7 +903,7 @@ Buyer receipt for released work. Numbers are sequential (database sequence payme
 
 ### `payments.payment_intents`
 
-CREATED -> CAPTURED | FAILED. One per escrow funding (idempotent).
+CREATED -> CAPTURED | FAILED; CAPTURED -> CHARGED_BACK if the card issuer reverses it. One per escrow funding.
 
 | Column | Type | Null | Keys / index |
 |---|---|---|---|
@@ -899,6 +920,9 @@ CREATED -> CAPTURED | FAILED. One per escrow funding (idempotent).
 | `failure_code` | varchar(60) | yes |  |
 | `failure_message` | varchar(300) | yes |  |
 | `captured_at` | DATETIME | yes |  |
+| `charged_back_at` | DATETIME | yes |  |
+| `chargeback_minor` | BIGINT | yes |  |
+| `chargeback_reason` | varchar(200) | yes |  |
 | `id` | UUID | no | PK |
 | `updated_at` | DATETIME | no |  |
 | `created_at` | DATETIME | no |  |
@@ -939,10 +963,63 @@ QUEUED (no payout account yet) -> INITIATED -> SETTLED | FAILED. One per escrow 
 | `status` | varchar(20) | no |  |
 | `provider_ref` | varchar(100) | yes |  |
 | `failure_message` | varchar(300) | yes |  |
+| `expected_at` | DATETIME | yes |  |
 | `settled_at` | DATETIME | yes |  |
 | `id` | UUID | no | PK |
 | `updated_at` | DATETIME | no |  |
 | `created_at` | DATETIME | no |  |
+
+### `payments.reconciliation_batches`
+
+Daily reconciliation (Engineering Handbook 15.4): escrow ledger vs payments records vs the provider's report. MATCHED or MISMATCH; a mismatch is a P0 financial incident. Re-running a day updates its batch.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `day` | DATE | no | unique |
+| `status` | varchar(20) | no |  |
+| `checks` | JSONB | no |  |
+| `mismatches` | BIGINT | no |  |
+| `run_by` | varchar(60) | no |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+
+### `payments.refunds`
+
+Money returned to the buyer's original payment method. One per escrow refund (idempotent).
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `escrow_refund_id` | UUID | no | unique |
+| `payment_intent_id` | UUID | yes |  |
+| `organization_id` | UUID | no |  |
+| `contract_id` | UUID | no |  |
+| `milestone_id` | UUID | yes |  |
+| `dispute_id` | UUID | yes |  |
+| `amount_minor` | BIGINT | no |  |
+| `currency` | varchar(3) | no |  |
+| `status` | varchar(20) | no |  |
+| `provider_ref` | varchar(100) | yes |  |
+| `settled_at` | DATETIME | yes |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+
+### `payments.webhook_events`
+
+Every verified provider callback, stored once (provider + event id is unique): duplicates are ignored.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `provider` | varchar(30) | no |  |
+| `event_id` | varchar(120) | no |  |
+| `event_type` | varchar(80) | no |  |
+| `payload` | JSONB | no |  |
+| `outcome` | varchar(200) | no |  |
+| `id` | UUID | no | PK |
+| `created_at` | DATETIME | no |  |
+
+Unique together: (provider, event_id)
 
 <a id="schema-verification"></a>
 ## Schema `verification`
@@ -988,6 +1065,7 @@ Append-only (database trigger): evidence is never edited or deleted, only added.
 | `sha256` | varchar(64) | no |  |
 | `size_bytes` | BIGINT | no |  |
 | `storage_key` | varchar(500) | yes |  |
+| `content_type` | varchar(100) | yes |  |
 | `uploaded_by` | UUID | no |  |
 | `id` | UUID | no | PK |
 | `created_at` | DATETIME | no |  |
@@ -1041,6 +1119,91 @@ Base class used for declarative class definitions.  The :class:`_orm.Declarative
 | `to_tier` | varchar(1) | no |  |
 | `reasons` | JSONB | no |  |
 | `source_event_type` | varchar(120) | no |  |
+| `id` | UUID | no | PK |
+| `created_at` | DATETIME | no |  |
+
+<a id="schema-dispute"></a>
+## Schema `dispute`
+
+### `dispute.cases`
+
+EVIDENCE_COLLECTION -> DIRECT_RESOLUTION -> MEDIATION -> DECIDED -> ENFORCED -> CLOSED (conduct/compliance skip direct).
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `reference` | varchar(20) | no | unique |
+| `contract_id` | UUID | no |  |
+| `contract_reference` | varchar(20) | no |  |
+| `organization_id` | UUID | no | indexed |
+| `professional_id` | UUID | no | indexed |
+| `milestone_ids` | JSONB | no |  |
+| `category` | varchar(30) | no |  |
+| `summary` | varchar(300) | no |  |
+| `desired_outcome` | varchar(30) | no |  |
+| `context` | varchar(1000) | no |  |
+| `initiated_by` | UUID | yes |  |
+| `initiator_party` | varchar(20) | no |  |
+| `status` | varchar(30) | no |  |
+| `currency` | varchar(3) | no |  |
+| `disputed_minor` | BIGINT | no |  |
+| `evidence_deadline` | DATETIME | no |  |
+| `evidence_complete` | JSONB | no |  |
+| `direct_deadline` | DATETIME | yes |  |
+| `escalated_at` | DATETIME | yes |  |
+| `mediator_identity_id` | UUID | yes |  |
+| `recommendation` | JSONB | yes |  |
+| `pending_decision` | JSONB | yes |  |
+| `decision` | JSONB | yes |  |
+| `decided_at` | DATETIME | yes |  |
+| `closed_at` | DATETIME | yes |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+| `version` | BIGINT | no |  |
+
+### `dispute.evidence_items` — append-only
+
+Append-only (database trigger): evidence is never edited or deleted, only added.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `case_id` | UUID | no | FK → dispute.cases.id, indexed |
+| `party` | varchar(20) | no |  |
+| `submitted_by` | UUID | no |  |
+| `evidence_type` | varchar(30) | no |  |
+| `description` | varchar(1000) | no |  |
+| `items` | JSONB | no |  |
+| `id` | UUID | no | PK |
+| `created_at` | DATETIME | no |  |
+
+### `dispute.resolution_proposals`
+
+OPEN -> ACCEPTED | REJECTED | SUPERSEDED. Structured: outcome + release/refund per milestone.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `case_id` | UUID | no | FK → dispute.cases.id, indexed |
+| `party` | varchar(20) | no |  |
+| `proposed_by` | UUID | no |  |
+| `outcome` | varchar(30) | no |  |
+| `allocations` | JSONB | no |  |
+| `note` | varchar(1000) | no |  |
+| `status` | varchar(20) | no |  |
+| `responded_at` | DATETIME | yes |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+
+### `dispute.timeline`
+
+What both parties see on the visual timeline (Dispute doc s.15).
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `case_id` | UUID | no | FK → dispute.cases.id, indexed |
+| `kind` | varchar(40) | no |  |
+| `actor` | varchar(200) | no |  |
+| `text` | varchar(500) | no |  |
 | `id` | UUID | no | PK |
 | `created_at` | DATETIME | no |  |
 

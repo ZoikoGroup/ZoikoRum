@@ -841,3 +841,36 @@ pre.agreement { white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular
 .fund-list { list-style: none; margin: 0 0 14px; padding: 0; }
 .fund-list li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--zk-border); }
 .fund-list .checkbox { margin: 0; }
+
+/* ---- Disputes (Step 9): neutral design language, no red unless safety enforcement ---- */
+.attention-banner.neutral { background: #eef4fb; border-color: #cfe0f0; }
+.proposal-mini { border: 1px solid var(--zk-border); border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; }
+.proposal-mini.open { border-color: var(--zk-blue); background: #f7fafe; }
+.proposal-mini .panel-head { margin-bottom: 6px; }
+.proposal-mini .why { margin: 6px 0; }
+.decision-card { border-left: 3px solid var(--zk-green); }
+.dispute-timeline li { align-items: flex-start; }
+.dispute-timeline li > span:nth-child(2) { flex: 1; }
+.warn-text { color: var(--zk-warn); font-weight: 600; }
+
+/* ---- Two-step verification QR ---- */
+.qr-box { display: inline-grid; place-items: center; width: 240px; height: 240px; padding: 10px; background: #fff;
+  border: 1px solid var(--zk-border); border-radius: 10px; }
+.qr-box img { display: block; image-rendering: pixelated; }
+
+/* ---- Password strength + conversion zone + filter pills (doc-audit fixes) ---- */
+.pw-strength { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+.pw-bar { flex: none; width: 120px; height: 6px; border-radius: 999px; background: var(--zk-bg); overflow: hidden; }
+.pw-bar span { display: block; height: 100%; border-radius: 999px; background: var(--zk-danger); }
+.pw-strength.s1 .pw-bar span { background: #f79009; }
+.pw-strength.s2 .pw-bar span { background: var(--zk-blue); }
+.pw-strength.s3 .pw-bar span { background: var(--zk-green); }
+.conversion-zone { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; border-top: 3px solid var(--zk-green); }
+.filter-pills { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 12px; }
+.filter-pills .pill { border: 1px solid var(--zk-border-strong); background: var(--zk-surface); border-radius: 999px; padding: 3px 10px; font: inherit; font-size: 12.5px; cursor: pointer; color: var(--zk-navy); }
+.filter-pills .pill:hover { border-color: var(--zk-danger); color: var(--zk-danger); }
+
+/* Stored documents: inline links that open the file (audited) */
+.file-link { display: inline; padding: 0; border: 0; background: none; color: var(--zk-blue); font: inherit; text-decoration: underline; cursor: pointer; }
+.file-link:hover { text-decoration: none; }
+.file-links { display: inline-flex; flex-wrap: wrap; gap: 4px 12px; }

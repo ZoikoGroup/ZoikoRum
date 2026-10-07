@@ -36,6 +36,7 @@ from zoikorum.shared.http import page_of, paginate
 from zoikorum.shared.money import MoneyDTO
 from zoikorum.shared.relay import cancel_timer, schedule_timer
 from zoikorum.shared.state_machine import StateMachine
+from zoikorum.shared.uploads import file_out, find_file, read_file, store_uploads
 
 REQUEST_STATES = StateMachine("ProposalRequest", {
     "DRAFT": {"OPEN", "CANCELLED"},
@@ -156,6 +157,12 @@ def _check_tier(trust: trust_facade.TrustSnapshot, who: str) -> None:
                             code="POLICY_BLOCKED_MINIMUM_TRUST_TIER")
 
 
+def _conflict(served: set[str], org) -> bool:
+    """Professional not eligible for the buyer's region (RFP s.16): flagged early, blocked at agreement.
+    A professional with no served countries listed is treated as unrestricted."""
+    return bool(served) and org is not None and org.country.upper() not in {s.upper() for s in served}
+
+
 def _budget(r: ProposalRequest) -> Budget | None:
     if r.budget_max_minor is None or r.budget_currency is None:
         return None
@@ -187,6 +194,8 @@ async def _requests_out(session: AsyncSession, actor: Actor, rows: list[Proposal
     briefs = await _briefs(session, list({r.professional_id for r in rows}))
     buyers = await identity_facade.get_identities(session, list({r.buyer_identity_id for r in rows}))
     orgs = {oid: await buyer_facade.get_organization(session, oid) for oid in {r.organization_id for r in rows}}
+    served = {pid: set(p.jurisdictions_served) for pid, p in
+              (await professional_facade.get_professionals(session, list({r.professional_id for r in rows}))).items()}
     props = {p.request_id: p for p in (await session.scalars(
         select(Proposal).where(Proposal.request_id.in_([r.id for r in rows])))).all()}
     sizes = dict((await session.execute(
@@ -207,13 +216,16 @@ async def _requests_out(session: AsyncSession, actor: Actor, rows: list[Proposal
             professional=briefs[r.professional_id], offeringId=r.offering_id, service=r.service, specialization=r.specialization,
             engagementType=r.engagement_type, businessContext=r.business_context, detailsHidden=hidden,
             objective=None if hidden else r.objective, details=None if hidden else r.details,
-            location=None if hidden else r.location, attachments=[] if hidden else r.attachments,
+            location=None if hidden else r.location, attachments=[] if hidden else [file_out(a) for a in r.attachments],
             desiredStartDate=r.desired_start_date, estimatedDuration=r.estimated_duration, budget=_budget(r),
             deliveryMode=r.delivery_mode, ndaRequired=r.nda_required, ndaAccepted=r.nda_accepted_at is not None,
             status=r.status, sentAt=r.sent_at, closedAt=r.closed_at, reasonCode=r.reason_code, reasonNote=r.reason_note,
             proposal=ProposalBrief(id=p.id, status="EXPIRED" if _expired(p) else p.status, total=_total(p),
                                    submittedAt=p.submitted_at, validUntil=p.valid_until) if p else None,
-            groupSize=sizes.get(r.group_id, 1), viewerRole=role, createdAt=r.created_at, version=r.version,
+            groupSize=sizes.get(r.group_id, 1), deliverables=[] if hidden else r.deliverables, dependencies=[] if hidden else r.dependencies,
+            pricingPreferences=r.pricing_preferences, paymentCadence=r.payment_cadence,
+            jurisdictionConflict=_conflict(served.get(r.professional_id, set()), orgs.get(r.organization_id)),
+            viewerRole=role, createdAt=r.created_at, version=r.version,
         ))
     return out
 
@@ -313,6 +325,7 @@ async def create_requests(session: AsyncSession, actor: Actor, body: RequestIn) 
             raise ValidationFailed("That service is not available from this professional", code="INVALID_OFFERING")
 
     now, group = clock.now(), uuid.uuid4()
+    attachments = store_uploads(f"proposals/{group}", body.attachments)  # one copy shared by the group
     rows = []
     for pid in body.professionalIds:
         r = ProposalRequest(
@@ -325,7 +338,9 @@ async def create_requests(session: AsyncSession, actor: Actor, body: RequestIn) 
             budget_max_minor=body.budget.maxMinor if body.budget else None,
             budget_currency=body.budget.currency if body.budget else None,
             delivery_mode=body.deliveryMode, location=(body.location or "").strip() or None, nda_required=body.ndaRequired,
-            attachments=[a.model_dump() for a in body.attachments],
+            attachments=attachments,
+            deliverables=body.deliverables, dependencies=list(body.dependencies), pricing_preferences=list(body.pricingPreferences),
+            payment_cadence=body.paymentCadence,
             status="DRAFT" if body.draft else "OPEN", sent_at=None if body.draft else now,
         )
         session.add(r)
@@ -389,6 +404,19 @@ async def cancel_request(session: AsyncSession, actor: Actor, request_id: uuid.U
 async def get_request(session: AsyncSession, actor: Actor, request_id: uuid.UUID) -> RequestOut:
     r = await _request(session, request_id)
     return (await _requests_out(session, actor, [r], viewer=await _viewer(session, actor, r)))[0]
+
+
+async def attachment_file(session: AsyncSession, actor: Actor, request_id: uuid.UUID, sha256: str) -> tuple[bytes, str | None, str]:
+    """A request attachment, for the buyer's organisation and the invited professional (after the NDA if one is required)."""
+    r = await _request(session, request_id)
+    role = await _viewer(session, actor, r)
+    if role == "PROFESSIONAL" and r.nda_required and r.nda_accepted_at is None:
+        raise Forbidden("Accept the NDA to open the attachments", code="NDA_NOT_ACCEPTED")
+    rec = find_file(r.attachments, sha256)
+    data = read_file(rec)
+    record_audit(session, "proposal.request.attachment.viewed", object_type="ProposalRequest", object_id=r.id,
+                 tenant_id=r.organization_id, evidence_hash=rec["sha256"], details={"viewer": role})
+    return data, rec.get("contentType"), rec["name"]
 
 
 def _status_filter(stmt, model, status: str | None):
@@ -642,6 +670,11 @@ async def accept_proposal(session: AsyncSession, actor: Actor, proposal_id: uuid
     if _expired(p):
         raise Conflict("This proposal has expired and can no longer be accepted", code="PROPOSAL_EXPIRED")
     _check_tier(await trust_facade.get_trust(session, p.professional_id), "This professional")
+    org = await buyer_facade.get_organization(session, p.organization_id)
+    pro = await professional_facade.get_professional(session, p.professional_id)
+    if pro is not None and _conflict(set(pro.jurisdictions_served), org):
+        raise PolicyBlocked(f"{pro.display_name} does not serve {org.country}; the engagement cannot be agreed. "
+                            "Choose a professional who serves your country.", code="JURISDICTION_CONFLICT")
     limit = await buyer_facade.get_member_spend_limit(session, p.organization_id, actor.identity_id)
     if limit is not None and limit.currency == p.currency and p.total_minor > limit.minor:
         raise PolicyBlocked(f"{_money(p.total_minor, p.currency)} is above your approval limit of "

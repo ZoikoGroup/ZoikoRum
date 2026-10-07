@@ -1,4 +1,4 @@
-"""Contract reacts to accepted proposals (generate the agreement) and to escrow funding (start the funded milestones)."""
+"""Contract reacts to accepted proposals (generate the agreement), escrow funding (start funded milestones) and disputes."""
 
 from __future__ import annotations
 
@@ -23,3 +23,28 @@ async def on_escrow_funded(session: AsyncSession, event: EventEnvelope) -> None:
 @on_timer(service.TIMER_SIGNATURE)
 async def on_signature_deadline(session: AsyncSession, key: str, payload: dict) -> None:
     await service.signature_deadline_passed(session, payload)
+
+
+@on_timer(service.TIMER_REVIEW_REMINDER)
+async def on_review_reminder(session: AsyncSession, key: str, payload: dict) -> None:
+    await service.review_reminder(session, payload)
+
+
+@on_timer(service.TIMER_REVIEW_DUE)
+async def on_review_due(session: AsyncSession, key: str, payload: dict) -> None:
+    await service.review_overdue(session, payload)
+
+
+@subscribe(E.ESCROW_FUNDING_REVERSED, consumer="contract.funding_reversed")
+async def on_funding_reversed(session: AsyncSession, event: EventEnvelope) -> None:
+    await service.funding_reversed(session, event.payload)
+
+
+@subscribe(E.DISPUTE_INITIATED, consumer="contract.dispute_pause")
+async def on_dispute_initiated(session: AsyncSession, event: EventEnvelope) -> None:
+    await service.dispute_initiated(session, event.payload)
+
+
+@subscribe(E.DISPUTE_RESOLVED, consumer="contract.dispute_outcome")
+async def on_dispute_resolved(session: AsyncSession, event: EventEnvelope) -> None:
+    await service.dispute_resolved(session, event.payload)

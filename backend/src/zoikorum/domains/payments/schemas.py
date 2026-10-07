@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, Field
 
@@ -33,6 +33,8 @@ class PayoutOut(BaseModel):
     net: MoneyDTO
     status: str
     failureMessage: str | None
+    expectedAt: datetime | None = None  # when the money should reach the bank
+    delayReason: str | None = None  # plain-language reason when a payout is waiting, late or failed
     settledAt: datetime | None
     createdAt: datetime
 
@@ -63,3 +65,39 @@ class ChargeOut(BaseModel):
     failureMessage: str | None
     createdAt: datetime
     capturedAt: datetime | None
+    chargedBackAt: datetime | None = None
+
+
+class RefundOut(BaseModel):
+    id: uuid.UUID
+    contractId: uuid.UUID
+    milestoneId: uuid.UUID | None
+    disputeId: uuid.UUID | None
+    amount: MoneyDTO
+    status: str
+    createdAt: datetime
+    settledAt: datetime | None
+
+
+class ReconciliationCheck(BaseModel):
+    name: str
+    currency: str
+    ledger: int
+    payments: int
+    provider: int | None
+    difference: int
+    ok: bool
+
+
+class ReconciliationOut(BaseModel):
+    id: uuid.UUID
+    day: date
+    status: str
+    mismatches: int
+    checks: list[ReconciliationCheck]
+    runBy: str
+    updatedAt: datetime
+
+
+class ReconcileIn(BaseModel):
+    day: date

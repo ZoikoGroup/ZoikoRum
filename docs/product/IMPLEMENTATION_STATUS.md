@@ -1,5 +1,7 @@
 # Repository implementation assessment
 
+> Historical assessment of the checkout before the dev merge. The merge now brings in Step 9 disputes, stored uploads and payment operations; entries describing those as absent are superseded. Messaging and change orders are retained on maruthi_dev. This document is not a fresh audit of the merged product.
+
 Assessment: 7 October 2026. Source requirements: the Word documents in `docs/product/`, readable extracts in `docs/product/text/`, and `backend/docs/BUILD_SPEC.md`. This describes the current checkout, including uncommitted work. A screen, facade, model or passing test alone does not establish complete implementation.
 
 | Step | Classification | Existing behavior and remaining work |

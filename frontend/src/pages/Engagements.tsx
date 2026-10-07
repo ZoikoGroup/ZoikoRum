@@ -1,15 +1,19 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { CONTRACT_STATUS, contractApi, MILESTONE_STATUS, type ChangeOrder, type Contract, type ContractMilestone, type FileRef } from '../api/contracts'
+import { CONTRACT_STATUS, contractApi, MILESTONE_STATUS, deliveredFileUrl, type ChangeOrder, type Contract, type ContractMilestone } from '../api/contracts'
+import { disputeApi, OPEN_PHASES, type Dispute } from '../api/disputes'
 import { escrowApi, type Escrow } from '../api/escrow'
+import { disputableMilestones, RaiseDisputeDialog } from './Disputes'
 import { FundDialog, PaymentsPanel } from '../components/EscrowPanels'
 import { formatMoney } from '../api/orgs'
 import { LABEL } from '../api/professional'
-import { sha256OfFile } from '../api/verification'
+import { DOC_ACCEPT, toUpload, type Upload } from '../api/files'
+import { FileLinks } from '../components/FileLink'
 import { useAuth } from '../auth/AuthContext'
 import { Icon } from '../components/dashboard'
 import { EmptyTable, PortalHeader, SidePanel, StatCard, Tabs } from '../components/portal'
 import { ErrorAlert, useStepUp } from '../components/ui'
+import { downloadFile } from '../lib/exports'
 
 /* Engagements (Step 7) for both sides: the contract generated from an accepted proposal, signatures (buyer first,
    professional countersigns, each with a fresh two-step confirmation), and milestones (funded -> delivered -> reviewed). */
@@ -92,13 +96,18 @@ export function EngagementDetail({ side }: { side: Side }) {
 
   const [escrow, setEscrow] = useState<Escrow | null>(null)
   const [fundFor, setFundFor] = useState<string[] | null>(null)
+  const [disputes, setDisputes] = useState<Dispute[]>([])
+  const [raising, setRaising] = useState(false)
   const load = useCallback(async () => {
     try {
       const k = await contractApi.get(id)
       setC(k)
-      if (k.status !== 'PENDING_SIGNATURE') setEscrow(await escrowApi.byContract(id).catch(() => null))
+      if (k.status !== 'PENDING_SIGNATURE') {
+        setEscrow(await escrowApi.byContract(id).catch(() => null))
+        setDisputes(await disputeApi.list(side, id).catch(() => []))
+      }
     } catch (err) { setError(err) }
-  }, [id])
+  }, [id, side])
   useEffect(() => { load() }, [load])
   // Payments are processed in the background (provider capture, then escrow hold): refresh a few times after funding.
   const refreshSoon = () => { for (const ms of [1200, 3000, 6000]) setTimeout(() => { load() }, ms) }
@@ -116,11 +125,19 @@ export function EngagementDetail({ side }: { side: Side }) {
   return (
     <>
       {modal}
+      {raising && <RaiseDisputeDialog contract={c} onClose={() => setRaising(false)} />}
       <PortalHeader eyebrow={<Link to={base(side)}>← Engagements</Link>} title={c.title}
         subtitle={<><span className={`badge ${st.tone}`}>{st.label}</span> · {c.reference} · {formatMoney(c.total)} · version {c.contractVersion}</>}
-        actions={<Link className="btn btn-secondary" to={`/app/messages?contextType=CONTRACT&contextId=${c.id}`}><Icon name="message" /> Messages</Link>} />
+        actions={<><Link className="btn btn-secondary" to={`/app/messages?contextType=CONTRACT&contextId=${c.id}`}><Icon name="message" /> Messages</Link>
+          {(c.status === 'ACTIVE' || c.status === 'DISPUTED') && disputableMilestones(c).length > 0 &&
+            <button className="btn btn-ghost" onClick={() => setRaising(true)}><Icon name="help" /> Raise a dispute</button>}</>} />
       {notice && <div className="alert alert-success" role="status">{notice}</div>}
       <ErrorAlert error={error} />
+      {disputes.filter((x) => OPEN_PHASES.includes(x.status)).map((x) => (
+        <div key={x.id} className="attention-banner neutral"><span className="kpi-icon amber"><Icon name="lock" /></span>
+          <div><strong>Dispute {x.reference} is open: {formatMoney(x.disputed)} frozen</strong>
+            <div className="small">{x.nextStep}</div></div>
+          <Link className="btn btn-secondary" to={`/app/disputes/${x.id}`}>Open dispute</Link></div>))}
 
       <div className={`attention-banner ${c.status === 'ACTIVE' || c.status === 'COMPLETED' ? 'ok' : ''}`}>
         <span className={`kpi-icon ${c.canSign ? 'amber' : 'green'}`}><Icon name={c.canSign ? 'contract' : 'check'} /></span>
@@ -265,7 +282,14 @@ export function EngagementDetail({ side }: { side: Side }) {
               <span className="muted small">{new Date(s.submittedAt).toLocaleString()}</span></li>))}
             {c.milestones.filter((m) => m.acceptedAt).map((m) => <li key={m.id + 'a'}><span className="dot" /><span>M{m.sequence} accepted</span><span className="muted small">{new Date(m.acceptedAt!).toLocaleString()}</span></li>)}
           </ul>
-          <p className="muted small">Every step is also recorded in the tamper-evident audit log.</p></section>
+          <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+            <p className="muted small" style={{ margin: 0 }}>Every step is also recorded in the tamper-evident audit log.</p>
+            <button className="btn btn-secondary btn-sm" onClick={async () => {
+              const ledger = escrow ? await escrowApi.ledger(escrow.id).catch(() => []) : []
+              downloadFile(`${c.reference || 'engagement'}-record.json`, JSON.stringify({
+                exportedAt: new Date().toISOString(), contract: c, escrow, ledger, disputes }, null, 2), 'application/json')
+            }}><Icon name="download" /> Export engagement record</button>
+          </div></section>
       )}
     </>
   )
@@ -461,10 +485,11 @@ function ChangeOrdersPanel({ c, side, busy, onPropose, onApprove, onReject }: {
 
 function MilestoneCard({ m, c, side, busy, canFund, funding, onFund, onSubmit, onAccept, onRevise }: {
   m: ContractMilestone; c: Contract; side: Side; busy: boolean; canFund: boolean; funding: boolean; onFund: () => void
-  onSubmit: (note: string, files: FileRef[]) => void; onAccept: () => void; onRevise: (reason: string) => void
+  onSubmit: (note: string, files: Upload[]) => void; onAccept: () => void; onRevise: (reason: string) => void
 }) {
   const [note, setNote] = useState('')
-  const [files, setFiles] = useState<FileRef[]>([])
+  const [files, setFiles] = useState<Upload[]>([])
+  const [fileError, setFileError] = useState('')
   const [reason, setReason] = useState('')
   const [revising, setRevising] = useState(false)
   const st = MILESTONE_STATUS[m.status]
@@ -480,6 +505,9 @@ function MilestoneCard({ m, c, side, busy, canFund, funding, onFund, onSubmit, o
       </div>
       <p className="muted small" style={{ margin: 0 }}>Delivers: {delivers.join(', ') || '—'} · Due {fmtDate(m.dueDate)}
         {m.acceptanceDueAt && m.status === 'SUBMITTED' && ` · Review by ${fmtDate(m.acceptanceDueAt)}`}</p>
+      {m.reviewOverdue && <div className="alert alert-warn" style={{ marginTop: 10 }}>{side === 'buyer'
+        ? 'The review window has passed. Please accept the work or request a revision. The payment stays in escrow until you decide.'
+        : 'The buyer has not reviewed this yet and the review window has passed. They have been reminded; your payment stays protected in escrow.'}</div>}
       {m.status === 'PENDING_FUNDING' && <div className="row card-actions" style={{ justifyContent: 'space-between' }}>
         <span className="small">{funding ? 'Payment processing…' : side === 'buyer' ? 'Fund this milestone to let work start. The money is held in escrow until you accept the work.'
           : 'Waiting for the buyer to fund this milestone. Do not start work before it is funded.'}</span>
@@ -490,16 +518,20 @@ function MilestoneCard({ m, c, side, busy, canFund, funding, onFund, onSubmit, o
 
       {m.submissions.length > 0 && <ul className="submission-list">{m.submissions.map((s) => (
         <li key={s.id}><span className="muted small">{new Date(s.submittedAt).toLocaleString()}</span><span>{s.note || <em className="muted">No note</em>}</span>
-          {s.files.length > 0 && <span className="small">{s.files.map((f) => f.name).join(', ')}</span>}</li>))}</ul>}
+          {s.files.length > 0 && <FileLinks files={s.files} url={(f) => deliveredFileUrl(c.id, f.sha256)} />}</li>))}</ul>}
 
       {canDeliver && <div className="revise-box">
         <label className="filter-box grow"><span>What did you deliver?</span>
           <textarea rows={3} maxLength={2000} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Summary of the work and where to find it" /></label>
         <div style={{ marginTop: 8 }}>{files.map((f) => <div key={f.sha256} className="file-row"><Icon name="request" /><span>{f.name}</span></div>)}
-          {files.length < 10 && <input type="file" multiple onChange={async (e) => {
+          {files.length < 10 && <input type="file" multiple accept={DOC_ACCEPT} onChange={async (e) => {
             const picked = Array.from(e.target.files ?? []).slice(0, 10 - files.length)
-            setFiles([...files, ...await Promise.all(picked.map(async (f) => ({ name: f.name, size: f.size, sha256: await sha256OfFile(f) })))])
-          }} />}</div>
+            e.target.value = ''
+            setFileError('')
+            try { setFiles([...files, ...await Promise.all(picked.map((f) => toUpload(f)))]) } catch (err) { setFileError(err instanceof Error ? err.message : 'That file could not be read') }
+          }} />}
+          <p className="muted small" style={{ margin: '4px 0 0' }}>PDF, Word, Excel, CSV, JPG or PNG · up to 10 MB each, 25 MB together. The buyer can open them; every opening is logged.</p>
+          {fileError && <p className="small" style={{ color: 'var(--zk-danger)', margin: '4px 0 0' }}>{fileError}</p>}</div>
         <button className="btn btn-primary" style={{ marginTop: 10 }} disabled={busy || (!note.trim() && files.length === 0)}
           onClick={() => { onSubmit(note.trim(), files); setNote(''); setFiles([]) }}>{m.status === 'REVISION_REQUESTED' ? 'Resubmit for review' : 'Submit for review'}</button>
       </div>}

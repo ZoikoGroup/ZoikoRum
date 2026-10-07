@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Literal
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, Response, status
 from pydantic import BaseModel
 
 from zoikorum.domains.proposal import service
@@ -14,6 +14,7 @@ from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
 from zoikorum.shared.http import Page
 from zoikorum.shared.idempotency import IdempotencyKey
+from zoikorum.shared.uploads import file_response
 
 router = APIRouter(tags=["proposals"])
 R = "/v1/proposal-requests"
@@ -47,6 +48,12 @@ async def summary(actor: CurrentActor, session: DbSession, role: Role = "buyer")
 @router.get(f"{R}/{{request_id}}", response_model=RequestOut)
 async def get_request(request_id: uuid.UUID, actor: CurrentActor, session: DbSession):
     return await service.get_request(session, actor, request_id)
+
+
+@router.get(f"{R}/{{request_id}}/attachments/{{sha256}}")
+async def attachment(request_id: uuid.UUID, sha256: str, actor: CurrentActor, session: DbSession) -> Response:
+    """Opens a request attachment (buyer's organisation, or the professional after any NDA). Audited."""
+    return file_response(*await service.attachment_file(session, actor, request_id, sha256))
 
 
 @router.post(f"{R}/{{request_id}}/send", response_model=list[RequestOut])

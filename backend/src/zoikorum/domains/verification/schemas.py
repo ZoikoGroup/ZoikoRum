@@ -20,10 +20,17 @@ class CaseIn(BaseModel):
     details: dict = Field(default_factory=dict)
 
 
+EvidenceContentType = Literal["application/pdf", "image/jpeg", "image/png"]
+
+
 class EvidenceFile(BaseModel):
+    """The document itself (base64) plus the fingerprint the browser computed; the server checks both."""
+
     name: str = Field(min_length=1, max_length=255)
     sha256: str = Field(pattern="^[a-f0-9]{64}$")
-    size: int = Field(gt=0, le=25 * 1024 * 1024)
+    size: int = Field(gt=0, le=10 * 1024 * 1024)
+    contentType: EvidenceContentType
+    dataBase64: str = Field(min_length=4, max_length=14 * 1024 * 1024)
 
 
 class EvidenceIn(BaseModel):
@@ -50,6 +57,8 @@ class EvidenceOut(BaseModel):
     fileName: str
     sha256: str
     sizeBytes: int
+    contentType: str | None
+    hasFile: bool
     uploadedAt: datetime
 
 

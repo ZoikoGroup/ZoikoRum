@@ -40,6 +40,7 @@ class ContractSummary:
     contract_version: int
     policy_version_id: uuid.UUID | None
     milestones: tuple[MilestoneSummary, ...]
+    reference: str = ""  # human reference, e.g. ZK-ENG-1A2B3C4D
 
 
 def _milestone(m: Milestone) -> MilestoneSummary:
@@ -51,7 +52,8 @@ async def _summary(session: AsyncSession, c: Contract | None) -> ContractSummary
         return None
     ms = (await session.scalars(select(Milestone).where(Milestone.contract_id == c.id).order_by(Milestone.sequence))).all()
     return ContractSummary(c.id, c.proposal_id, c.request_id, c.organization_id, c.buyer_identity_id, c.professional_id, c.status,
-                           c.currency, c.total_minor, c.terms_hash, c.contract_version, None, tuple(_milestone(m) for m in ms))
+                           c.currency, c.total_minor, c.terms_hash, c.contract_version, None, tuple(_milestone(m) for m in ms),
+                           c.reference)
 
 
 async def get_contract(session: AsyncSession, contract_id: uuid.UUID) -> ContractSummary | None:
@@ -69,3 +71,15 @@ async def get_contract_by_proposal(session: AsyncSession, proposal_id: uuid.UUID
 async def get_milestone(session: AsyncSession, milestone_id: uuid.UUID) -> MilestoneSummary | None:
     m = await session.get(Milestone, milestone_id)
     return _milestone(m) if m else None
+
+
+async def delivery_stats(session: AsyncSession, professional_id: uuid.UUID) -> dict[str, int]:
+    """Platform history for a professional's public profile: completed engagements and on-time milestone delivery."""
+    from sqlalchemy import func
+
+    completed = await session.scalar(select(func.count()).select_from(Contract).where(
+        Contract.professional_id == professional_id, Contract.status == "COMPLETED")) or 0
+    rows = (await session.execute(select(Milestone.submitted_at, Milestone.due_date).join(Contract, Contract.id == Milestone.contract_id).where(
+        Contract.professional_id == professional_id, Milestone.status == "ACCEPTED", Milestone.due_date.is_not(None)))).all()
+    on_time = sum(1 for submitted, due in rows if submitted is not None and submitted.date() <= due)
+    return {"completed": int(completed), "milestonesWithDueDate": len(rows), "onTime": on_time}

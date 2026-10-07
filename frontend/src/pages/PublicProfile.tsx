@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { formatMoney } from '../api/orgs'
+import { formatMoney, orgApi } from '../api/orgs'
 import { LABEL, RATE_UNIT_LABEL, proApi, type PublicProfile } from '../api/professional'
 import { DIMENSION_VALUE, DIMENSIONS } from '../api/verification'
 import { useAuth } from '../auth/AuthContext'
@@ -21,6 +21,10 @@ export default function PublicProfilePage() {
   useEffect(() => { proApi.publicProfile(id).then(setP).catch(setError) }, [id])
   const savedIds = useSavedIds()
   const { user } = useAuth()
+  // Buyer location vs eligibility (Profile doc s.15, Onboarding s.13): surfaced on the profile, before any request.
+  const [buyerCountry, setBuyerCountry] = useState<string | null>(null)
+  useEffect(() => { if (savedIds.canSave) orgApi.mine().then((o) => setBuyerCountry(o[0]?.country ?? null)).catch(() => {}) }, [savedIds.canSave])
+  const outOfArea = !!(p && buyerCountry && p.servedJurisdictions.length > 0 && !p.servedJurisdictions.includes(buyerCountry))
 
   const keyCredentials = p?.credentials.filter((c) => c.status === 'VERIFIED').slice(0, 2) ?? []
   return (
@@ -42,6 +46,7 @@ export default function PublicProfilePage() {
                 <Link to="/app/professional/profile">Edit profile</Link>
               </div>
             )}
+            {outOfArea && <div className="alert alert-warn" role="status">{p.displayName} does not list {countryName(buyerCountry ?? "")} among the places they serve. You can still ask, but an engagement cannot be agreed. <Link to={`/app/find?jurisdiction=${buyerCountry}`}>Show professionals who serve {countryName(buyerCountry ?? "")}</Link></div>}
             <section className="card panel profile-head">
               <div>
                 <div className="name-row"><Avatar name={p.displayName} photoUrl={p.photoUrl} size={72} /><h1>{p.displayName}</h1></div>
@@ -119,10 +124,20 @@ export default function PublicProfilePage() {
                       const v = DIMENSION_VALUE[p.trust.dimensions[d.key]] ?? { label: 'Not verified', good: false }
                       return <li key={d.key}><span>{d.label}</span><span className={`badge ${v.good ? 'green' : ''}`}>{v.label}</span></li>
                     })}
-                    <li><span>Engagement integrity</span><span className="muted small">No engagements yet</span></li>
                   </ul>
                   <p className="muted small" style={{ margin: '8px 0 0' }}>Checks are made by a verification provider or a compliance reviewer — never by AI.</p>
                 </section>
+                {p.history && <section className="card panel"><h2>Engagement history</h2>
+                  {p.history.newToPlatform && <p style={{ margin: '0 0 8px' }}><span className="badge">New to Zoikorum</span>
+                    <span className="muted small"> · limited platform history</span></p>}
+                  <ul className="checklist">
+                    <li><span>Completed engagements</span><strong>{p.history.completedEngagements}</strong></li>
+                    <li><span>On-time milestone delivery</span><strong>{p.history.onTimeRate === null ? '—' : `${p.history.onTimeRate}%`}</strong></li>
+                    <li><span>Typical response to requests</span><strong>{p.history.medianResponseHours === null ? '—'
+                      : p.history.medianResponseHours < 1 ? 'Under 1 hour' : `About ${Math.round(p.history.medianResponseHours)} h`}</strong></li>
+                  </ul>
+                  <p className="muted small" style={{ margin: '8px 0 0' }}>Measured on Zoikorum only. Reviews appear once verified engagements are rated.</p>
+                </section>}
                 <section className="card panel"><h2>How they work</h2>
                   <ul className="checklist">
                     <li><span>Engagements</span><span>{p.engagementTypes.map((t) => LABEL[t]).join(', ') || '—'}</span></li>
@@ -151,6 +166,15 @@ export default function PublicProfilePage() {
                 </section>
               </aside>
             </div>
+            {!p.isOwnProfile && <section className="card panel conversion-zone">
+              <div><h2 style={{ margin: 0 }}>Ready to engage {p.displayName}?</h2>
+                <p className="muted small" style={{ margin: '4px 0 0' }}>Send a structured request. No payment until you accept a proposal and sign the contract.</p></div>
+              <div className="row">
+                {savedIds.canSave ? <Link className="btn btn-primary" to={`/app/requests/new?pro=${p.id}`}>Request proposal</Link>
+                  : !user && <Link className="btn btn-primary" to="/login">Sign in to request a proposal</Link>}
+                {savedIds.canSave && savedIds.ids && <SaveButton id={p.id} saved={savedIds.ids.has(p.id)} onToggle={(pid) => { savedIds.toggle(pid).catch(setError) }} />}
+              </div>
+            </section>}
             <p className="muted small disclosure">
               {p.displayName} is an independent professional. Zoikorum provides marketplace infrastructure, verification,
               contracting facilitation and payment protection; it does not employ professionals or provide regulated professional services.

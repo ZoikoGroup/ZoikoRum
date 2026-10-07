@@ -64,6 +64,12 @@ async def get_allocation_states_for_amendment(
         .with_for_update()
     )).all()
     return {allocation.milestone_id: allocation.state for allocation in allocations}
+async def ledger_movements(session: AsyncSession, since: datetime, until: datetime) -> dict[tuple[str, str], tuple[int, int]]:
+    """Daily reconciliation input: (ledger account, currency) -> (debits, credits) posted in [since, until).
+    Accounts: BUYER_CLEARING, ESCROW_HELD, PRO_PAYABLE, PLATFORM_REVENUE, BUYER_REFUND_PAYABLE, CHARGEBACK_REVERSAL, ..."""
+    from zoikorum.domains.escrow.service import movements
+
+    return await movements(session, since, until)
 
 
 async def ledger_totals(session: AsyncSession, since: datetime, until: datetime) -> dict[str, int]:

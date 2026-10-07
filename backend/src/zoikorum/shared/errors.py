@@ -83,3 +83,7 @@ class IdempotencyKeyReused(DomainError):
 
 class RateLimited(DomainError):
     status, code, title = 429, "RATE_LIMITED", "Too many requests"
+
+
+class ServiceUnavailable(DomainError):
+    status, code, title = 503, "SERVICE_UNAVAILABLE", "A partner service is temporarily unavailable"

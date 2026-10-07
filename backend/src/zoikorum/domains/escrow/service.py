@@ -29,8 +29,8 @@ from zoikorum.shared.state_machine import StateMachine
 ALLOCATION_STATES = StateMachine("Allocation", {
     "UNFUNDED": {"FUNDING"},
     "FUNDING": {"HELD", "UNFUNDED"},
-    "HELD": {"RELEASED", "ON_HOLD", "RELEASE_PENDING_APPROVAL", "REFUNDED"},
-    "ON_HOLD": {"HELD", "RELEASED", "PARTIALLY_RELEASED", "REFUNDED"},
+    "HELD": {"RELEASED", "ON_HOLD", "RELEASE_PENDING_APPROVAL", "REFUNDED", "UNFUNDED"},  # UNFUNDED: chargeback
+    "ON_HOLD": {"HELD", "RELEASED", "PARTIALLY_RELEASED", "REFUNDED", "UNFUNDED"},
     "RELEASE_PENDING_APPROVAL": {"RELEASED", "HELD"},
     "PARTIALLY_RELEASED": set(),
     "RELEASED": set(),
@@ -87,8 +87,13 @@ async def _viewer(session: AsyncSession, actor: Actor, a: EscrowAccount) -> str:
 
 
 def _status(a: EscrowAccount, allocs: list[Allocation]) -> str:
+    if any(x.state == "ON_HOLD" for x in allocs):
+        return "DISPUTED"
     if allocs and all(x.state == "RELEASED" for x in allocs):
         return "FULLY_RELEASED"
+    settled = ("RELEASED", "PARTIALLY_RELEASED", "REFUNDED", "UNFUNDED")  # UNFUNDED also covers chargebacks
+    if allocs and a.refunded_minor > 0 and all(x.state in settled for x in allocs):
+        return "REFUNDED" if a.released_minor == 0 else "CLOSED"
     if a.released_minor > 0:
         return "PARTIALLY_RELEASED"
     if a.funded_minor > 0:
@@ -312,6 +317,171 @@ async def milestone_accepted(session: AsyncSession, payload: dict) -> None:
     evaluated("RELEASE", "ACCEPTED")
     _evt(session, E.ESCROW_RELEASED, a, milestoneId=milestone_id, professionalId=a.professional_id, grossMinor=gross, feeMinor=fee,
          netMinor=net, currency=a.currency, releaseId=r.id)
+
+
+# ---- Chargebacks (Payments & Escrow s.18) ----------------------------------------------------------------
+
+async def payment_charged_back(session: AsyncSession, payload: dict) -> None:
+    """Consumer of PAYMENT_CHARGED_BACK. The card issuer took money back, so it can no longer be in escrow:
+    - money still held for unreleased milestones leaves escrow and those milestones need funding again
+      ("no work without funding"), even if a dispute had frozen them;
+    - any part already released to the professional becomes a platform loss for Financial Ops to recover.
+    Both are balanced ledger groups. Idempotent per payment intent."""
+    intent_id = uuid.UUID(str(payload["paymentIntentId"]))
+    if await session.scalar(select(LedgerEntry.id).where(LedgerEntry.reference_type == "CHARGEBACK", LedgerEntry.reference_id == intent_id)):
+        return
+    f = await session.get(Funding, uuid.UUID(str(payload["fundingId"])), with_for_update=True)
+    if f is None:
+        return
+    a = await _account(session, f.account_id, lock=True)
+    remaining = min(int(payload["amountMinor"]), f.amount_minor)
+    lines: list[tuple[str, str, int, int, str]] = []
+    reversed_ids = []
+    for x in await _allocations(session, a.id, lock=True):
+        if remaining <= 0 or x.funding_id != f.id or x.state not in ("HELD", "ON_HOLD"):
+            continue
+        take = min(x.amount_minor, remaining)
+        lines += [("CHARGEBACK", "ESCROW_HELD", take, 0, f"M{x.sequence}: reversed by the card issuer"),
+                  ("CHARGEBACK", "CHARGEBACK_REVERSAL", 0, take, f"M{x.sequence}: returned to the buyer's card")]
+        if x.state == "ON_HOLD":
+            a.on_hold_minor -= x.amount_minor
+        ALLOCATION_STATES.assert_can(x.state, "UNFUNDED")
+        x.state, x.funding_id, x.funded_at = "UNFUNDED", None, None
+        a.held_minor -= x.amount_minor
+        a.funded_minor -= x.amount_minor
+        remaining -= take
+        reversed_ids.append(x.milestone_id)
+    loss = remaining  # whatever was already released: the platform owes it back to the provider
+    if loss:
+        lines += [("CHARGEBACK", "PLATFORM_CHARGEBACK_LOSS", loss, 0, "Chargeback on money already released"),
+                  ("CHARGEBACK", "CHARGEBACK_REVERSAL", 0, loss, "Returned to the buyer's card")]
+    if not lines:
+        return
+    _post(session, a, "CHARGEBACK", intent_id, lines)
+    f.status = "REVERSED"
+    a.status = _status(a, await _allocations(session, a.id))
+    _evt(session, E.ESCROW_FUNDING_REVERSED, a, fundingId=f.id, milestoneIds=reversed_ids, amountMinor=int(payload["amountMinor"]),
+         lossMinor=loss, currency=a.currency, reason=payload.get("reason") or "")
+
+
+# ---- Disputes and termination -------------------------------------------------------------------------
+
+async def _account_for_contract(session: AsyncSession, contract_id) -> EscrowAccount | None:
+    return await session.scalar(select(EscrowAccount).where(EscrowAccount.contract_id == uuid.UUID(str(contract_id))).with_for_update())
+
+
+async def dispute_initiated(session: AsyncSession, payload: dict) -> None:
+    """Consumer of DISPUTE_INITIATED: freeze the disputed milestones' funds. While held, no release path may run."""
+    a = await _account_for_contract(session, payload["contractId"])
+    if a is None:
+        return
+    ids = {uuid.UUID(str(i)) for i in payload.get("milestoneIds", [])}
+    frozen = []
+    for x in await _allocations(session, a.id, lock=True):
+        if x.milestone_id in ids and x.state == "HELD":
+            ALLOCATION_STATES.assert_can(x.state, "ON_HOLD")
+            x.state = "ON_HOLD"
+            frozen.append(x)
+    if not frozen:
+        return
+    a.on_hold_minor += sum(x.amount_minor for x in frozen)
+    a.status = _status(a, await _allocations(session, a.id))
+    _evt(session, E.ESCROW_HOLD_APPLIED, a, disputeId=payload["disputeId"], milestoneIds=[x.milestone_id for x in frozen],
+         amountMinor=sum(x.amount_minor for x in frozen))
+
+
+def _decision_lines(x: Allocation, gross: int, fee: int, refund: int, bps: int) -> list[tuple[str, str, int, int, str]]:
+    lines: list[tuple[str, str, int, int, str]] = []
+    if gross:
+        lines += [("ESCROW_RELEASE", "ESCROW_HELD", gross, 0, f"M{x.sequence}: released by dispute decision"),
+                  ("ESCROW_RELEASE", "PRO_PAYABLE", 0, gross - fee, f"M{x.sequence}: payable to professional")]
+        if fee:
+            lines.append(("PLATFORM_FEE", "PLATFORM_REVENUE", 0, fee, f"M{x.sequence}: platform fee {bps / 100:.2f}%"))
+    if refund:
+        lines += [("REFUND", "ESCROW_HELD", refund, 0, f"M{x.sequence}: refunded by dispute decision"),
+                  ("REFUND", "BUYER_REFUND_PAYABLE", 0, refund, f"M{x.sequence}: refund payable to buyer")]
+    return lines
+
+
+async def dispute_resolved(session: AsyncSession, payload: dict) -> None:
+    """Consumer of DISPUTE_RESOLVED: execute the decision exactly (release part, refund part, or back to held)."""
+    a = await _account_for_contract(session, payload["contractId"])
+    if a is None:
+        return
+    allocs = {x.milestone_id: x for x in await _allocations(session, a.id, lock=True)}
+    bps = get_settings().platform_fee_bps
+    released = refunded = 0
+    now = clock.now()
+    for item in payload.get("allocations", []):
+        x = allocs.get(uuid.UUID(str(item["milestoneId"])))
+        if x is None or x.state != "ON_HOLD":
+            continue  # already executed (idempotent) or never funded
+        gross, refund = int(item["releaseMinor"]), int(item["refundMinor"])
+        if gross + refund > x.amount_minor:
+            raise ValueError(f"Decision moves more than is held for milestone {x.milestone_id}")
+        a.on_hold_minor -= x.amount_minor
+        if gross == 0 and refund == 0:  # rework / extension: unfreeze, the money stays held
+            ALLOCATION_STATES.assert_can(x.state, "HELD")
+            x.state = "HELD"
+            _evt(session, E.ESCROW_HOLD_RELEASED, a, disputeId=payload["disputeId"], milestoneIds=[x.milestone_id], amountMinor=x.amount_minor)
+            continue
+        fee = Money(gross, a.currency).percentage_bps(bps).minor if gross else 0
+        ref = uuid.uuid4()
+        if gross:
+            r = Release(account_id=a.id, milestone_id=x.milestone_id, gross_minor=gross, fee_minor=fee, net_minor=gross - fee,
+                        currency=a.currency, fee_bps=bps)
+            session.add(r)
+            await session.flush()
+            ref = r.id
+        _post(session, a, "DISPUTE_DECISION", ref, _decision_lines(x, gross, fee, refund, bps), x.milestone_id)
+        new_state = "RELEASED" if not refund else ("REFUNDED" if not gross else "PARTIALLY_RELEASED")
+        ALLOCATION_STATES.assert_can(x.state, new_state)
+        x.state, x.released_minor, x.fee_minor, x.refunded_minor, x.released_at = new_state, gross - fee, fee, refund, now
+        a.held_minor -= gross + refund
+        a.released_minor += gross - fee
+        a.fees_minor += fee
+        a.refunded_minor += refund
+        released, refunded = released + gross, refunded + refund
+        if gross:
+            _evt(session, E.ESCROW_RELEASED, a, milestoneId=x.milestone_id, disputeId=payload["disputeId"], professionalId=a.professional_id,
+                 grossMinor=gross, feeMinor=fee, netMinor=gross - fee, currency=a.currency, releaseId=ref)
+        if refund:
+            _evt(session, E.ESCROW_REFUNDED, a, milestoneId=x.milestone_id, disputeId=payload["disputeId"], amountMinor=refund,
+                 currency=a.currency, refundId=uuid.uuid4(), fundingIds=[x.funding_id] if x.funding_id else [])
+    a.status = _status(a, list(allocs.values()))
+    _evt(session, E.ESCROW_RESOLUTION_EXECUTED, a, disputeId=payload["disputeId"], releasedMinor=released, refundedMinor=refunded,
+         currency=a.currency)
+
+
+async def contract_terminated(session: AsyncSession, payload: dict) -> None:
+    """Consumer of CONTRACT_TERMINATED: refund every funded, unreleased milestone that a dispute is not freezing."""
+    a = await _account_for_contract(session, payload["contractId"])
+    if a is None:
+        return
+    allocs = await _allocations(session, a.id, lock=True)
+    for x in allocs:
+        if x.state != "HELD":
+            continue
+        refund_id = uuid.uuid4()
+        _post(session, a, "REFUND", refund_id, [
+            ("REFUND", "ESCROW_HELD", x.amount_minor, 0, f"M{x.sequence}: refunded on termination"),
+            ("REFUND", "BUYER_REFUND_PAYABLE", 0, x.amount_minor, f"M{x.sequence}: refund payable to buyer")], x.milestone_id)
+        ALLOCATION_STATES.assert_can(x.state, "REFUNDED")
+        x.state, x.refunded_minor = "REFUNDED", x.amount_minor
+        a.held_minor -= x.amount_minor
+        a.refunded_minor += x.amount_minor
+        _evt(session, E.ESCROW_REFUNDED, a, milestoneId=x.milestone_id, disputeId=payload.get("disputeId"), amountMinor=x.amount_minor,
+             currency=a.currency, refundId=refund_id, fundingIds=[x.funding_id] if x.funding_id else [])
+    a.status = _status(a, allocs)
+
+
+async def movements(session: AsyncSession, since, until) -> dict[tuple[str, str], tuple[int, int]]:
+    """(ledger account, currency) -> (debits, credits) for ledger groups written in [since, until)."""
+    rows = (await session.execute(
+        select(LedgerEntry.ledger_account, LedgerEntry.currency, func.sum(LedgerEntry.debit_minor), func.sum(LedgerEntry.credit_minor))
+        .where(LedgerEntry.created_at >= since, LedgerEntry.created_at < until)
+        .group_by(LedgerEntry.ledger_account, LedgerEntry.currency))).all()
+    return {(acct, ccy): (int(d or 0), int(c or 0)) for acct, ccy, d, c in rows}
 
 
 async def totals(session: AsyncSession, since, until) -> dict[str, int]:

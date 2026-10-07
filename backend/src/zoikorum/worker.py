@@ -23,6 +23,9 @@ async def _bootstrap_timers() -> None:
     async with sf() as s, s.begin():
         first = clock.now() + timedelta(hours=1)
         await schedule_timer(s, "audit.chain_validation", first.strftime("%Y%m%d%H"), first)
+        from zoikorum.domains.payments import reconciliation  # daily at 01:00 UTC, re-arms itself
+
+        await reconciliation.bootstrap(s)
 
 
 async def run(poll_seconds: float = 0.5) -> None:
