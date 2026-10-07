@@ -10,7 +10,8 @@ escrow-protected payments and an audit-grade record of every action.
 | `docker-compose.yml` | Local Postgres 16 (port 5434) and Redis 7 (port 6380) | |
 | [`docs/product/`](docs/product/README.md) | The 18 product documents (originals + readable text) | |
 | `start-dev.ps1` | Starts the whole dev stack on Windows | |
-| `.github/workflows/ci.yml` | CI: backend migrations + tests, frontend lint + build | |
+| `run-tests.ps1` | Runs every test suite (or one kind: `-Kind unit`, `integration`, `regression`) | |
+| `.github/workflows/ci.yml` | CI: migrations, backend unit / integration / regression tests, frontend lint, unit tests, build | |
 
 ## Quick start (Windows)
 
@@ -30,10 +31,26 @@ Then open http://localhost:5173. Create the first Platform Admin with
 `python -m zoikorum.cli create-admin` (see the backend README). macOS/Linux: run the same steps with
 `.venv/bin/...` and start the servers as described in each folder's README.
 
+## Testing
+
+```powershell
+.un-tests.ps1                    # everything (needs the Docker database)
+.un-tests.ps1 -Kind unit         # fast: backend business rules + frontend helpers, no database
+.un-tests.ps1 -Kind regression   # end-to-end journeys across Steps 1-9
+```
+
+| Kind | What it checks | Where |
+|---|---|---|
+| Unit | Pure rules: fees and rounding, escrow status, ledger balance, state machines, business days, jurisdiction conflicts, upload checks; frontend helpers (uploads, CSV, password strength, money) | `backend/tests/test_unit_rules.py` and other plain tests (auto-marked); `frontend/src/**/*.test.ts` (Vitest) |
+| Integration | One feature through the API and a real Postgres database | the per-domain `backend/tests/test_*.py` files |
+| Regression | Whole journeys: find -> request -> proposal -> contract -> escrow -> delivery -> release -> payout; dispute with frozen money and settlement; access boundaries | `backend/tests/test_regression.py` |
+
+Run the regression suite before every merge; CI runs all three on every push.
+
 ## Build status
 
 Built in small, reviewed steps. See [ARCHITECTURE.md §6](backend/docs/ARCHITECTURE.md) for the current status:
-foundation, role-based login, organizations & firms, professional profiles, verification & trust tiers, and search & discovery are built; proposals come next.
+Steps 0-9 are built: foundation, role-based login, organizations & firms, professional profiles, verification & trust tiers, search & discovery, requests & proposals, contracts, escrow & payments, and disputes. Step 10 onward is next.
 
 ## Rules of the road
 

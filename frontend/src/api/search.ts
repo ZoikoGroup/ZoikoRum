@@ -28,7 +28,7 @@ export interface SearchResponse { total: number; items: SearchResult[]; facets: 
 
 export type SearchQuery = Partial<Record<
   'q' | 'category' | 'spec' | 'specMatch' | 'tier' | 'verified' | 'engagementType' | 'delivery' | 'availability' |
-  'pricingModel' | 'credential' | 'jurisdiction' | 'sort' | 'limit' | 'offset', string>>
+  'pricingModel' | 'credential' | 'jurisdiction' | 'experience' | 'publishedAfter' | 'sort' | 'limit' | 'offset', string>>
 
 export const searchApi = {
   professionals: (query: SearchQuery) => {

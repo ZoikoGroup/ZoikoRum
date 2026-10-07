@@ -142,6 +142,10 @@ def _conditions(p: SearchParams, tsquery) -> list:
         conds.append(Doc.availability == p.availability)
     if p.credential:
         conds.append(func.array_to_string(Doc.verified_credentials, " ").ilike(f"%{_escape_like(p.credential)}%", escape="\\"))
+    if p.experience:
+        conds.append(Doc.years_experience_band == p.experience)
+    if p.publishedAfter:
+        conds.append(Doc.published_at > p.publishedAfter)
     if p.jurisdiction:
         j = p.jurisdiction.upper()
         conds.append(or_(Doc.served_jurisdictions.contains([j]), Doc.licensed_jurisdictions.contains([j])))

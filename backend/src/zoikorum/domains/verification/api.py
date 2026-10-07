@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Literal
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, Response, status
 
 from zoikorum.domains.verification import service
 from zoikorum.domains.verification.schemas import CaseIn, CaseOut, DecisionIn, EvidenceIn, QueueItemOut, RevokeIn
@@ -27,6 +27,16 @@ async def get_case(case_id: uuid.UUID, actor: CurrentActor, session: DbSession):
 @router.post("/cases/{case_id}/evidence", response_model=CaseOut)
 async def add_evidence(case_id: uuid.UUID, body: EvidenceIn, actor: CurrentActor, session: DbSession):
     return await service.add_evidence(session, actor, case_id, body)
+
+
+@router.get("/evidence/{evidence_id}/file")
+async def evidence_file(evidence_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> Response:
+    """Opens an uploaded document (owner or reviewer). Audited; never cached; shown in a sandbox."""
+    data, content_type, name = await service.evidence_file(session, actor, evidence_id)
+    safe = "".join(ch for ch in name if ch.isalnum() or ch in "._- ")[:120] or "document"
+    return Response(data, media_type=content_type, headers={
+        "Content-Disposition": f'inline; filename="{safe}"', "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox"})
 
 
 @router.get("/subjects/{subject_type}/{subject_id}", response_model=list[CaseOut])

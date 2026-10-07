@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Header, Request
 
-from zoikorum.domains.payments import service
-from zoikorum.domains.payments.schemas import ChargeOut, EarningsOut, InvoiceOut, PayoutAccountIn, PayoutAccountOut
+from zoikorum.domains.payments import reconciliation, service, webhooks
+from zoikorum.domains.payments.schemas import (
+    ChargeOut, EarningsOut, InvoiceOut, PayoutAccountIn, PayoutAccountOut, ReconcileIn, ReconciliationOut, RefundOut,
+)
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
 
@@ -31,3 +33,27 @@ async def invoices(organizationId: uuid.UUID, actor: CurrentActor, session: DbSe
 @router.get("/v1/payments/charges", response_model=list[ChargeOut])
 async def charges(organizationId: uuid.UUID, actor: CurrentActor, session: DbSession):
     return await service.charges(session, actor, organizationId)
+
+
+@router.get("/v1/payments/refunds", response_model=list[RefundOut])
+async def refunds(organizationId: uuid.UUID, actor: CurrentActor, session: DbSession):
+    return await service.refunds(session, actor, organizationId)
+
+
+@router.post("/v1/payments/webhooks/{provider}")
+async def provider_webhook(provider: str, request: Request, session: DbSession,
+                           webhook_signature: str | None = Header(default=None)):
+    """Called by the payment provider, not by users. Signed (HMAC-SHA256, timestamped) and stored once per event id."""
+    return await webhooks.handle(session, provider, webhook_signature, await request.body())
+
+
+@router.get("/v1/payments/reconciliations", response_model=list[ReconciliationOut])
+async def reconciliations(actor: CurrentActor, session: DbSession):
+    """Financial Ops: daily reconciliation results, newest first."""
+    return await reconciliation.list_batches(session, actor)
+
+
+@router.post("/v1/payments/reconciliations", response_model=ReconciliationOut)
+async def run_reconciliation(body: ReconcileIn, actor: CurrentActor, session: DbSession):
+    """Financial Ops: (re-)run reconciliation for one day."""
+    return await reconciliation.run(session, actor, body.day)

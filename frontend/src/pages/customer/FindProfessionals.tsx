@@ -10,6 +10,7 @@ import { ErrorAlert } from '../../components/ui'
 import { COUNTRIES } from '../Join'
 import { countryName } from '../ProfessionalPages'
 import { useSavedIds } from '../SavedPage'
+import { savedApi } from '../../api/saved'
 
 const PAGE = 20
 const MAX_COMPARE = 3
@@ -33,6 +34,7 @@ export default function FindProfessionals() {
   const [q, setQ] = useState(params.get('q') ?? '')
   const [selected, setSelected] = useState<string[]>([])
   const [comparing, setComparing] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
   const saved = useSavedIds()
   const key = params.toString()
 
@@ -68,6 +70,15 @@ export default function FindProfessionals() {
   function submit(e: FormEvent) { e.preventDefault(); set('q', q.trim() || null) }
 
   const groups = taxonomy.flatMap((c) => c.groups)
+  // Active filter summary bar (Category doc s.4.5): every filter visible and removable on its own.
+  const specName = Object.fromEntries(groups.flatMap((g) => g.specializations.map((s) => [s.slug, s.name])))
+  const NAMES: Record<string, (v: string) => string> = {
+    q: (v) => `“${v}”`, spec: (v) => v.split(',').map((s) => specName[s] ?? s).join(', '), tier: (v) => `Tier ${v.replace(',', ' or ')}`,
+    verified: (v) => `Verified: ${v.replace(/,/g, ', ')}`, jurisdiction: (v) => `Serves ${countryName(v)}`, experience: (v) => `${v} years`,
+    engagementType: (v) => LABEL[v] ?? v, delivery: (v) => LABEL[v] ?? v, availability: (v) => LABEL[v] ?? v, pricingModel: (v) => LABEL[v] ?? v,
+    credential: (v) => `Credential: ${v}`,
+  }
+  const active: [string, string][] = [...params.entries()].filter(([k]) => k in NAMES).map(([k, v]) => [k, NAMES[k](v)])
   const names = Object.fromEntries(items.map((r) => [r.professionalId, { name: r.displayName, photoUrl: r.photoUrl }]))
   const select = (name: string, label: string, options: [string, string][], any = 'Any') => (
     <label className="filter-box">
@@ -102,6 +113,7 @@ export default function FindProfessionals() {
           {select('pricingModel', 'Engagement model', PRICING, 'Any model')}
           {select('availability', 'Availability', [['NOW', 'Available now'], ['TWO_WEEKS', 'Within 2 weeks'], ['ONE_MONTH', 'Within a month']], 'Any time')}
           {select('delivery', 'Delivery', [['REMOTE', 'Remote'], ['ONSITE', 'On-site'], ['HYBRID', 'Hybrid']], 'Any')}
+          {select('experience', 'Experience', [['0-2', '0–2 years'], ['3-5', '3–5 years'], ['6-10', '6–10 years'], ['11-15', '11–15 years'], ['16+', '16+ years']], 'Any')}
         </div>
       </section>
 
@@ -126,6 +138,15 @@ export default function FindProfessionals() {
         </aside>
 
         <section className="card panel results-panel">
+          {active.length > 0 && <div className="filter-pills" aria-label="Active filters">
+            {active.map(([k, label]) => <button key={k} className="pill" onClick={() => { if (k === 'q') setQ(''); set(k, null) }}>{label} ×</button>)}
+            <button className="link-btn small" style={{ flex: 'none' }} onClick={() => { setQ(''); setParams({}) }}>Clear all</button>
+            {saved.canSave && <button className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }} onClick={() => {
+              const name = prompt('Name this search', params.get('q') || active.map(([, l]) => l).slice(0, 2).join(', '))
+              if (name && name.trim()) savedApi.saveSearch(name.trim(), Object.fromEntries(params)).then(() => setNotice('Search saved. Find it on Saved Professionals, with new matches.')).catch(setError)
+            }}><Icon name="bookmark" /> Save this search</button>}
+          </div>}
+          {notice && <div className="alert alert-success" role="status">{notice}</div>}
           <div className="results-head">
             <h2 style={{ margin: 0 }}>{data ? `${data.total} professional${data.total === 1 ? '' : 's'} found` : 'Searching…'}</h2>
             <label className="small">Sort by{' '}
@@ -135,7 +156,10 @@ export default function FindProfessionals() {
             </label>
           </div>
           <ErrorAlert error={error} />
-          {data && data.total === 0 && <p className="muted">No published professionals match these filters yet. Try fewer filters or a broader search.</p>}
+          {data && data.total === 0 && <div className="empty-row" style={{ padding: 24 }}>
+            <strong>No professionals match these filters.</strong> Relax a filter (above), or start again.
+            <div className="row" style={{ justifyContent: 'center', marginTop: 10 }}>
+              <button className="btn btn-secondary btn-sm" onClick={() => { setQ(''); setParams({}) }}>Reset filters</button></div></div>}
           {items.map((r) => (
             <article key={r.professionalId} className="pro-row">
               <input type="checkbox" aria-label={`Select ${r.displayName} to compare`} checked={selected.includes(r.professionalId)}
@@ -160,6 +184,7 @@ export default function FindProfessionals() {
                 <div className="price">{r.startingPrice ? <>From <strong>{formatMoney(r.startingPrice)}</strong></> : r.pricingModels.includes('CUSTOM') ? 'Quote on request' : ''}</div>
                 <div className="row">
                   <Link className="btn btn-primary btn-sm" to={`/professionals/${r.professionalId}`}>View profile</Link>
+                  <Link className="btn btn-secondary btn-sm" to={`/app/requests/new?pro=${r.professionalId}`}>Request proposal</Link>
                   {saved.canSave && saved.ids && (
                     <button className="btn btn-secondary btn-sm" onClick={() => saved.toggle(r.professionalId).catch(setError)}>
                       <Icon name="bookmark" /> {saved.ids.has(r.professionalId) ? 'Saved' : 'Save'}</button>

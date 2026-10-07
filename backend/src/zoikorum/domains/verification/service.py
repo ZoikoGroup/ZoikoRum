@@ -6,6 +6,8 @@ Charter). Reviewers are COMPLIANCE_OFFICERs with a fresh MFA step-up, and never 
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import uuid
 from datetime import date, datetime, time, timedelta, timezone
 
@@ -21,10 +23,11 @@ from zoikorum.shared import clock
 from zoikorum.shared.auth import Actor, FirmRole, PlatformRole
 from zoikorum.shared.errors import Conflict, Forbidden, NotFound, ValidationFailed
 from zoikorum.shared.event_catalog import E
-from zoikorum.shared.events import record_event
+from zoikorum.shared.events import record_audit, record_event
 from zoikorum.shared.http import page_of, paginate
 from zoikorum.shared.relay import cancel_timer, schedule_timer
 from zoikorum.shared.state_machine import StateMachine
+from zoikorum.shared.storage import get_storage
 
 CASE_STATES = StateMachine("VerificationCase", {
     "PENDING": {"IN_REVIEW", "NEEDS_INFO", "VERIFIED", "FAILED"},
@@ -90,8 +93,8 @@ async def _case(session: AsyncSession, case_id: uuid.UUID, lock: bool = False) -
 
 async def _evidence(session: AsyncSession, case_id: uuid.UUID) -> list[EvidenceOut]:
     rows = (await session.scalars(select(EvidenceItem).where(EvidenceItem.case_id == case_id).order_by(EvidenceItem.created_at))).all()
-    return [EvidenceOut(id=e.id, evidenceType=e.evidence_type, fileName=e.file_name, sha256=e.sha256,
-                        sizeBytes=e.size_bytes, uploadedAt=e.created_at) for e in rows]
+    return [EvidenceOut(id=e.id, evidenceType=e.evidence_type, fileName=e.file_name, sha256=e.sha256, sizeBytes=e.size_bytes,
+                        contentType=e.content_type, hasFile=bool(e.storage_key), uploadedAt=e.created_at) for e in rows]
 
 
 async def _out(session: AsyncSession, case: VerificationCase, is_mine: bool) -> CaseOut:
@@ -192,15 +195,40 @@ async def open_restrictions_screening(session: AsyncSession, p: dict) -> None:
 
 # ---- Evidence --------------------------------------------------------------------
 
+# File signatures: the declared type must match the document's own bytes.
+_MAGIC = {"application/pdf": b"%PDF-", "image/jpeg": b"\xff\xd8\xff", "image/png": b"\x89PNG\r\n\x1a\n"}
+
+
+def _checked_file(f) -> bytes:
+    """Decodes an uploaded document and checks size, type and fingerprint before it is stored."""
+    try:
+        data = base64.b64decode(f.dataBase64, validate=True)
+    except ValueError as exc:
+        raise ValidationFailed(f"{f.name} could not be read. Please upload it again.", code="INVALID_FILE") from exc
+    if len(data) != f.size or len(data) > MAX_EVIDENCE_BYTES:
+        raise ValidationFailed(f"{f.name} must be a complete file under 10 MB", code="INVALID_FILE")
+    if not data.startswith(_MAGIC[f.contentType]):
+        raise ValidationFailed(f"{f.name} is not a PDF, JPG or PNG file", code="INVALID_FILE_TYPE")
+    if hashlib.sha256(data).hexdigest() != f.sha256:
+        raise ValidationFailed(f"{f.name} changed during upload. Please upload it again.", code="FINGERPRINT_MISMATCH")
+    return data
+
+
+MAX_EVIDENCE_BYTES = 10 * 1024 * 1024
+
+
 async def add_evidence(session: AsyncSession, actor: Actor, case_id: uuid.UUID, body: EvidenceIn) -> CaseOut:
     case = await _case(session, case_id, lock=True)
     if not await _is_owner(session, actor, case.subject_type, case.subject_id):
         raise NotFound("Verification case not found")
     if case.status not in OPEN_STATES:
         raise Conflict("Evidence can only be added while the check is open", code="CASE_CLOSED")
-    for f in body.items:
+    stored = [(f, _checked_file(f)) for f in body.items]  # validate every file before storing any
+    for f, data in stored:
+        key = f"verification/{case.id}/{f.sha256}"
+        get_storage().put(key, data)
         session.add(EvidenceItem(case_id=case.id, evidence_type=body.evidenceType, file_name=f.name, sha256=f.sha256,
-                                 size_bytes=f.size, uploaded_by=actor.identity_id))
+                                 size_bytes=len(data), storage_key=key, content_type=f.contentType, uploaded_by=actor.identity_id))
     if case.status in ("PENDING", "NEEDS_INFO"):
         CASE_STATES.assert_can(case.status, "IN_REVIEW")
         case.status = "IN_REVIEW"
@@ -313,6 +341,22 @@ async def expire(session: AsyncSession, payload: dict) -> None:
 
 
 # ---- Queries ---------------------------------------------------------------------
+
+async def evidence_file(session: AsyncSession, actor: Actor, evidence_id: uuid.UUID) -> tuple[bytes, str, str]:
+    """The document itself, for its owner and for reviewers. Every opening is recorded in the audit log."""
+    item = await session.get(EvidenceItem, evidence_id)
+    if item is None:
+        raise NotFound("Document not found")
+    case = await _case(session, item.case_id)
+    await _require_view(session, actor, case.subject_type, case.subject_id)
+    data = get_storage().get(item.storage_key) if item.storage_key else None
+    if data is None:
+        raise NotFound("This document was recorded before file uploads were stored. Ask for it to be uploaded again.",
+                       code="FILE_NOT_STORED")
+    record_audit(session, "verification.evidence.viewed", object_type="EvidenceItem", object_id=item.id,
+                 tenant_id=case.subject_id, evidence_hash=item.sha256, details={"caseId": str(case.id)})
+    return data, item.content_type or "application/octet-stream", item.file_name
+
 
 async def get_case(session: AsyncSession, actor: Actor, case_id: uuid.UUID) -> CaseOut:
     case = await _case(session, case_id)

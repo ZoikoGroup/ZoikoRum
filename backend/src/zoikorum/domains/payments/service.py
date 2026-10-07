@@ -1,8 +1,8 @@
 """Payments domain (Step 8): charges for escrow funding, professional payout accounts, payouts and buyer invoices
 (BUILD_SPEC s.payments, Payments & Escrow doc phases 7-8).
 
-Tokens only: no raw card or bank data. Webhooks, daily reconciliation, refunds and chargebacks arrive with the dispute
-and production-provider work; the provider adapter is already the seam for them.
+Tokens only: no raw card or bank data. Provider webhooks live in ``webhooks.py`` and daily reconciliation in
+``reconciliation.py``; chargebacks reverse escrow funding through PAYMENT_CHARGED_BACK.
 """
 
 from __future__ import annotations
@@ -14,11 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.domains.buyer import facade as buyer_facade
 from zoikorum.domains.contract import facade as contract_facade
-from zoikorum.domains.payments.models import INVOICE_NUMBER_SEQ, Invoice, PaymentIntent, Payout, PayoutAccount
+from zoikorum.domains.payments.models import INVOICE_NUMBER_SEQ, Invoice, PaymentIntent, Payout, PayoutAccount, Refund
 from zoikorum.domains.payments.providers import get_provider
-from zoikorum.domains.payments.schemas import ChargeOut, EarningsOut, InvoiceOut, PayoutAccountIn, PayoutAccountOut, PayoutOut
+from zoikorum.domains.payments.schemas import ChargeOut, EarningsOut, InvoiceOut, PayoutAccountIn, PayoutAccountOut, PayoutOut, RefundOut
 from zoikorum.domains.professional import facade as professional_facade
 from zoikorum.domains.trust import facade as trust_facade
+from zoikorum.config import get_settings
 from zoikorum.shared import clock
 from zoikorum.shared.auth import Actor
 from zoikorum.shared.errors import Forbidden, NotFound, PolicyBlocked
@@ -65,9 +66,11 @@ async def _send_payout(session: AsyncSession, p: Payout, account: PayoutAccount)
     payload = {"payoutId": p.id, "professionalId": p.professional_id, "releaseId": p.release_id, "amountMinor": p.amount_minor,
                "currency": p.currency}
     p.status = "INITIATED"
+    p.expected_at = clock.add_business_days(clock.now(), get_settings().payout_settlement_business_days)
     record_event(session, E.PAYOUT_INITIATED, aggregate_type="Payout", aggregate_id=p.id, tenant_id=p.professional_id, payload=payload)
     result = get_provider().payout(account.provider_account_ref, p.amount_minor, p.currency)
     if result.ok:
+        # The fake provider confirms at once; a real one confirms later through the payout.paid webhook.
         p.status, p.provider_ref, p.settled_at = "SETTLED", result.provider_ref, clock.now()
         record_event(session, E.PAYOUT_SETTLED, aggregate_type="Payout", aggregate_id=p.id, tenant_id=p.professional_id, payload=payload)
     else:
@@ -109,6 +112,17 @@ async def on_released(session: AsyncSession, payload: dict) -> None:
 
 
 # ---- Professional: payout account and earnings -------------------------------------------------------
+
+def delay_reason(p: Payout) -> str | None:
+    """Plain-language reason a payout has not arrived (Professional Dashboard s.12: "Delayed (with reason)")."""
+    if p.status == "QUEUED":
+        return "Waiting for your payout account. Add one under Payout details to receive this payment."
+    if p.status == "FAILED":
+        return f"{p.failure_message or 'The transfer failed'}. Update your payout account and we will retry."
+    if p.status == "INITIATED" and p.expected_at is not None and p.expected_at < clock.now():
+        return "Taking longer than usual at the bank. We are checking with the payment provider."
+    return None
+
 
 def _account_out(a: PayoutAccount) -> PayoutAccountOut:
     return PayoutAccountOut(holderName=a.holder_name, country=a.country, currency=a.currency, label=f"Bank account •••• {a.last4}",
@@ -159,7 +173,8 @@ async def earnings(session: AsyncSession, actor: Actor) -> EarningsOut:
     totals["fees"] = _m(sum(p.fee_minor for p in payouts if p.currency == ccy), ccy)
     return EarningsOut(payoutAccount=_account_out(account) if account else None, totals=totals, payouts=[PayoutOut(
         id=p.id, contractId=p.contract_id, milestoneId=p.milestone_id, gross=_m(p.gross_minor, p.currency), fee=_m(p.fee_minor, p.currency),
-        net=_m(p.amount_minor, p.currency), status=p.status, failureMessage=p.failure_message, settledAt=p.settled_at, createdAt=p.created_at)
+        net=_m(p.amount_minor, p.currency), status=p.status, failureMessage=p.failure_message, expectedAt=p.expected_at,
+        delayReason=delay_reason(p), settledAt=p.settled_at, createdAt=p.created_at)
         for p in payouts])
 
 
@@ -182,9 +197,45 @@ async def charges(session: AsyncSession, actor: Actor, organization_id: uuid.UUI
     rows = (await session.scalars(select(PaymentIntent).where(PaymentIntent.organization_id == organization_id)
                                   .order_by(PaymentIntent.created_at.desc()).limit(200))).all()
     return [ChargeOut(id=p.id, contractId=p.contract_id, amount=_m(p.amount_minor, p.currency), status=p.status, methodLabel=p.method_label,
-                      failureMessage=p.failure_message, createdAt=p.created_at, capturedAt=p.captured_at) for p in rows]
+                      failureMessage=p.failure_message, createdAt=p.created_at, capturedAt=p.captured_at,
+                      chargedBackAt=p.charged_back_at) for p in rows]
 
 
 async def has_valid_payout_account(session: AsyncSession, professional_id: uuid.UUID) -> bool:
     return bool(await session.scalar(select(PayoutAccount.id).where(PayoutAccount.professional_id == professional_id,
                                                                     PayoutAccount.status == "ACTIVE")))
+
+
+# ---- Refunds ----------------------------------------------------------------------------------------------
+
+async def on_refunded(session: AsyncSession, payload: dict) -> None:
+    """Consumer of ESCROW_REFUNDED: return the money to the original payment method. Idempotent per escrow refund."""
+    escrow_refund_id = uuid.UUID(str(payload["refundId"]))
+    if await session.scalar(select(Refund.id).where(Refund.escrow_refund_id == escrow_refund_id)):
+        return
+    funding_ids = [uuid.UUID(str(f)) for f in payload.get("fundingIds") or []]
+    intent = await session.scalar(select(PaymentIntent).where(PaymentIntent.funding_id.in_(funding_ids), PaymentIntent.status == "CAPTURED")) \
+        if funding_ids else None
+    r = Refund(escrow_refund_id=escrow_refund_id, payment_intent_id=intent.id if intent else None,
+               organization_id=uuid.UUID(str(payload["organizationId"])), contract_id=uuid.UUID(str(payload["contractId"])),
+               milestone_id=uuid.UUID(str(payload["milestoneId"])) if payload.get("milestoneId") else None,
+               dispute_id=uuid.UUID(str(payload["disputeId"])) if payload.get("disputeId") else None,
+               amount_minor=int(payload["amountMinor"]), currency=payload["currency"], status="INITIATED")
+    session.add(r)
+    await session.flush()
+    base = {"refundId": r.id, "escrowRefundId": escrow_refund_id, "organizationId": r.organization_id, "amountMinor": r.amount_minor,
+            "currency": r.currency}
+    record_event(session, E.REFUND_INITIATED, aggregate_type="Refund", aggregate_id=r.id, tenant_id=r.organization_id, payload=base)
+    result = get_provider().refund(intent.provider_ref if intent else None, r.amount_minor, r.currency)
+    if result.ok:
+        r.status, r.provider_ref, r.settled_at = "SETTLED", result.provider_ref, clock.now()
+        record_event(session, E.REFUND_SETTLED, aggregate_type="Refund", aggregate_id=r.id, tenant_id=r.organization_id, payload=base)
+    else:
+        r.status = "FAILED"
+
+
+async def refunds(session: AsyncSession, actor: Actor, organization_id: uuid.UUID) -> list[RefundOut]:
+    await _require_member(session, actor, organization_id)
+    rows = (await session.scalars(select(Refund).where(Refund.organization_id == organization_id).order_by(Refund.created_at.desc()).limit(200))).all()
+    return [RefundOut(id=r.id, contractId=r.contract_id, milestoneId=r.milestone_id, disputeId=r.dispute_id, amount=_m(r.amount_minor, r.currency),
+                      status=r.status, createdAt=r.created_at, settledAt=r.settled_at) for r in rows]

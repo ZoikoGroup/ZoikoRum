@@ -57,5 +57,6 @@ class EvidenceItem(Base, UUIDPk, CreatedAt):
     file_name: Mapped[str] = mapped_column(String(255), nullable=False)
     sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    storage_key: Mapped[str | None] = mapped_column(String(500))  # blob storage key, once uploads exist
+    storage_key: Mapped[str | None] = mapped_column(String(500))  # blob storage key (the file itself)
+    content_type: Mapped[str | None] = mapped_column(String(100))
     uploaded_by: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)

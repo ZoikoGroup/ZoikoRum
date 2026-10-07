@@ -30,14 +30,18 @@ export interface LedgerLine {
   referenceType: string; referenceId: string; milestoneId: string | null; memo: string; createdAt: string
 }
 
-export interface Payout { id: string; contractId: string; milestoneId: string | null; gross: Money; fee: Money; net: Money; status: 'QUEUED' | 'INITIATED' | 'SETTLED' | 'FAILED'; failureMessage: string | null; settledAt: string | null; createdAt: string }
+export interface Payout { id: string; contractId: string; milestoneId: string | null; gross: Money; fee: Money; net: Money; status: 'QUEUED' | 'INITIATED' | 'SETTLED' | 'FAILED'; failureMessage: string | null
+  expectedAt: string | null; delayReason: string | null; settledAt: string | null; createdAt: string }
 export interface Earnings {
   payoutAccount: { holderName: string; country: string; currency: string; label: string; status: string; createdAt: string } | null
   payouts: Payout[]
   totals: { settled: Money; pending: Money; failed: Money; fees: Money }
 }
 export interface Invoice { id: string; number: string; contractId: string; milestoneId: string | null; lines: { description: string; amountMinor: number }[]; tax: Money; total: Money; issuedAt: string }
-export interface Charge { id: string; contractId: string; amount: Money; status: 'CREATED' | 'CAPTURED' | 'FAILED'; methodLabel: string; failureMessage: string | null; createdAt: string; capturedAt: string | null }
+export interface Charge { id: string; contractId: string; amount: Money; status: 'CREATED' | 'CAPTURED' | 'FAILED' | 'CHARGED_BACK'; methodLabel: string; failureMessage: string | null; createdAt: string
+  capturedAt: string | null; chargedBackAt: string | null }
+export interface ReconciliationCheck { name: string; currency: string; ledger: number; payments: number; provider: number | null; difference: number; ok: boolean }
+export interface Reconciliation { id: string; day: string; status: 'MATCHED' | 'MISMATCH'; mismatches: number; checks: ReconciliationCheck[]; runBy: string; updatedAt: string }
 
 const idem = () => ({ 'Idempotency-Key': crypto.randomUUID() })
 
@@ -54,6 +58,8 @@ export const paymentsApi = {
     api<Earnings['payoutAccount']>('/v1/payout-accounts/me', { method: 'PUT', body }),
   invoices: (organizationId: string) => api<Invoice[]>('/v1/payments/invoices', { query: { organizationId } }),
   charges: (organizationId: string) => api<Charge[]>('/v1/payments/charges', { query: { organizationId } }),
+  reconciliations: () => api<Reconciliation[]>('/v1/payments/reconciliations'),
+  reconcile: (day: string) => api<Reconciliation>('/v1/payments/reconciliations', { method: 'POST', body: { day } }),
 }
 
 // Test-mode payment methods from the (fake) payment provider. A real provider's card form returns a token like these.

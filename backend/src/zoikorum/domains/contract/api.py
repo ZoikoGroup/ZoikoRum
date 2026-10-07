@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Literal
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Query, Request, Response
 from fastapi.responses import PlainTextResponse
 
 from zoikorum.domains.contract import service
@@ -12,6 +12,7 @@ from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
 from zoikorum.shared.http import Page
 from zoikorum.shared.idempotency import IdempotencyKey
+from zoikorum.shared.uploads import file_response
 
 router = APIRouter(tags=["contracts"])
 Role = Literal["buyer", "professional"]
@@ -38,6 +39,12 @@ async def document(contract_id: uuid.UUID, actor: CurrentActor, session: DbSessi
     """The full agreement text. Every read is recorded in the audit log."""
     text, sha = await service.get_document(session, actor, contract_id)
     return PlainTextResponse(text, headers={"X-Document-SHA256": sha})
+
+
+@router.get("/v1/contracts/{contract_id}/files/{sha256}")
+async def delivered_file(contract_id: uuid.UUID, sha256: str, actor: CurrentActor, session: DbSession) -> Response:
+    """Opens a file the professional delivered with a milestone. Audited."""
+    return file_response(*await service.submission_file(session, actor, contract_id, sha256))
 
 
 @router.post("/v1/contracts/{contract_id}/sign", response_model=ContractOut)

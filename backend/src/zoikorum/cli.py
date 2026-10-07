@@ -3,6 +3,7 @@
     python -m zoikorum.cli create-admin --email admin@zoikorum.com --name "Platform Admin"
     python -m zoikorum.cli reindex-search      # rebuild the search projection from the owning domains
     python -m zoikorum.cli schema-doc          # regenerate docs/DATABASE_SCHEMA.md from the models
+    python -m zoikorum.cli reconcile --day 2026-10-06   # payments reconciliation for one UTC day (default: yesterday)
 
 The first Platform Admin can only be created here (never over HTTP). The password
 is read from a prompt or ZK_ADMIN_PASSWORD - never pass it as an argument.
@@ -44,6 +45,26 @@ async def _reindex_search() -> None:
     print(f"Search index rebuilt for {count} professionals.")
 
 
+async def _reconcile(day: str | None) -> None:
+    from datetime import date, timedelta
+
+    from zoikorum.domains.payments import reconciliation
+    from zoikorum.shared import clock
+
+    load_domains()
+    target = date.fromisoformat(day) if day else (clock.now() - timedelta(days=1)).date()
+    ctx = context.ExecutionContext(correlation_id=context.new_correlation_id(), actor_id="cli", actor_type="operator")
+    with context.use_context(ctx):
+        async with session_factory()() as s, s.begin():
+            batch = await reconciliation.reconcile(s, target, run_by="CLI")
+            status, checks = batch.status, batch.checks
+    await dispose_engine()
+    print(f"Reconciliation {target}: {status}")
+    for c in checks:
+        print(f"  {'OK ' if c['ok'] else 'BAD'} {c['name']:<12} {c['currency']}  ledger={c['ledger']}  payments={c['payments']}"
+              f"  provider={c['provider'] if c['provider'] is not None else '-'}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="zoikorum")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -54,7 +75,11 @@ def main() -> None:
     sub.add_parser("reindex-search", help="rebuild the search projection")
     sd = sub.add_parser("schema-doc", help="write the database schema as Markdown")
     sd.add_argument("--out", default="docs/DATABASE_SCHEMA.md")
+    rc = sub.add_parser("reconcile", help="reconcile escrow ledger, payments and provider for one day")
+    rc.add_argument("--day", help="YYYY-MM-DD (UTC); default yesterday")
     args = parser.parse_args()
+    if args.cmd == "reconcile":
+        asyncio.run(_reconcile(args.day))
     if args.cmd == "reindex-search":
         asyncio.run(_reindex_search())
     if args.cmd == "schema-doc":

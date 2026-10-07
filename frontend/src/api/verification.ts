@@ -1,10 +1,16 @@
 import { api } from './client'
+import type { Upload } from './files'
 
 export type SubjectType = 'PROFESSIONAL' | 'FIRM'
 export type SelfServiceType = 'IDENTITY' | 'JURISDICTION' | 'INSURANCE' | 'FIRM_REGISTRATION'
 export type EvidenceType = 'ID_DOCUMENT' | 'PROOF_OF_ADDRESS' | 'LICENSE' | 'CERTIFICATE' | 'INSURANCE_POLICY' | 'REGISTRATION_DOCUMENT' | 'OTHER'
 
-export interface Evidence { id: string; evidenceType: string; fileName: string; sha256: string; sizeBytes: number; uploadedAt: string }
+export interface Evidence {
+  id: string; evidenceType: string; fileName: string; sha256: string; sizeBytes: number
+  contentType: string | null; hasFile: boolean; uploadedAt: string
+}
+export type EvidenceContentType = 'application/pdf' | 'image/jpeg' | 'image/png'
+export interface EvidenceUploadItem { name: string; sha256: string; size: number; contentType: EvidenceContentType; dataBase64: string }
 
 export interface VerificationCase {
   id: string
@@ -65,7 +71,7 @@ export const verificationApi = {
     api<VerificationCase>(`${V}/cases`, { method: 'POST', body }),
   get: (id: string) => api<VerificationCase>(`${V}/cases/${id}`),
   forSubject: (type: SubjectType, id: string) => api<VerificationCase[]>(`${V}/subjects/${type}/${id}`),
-  addEvidence: (id: string, evidenceType: EvidenceType, items: { name: string; sha256: string; size: number }[]) =>
+  addEvidence: (id: string, evidenceType: EvidenceType, items: Upload[]) =>
     api<VerificationCase>(`${V}/cases/${id}/evidence`, { method: 'POST', body: { evidenceType, items } }),
   queue: (cursor?: string | null) =>
     api<{ items: QueueItem[]; nextCursor: string | null }>(`${V}/review-queue`, { query: cursor ? { cursor } : undefined }),
@@ -80,11 +86,10 @@ export const trustApi = {
   history: (professionalId: string) => api<TrustHistory>(`/v1/trust/professionals/${professionalId}/history`),
 }
 
-/** SHA-256 of a file, computed in the browser. Only the fingerprint and metadata are sent today. */
-export async function sha256OfFile(file: File): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer())
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
-}
+/** Owner or reviewer opens an uploaded verification document (audited). */
+export const evidenceFileUrl = (id: string) => `${V}/evidence/${id}/file`
+
+export { sha256OfFile } from './files'
 
 export const CASE_STATUS: Record<string, { label: string; cls: string }> = {
   PENDING: { label: 'Waiting for documents', cls: 'warn' },

@@ -201,6 +201,15 @@ class FirmLinkIn(BaseModel):
     firmId: uuid.UUID | None = None  # None = practise independently
 
 
+class HistoryOut(BaseModel):
+    """Platform history (Profile doc s.12): measured on Zoikorum only, never self-reported."""
+
+    completedEngagements: int
+    onTimeRate: int | None  # % of accepted milestones delivered by their due date
+    medianResponseHours: float | None
+    newToPlatform: bool  # neutral caution signal (Category doc s.12)
+
+
 class PublicFirmOut(BaseModel):
     id: uuid.UUID
     name: str  # trading name when set, otherwise the registered name
@@ -237,3 +246,4 @@ class PublicProfileOut(BaseModel):
     publishedAt: datetime | None
     isOwnProfile: bool
     firm: PublicFirmOut | None = None
+    history: HistoryOut | None = None
