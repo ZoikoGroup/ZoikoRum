@@ -99,10 +99,26 @@ async def _fresh_db(engine):
         rows = await conn.execute(text(
             "SELECT table_schema, table_name FROM information_schema.tables "
             "WHERE table_type = 'BASE TABLE' AND table_schema = ANY(:s)"), {"s": list(DOMAIN_SCHEMAS)})
-        tables = ", ".join(f'"{a}"."{b}"' for a, b in rows.all())
+        table_names = rows.all()
+        tables = ", ".join(f'"{a}"."{b}"' for a, b in table_names)
     async with engine.begin() as conn:
         await conn.execute(text("SET session_replication_role = replica"))  # bypass append-only triggers
-        await conn.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
+        if os.environ.get("ZK_TEST_FAST_CLEANUP") == "true":
+            # Avoid rewriting every empty relation on slow local storage. The
+            # same tables are cleared and all owned sequences are reset. This
+            # changes only fixture cleanup, never database durability settings.
+            deletes = "\n".join(f'DELETE FROM "{a}"."{b}";' for a, b in table_names)
+            schemas = ", ".join(f"'{name}'" for name in DOMAIN_SCHEMAS)
+            await conn.execute(text(f"""DO $test_cleanup$
+                DECLARE seq record;
+                BEGIN
+                    {deletes}
+                    FOR seq IN SELECT schemaname, sequencename FROM pg_sequences WHERE schemaname IN ({schemas}) LOOP
+                        PERFORM setval(format('%I.%I', seq.schemaname, seq.sequencename)::regclass, 1, false);
+                    END LOOP;
+                END $test_cleanup$;"""))
+        else:
+            await conn.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
         await conn.execute(text("SET session_replication_role = DEFAULT"))
     # Reference data (e.g. the capability taxonomy) that migrations load in real databases.
     async with session_factory()() as s, s.begin():

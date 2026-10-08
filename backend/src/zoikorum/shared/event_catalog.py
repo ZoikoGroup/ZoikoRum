@@ -80,6 +80,7 @@ class E:
     TAXONOMY_UPDATED = _t("marketplace", "taxonomy", "updated")
     LISTING_VIEWED = _t("marketplace", "listing", "viewed")
     PROFESSIONAL_SAVED = _t("marketplace", "listing", "bookmarked")
+    PROFESSIONAL_UNSAVED = _t("marketplace", "listing", "unbookmarked")
     SEARCH_SAVED = _t("marketplace", "saved_search", "created")
     MATCH_REQUESTED = _t("marketplace", "match", "requested")
     COLLECTION_UPDATED = _t("marketplace", "collection", "updated")
@@ -198,6 +199,8 @@ class E:
     DISPUTE_ENFORCED = _t("dispute", "case", "enforced")
     DISPUTE_CLOSED = _t("dispute", "case", "closed")
     DISPUTE_APPEALED = _t("dispute", "case", "appealed")
+    DISPUTE_APPEAL_DECIDED = _t("dispute", "case", "appeal_decided")
+    REVIEW_CREATED = _t("review", "review", "created")
 
     # ---- Audit ---------------------------------------------------------------
     AUDIT_ENTRY_REQUESTED = _t("audit", "entry", "requested")  # explicit audit-only entries

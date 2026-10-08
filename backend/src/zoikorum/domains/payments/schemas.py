@@ -42,7 +42,9 @@ class PayoutOut(BaseModel):
 class EarningsOut(BaseModel):
     payoutAccount: PayoutAccountOut | None
     payouts: list[PayoutOut]
-    totals: dict[str, MoneyDTO]  # settled / queued / failed, per currency of the first payout (single-currency summary)
+    totals: dict[str, MoneyDTO]  # Legacy single-currency summary; empty for multiple currencies.
+    totalsByCurrency: dict[str, dict[str, MoneyDTO]]
+    monthlySettledByCurrency: list[MoneyDTO]
 
 
 class InvoiceOut(BaseModel):

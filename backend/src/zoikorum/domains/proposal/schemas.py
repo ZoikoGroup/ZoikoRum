@@ -118,6 +118,7 @@ class RequestOut(BaseModel):
     id: uuid.UUID
     groupId: uuid.UUID
     organizationId: uuid.UUID
+    costCenterId: uuid.UUID | None = None
     organizationName: str | None
     buyerIdentityId: uuid.UUID
     buyerName: str | None

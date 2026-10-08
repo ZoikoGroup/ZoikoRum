@@ -28,6 +28,8 @@ class ChargeResult:
     failure_code: str | None = None
     failure_message: str | None = None
     method_label: str = "Card"
+    pending: bool = False
+    checkout_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -35,6 +37,7 @@ class PayoutResult:
     ok: bool
     provider_ref: str | None = None
     failure_message: str | None = None
+    pending: bool = False
 
 
 @dataclass(frozen=True)
@@ -49,10 +52,10 @@ class ProviderReport:
 class PaymentProvider(Protocol):
     name: str
 
-    def charge(self, token: str, amount_minor: int, currency: str) -> ChargeResult: ...
-    def payout(self, account_ref: str, amount_minor: int, currency: str) -> PayoutResult: ...
+    def charge(self, token: str, amount_minor: int, currency: str, *, idempotency_key: str | None = None) -> ChargeResult: ...
+    def payout(self, account_ref: str, amount_minor: int, currency: str, *, idempotency_key: str | None = None) -> PayoutResult: ...
     def create_payout_account(self, holder_name: str, country: str, currency: str, account_number: str) -> str: ...
-    def refund(self, charge_ref: str | None, amount_minor: int, currency: str) -> PayoutResult: ...
+    def refund(self, charge_ref: str | None, amount_minor: int, currency: str, *, idempotency_key: str | None = None) -> PayoutResult: ...
     def verify_webhook(self, signature_header: str, body: bytes) -> bool: ...
     def report(self, since: datetime, until: datetime) -> ProviderReport | None: ...
 
@@ -80,18 +83,18 @@ class FakeProvider:
     name = "fake"
     LABELS = {"tok_visa": "Test Visa •••• 4242", "tok_mastercard": "Test Mastercard •••• 4444", "tok_fail": "Test card (declined)"}
 
-    def charge(self, token: str, amount_minor: int, currency: str) -> ChargeResult:
+    def charge(self, token: str, amount_minor: int, currency: str, *, idempotency_key=None) -> ChargeResult:
         label = self.LABELS.get(token, "Test card")
         if token == "tok_fail":
             return ChargeResult(False, failure_code="card_declined", failure_message="The card was declined", method_label=label)
         return ChargeResult(True, provider_ref=f"fake_ch_{uuid.uuid4().hex[:16]}", method_label=label)
 
-    def payout(self, account_ref: str, amount_minor: int, currency: str) -> PayoutResult:
+    def payout(self, account_ref: str, amount_minor: int, currency: str, *, idempotency_key=None) -> PayoutResult:
         if account_ref == "acct_fail":
             return PayoutResult(False, failure_message="The bank rejected the transfer")
         return PayoutResult(True, provider_ref=f"fake_po_{uuid.uuid4().hex[:16]}")
 
-    def refund(self, charge_ref: str | None, amount_minor: int, currency: str) -> PayoutResult:
+    def refund(self, charge_ref: str | None, amount_minor: int, currency: str, *, idempotency_key=None) -> PayoutResult:
         return PayoutResult(True, provider_ref=f"fake_re_{uuid.uuid4().hex[:16]}")
 
     def create_payout_account(self, holder_name: str, country: str, currency: str, account_number: str) -> str:
@@ -118,4 +121,13 @@ def breaker() -> CircuitBreaker:
 
 
 def get_provider() -> PaymentProvider:
-    return Guarded(FakeProvider(), breaker(), ("charge", "payout", "refund", "create_payout_account", "report"))  # type: ignore[return-value]
+    from zoikorum.shared.errors import ServiceUnavailable
+    settings = get_settings()
+    if settings.payment_provider == "fake" and settings.env in ("local", "test", "development"):
+        provider = FakeProvider()
+    elif settings.payment_provider == "stripe":
+        from zoikorum.domains.payments.stripe_provider import StripeProvider
+        provider = StripeProvider(settings)
+    else:
+        raise ServiceUnavailable("Configure an approved payment provider before moving money", code="INTEGRATION_NOT_CONFIGURED")
+    return Guarded(provider, breaker(), ("charge", "payout", "refund", "create_payout_account", "report"))  # type: ignore[return-value]

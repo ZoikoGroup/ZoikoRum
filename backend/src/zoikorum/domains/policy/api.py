@@ -19,6 +19,7 @@ from zoikorum.shared.errors import NotFound
 from zoikorum.shared.http import page_of, paginate
 from zoikorum.shared.events import record_audit
 from zoikorum.shared.uploads import file_response, find_file, read_file
+from zoikorum.shared.idempotency import OptionalIdempotencyKey
 
 router = APIRouter(prefix="/v1/policy", tags=["enterprise policies"])
 
@@ -30,8 +31,8 @@ async def profiles(orgId: uuid.UUID, actor: CurrentActor, session: DbSession,
 
 
 @router.post("/profiles", status_code=201)
-async def create_profile(body: ProfileIn, actor: CurrentActor, session: DbSession):
-    return await service.create_profile(session, actor, body)
+async def create_profile(body: ProfileIn, actor: CurrentActor, session: DbSession, idem: OptionalIdempotencyKey):
+    return await idem.run(session, actor, lambda: service.create_profile(session, actor, body), status_code=201)
 
 
 @router.get("/profiles/{profile_id}")
@@ -40,18 +41,18 @@ async def profile(profile_id: uuid.UUID, actor: CurrentActor, session: DbSession
 
 
 @router.put("/profiles/{profile_id}/draft")
-async def edit_draft(profile_id: uuid.UUID, body: DraftIn, actor: CurrentActor, session: DbSession):
-    return await service.update_draft(session, actor, profile_id, body)
+async def edit_draft(profile_id: uuid.UUID, body: DraftIn, actor: CurrentActor, session: DbSession, idem: OptionalIdempotencyKey):
+    return await idem.run(session, actor, lambda: service.update_draft(session, actor, profile_id, body))
 
 
 @router.post("/profiles/{profile_id}/draft")
-async def new_draft(profile_id: uuid.UUID, actor: CurrentActor, session: DbSession):
-    return await service.new_draft(session, actor, profile_id)
+async def new_draft(profile_id: uuid.UUID, actor: CurrentActor, session: DbSession, idem: OptionalIdempotencyKey):
+    return await idem.run(session, actor, lambda: service.new_draft(session, actor, profile_id))
 
 
 @router.post("/profiles/{profile_id}/activate")
-async def activate(profile_id: uuid.UUID, actor: CurrentActor, session: DbSession):
-    return await service.activate(session, actor, profile_id)
+async def activate(profile_id: uuid.UUID, actor: CurrentActor, session: DbSession, idem: OptionalIdempotencyKey):
+    return await idem.run(session, actor, lambda: service.activate(session, actor, profile_id))
 
 
 @router.get("/profiles/{profile_id}/impact")
@@ -86,8 +87,8 @@ async def approvals(orgId: uuid.UUID, actor: CurrentActor, session: DbSession,
 
 
 @router.post("/approvals/{request_id}/decide")
-async def decide_approval(request_id: uuid.UUID, body: ApprovalDecisionIn, actor: CurrentActor, session: DbSession):
-    return await service.decide_approval(session, actor, request_id, body)
+async def decide_approval(request_id: uuid.UUID, body: ApprovalDecisionIn, actor: CurrentActor, session: DbSession, idem: OptionalIdempotencyKey):
+    return await idem.run(session, actor, lambda: service.decide_approval(session, actor, request_id, body))
 
 
 @router.get("/exceptions")
@@ -99,13 +100,13 @@ async def exceptions(orgId: uuid.UUID, actor: CurrentActor, session: DbSession,
 
 
 @router.post("/exceptions", status_code=201)
-async def request_exception(body: ExceptionIn, actor: CurrentActor, session: DbSession):
-    return await service.create_exception(session, actor, body)
+async def request_exception(body: ExceptionIn, actor: CurrentActor, session: DbSession, idem: OptionalIdempotencyKey):
+    return await idem.run(session, actor, lambda: service.create_exception(session, actor, body), status_code=201)
 
 
 @router.post("/exceptions/{request_id}/decide")
-async def decide_exception(request_id: uuid.UUID, body: ExceptionDecisionIn, actor: CurrentActor, session: DbSession):
-    return await service.decide_exception(session, actor, request_id, body)
+async def decide_exception(request_id: uuid.UUID, body: ExceptionDecisionIn, actor: CurrentActor, session: DbSession, idem: OptionalIdempotencyKey):
+    return await idem.run(session, actor, lambda: service.decide_exception(session, actor, request_id, body))
 
 
 @router.get("/exceptions/{request_id}/documents/{digest}")

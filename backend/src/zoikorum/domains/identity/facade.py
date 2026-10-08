@@ -39,6 +39,59 @@ async def get_identity(session: AsyncSession, identity_id: uuid.UUID) -> Identit
     return _summary(i) if i else None
 
 
+async def live_platform_roles(session: AsyncSession, identity_id: uuid.UUID) -> frozenset[str]:
+    i = await session.get(Identity, identity_id)
+    return frozenset(i.platform_roles) if i and await account_is_active(session, identity_id) else frozenset()
+
+
+async def account_is_active(session: AsyncSession, identity_id: uuid.UUID) -> bool:
+    """Authorization sees restrictions immediately, before status projection catches up."""
+    from zoikorum.domains.admin import facade as admin
+    account = await get_identity(session, identity_id)
+    return bool(account and account.status == "ACTIVE" and not set(await admin.active_restrictions(
+        session, "IDENTITY", identity_id)).intersection({"SUSPEND_ACCOUNT", "OFFBOARD"}))
+
+
+async def validate_session_actor(session: AsyncSession, actor, *, allow_restricted=False):
+    from dataclasses import replace
+    from zoikorum.domains.identity.models import Session
+    from zoikorum.shared.errors import Unauthenticated, Forbidden
+    from zoikorum.shared import clock
+    i = await session.get(Identity, actor.identity_id)
+    s = await session.get(Session, actor.session_id) if actor.session_id else None
+    if not i or not s or s.identity_id != i.id or s.expires_at <= clock.now():
+        raise Unauthenticated("Your session has ended")
+    if i.status != "ACTIVE" and not (allow_restricted and i.status == "SUSPENDED"):
+        raise Forbidden("This account is restricted", code="ACCOUNT_NOT_ACTIVE")
+    if s.revoked_at:
+        raise Unauthenticated("Your session has ended")
+    return replace(actor, platform_roles=frozenset(i.platform_roles) if i.status == "ACTIVE" else frozenset())
+
+
+async def notification_account_link(session: AsyncSession, identity_id: uuid.UUID, purpose: str, requested_at=None) -> str | None:
+    """Tokens are minted only for delivery, never persisted in events or audit records."""
+    from urllib.parse import urlencode
+    from zoikorum.config import get_settings
+    from zoikorum.domains.identity import tokens
+    from zoikorum.domains.identity.service import EMAIL_TOKEN_TTL, RESET_TOKEN_TTL, _password_fingerprint
+    identity = await session.get(Identity, identity_id)
+    if not identity or (identity.status != 'ACTIVE' and not (purpose == 'password_reset' and identity.status == 'SUSPENDED')):
+        return None
+    if purpose == 'email_confirm':
+        if identity.email_confirmed_at:
+            return None
+        token = tokens.mint_purpose_token(identity.id, purpose, EMAIL_TOKEN_TTL)
+        path = '/confirm-email'
+    elif purpose == 'password_reset':
+        if requested_at is not None and identity.updated_at > requested_at:
+            return None
+        token = tokens.mint_purpose_token(identity.id, purpose, RESET_TOKEN_TTL, extra={'pwf': _password_fingerprint(identity)})
+        path = '/reset-password'
+    else:
+        return None
+    return get_settings().frontend_url.rstrip('/') + path + '?' + urlencode({'token': token})
+
+
 async def get_identities(session: AsyncSession, ids: list[uuid.UUID]) -> dict[uuid.UUID, IdentitySummary]:
     if not ids:
         return {}

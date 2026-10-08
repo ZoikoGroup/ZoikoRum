@@ -3,6 +3,7 @@ import { PLATFORM_ROLES } from './api/auth'
 import { AuthProvider } from './auth/AuthContext'
 import { GuestOnly, RequireAuth, RequireRole } from './auth/guards'
 import { ConfirmEmail, ForgotPassword, ResetPassword } from './pages/AccountPages'
+import AuditExportsPage from './pages/AuditExports'
 import AppShell from './pages/AppShell'
 import { AccountPage, ForbiddenPage } from './pages/Dashboards'
 import EnterpriseAccess from './pages/EnterpriseAccess'
@@ -36,6 +37,8 @@ import { ProfessionalRequestDetail, ProfessionalRequestsPage } from './pages/Pro
 import SavedProfessionals from './pages/customer/SavedProfessionals'
 import SettingsPage from './pages/customer/Settings'
 import PoliciesPage from './pages/Policies'
+import { NotificationsPage, WebhooksPage } from './pages/Notifications'
+import { SafetyPage, AIAdminPage, ReportsPage, PlatformAnalyticsPage, DeadLettersPage } from './pages/Operations'
 
 const ENTERPRISE: ('ENTERPRISE_ADMIN' | 'ENTERPRISE_MEMBER')[] = ['ENTERPRISE_ADMIN', 'ENTERPRISE_MEMBER']
 const CUSTOMER: ('BUYER' | 'ENTERPRISE_ADMIN' | 'ENTERPRISE_MEMBER')[] = ['BUYER', ...ENTERPRISE]
@@ -60,6 +63,8 @@ export default function App() {
 
           {/* Signed in: each workspace is gated by role (the API enforces the same rules). */}
           <Route path="/app" element={<RequireAuth><AppShell /></RequireAuth>}>
+            <Route path="notifications" element={<NotificationsPage />} />
+            <Route path="webhooks" element={<RequireRole any={CUSTOMER}><WebhooksPage /></RequireRole>} />
             <Route path="policies" element={<RequireRole any={CUSTOMER}><PoliciesPage /></RequireRole>} />
             <Route path="buyer" element={<RequireRole any={['BUYER']}><BuyerHome /></RequireRole>} />
             <Route path="professional" element={<RequireRole any={['PROFESSIONAL']}><ProfessionalDashboard /></RequireRole>} />
@@ -101,7 +106,14 @@ export default function App() {
             <Route path="ops/staff" element={<RequireRole any={['PLATFORM_ADMIN']}><StaffAdmin /></RequireRole>} />
             <Route path="ops/reconciliation" element={<RequireRole any={['FINANCIAL_OPS', 'PLATFORM_ADMIN']}><ReconciliationPage /></RequireRole>} />
             <Route path="ops/verification" element={<RequireRole any={['COMPLIANCE_OFFICER']}><ReviewQueuePage /></RequireRole>} />
+            <Route path="ops/audit" element={<RequireRole any={[...PLATFORM_ROLES]}><AuditExportsPage /></RequireRole>} />
             <Route path="account" element={<AccountPage />} />
+            <Route path="safety" element={<SafetyPage />} />
+            <Route path="reports" element={<ReportsPage />} />
+            <Route path="ops/safety" element={<RequireRole any={[...PLATFORM_ROLES]}><SafetyPage operator /></RequireRole>} />
+            <Route path="ops/ai" element={<RequireRole any={['AI_SAFETY_REVIEWER']}><AIAdminPage /></RequireRole>} />
+            <Route path="ops/analytics" element={<RequireRole any={[...PLATFORM_ROLES]}><PlatformAnalyticsPage /></RequireRole>} />
+            <Route path="ops/dead-letters" element={<RequireRole any={['FINANCIAL_OPS', 'PLATFORM_ADMIN']}><DeadLettersPage /></RequireRole>} />
             <Route path="security" element={<Security />} />
             <Route path="forbidden" element={<ForbiddenPage />} />
           </Route>

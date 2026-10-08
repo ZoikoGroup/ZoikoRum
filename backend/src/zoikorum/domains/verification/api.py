@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Literal
 
-from fastapi import APIRouter, Query, Response, status
+from fastapi import APIRouter, Query, Request, Response, status
 
 from zoikorum.domains.verification import service
 from zoikorum.domains.verification.schemas import CaseIn, CaseOut, DecisionIn, EvidenceIn, QueueItemOut, RevokeIn
@@ -12,6 +12,24 @@ from zoikorum.shared.db import DbSession
 from zoikorum.shared.http import Page
 
 router = APIRouter(prefix="/v1/verification", tags=["verification"])
+
+
+@router.get("/configuration")
+async def provider_configuration(actor: CurrentActor):
+    from zoikorum.domains.verification.integration import configuration
+    return configuration()
+
+
+@router.post("/cases/{case_id}/hosted-session")
+async def hosted_session(case_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    from zoikorum.domains.verification.integration import hosted
+    return await hosted(session, actor, case_id)
+
+
+@router.post("/webhooks/persona")
+async def persona_receipt(request: Request, session: DbSession):
+    from zoikorum.domains.verification.integration import receipt
+    return await receipt(session, request.headers.get("persona-signature"), await request.body())
 
 
 @router.post("/cases", response_model=CaseOut, status_code=status.HTTP_201_CREATED)

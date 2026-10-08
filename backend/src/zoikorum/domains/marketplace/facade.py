@@ -68,6 +68,11 @@ async def get_category(session: AsyncSession, slug: str) -> CategoryInfo | None:
     return CategoryInfo(n.slug, n.name, n.taxonomy_version) if n else None
 
 
+async def specialization_names(session: AsyncSession) -> dict[str, str]:
+    rows = (await session.execute(select(TaxonomyNode.slug, TaxonomyNode.name).where(TaxonomyNode.level == "SPECIALIZATION"))).all()
+    return dict(rows)
+
+
 async def saved_by(session: AsyncSession, professional_id: uuid.UUID) -> list[uuid.UUID]:
     """Identity ids that saved this professional (availability alerts)."""
     return list((await session.scalars(select(SavedProfessional.identity_id).where(

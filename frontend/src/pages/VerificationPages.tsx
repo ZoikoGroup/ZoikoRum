@@ -6,6 +6,7 @@ import {
 } from '../api/verification'
 import { toUpload } from '../api/files'
 import { FileLink } from '../components/FileLink'
+import { HostedVerification } from '../components/HostedVerification'
 import { ErrorAlert, Field, useStepUp } from '../components/ui'
 import { useMyFirm } from './FirmPages'
 import { COUNTRIES } from './Join'
@@ -120,6 +121,7 @@ function CaseCard({ c, onChange }: { c: VerificationCase; onChange: (c: Verifica
       {c.evidence.length > 0 && (
         <ul className="deliverables">{c.evidence.map((e) => <li key={e.id}><FileLink file={{ name: e.fileName, hasFile: e.hasFile }} url={evidenceFileUrl(e.id)} /> <span className="muted small">· {fmtDate(e.uploadedAt)}</span></li>)}</ul>
       )}
+      {c.isMine && OPEN.includes(c.status) && c.verificationType === 'IDENTITY' && <HostedVerification caseId={c.id} />}
       {c.isMine && OPEN.includes(c.status) && c.verificationType !== 'RESTRICTIONS' && <EvidenceUpload c={c} onDone={onChange} />}
     </article>
   )

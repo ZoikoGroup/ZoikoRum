@@ -18,6 +18,9 @@ from zoikorum.domains.trust.models import TierHistory, TrustProfile, TrustSignal
 from zoikorum.domains.trust.rules import TIER_LABEL, Check, Facts, evaluate
 from zoikorum.domains.trust.schemas import SignalOut, TierChangeOut, TrustHistoryOut, TrustOut
 from zoikorum.domains.verification import facade as verification_facade
+from zoikorum.domains.contract import facade as contract_facade
+from zoikorum.domains.dispute import facade as dispute_facade
+from zoikorum.domains.proposal import facade as proposal_facade
 from zoikorum.shared import clock
 from zoikorum.shared.auth import Actor, PlatformRole
 from zoikorum.shared.errors import NotFound
@@ -67,13 +70,25 @@ async def recompute(session: AsyncSession, prof: TrustProfile, source_event_type
         licensed=frozenset(pro.licensed_jurisdictions), served=frozenset(pro.jurisdictions_served),
         engagement_suspended=prof.engagement_suspended,
     ))
+    delivery = await contract_facade.delivery_stats(session, pro.id)
+    disputes = await dispute_facade.outcome_stats(session, pro.id)
+    responses = await proposal_facade.response_stats(session, pro.id)
+    # Scoring weights come from BUILD_SPEC; saturation at ten completions is an implementation default.
+    from zoikorum.config import get_settings
+    completion_points = min(25, round(delivery["weightedCompleted"] * 25 / get_settings().trust_completion_full_credit))
+    on_time_points = round(10 * delivery["onTime"] / delivery["milestonesWithDueDate"]) if delivery["milestonesWithDueDate"] else 0
+    outcome_total = delivery["engagements"]
+    dispute_points = max(0, round(15 * (1 - disputes["adverseOutcomes"] / outcome_total))) if outcome_total else 0
+    response_points = round(10 * responses["responded"] / responses["requests"]) if responses["requests"] else 0
+    score = min(100, result.score + completion_points + on_time_points + dispute_points + response_points)
+    explanation = list(result.explanation[:-1]) + [f"Completed engagements: {completion_points}/25; on-time delivery: {on_time_points}/10; confirmed dispute outcomes: {dispute_points}/15; responsiveness: {response_points}/10."]
     old_tier = prof.tier
-    changed = (result.tier, result.score, result.dimensions, list(result.explanation)) != (
+    changed = (result.tier, score, result.dimensions, explanation) != (
         prof.tier, prof.score, prof.dimensions, prof.explanation)
-    prof.tier, prof.score, prof.dimensions, prof.explanation = result.tier, result.score, result.dimensions, list(result.explanation)
+    prof.tier, prof.score, prof.dimensions, prof.explanation = result.tier, score, result.dimensions, explanation
     prof.recomputed_at = clock.now()
     if changed:
-        _evt(session, E.TRUST_SCORE_RECOMPUTED, prof, score=result.score, tier=result.tier, dimensions=result.dimensions)
+        _evt(session, E.TRUST_SCORE_RECOMPUTED, prof, score=score, tier=result.tier, dimensions=result.dimensions)
     if result.tier != old_tier:
         reasons = list(result.explanation)
         session.add(TierHistory(professional_id=prof.professional_id, from_tier=old_tier, to_tier=result.tier,
@@ -116,7 +131,9 @@ async def on_enforcement(session: AsyncSession, event: EventEnvelope) -> None:
     applied = event.eventType == E.ENFORCEMENT_ACTION_APPLIED
     summary = f"Engagement suspension {'applied' if applied else 'reversed'} ({p.get('reasonCode')})"
     if await _record_signal(session, prof, event, "ENFORCEMENT", summary, applied):
-        prof.engagement_suspended = applied
+        from zoikorum.domains.admin import facade as admin_facade
+        # Reversing or expiring one case cannot clear a separate active restriction.
+        prof.engagement_suspended = applied or "ENGAGEMENT_SUSPENSION" in await admin_facade.active_restrictions(session, "PROFESSIONAL", prof.professional_id)
     await recompute(session, prof, event.eventType)
 
 

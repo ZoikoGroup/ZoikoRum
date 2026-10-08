@@ -29,6 +29,10 @@ def _professional_id(payload: dict) -> uuid.UUID | None:
 
 async def on_professional_fact(session: AsyncSession, event: EventEnvelope) -> None:
     pid = _professional_id(event.payload)
+    if not pid and event.payload.get("subjectType") == "IDENTITY":
+        from zoikorum.domains.professional import facade as professional
+        pro = await professional.get_professional_by_identity(session, uuid.UUID(str(event.payload["subjectId"])))
+        pid = pro.id if pro else None
     if pid:
         await service.rebuild(session, pid, event.occurredAt)
 

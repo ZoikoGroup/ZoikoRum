@@ -12,6 +12,9 @@ import { useAuth } from '../auth/AuthContext'
 import { Icon } from '../components/dashboard'
 import { EmptyTable, PortalHeader, SidePanel, StatCard } from '../components/portal'
 import { ErrorAlert, useStepUp } from '../components/ui'
+import { DisputeAppealPanel } from '../components/DisputeAppeal'
+import { AIAssistance } from '../components/AIAssistance'
+import { formatCurrencies } from '../lib/money'
 
 /* Disputes (Dispute Resolution doc): neutral language, structured steps, the money frozen until a decision is executed. */
 
@@ -95,7 +98,7 @@ export function DisputesPage({ role }: { role: 'buyer' | 'professional' | 'opera
         <StatCard icon="clock" tone="amber" value={list ? open.length : '…'} label="Open" sub="Evidence, negotiation or mediation" />
         <StatCard icon="team" tone="violet" value={list ? rows.filter((d) => d.status === 'MEDIATION').length : '…'} label="In mediation" sub={role === 'operator' ? 'Need a mediator or decision' : 'With a neutral mediator'} />
         <StatCard icon="check" tone="green" value={list ? rows.filter((d) => d.status === 'CLOSED').length : '…'} label="Closed" sub="Decided and executed" />
-        <StatCard icon="lock" tone="blue" value={list && open.length ? formatMoney({ amountMinor: open.reduce((s, d) => s + d.disputed.amountMinor, 0), currency: open[0].disputed.currency }) : '—'} label="Frozen" sub="Across open disputes" />
+        <StatCard icon="lock" tone="blue" value={list ? formatCurrencies(open.map(d => d.disputed)) : '…'} label="Frozen" sub="Across open disputes, by currency" />
       </div>
       <section className="card panel">
         {list && rows.length === 0 ? (
@@ -200,6 +203,8 @@ export function DisputeDetail() {
           </section>
 
           {d.decision && <DecisionCard d={d} />}
+          {d.viewerRole === 'MEDIATOR' && <AIAssistance purpose="dispute-summary" subjectId={d.id} />}
+          {d.decision?.decisionPath === 'PLATFORM' && <DisputeAppealPanel caseId={d.id} canFile={party} canReview={!!user?.platformRoles.includes('LEGAL')} />}
 
           {d.status === 'MEDIATION' && <MediationPanel d={d} busy={busy} party={party}
             onAnswer={(accept) => act(() => disputeApi.answerRecommendation(d.id, accept), accept ? 'You accepted the recommendation.' : 'You declined the recommendation.')}

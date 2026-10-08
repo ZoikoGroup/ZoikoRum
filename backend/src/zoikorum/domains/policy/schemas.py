@@ -25,6 +25,9 @@ class SettingsIn(BaseModel):
     disputeEvidenceDays: int = Field(default=7, ge=1, le=90)
     directResolutionBusinessDays: int = Field(default=5, ge=1, le=90)
     challengeWindowDays: int = Field(default=14, ge=1, le=90)
+    autoDisputeMissedDeadline: bool = False
+    autoDisputeRejectionCount: int | None = Field(default=None, ge=2, le=20)
+    autoDisputeComplianceFlag: bool = False
     requiredClauses: list[Literal["CONFIDENTIALITY", "IP_OWNERSHIP", "TERMINATION", "GOVERNING_LAW"]] = [
         "CONFIDENTIALITY", "IP_OWNERSHIP", "TERMINATION", "GOVERNING_LAW",
     ]

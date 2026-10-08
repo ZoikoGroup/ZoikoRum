@@ -83,13 +83,28 @@ async def policy_controls(session: AsyncSession, contract_id: uuid.UUID) -> dict
     return dict(contract.terms.get("policySettings", {})) if contract else {}
 
 
+async def assistance_terms(session: AsyncSession, contract_id: uuid.UUID) -> dict | None:
+    c = await session.get(Contract, contract_id)
+    return {"reference": c.reference, "terms": c.terms, "documentHash": c.terms_hash, "version": c.contract_version} if c else None
+
+
+async def active_contract_ids(session: AsyncSession, professional_id: uuid.UUID) -> list[uuid.UUID]:
+    return list((await session.scalars(select(Contract.id).where(Contract.professional_id == professional_id,
+        Contract.status.in_(("ACTIVE", "DISPUTED"))))).all())
+
+
 async def delivery_stats(session: AsyncSession, professional_id: uuid.UUID) -> dict[str, int]:
     """Platform history for a professional's public profile: completed engagements and on-time milestone delivery."""
     from sqlalchemy import func
 
-    completed = await session.scalar(select(func.count()).select_from(Contract).where(
-        Contract.professional_id == professional_id, Contract.status == "COMPLETED")) or 0
+    from zoikorum.shared import clock
+    from zoikorum.config import get_settings
+    completed_dates = (await session.scalars(select(Contract.completed_at).where(
+        Contract.professional_id == professional_id, Contract.status == "COMPLETED"))).all()
+    completed = len(completed_dates)
+    weighted_completed = sum(0.5 ** (max(0, (clock.now() - d).total_seconds()) / 86400 / get_settings().trust_completion_half_life_days) for d in completed_dates if d)
+    engagements = await session.scalar(select(func.count()).select_from(Contract).where(Contract.professional_id == professional_id, Contract.activated_at.is_not(None))) or 0
     rows = (await session.execute(select(Milestone.submitted_at, Milestone.due_date).join(Contract, Contract.id == Milestone.contract_id).where(
         Contract.professional_id == professional_id, Milestone.status == "ACCEPTED", Milestone.due_date.is_not(None)))).all()
     on_time = sum(1 for submitted, due in rows if submitted is not None and submitted.date() <= due)
-    return {"completed": int(completed), "milestonesWithDueDate": len(rows), "onTime": on_time}
+    return {"completed": completed, "weightedCompleted": weighted_completed, "engagements": engagements, "milestonesWithDueDate": len(rows), "onTime": on_time}

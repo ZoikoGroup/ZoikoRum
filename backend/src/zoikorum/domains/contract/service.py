@@ -546,7 +546,7 @@ async def generate_from_proposal(session: AsyncSession, payload: dict) -> None:
     _evt(session, E.CONTRACT_GENERATED, c, proposalId=proposal_id, buyerIdentityId=buyer_id, totalMinor=c.total_minor,
          currency=c.currency, termsHash=c.terms_hash, signatureDeadline=c.signature_deadline)
     for m in milestones:
-        _evt(session, E.MILESTONE_CREATED, c, milestoneId=m.id, sequence=m.sequence, amountMinor=m.amount_minor, currency=m.currency)
+        _evt(session, E.MILESTONE_CREATED, c, milestoneId=m.id, sequence=m.sequence, amountMinor=m.amount_minor, currency=m.currency, dueDate=m.due_date, title=m.title)
     await schedule_timer(session, TIMER_SIGNATURE, str(c.id), c.signature_deadline, {"contractId": str(c.id)})
 
 
@@ -1079,7 +1079,8 @@ async def policy_auto_accept(session, payload):
         subject_type="Milestone", subject_id=m.id, actor_identity_id=None, amount=m.amount_minor, currency=m.currency,
         engagement_type=c.engagement_type, pinned_version_id=c.policy_version_id,
         platform_default_pinned=c.policy_version_id is None,
-        extra={"contract.termsHash": c.terms_hash, "contract.version": c.contract_version}))
+        extra={"contract.termsHash": c.terms_hash, "contract.version": c.contract_version,
+               "milestone.submissionId": str(await session.scalar(select(Submission.id).where(Submission.milestone_id == m.id).order_by(Submission.created_at.desc()).limit(1)))}))
     if not decision.allowed:
         return
     m.status, m.accepted_at = "ACCEPTED", clock.now()
@@ -1133,6 +1134,6 @@ async def request_revision(session: AsyncSession, actor: Actor, milestone_id: uu
     MILESTONE_STATES.assert_can(m.status, "REVISION_REQUESTED")
     m.status, m.last_revision_reason = "REVISION_REQUESTED", body.reason.strip()
     m.revision_count += 1
-    _evt(session, E.MILESTONE_REVISION_REQUESTED, c, milestoneId=m.id, reason=m.last_revision_reason)
+    _evt(session, E.MILESTONE_REVISION_REQUESTED, c, milestoneId=m.id, reason=m.last_revision_reason, revisionCount=m.revision_count)
     await session.flush()
     return await _out(session, actor, c, viewer)

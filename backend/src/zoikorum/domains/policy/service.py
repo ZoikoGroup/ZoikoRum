@@ -1,5 +1,8 @@
 """Versioned, deterministic enterprise controls. Authority is always checked live."""
 from __future__ import annotations
+from zoikorum.domains.admin import facade as admin_facade
+
+
 
 import uuid
 from dataclasses import asdict
@@ -43,6 +46,8 @@ SETTING_NAMES = {
     "signatureDeadlineDays": "signature_deadline_days", "disputeEvidenceDays": "dispute_evidence_days",
     "directResolutionBusinessDays": "direct_resolution_business_days", "challengeWindowDays": "challenge_window_days",
     "requiredClauses": "required_clauses", "stepUpForApprovals": "step_up_for_approvals",
+    "autoDisputeMissedDeadline": "auto_dispute_missed_deadline", "autoDisputeRejectionCount": "auto_dispute_rejection_count",
+    "autoDisputeComplianceFlag": "auto_dispute_compliance_flag",
 }
 
 
@@ -70,7 +75,11 @@ async def attributes_for(session, org_id, professional_id, *, amount=0, currency
     attrs = {
         Attr.PRO_ID: str(pro.id), Attr.PRO_TIER: snapshot.tier, Attr.PRO_DIMENSIONS: snapshot.dimensions,
         Attr.PRO_JURISDICTIONS: list(pro.jurisdictions_served), Attr.PRO_LICENSED: list(pro.licensed_jurisdictions),
-        Attr.PRO_RESTRICTED: pro.status == "SUSPENDED" or snapshot.dimensions.get("restrictions") == "FLAGGED",
+        Attr.PRO_RESTRICTED: pro.status == "SUSPENDED" or snapshot.dimensions.get("restrictions") == "FLAGGED" or bool(
+            set(await admin_facade.active_restrictions(session, "PROFESSIONAL", pro.id)).intersection(
+                {"ENGAGEMENT_SUSPENSION", "CREDENTIAL_ENFORCEMENT", "VERIFICATION_RESET", "OFFBOARD", "SUSPEND_ACCOUNT"})) or bool(
+            set(await admin_facade.active_restrictions(session, "ORGANIZATION", org_id)).intersection({"ENGAGEMENT_SUSPENSION"})) or bool(
+            set(await admin_facade.active_restrictions(session, "IDENTITY", pro.identity_id)).intersection({"SUSPEND_ACCOUNT", "OFFBOARD"})),
         Attr.BUYER_COUNTRY: org.country, Attr.BUYER_ORG_TYPE: org.org_type,
         Attr.ENGAGEMENT_VALUE_MINOR: amount, Attr.AMOUNT_MINOR: amount,
         Attr.ENGAGEMENT_CURRENCY: currency, Attr.ENGAGEMENT_TYPE: engagement_type,
@@ -287,7 +296,7 @@ async def valid_votes(session, request):
         currency = request.attributes.get(Attr.ENGAGEMENT_CURRENCY)
         authorized = (limit is None and OrgRole.ORG_ADMIN in roles) or (
             limit is not None and limit.currency == currency and amount <= limit.minor)
-        if account and account.status == "ACTIVE" and vote.authority_role in roles and authorized:
+        if account and await identity.account_is_active(session, vote.identity_id) and vote.authority_role in roles and authorized:
             valid.append(vote)
     return valid
 
@@ -348,7 +357,7 @@ async def evaluate(session, ctx, *, dry_run=False, preview_profile_id=None):
             for granted in candidates:
                 roles = await buyer.get_member_roles(session, ctx.org_id, granted.decided_by)
                 account = await identity.get_identity(session, granted.decided_by)
-                if OrgRole.EXCEPTION_AUTHORITY in roles and account and account.status == "ACTIVE":
+                if OrgRole.EXCEPTION_AUTHORITY in roles and account and await identity.account_is_active(session, granted.decided_by):
                     exception_id = granted.id
                     decision = max((d for d, _ in findings if d != Decision.REQUIRE_EXCEPTION),
                         key=lambda d: Decision.SEVERITY[d], default=Decision.ALLOW)

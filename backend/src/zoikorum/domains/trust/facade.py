@@ -18,6 +18,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.domains.trust.models import TrustProfile
+from zoikorum.domains.contract import facade as contract_facade
+from zoikorum.domains.dispute import facade as dispute_facade
 
 
 @dataclass(frozen=True)
@@ -45,6 +47,12 @@ async def get_trust_many(session: AsyncSession, ids: list[uuid.UUID]) -> dict[uu
     out = {}
     for pid in ids:
         p = rows.get(pid)
+        delivery = await contract_facade.delivery_stats(session, pid)
+        disputes = await dispute_facade.outcome_stats(session, pid)
+        denominator = delivery["engagements"]
         out[pid] = (TrustSnapshot(pid, p.tier, p.score, dict(p.dimensions), tuple(p.flags), tuple(p.explanation),
+                                  completed_contracts=delivery["completed"],
+                                  on_time_rate_bps=round(delivery["onTime"] * 10000 / delivery["milestonesWithDueDate"]) if delivery["milestonesWithDueDate"] else None,
+                                  dispute_rate_bps=round(disputes["resolvedDisputedContracts"] * 10000 / denominator) if denominator else None,
                                   updated_at=p.recomputed_at) if p else TrustSnapshot(pid, "C", 0))
     return out

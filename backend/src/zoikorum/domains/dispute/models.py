@@ -53,6 +53,22 @@ class DisputeCase(Base, UUIDPk, Timestamps, Versioned):
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class DisputeAppeal(Base, UUIDPk, Timestamps):
+    __tablename__ = "appeals"
+    __table_args__ = {"schema": SCHEMA}
+
+    case_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.cases.id"), nullable=False, unique=True)
+    submitted_by: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    grounds: Mapped[str] = mapped_column(String(40), nullable=False)
+    explanation: Mapped[str] = mapped_column(String(4000), nullable=False)
+    evidence: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="PENDING")
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    decision_reason: Mapped[str | None] = mapped_column(String(4000))
+    remediation: Mapped[str | None] = mapped_column(String(4000))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class EvidenceItem(Base, UUIDPk, CreatedAt):
     """Append-only (database trigger): evidence is never edited or deleted, only added."""
 

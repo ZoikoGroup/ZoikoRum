@@ -33,3 +33,23 @@ async def open_disputes_for_contract(session: AsyncSession, contract_id: uuid.UU
     from zoikorum.domains.dispute.service import open_for_contract
 
     return [_summary(c) for c in await open_for_contract(session, contract_id)]
+
+
+async def outcome_stats(session: AsyncSession, professional_id: uuid.UUID) -> dict:
+    from sqlalchemy import select
+    rows = (await session.scalars(select(DisputeCase).where(DisputeCase.professional_id == professional_id,
+                                                          DisputeCase.status.in_(("DECIDED", "ENFORCED", "CLOSED"))))).all()
+    return {"resolvedDisputedContracts": len({r.contract_id for r in rows}),
+            "adverseOutcomes": len({r.contract_id for r in rows if (r.decision or {}).get("outcome") in ("FULL_REFUND", "PARTIAL_REFUND", "TERMINATION")})}
+
+
+async def assistance_evidence(session: AsyncSession, dispute_id: uuid.UUID, reviewer_id: uuid.UUID) -> dict | None:
+    from sqlalchemy import select
+    from zoikorum.domains.dispute.models import EvidenceItem
+    c = await session.get(DisputeCase, dispute_id)
+    if not c or c.mediator_identity_id != reviewer_id:
+        return None
+    evidence = (await session.scalars(select(EvidenceItem).where(EvidenceItem.case_id == c.id))).all()
+    return {"reference": c.reference, "category": c.category, "summary": c.summary, "context": c.context,
+            "evidence": [{"id": str(e.id), "party": e.party, "type": e.evidence_type, "description": e.description,
+                          "files": [{"name": f["name"], "sha256": f["sha256"]} for f in e.items]} for e in evidence]}

@@ -45,6 +45,15 @@ async def get_request(session: AsyncSession, request_id: uuid.UUID) -> RequestSu
                           status=r.status, nda_required=r.nda_required)
 
 
+async def assistance_brief(session: AsyncSession, request_id: uuid.UUID) -> dict | None:
+    r = await session.get(ProposalRequest, request_id)
+    if not r:
+        return None
+    return {"service": r.service, "objective": r.objective, "details": r.details,
+            "engagementType": r.engagement_type, "duration": r.estimated_duration,
+            "ndaRequired": r.nda_required, "ndaAccepted": r.nda_accepted_at is not None}
+
+
 async def get_proposal(session: AsyncSession, proposal_id: uuid.UUID) -> ProposalSummary | None:
     p = await session.get(Proposal, proposal_id)
     if p is None:

@@ -53,6 +53,7 @@ DOMAIN_SCHEMAS = (
     "ai",
     "admin",
     "analytics",
+    "review",
 )
 
 

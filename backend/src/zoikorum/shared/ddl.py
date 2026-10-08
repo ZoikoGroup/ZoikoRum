@@ -12,12 +12,16 @@ APPEND_ONLY_TABLES: tuple[str, ...] = (
     "escrow.ledger_entries",
     "dispute.evidence_items",
     "verification.evidence_items",
+    "verification.provider_events",
     "contract.signatures",
     "contract.contract_revisions",
     "messaging.messages",
     "messaging.attachments",
     "policy.policy_evaluations",
     "policy.approval_votes",
+    "notification.delivery_attempts",
+    "review.reviews",
+    "ai.inference_logs",
 )
 
 PREVENT_MUTATION_FN = """
@@ -94,6 +98,41 @@ def append_only_trigger(qualified_table: str) -> list[str]:
 
 def all_statements(existing_tables: set[str]) -> list[str]:
     stmts = [PREVENT_MUTATION_FN]
+    if "ai.prompt_versions" in existing_tables:
+        stmts.extend(["""CREATE OR REPLACE FUNCTION ai.guard_prompt() RETURNS trigger AS $$
+        BEGIN
+          IF TG_OP = 'DELETE' OR (OLD.status <> 'DRAFT' AND (NEW.prompt_key IS DISTINCT FROM OLD.prompt_key
+             OR NEW.version IS DISTINCT FROM OLD.version OR NEW.instructions IS DISTINCT FROM OLD.instructions
+             OR NEW.golden_tests IS DISTINCT FROM OLD.golden_tests OR NEW.target_model IS DISTINCT FROM OLD.target_model
+             OR NEW.approved_by IS DISTINCT FROM OLD.approved_by OR NEW.status <> 'RETIRED')) THEN
+             RAISE EXCEPTION 'approved prompt versions are immutable';
+          END IF;
+          RETURN NEW;
+        END; $$ LANGUAGE plpgsql;""",
+        "DROP TRIGGER IF EXISTS trg_prompt_immutable ON ai.prompt_versions;",
+        "CREATE TRIGGER trg_prompt_immutable BEFORE UPDATE OR DELETE ON ai.prompt_versions FOR EACH ROW EXECUTE FUNCTION ai.guard_prompt();"])
+    if "dispute.cases" in existing_tables:
+        stmts.extend(["""CREATE OR REPLACE FUNCTION dispute.guard_decision() RETURNS trigger AS $$
+        BEGIN
+          IF OLD.decision IS NOT NULL AND NEW.decision IS DISTINCT FROM OLD.decision THEN
+            RAISE EXCEPTION 'issued dispute decisions are immutable';
+          END IF;
+          RETURN NEW;
+        END; $$ LANGUAGE plpgsql;""",
+        "DROP TRIGGER IF EXISTS trg_decision_immutable ON dispute.cases;",
+        "CREATE TRIGGER trg_decision_immutable BEFORE UPDATE ON dispute.cases FOR EACH ROW EXECUTE FUNCTION dispute.guard_decision();"])
+    if "dispute.appeals" in existing_tables:
+        stmts.extend(["""CREATE OR REPLACE FUNCTION dispute.guard_appeal() RETURNS trigger AS $$
+        BEGIN
+          IF TG_OP = 'DELETE' OR OLD.status <> 'PENDING' OR NEW.case_id IS DISTINCT FROM OLD.case_id
+            OR NEW.submitted_by IS DISTINCT FROM OLD.submitted_by OR NEW.grounds IS DISTINCT FROM OLD.grounds
+            OR NEW.explanation IS DISTINCT FROM OLD.explanation OR NEW.evidence IS DISTINCT FROM OLD.evidence THEN
+            RAISE EXCEPTION 'appeal submissions and issued decisions are immutable';
+          END IF;
+          RETURN NEW;
+        END; $$ LANGUAGE plpgsql;""",
+        "DROP TRIGGER IF EXISTS trg_appeal_immutable ON dispute.appeals;",
+        "CREATE TRIGGER trg_appeal_immutable BEFORE UPDATE OR DELETE ON dispute.appeals FOR EACH ROW EXECUTE FUNCTION dispute.guard_appeal();"])
     if "policy.versions" in existing_tables:
         stmts.extend([POLICY_VERSION_GUARD,
             "DROP TRIGGER IF EXISTS trg_policy_versions_immutable ON policy.versions;",

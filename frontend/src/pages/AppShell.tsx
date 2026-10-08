@@ -4,11 +4,12 @@ import { firmApi, orgApi } from '../api/orgs'
 import { contractApi } from '../api/contracts'
 import { proposalApi } from '../api/proposals'
 import { messagingApi } from '../api/messaging'
+import { notificationApi } from '../api/notifications'
 import { DASHBOARD_FOR_PERSONA, ROLE_LABEL } from '../api/auth'
 import { useAuth } from '../auth/AuthContext'
 import { Icon, type IconName } from '../components/dashboard'
 
-/* Signed-in layout: navy sidebar (only the areas this account's roles can use) and a top bar with
+  /* Signed-in layout: navy sidebar (only the areas this account's roles can use) and a top bar with
    search, notifications and the account menu. Areas still being built are listed as "Soon", not linked. */
 
 function Item({ to, icon, children, end, count }: { to: string; icon: IconName; children: ReactNode; end?: boolean; count?: number }) {
@@ -19,9 +20,6 @@ function Item({ to, icon, children, end, count }: { to: string; icon: IconName; 
   )
 }
 
-function Soon({ icon, children }: { icon: IconName; children: ReactNode }) {
-  return <span className="side-link soon" aria-disabled="true"><Icon name={icon} /><span>{children}</span><em>Soon</em></span>
-}
 
 export default function AppShell() {
   const { user, logout } = useAuth()
@@ -32,19 +30,30 @@ export default function AppShell() {
   const [newRequests, setNewRequests] = useState(0)
   const [toSign, setToSign] = useState(0)
   const [unreadMessages, setUnreadMessages] = useState(0)
+  const [unreadNotifications, setUnreadNotifications] = useState(0)
+  useEffect(() => { let active = true; const load = () => notificationApi.count().then(r => { if (active) setUnreadNotifications(r.unread) }).catch(() => {}); load(); const timer = window.setInterval(load, 15000); return () => { active = false; window.clearInterval(timer) } }, [user?.id, location.pathname])
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
 
+  // Close mobile menu on navigation (cheap, no API calls)
   useEffect(() => {
-    setOpen(false)  // close the mobile menu after navigating
+    setOpen(false)
+  }, [location.pathname])
+
+  // Badge counts: fetch once on mount / user change, not on every page click
+  useEffect(() => {
+    let active = true
     Promise.all([orgApi.myInvitations(), firmApi.myInvitations(), firmApi.mine()])
-      .then(([o, f, firms]) => { setInviteCount(o.length + f.length); setInFirm(firms.length > 0) })
+      .then(([o, f, firms]) => { if (active) { setInviteCount(o.length + f.length); setInFirm(firms.length > 0) } })
       .catch(() => {})
     if (user?.personas.includes('PROFESSIONAL')) {
-      proposalApi.summary('professional').then((s) => setNewRequests(s.requests.OPEN ?? 0)).catch(() => {})
-      contractApi.list('professional', 'PENDING_SIGNATURE').then((l) => setToSign(l.filter((c) => c.canSign).length)).catch(() => {})
+      proposalApi.summary('professional').then((s) => { if (active) setNewRequests(s.requests.OPEN ?? 0) }).catch(() => {})
+      contractApi.list('professional', 'PENDING_SIGNATURE').then((l) => { if (active) setToSign(l.filter((c) => c.canSign).length) }).catch(() => {})
     }
-  }, [location.pathname, user])
+    return () => { active = false }
+  }, [user?.id])
+
+  // Unread message count: poll every 12s, but only mount once per user session
   useEffect(() => {
     if (!user?.personas.some(role => ['BUYER', 'PROFESSIONAL', 'ENTERPRISE_ADMIN', 'ENTERPRISE_MEMBER'].includes(role))) return
     let active = true
@@ -52,7 +61,7 @@ export default function AppShell() {
     load()
     const timer = window.setInterval(load, 12000)
     return () => { active = false; window.clearInterval(timer) }
-  }, [user?.id, location.pathname])
+  }, [user?.id])
   if (!user) return null
 
   const dashboards = new Set(user.personas.map((p) => DASHBOARD_FOR_PERSONA[p]))
@@ -93,6 +102,8 @@ export default function AppShell() {
           <Item to="/app/messages" icon="message" count={unreadMessages}>Messages</Item>
           <Item to="/app/disputes" icon="shield">Disputes</Item>
           <Item to="/app/policies" icon="contract">Policies &amp; Approvals</Item>
+          <Item to="/app/webhooks" icon="gear">Enterprise Webhooks</Item>
+          <Item to="/app/reports" icon="contract">Reports</Item>
         </>}
 
         {dashboards.has('professional') && <>
@@ -125,7 +136,11 @@ export default function AppShell() {
           {user.platformRoles.some((r) => ['FINANCIAL_OPS', 'PLATFORM_ADMIN'].includes(r)) && <Item to="/app/ops/reconciliation" icon="wallet">Reconciliation</Item>}
           {!customer && <Item to="/professionals" icon="search">Professionals</Item>}
           {user.platformRoles.some((r) => ['MEDIATOR', 'LEGAL', 'PLATFORM_ADMIN'].includes(r)) && <Item to="/app/ops/disputes" icon="shield">Disputes</Item>}
-          <Soon icon="contract">Reports</Soon>
+          <Item to="/app/ops/analytics" icon="contract">Platform Analytics</Item>
+          <Item to="/app/ops/audit" icon="contract">Audit Exports</Item>
+          <Item to="/app/ops/safety" icon="shield">Safety Cases</Item>
+          {user.platformRoles.includes('AI_SAFETY_REVIEWER') && <Item to="/app/ops/ai" icon="gear">AI Governance</Item>}
+          {user.platformRoles.some(r => ['FINANCIAL_OPS', 'PLATFORM_ADMIN'].includes(r)) && <Item to="/app/ops/dead-letters" icon="gear">Failed Deliveries</Item>}
         </>}
 
         <div className="side-group">Account</div>
@@ -136,6 +151,8 @@ export default function AppShell() {
         </>}
         <Item to="/app/invitations" icon="mail" count={inviteCount}>Invitations</Item>
         <Item to="/app/settings" icon="gear">Settings</Item>
+        <Item to="/app/safety" icon="shield">Safety &amp; Appeals</Item>
+        {!customer && !user.platformRoles.length && <Item to="/app/reports" icon="contract">Reports</Item>}
         <Item to="/app/help" icon="help">Help &amp; Support</Item>
 
         <div className="side-support">
@@ -157,8 +174,8 @@ export default function AppShell() {
           </form>
           <div style={{ flex: 1 }} />
           <NavLink to="/app/help" className="icon-btn" aria-label="Help &amp; support"><Icon name="help" /></NavLink>
-          <NavLink to="/app/invitations" className="icon-btn" aria-label={`Notifications${inviteCount ? `: ${inviteCount} new` : ''}`}>
-            <Icon name="bell" />{inviteCount > 0 && <span className="dot-count">{inviteCount}</span>}
+          <NavLink to="/app/notifications" className="icon-btn" aria-label={`Notifications${unreadNotifications ? `: ${unreadNotifications} unread` : ''}`}>
+            <Icon name="bell" />{unreadNotifications > 0 && <span className="dot-count">{unreadNotifications}</span>}
           </NavLink>
           <details className="user-menu-pop">
             <summary>
@@ -177,6 +194,7 @@ export default function AppShell() {
           </details>
         </header>
         <main className="main">
+          {user.status === "SUSPENDED" && <div className="alert alert-warn" role="status">Your account is restricted. <NavLink to="/app/safety">Read the notice and submit an appeal</NavLink>.</div>}
           <Outlet />
         </main>
       </div>

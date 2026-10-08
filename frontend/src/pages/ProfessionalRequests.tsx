@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import { AIAssistance } from '../components/AIAssistance'
 import { ApiError } from '../api/client'
 import { formatMoney } from '../api/orgs'
 import { CURRENCIES, LABEL, proApi, toMinor, type Offering } from '../api/professional'
@@ -193,6 +194,7 @@ export function ProfessionalRequestDetail() {
       {notice && <div className="alert alert-success" role="status">{notice}</div>}
       <ErrorAlert error={error} />
 
+      {(!req.ndaRequired || req.ndaAccepted) && <AIAssistance purpose="proposal-draft" subjectId={req.id} />}
       {declining && <DeclineForm busy={busy} onCancel={() => setDeclining(false)}
         onDecline={(reason, note) => run(() => proposalApi.decline(req.id, reason, note), 'Request declined. The buyer has been told, with your reason.').then(() => setDeclining(false))} />}
 

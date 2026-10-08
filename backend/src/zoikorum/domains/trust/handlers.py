@@ -37,3 +37,21 @@ async def on_enforcement(session: AsyncSession, event: EventEnvelope) -> None:
 @subscribe(E.RISK_FLAG_RAISED, consumer="trust.risk_flag")
 async def on_risk_flag(session: AsyncSession, event: EventEnvelope) -> None:
     await service.on_risk_flag(session, event)
+
+
+@subscribe(E.CONTRACT_COMPLETED, consumer="trust.outcomes")
+@subscribe(E.MILESTONE_ACCEPTED, consumer="trust.outcomes")
+@subscribe(E.DISPUTE_RESOLVED, consumer="trust.outcomes")
+@subscribe(E.DISPUTE_APPEAL_DECIDED, consumer="trust.outcomes")
+@subscribe(E.REVIEW_CREATED, consumer="trust.outcomes")
+@subscribe(E.PROPOSAL_SUBMITTED, consumer="trust.outcomes")
+@subscribe(E.PROPOSAL_REQUEST_DECLINED, consumer="trust.outcomes")
+async def on_outcome(session: AsyncSession, event: EventEnvelope) -> None:
+    import uuid
+    pid = event.payload.get("professionalId")
+    if not pid and event.payload.get("contractId"):
+        c = await service.contract_facade.get_contract(session, uuid.UUID(str(event.payload["contractId"])))
+        pid = c.professional_id if c else None
+    if pid:
+        prof = await service._profile(session, uuid.UUID(str(pid)))
+        await service.recompute(session, prof, event.eventType)

@@ -137,6 +137,9 @@ class ProfileSettings:
     required_clauses: tuple[str, ...] = ("CONFIDENTIALITY", "IP_OWNERSHIP", "TERMINATION", "GOVERNING_LAW")
     allowed_currencies: tuple[str, ...] | None = None
     step_up_for_approvals: bool = True
+    auto_dispute_missed_deadline: bool = False
+    auto_dispute_rejection_count: int | None = None
+    auto_dispute_compliance_flag: bool = False
 
 
 @dataclass(frozen=True)
@@ -213,3 +216,18 @@ async def contract_terms(session: AsyncSession, org_id: uuid.UUID, version_id: u
     from zoikorum.domains.policy import service
     _, version = await service.effective_version(session, org_id, version_id)
     return {"governingLaw": version.settings.get("governingLaw"), "clauseTexts": version.settings.get("clauseTexts", {})}
+
+
+async def continuation_actor(session, payload):
+    """Rehydrate the original requester without inventing elevated authentication."""
+    from zoikorum.domains.identity import facade as identity
+    from zoikorum.domains.admin import facade as admin
+    from zoikorum.shared.auth import Actor
+    raw = payload.get("requesterIdentityId")
+    if not raw:
+        return None
+    iid = uuid.UUID(str(raw))
+    account = await identity.get_identity(session, iid)
+    if not account or account.status != "ACTIVE" or set(await admin.active_restrictions(session, "IDENTITY", iid)).intersection({"SUSPEND_ACCOUNT", "OFFBOARD"}):
+        return None
+    return Actor(identity_id=iid, session_id=None, email=account.email)

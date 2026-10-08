@@ -10,11 +10,10 @@ import { EmptyTable, PortalHeader, SidePanel, StatCard, Tabs } from '../componen
 import { ErrorAlert, Field, useStepUp } from '../components/ui'
 import { COUNTRIES } from './Join'
 import { csv, downloadFile, printReceipt } from '../lib/exports'
+import { formatCurrencies } from '../lib/money'
 
 /* Money screens (Step 8): the professional's Earnings (payout account + payouts) and the customer's Payments
    & Protection (escrow across engagements, charges, invoices). Test mode: a fake payment provider, no real money. */
-
-const sum = (xs: { amountMinor: number }[]) => xs.reduce((s, x) => s + x.amountMinor, 0)
 
 export function EarningsPage() {
   const { user } = useAuth()
@@ -25,6 +24,8 @@ export function EarningsPage() {
   const [editing, setEditing] = useState(false)
   const [f, setF] = useState({ holderName: user?.displayName ?? '', country: user?.country ?? 'US', currency: 'USD', accountNumber: '' })
   const { run, modal } = useStepUp(setError)
+  const [configuration, setConfiguration] = useState<Awaited<ReturnType<typeof paymentsApi.configuration>> | null>(null)
+  useEffect(() => { paymentsApi.configuration().then(setConfiguration).catch(setError) }, [])
 
   const load = useCallback(() => {
     paymentsApi.earnings().then(setData).catch(setError)
@@ -46,8 +47,8 @@ export function EarningsPage() {
 
   const title = (cid: string) => contracts.find((c) => c.id === cid)?.title ?? 'Engagement'
   const ms = (cid: string, mid: string | null) => contracts.find((c) => c.id === cid)?.milestones.find((m) => m.id === mid)
-  const held = sum(contracts.filter((c) => c.status === 'ACTIVE').flatMap((c) => c.milestones.filter((m) => ['IN_PROGRESS', 'SUBMITTED', 'REVISION_REQUESTED'].includes(m.status)).map((m) => m.amount)))
-  const ccy = data?.totals.settled.currency ?? 'USD'
+  const held = formatCurrencies(contracts.filter((c) => ['ACTIVE', 'DISPUTED'].includes(c.status)).flatMap((c) => c.milestones.filter((m) => ['IN_PROGRESS', 'SUBMITTED', 'REVISION_REQUESTED', 'ACCEPTANCE_PENDING_APPROVAL', 'DISPUTED'].includes(m.status)).map((m) => m.amount)))
+  const total = (key: 'settled' | 'pending' | 'fees') => data ? formatCurrencies(Object.values(data.totalsByCurrency).map(t => t[key])) : '…'
 
   return (
     <>
@@ -56,10 +57,10 @@ export function EarningsPage() {
       {notice && <div className="alert alert-success" role="status">{notice}</div>}
       <ErrorAlert error={error} />
       <div className="stat-row four">
-        <StatCard icon="check" tone="green" value={data ? formatMoney(data.totals.settled) : '…'} label="Paid out" sub="Settled to your bank" />
-        <StatCard icon="clock" tone="amber" value={data ? formatMoney(data.totals.pending) : '…'} label="Waiting" sub={data?.payoutAccount ? 'Being sent' : 'Add a payout account'} />
-        <StatCard icon="lock" tone="blue" value={formatMoney({ amountMinor: held, currency: ccy })} label="Secured in escrow" sub="Funded, not yet accepted" />
-        <StatCard icon="wallet" tone="violet" value={data ? formatMoney(data.totals.fees) : '…'} label="Platform fees" sub="Deducted from releases" />
+        <StatCard icon="check" tone="green" value={total('settled')} label="Paid out" sub="Settled to your bank, by currency" />
+        <StatCard icon="clock" tone="amber" value={total('pending')} label="Waiting" sub={data?.payoutAccount ? 'Being sent' : 'Add a payout account'} />
+        <StatCard icon="lock" tone="blue" value={held} label="Secured in escrow" sub="Funded, not yet accepted" />
+        <StatCard icon="wallet" tone="violet" value={total('fees')} label="Platform fees" sub="Deducted from releases" />
       </div>
       <div className="home-grid wide">
         <section className="card panel">
@@ -87,8 +88,12 @@ export function EarningsPage() {
           )}
         </section>
         <aside>
-          <SidePanel title="Payout account" action={data?.payoutAccount && !editing && <button className="btn btn-ghost btn-sm" onClick={() => setEditing(true)}>Change</button>}>
-            {data?.payoutAccount && !editing ? (
+          <SidePanel title="Payout account" action={!configuration?.hostedOnboarding && data?.payoutAccount && !editing && <button className="btn btn-ghost btn-sm" onClick={() => setEditing(true)}>Change</button>}>
+            {!configuration ? <p>Loading payout options…</p> : !configuration.configured ? <p>Payout onboarding is unavailable. Please try again later.</p> : configuration.hostedOnboarding ? <div>
+              <p>Identity and bank details are collected by the payment partner. Payouts start after its account checks are complete.</p>
+              {data?.payoutAccount && <p>Account status: {data.payoutAccount.status.toLowerCase()}</p>}
+              <button className="btn btn-primary" onClick={() => run(async () => { const result = await paymentsApi.onboarding(); window.location.assign(result.url) })}>Set up or review payouts</button>
+            </div> : data?.payoutAccount && !editing ? (
               <dl className="facts">
                 <dt>Account</dt><dd>{data.payoutAccount.label}</dd>
                 <dt>Holder</dt><dd>{data.payoutAccount.holderName}</dd>
@@ -135,6 +140,8 @@ export function CustomerPaymentsPage() {
   const [charges, setCharges] = useState<Charge[]>([])
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [error, setError] = useState<unknown>(null)
+  const [configuration, setConfiguration] = useState<Awaited<ReturnType<typeof paymentsApi.configuration>> | null>(null)
+  useEffect(() => { paymentsApi.configuration().then(setConfiguration).catch(setError) }, [])
   const [tab, setTab] = useState<'escrow' | 'transactions' | 'invoices'>('escrow')
 
   useEffect(() => {
@@ -151,10 +158,8 @@ export function CustomerPaymentsPage() {
     })()
   }, [])
 
-  const ccy = escrows[0]?.currency ?? 'USD'
-  const m = (n: number) => formatMoney({ amountMinor: n, currency: ccy })
   const title = (cid: string) => contracts?.find((c) => c.id === cid)?.title ?? 'Engagement'
-  const paid = charges.filter((c) => c.status === 'CAPTURED').reduce((s, c) => s + c.amount.amountMinor, 0)
+  const paid = formatCurrencies(charges.filter((c) => c.status === 'CAPTURED').map(c => c.amount))
 
   return (
     <>
@@ -162,12 +167,13 @@ export function CustomerPaymentsPage() {
         subtitle="Money is held in escrow per milestone and released to the professional only when you accept the work."
         actions={<Link className="btn btn-secondary" to="/app/engagements"><Icon name="briefcase" /> Engagements</Link>} />
       <ErrorAlert error={error} />
-      <div className="tip" style={{ marginBottom: 16 }}><Icon name="help" /><span>Test mode: payments use a test provider and test cards. No real money moves.</span></div>
+      {configuration?.testMode && <div className="tip" style={{ marginBottom: 16 }}><Icon name="help" /><span>Test mode: no real money moves.</span></div>}
+      {configuration && !configuration.configured && <p role="status">Online payments are unavailable. Please try again later.</p>}
       <div className="stat-row four">
-        <StatCard icon="lock" tone="amber" value={m(escrows.reduce((s, e) => s + e.held.amountMinor, 0))} label="In escrow" sub="Held until you accept" />
-        <StatCard icon="check" tone="green" value={m(escrows.reduce((s, e) => s + e.released.amountMinor + e.fees.amountMinor, 0))} label="Released" sub="Paid for accepted work" />
-        <StatCard icon="wallet" tone="blue" value={m(paid)} label="Total paid" sub={`${charges.filter((c) => c.status === 'CAPTURED').length} payment(s)`} />
-        <StatCard icon="download" tone="violet" value={m(escrows.reduce((s, e) => s + e.refunded.amountMinor, 0))} label="Refunded" sub="Returned to you" />
+        <StatCard icon="lock" tone="amber" value={formatCurrencies(escrows.map(e => e.held))} label="In escrow" sub="Held until you accept" />
+        <StatCard icon="check" tone="green" value={formatCurrencies(escrows.flatMap(e => [e.released, e.fees]))} label="Released" sub="Paid for accepted work" />
+        <StatCard icon="wallet" tone="blue" value={paid} label="Total paid" sub={`${charges.filter((c) => c.status === 'CAPTURED').length} payment(s)`} />
+        <StatCard icon="download" tone="violet" value={formatCurrencies(escrows.map(e => e.refunded))} label="Refunded" sub="Returned to you" />
       </div>
       <section className="card panel">
         <Tabs tabs={[{ key: 'escrow', label: 'Escrow by engagement', count: escrows.length }, { key: 'transactions', label: 'Payments', count: charges.length },

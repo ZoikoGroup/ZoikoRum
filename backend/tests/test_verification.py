@@ -136,6 +136,9 @@ async def test_credential_check_updates_the_claim_and_expires(client, make_user,
 
     clock.set_now(clock.now() + timedelta(days=30))
     await drain()
+    # The timer has fired, but the original session has also expired after 101 days.
+    assert (await client.get(cases_url(pro), headers=u.h)).status_code == 401
+    clock.set_now(None)  # Inspect the persisted expiry using the original, current-time session.
     assert (await case_of(client, u, pro, "CREDENTIAL"))["status"] == "EXPIRED"
     (c,) = (await client.get("/v1/professionals/me/credentials", headers=u.h)).json()
     assert c["status"] == "EXPIRED"

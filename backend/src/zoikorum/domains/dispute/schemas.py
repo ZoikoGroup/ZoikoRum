@@ -16,6 +16,18 @@ EvidenceType = Literal["CONTRACT_SCOPE", "MILESTONE_DEFINITION", "DELIVERABLE", 
                        "THIRD_PARTY", "OTHER"]
 
 
+class AppealIn(BaseModel):
+    grounds: Literal["NEW_MATERIAL_EVIDENCE", "PROCEDURAL_ERROR"]
+    explanation: str = Field(min_length=20, max_length=4000)
+    evidence: list[UploadIn] = Field(default_factory=list, max_length=10)
+
+
+class AppealDecisionIn(BaseModel):
+    outcome: Literal["UPHELD", "REJECTED"]
+    reason: str = Field(min_length=20, max_length=4000)
+    remediation: str = Field(default="", max_length=4000)
+
+
 class DisputeIn(BaseModel):
     contractId: uuid.UUID
     milestoneIds: list[uuid.UUID] = Field(min_length=1, max_length=20)

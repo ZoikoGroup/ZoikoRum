@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
+import { EngagementReview } from '../components/EngagementReview'
+import { AIAssistance } from '../components/AIAssistance'
 import { Link, useParams } from 'react-router-dom'
 import { CONTRACT_STATUS, contractApi, MILESTONE_STATUS, deliveredFileUrl, type ChangeOrder, type Contract, type ContractMilestone } from '../api/contracts'
 import { disputeApi, OPEN_PHASES, type Dispute } from '../api/disputes'
@@ -14,6 +16,7 @@ import { Icon } from '../components/dashboard'
 import { EmptyTable, PortalHeader, SidePanel, StatCard, Tabs } from '../components/portal'
 import { ErrorAlert, useStepUp } from '../components/ui'
 import { downloadFile } from '../lib/exports'
+import { formatCurrencies } from '../lib/money'
 
 /* Engagements (Step 7) for both sides: the contract generated from an accepted proposal, signatures (buyer first,
    professional countersigns, each with a fresh two-step confirmation), and milestones (funded -> delivered -> reviewed). */
@@ -33,8 +36,7 @@ export function EngagementsPage({ side }: { side: Side }) {
   useEffect(() => { contractApi.list(side).then(setList).catch(setError) }, [side])
   const rows = list ?? []
   const of = (t: string) => rows.filter((c) => t === 'all' || (t === 'signing' ? c.status === 'PENDING_SIGNATURE' : t === 'active' ? c.status === 'ACTIVE' : c.status === 'COMPLETED'))
-  const activeValue = rows.filter((c) => c.status === 'ACTIVE').reduce((s, c) => s + c.total.amountMinor, 0)
-  const currency = rows.find((c) => c.status === 'ACTIVE')?.total.currency
+  const activeValue = formatCurrencies(rows.filter((c) => c.status === 'ACTIVE').map(c => c.total))
   const other = (c: Contract) => c.parties.find((p) => p.role !== (side === 'buyer' ? 'BUYER' : 'PROFESSIONAL'))
 
   return (
@@ -47,7 +49,7 @@ export function EngagementsPage({ side }: { side: Side }) {
         <StatCard icon="contract" tone="amber" value={list ? of('signing').length : '…'} label="Awaiting signatures" sub="Sign to activate" />
         <StatCard icon="briefcase" tone="green" value={list ? of('active').length : '…'} label="Active" sub="In progress" />
         <StatCard icon="check" tone="blue" value={list ? of('completed').length : '…'} label="Completed" sub="All milestones accepted" />
-        <StatCard icon="lock" tone="violet" value={list ? (currency ? formatMoney({ amountMinor: activeValue, currency }) : '—') : '…'} label="Active value" sub="Across active contracts" />
+        <StatCard icon="lock" tone="violet" value={list ? activeValue : '…'} label="Active value" sub="Totals by currency" />
       </div>
       <section className="card panel">
         <Tabs tabs={[{ key: 'all', label: 'All', count: rows.length }, { key: 'signing', label: 'Awaiting signatures', count: of('signing').length },
@@ -147,6 +149,8 @@ export function EngagementDetail({ side }: { side: Side }) {
         {c.canSign && <button className="btn btn-primary" onClick={() => setTab('agreement')}>Review &amp; sign</button>}
       </div>
 
+      {c.status === 'COMPLETED' && <EngagementReview contractId={c.id} canReview={side === 'buyer'} />}
+      {tab === 'agreement' && <AIAssistance purpose="contract-summary" subjectId={c.id} />}
       <Tabs tabs={[{ key: 'overview', label: 'Overview' }, { key: 'agreement', label: 'Agreement' }, { key: 'milestones', label: 'Milestones', count: c.milestones.length },
         { key: 'changes', label: 'Change orders', count: c.changeOrders.length }, { key: 'payments', label: 'Payments' },
         { key: 'activity', label: 'Activity' }]} value={tab} onChange={setTab} />

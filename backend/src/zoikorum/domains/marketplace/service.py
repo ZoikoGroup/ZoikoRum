@@ -153,8 +153,11 @@ async def save_professional(session: AsyncSession, actor: Actor, professional_id
 
 
 async def unsave_professional(session: AsyncSession, actor: Actor, professional_id: uuid.UUID) -> None:
-    await session.execute(delete(SavedProfessional).where(SavedProfessional.identity_id == actor.identity_id,
+    result = await session.execute(delete(SavedProfessional).where(SavedProfessional.identity_id == actor.identity_id,
                                                           SavedProfessional.professional_id == professional_id))
+    if result.rowcount:
+        record_event(session, E.PROFESSIONAL_UNSAVED, aggregate_type="SavedProfessional", aggregate_id=professional_id,
+                     payload={"professionalId": professional_id, "identityId": actor.identity_id})
 
 
 async def saved_professionals(session: AsyncSession, actor: Actor) -> list[SavedOut]:

@@ -8,8 +8,9 @@ Tokens only: no raw card or bank data. Provider webhooks live in ``webhooks.py``
 from __future__ import annotations
 
 import uuid
+import asyncio
 
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.domains.buyer import facade as buyer_facade
@@ -22,7 +23,7 @@ from zoikorum.domains.trust import facade as trust_facade
 from zoikorum.config import get_settings
 from zoikorum.shared import clock
 from zoikorum.shared.auth import Actor
-from zoikorum.shared.errors import Forbidden, NotFound, PolicyBlocked
+from zoikorum.shared.errors import Forbidden, NotFound, PolicyBlocked, ValidationFailed
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_audit, record_event
 from zoikorum.shared.money import MoneyDTO
@@ -48,9 +49,13 @@ async def charge_for_funding(session: AsyncSession, payload: dict) -> None:
     base = {"paymentIntentId": pi.id, "escrowAccountId": pi.escrow_account_id, "fundingId": funding_id,
             "amountMinor": pi.amount_minor, "currency": pi.currency}
     record_event(session, E.PAYMENT_INTENT_CREATED, aggregate_type="PaymentIntent", aggregate_id=pi.id, tenant_id=pi.organization_id, payload=base)
-    result = provider.charge(payload["paymentMethodToken"], pi.amount_minor, pi.currency)
+    result = await asyncio.to_thread(provider.charge, payload["paymentMethodToken"], pi.amount_minor, pi.currency,
+                                     idempotency_key=str(funding_id))
     pi.method_label = result.method_label
-    if result.ok:
+    pi.provider_ref = result.provider_ref
+    if result.ok and result.pending:
+        pi.status = "CREATED"
+    elif result.ok:
         pi.status, pi.provider_ref, pi.captured_at = "CAPTURED", result.provider_ref, clock.now()
         record_event(session, E.PAYMENT_CAPTURED, aggregate_type="PaymentIntent", aggregate_id=pi.id, tenant_id=pi.organization_id,
                      payload={**base, "providerRef": result.provider_ref})
@@ -68,8 +73,25 @@ async def _send_payout(session: AsyncSession, p: Payout, account: PayoutAccount)
     p.status = "INITIATED"
     p.expected_at = clock.add_business_days(clock.now(), get_settings().payout_settlement_business_days)
     record_event(session, E.PAYOUT_INITIATED, aggregate_type="Payout", aggregate_id=p.id, tenant_id=p.professional_id, payload=payload)
-    result = get_provider().payout(account.provider_account_ref, p.amount_minor, p.currency)
-    if result.ok:
+    provider = get_provider()
+    try:
+        if provider.name == "stripe" and p.transfer_ref:
+            p.provider_attempt += 1
+            result = await asyncio.to_thread(provider.bank_payout, account.provider_account_ref, p.amount_minor, p.currency,
+                                             idempotency_key=f"{p.release_id}:{p.provider_attempt}")
+        else:
+            result = await asyncio.to_thread(provider.payout, account.provider_account_ref, p.amount_minor, p.currency,
+                                             idempotency_key=str(p.release_id))
+            if provider.name == "stripe" and result.ok:
+                p.transfer_ref = result.provider_ref
+    except ValidationFailed:
+        from zoikorum.domains.payments.providers import PayoutResult
+        result = PayoutResult(False, failure_message="The payment partner rejected the payout. Review your connected account before retrying.")
+    if result.provider_ref:
+        p.provider_ref = result.provider_ref
+    if result.ok and result.pending:
+        p.status = "INITIATED"
+    elif result.ok:
         # The fake provider confirms at once; a real one confirms later through the payout.paid webhook.
         p.status, p.provider_ref, p.settled_at = "SETTLED", result.provider_ref, clock.now()
         record_event(session, E.PAYOUT_SETTLED, aggregate_type="Payout", aggregate_id=p.id, tenant_id=p.professional_id, payload=payload)
@@ -167,11 +189,25 @@ async def earnings(session: AsyncSession, actor: Actor) -> EarningsOut:
     pro = await _my_professional(session, actor)
     account = await session.scalar(select(PayoutAccount).where(PayoutAccount.professional_id == pro.id))
     payouts = (await session.scalars(select(Payout).where(Payout.professional_id == pro.id).order_by(Payout.created_at.desc()).limit(200))).all()
-    ccy = payouts[0].currency if payouts else (account.currency if account else "USD")
-    totals = {k: _m(sum(p.amount_minor for p in payouts if p.status in states and p.currency == ccy), ccy)
-              for k, states in (("settled", ("SETTLED",)), ("pending", ("QUEUED", "INITIATED")), ("failed", ("FAILED",)))}
-    totals["fees"] = _m(sum(p.fee_minor for p in payouts if p.currency == ccy), ccy)
-    return EarningsOut(payoutAccount=_account_out(account) if account else None, totals=totals, payouts=[PayoutOut(
+    now = clock.now()
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    states = (("settled", ("SETTLED",)), ("pending", ("QUEUED", "INITIATED")), ("failed", ("FAILED",)))
+    # Aggregate the entire history, independently of the latest-200 detail window.
+    aggregates = (await session.execute(select(Payout.currency,
+        *(func.sum(case((Payout.status.in_(statuses), Payout.amount_minor), else_=0)) for _, statuses in states),
+        func.sum(Payout.fee_minor),
+        func.sum(case(((Payout.status == "SETTLED") & (Payout.settled_at >= month_start) &
+                       (Payout.settled_at <= now), Payout.amount_minor), else_=0))
+    ).where(Payout.professional_id == pro.id).group_by(Payout.currency).order_by(Payout.currency))).all()
+    grouped = {row[0]: {key: _m(int(amount or 0), row[0])
+               for key, amount in zip(("settled", "pending", "failed", "fees"), row[1:5])} for row in aggregates}
+    if not grouped:
+        currency = account.currency if account else "USD"
+        grouped[currency] = {key: _m(0, currency) for key in ("settled", "pending", "failed", "fees")}
+    totals = next(iter(grouped.values())) if len(grouped) == 1 else {}
+    monthly = [_m(int(row[5] or 0), row[0]) for row in aggregates]
+    return EarningsOut(payoutAccount=_account_out(account) if account else None, totals=totals,
+                       totalsByCurrency=grouped, monthlySettledByCurrency=monthly, payouts=[PayoutOut(
         id=p.id, contractId=p.contract_id, milestoneId=p.milestone_id, gross=_m(p.gross_minor, p.currency), fee=_m(p.fee_minor, p.currency),
         net=_m(p.amount_minor, p.currency), status=p.status, failureMessage=p.failure_message, expectedAt=p.expected_at,
         delayReason=delay_reason(p), settledAt=p.settled_at, createdAt=p.created_at)
@@ -226,8 +262,12 @@ async def on_refunded(session: AsyncSession, payload: dict) -> None:
     base = {"refundId": r.id, "escrowRefundId": escrow_refund_id, "organizationId": r.organization_id, "amountMinor": r.amount_minor,
             "currency": r.currency}
     record_event(session, E.REFUND_INITIATED, aggregate_type="Refund", aggregate_id=r.id, tenant_id=r.organization_id, payload=base)
-    result = get_provider().refund(intent.provider_ref if intent else None, r.amount_minor, r.currency)
-    if result.ok:
+    result = await asyncio.to_thread(get_provider().refund, intent.provider_ref if intent else None, r.amount_minor, r.currency,
+                                     idempotency_key=str(escrow_refund_id))
+    r.provider_ref = result.provider_ref
+    if result.ok and result.pending:
+        r.status = "INITIATED"
+    elif result.ok:
         r.status, r.provider_ref, r.settled_at = "SETTLED", result.provider_ref, clock.now()
         record_event(session, E.REFUND_SETTLED, aggregate_type="Refund", aggregate_id=r.id, tenant_id=r.organization_id, payload=base)
     else:

@@ -202,6 +202,8 @@ async def ledger(session: AsyncSession, actor: Actor, account_id: uuid.UUID) -> 
 # ---- Funding ------------------------------------------------------------------------------------
 
 async def fund(session: AsyncSession, actor: Actor, account_id: uuid.UUID, body: FundIn) -> EscrowOut:
+    from zoikorum.domains.payments import facade as payments_facade
+    payments_facade.require_available()
     a = await _account(session, account_id, lock=True)
     if await _viewer(session, actor, a) != "BUYER":
         raise Forbidden("Only the buyer funds escrow")
@@ -323,7 +325,8 @@ async def milestone_accepted(session: AsyncSession, payload: dict) -> None:
         amount=x.amount_minor, currency=a.currency, pinned_version_id=contract.policy_version_id,
         platform_default_pinned=contract.policy_version_id is None,
         extra={"contract.termsHash": contract.terms_hash, "contract.version": contract.contract_version,
-            "engagement.allMilestonesAccepted": all(m.status == "ACCEPTED" for m in contract.milestones)}))
+            "engagement.allMilestonesAccepted": all(m.status == "ACCEPTED" for m in contract.milestones),
+            "milestone.acceptedAt": next((m.accepted_at.isoformat() for m in contract.milestones if m.id == milestone_id and m.accepted_at), None)}))
     if not decision.allowed:
         if decision.decision == policy_facade.Decision.REQUIRE_APPROVAL and x.state == "HELD":
             ALLOCATION_STATES.assert_can(x.state, "RELEASE_PENDING_APPROVAL")

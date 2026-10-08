@@ -8,6 +8,29 @@ from zoikorum.domains.contract import service
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import EventEnvelope, subscribe
 from zoikorum.shared.relay import on_timer
+import uuid
+from zoikorum.shared.errors import DomainError
+from zoikorum.shared.events import record_audit
+
+
+@subscribe(E.APPROVAL_GRANTED, consumer="contract.policy_continuation")
+@subscribe(E.EXCEPTION_GRANTED, consumer="contract.policy_continuation")
+async def continue_acceptance(session, event):
+    p = event.payload
+    if p.get("subjectType") != "Milestone" or p.get("action") != "MILESTONE_ACCEPT":
+        return
+    actor = await service.policy_facade.continuation_actor(session, p)
+    try:
+        async with session.begin_nested():
+            mid = uuid.UUID(str(p["subjectId"]))
+            if actor:
+                await service.accept_milestone(session, actor, mid)
+            elif not p.get("requesterIdentityId"):
+                latest = await session.scalar(service.select(service.Submission.id).where(service.Submission.milestone_id == mid).order_by(service.Submission.created_at.desc()).limit(1))
+                if latest:
+                    await service.policy_auto_accept(session, {"milestoneId": str(mid), "submissionId": str(latest)})
+    except DomainError as exc:
+        record_audit(session, "contract.policy.continuation_skipped", object_type="Milestone", object_id=p["subjectId"], details={"reason": exc.code})
 
 
 @subscribe(E.PROPOSAL_ACCEPTED, consumer="contract.generate")

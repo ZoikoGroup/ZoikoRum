@@ -211,7 +211,7 @@ async def _requests_out(session: AsyncSession, actor: Actor, rows: list[Proposal
         if p and role == "BUYER" and p.status == "DRAFT":
             p = None  # buyers never see a professional's unsent draft
         out.append(RequestOut(
-            id=r.id, groupId=r.group_id, organizationId=r.organization_id,
+            id=r.id, groupId=r.group_id, organizationId=r.organization_id, costCenterId=r.cost_center_id,
             organizationName=orgs[r.organization_id].name if orgs.get(r.organization_id) else None,
             buyerIdentityId=r.buyer_identity_id, buyerName=buyers[r.buyer_identity_id].display_name if r.buyer_identity_id in buyers else None,
             professional=briefs[r.professional_id], offeringId=r.offering_id, service=r.service, specialization=r.specialization,
@@ -725,6 +725,15 @@ async def accept_proposal(session: AsyncSession, actor: Actor, proposal_id: uuid
         terms["policySettings"] = {"acceptanceWindowDays": settings.acceptance_window_days,
             "autoAcceptAfterDays": settings.auto_accept_after_days, "signatureDeadlineDays": settings.signature_deadline_days,
             "disputeEvidenceDays": settings.dispute_evidence_days, "directResolutionBusinessDays": settings.direct_resolution_business_days,
+            "challengeWindowDays": settings.challenge_window_days, "partialReleaseAllowed": settings.partial_release_allowed,
+            "autoDisputeMissedDeadline": settings.auto_dispute_missed_deadline,
+            "autoDisputeRejectionCount": settings.auto_dispute_rejection_count,
+            "autoDisputeComplianceFlag": settings.auto_dispute_compliance_flag}
+    else:
+        settings = await policy_facade.get_settings_for_org(session, None)
+        terms["policySettings"] = {"acceptanceWindowDays": settings.acceptance_window_days,
+            "signatureDeadlineDays": settings.signature_deadline_days, "disputeEvidenceDays": settings.dispute_evidence_days,
+            "directResolutionBusinessDays": settings.direct_resolution_business_days,
             "challengeWindowDays": settings.challenge_window_days, "partialReleaseAllowed": settings.partial_release_allowed}
     p.terms_hash = hashlib.sha256(json.dumps(terms, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
     PROPOSAL_STATES.assert_can(p.status, "ACCEPTED")

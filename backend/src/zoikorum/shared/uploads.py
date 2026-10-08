@@ -85,8 +85,11 @@ def store_uploads(prefix: str, files: list[UploadIn]) -> list[dict]:
     out = []
     for f, data in checked:
         key = f"{prefix}/{f.sha256}"
-        get_storage().put(key, data)
-        out.append({"name": f.name, "sha256": f.sha256, "size": len(data), "contentType": f.contentType, "key": key})
+        version = get_storage().put(key, data)
+        record = {"name": f.name, "sha256": f.sha256, "size": len(data), "contentType": f.contentType, "key": key}
+        if version:
+            record["versionId"] = version
+        out.append(record)
     return out
 
 
@@ -105,7 +108,7 @@ def find_file(records: list[dict], sha256: str) -> dict:
 
 
 def read_file(record: dict) -> bytes:
-    data = get_storage().get(record["key"])
+    data = get_storage().get(record["key"], record.get("versionId"))
     if data is None:
         raise NotFound("File not found")
     return data

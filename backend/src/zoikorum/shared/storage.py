@@ -8,13 +8,18 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Protocol
+import base64
+import hashlib
+from datetime import timedelta
 
 from zoikorum.config import get_settings
+from zoikorum.shared import clock
+from zoikorum.shared.errors import ServiceUnavailable, ValidationFailed
 
 
 class BlobStorage(Protocol):
-    def put(self, key: str, data: bytes) -> None: ...
-    def get(self, key: str) -> bytes | None: ...
+    def put(self, key: str, data: bytes) -> str | None: ...
+    def get(self, key: str, version_id: str | None = None) -> bytes | None: ...
     def delete(self, key: str) -> None: ...
 
 
@@ -33,7 +38,9 @@ class LocalDiskStorage:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
 
-    def get(self, key: str) -> bytes | None:
+    def get(self, key: str, version_id: str | None = None) -> bytes | None:
+        if version_id:
+            raise ServiceUnavailable("This object belongs to versioned cloud storage", code="STORAGE_PROVIDER_MISMATCH")
         path = self._path(key)
         return path.read_bytes() if path.is_file() else None
 
@@ -41,5 +48,98 @@ class LocalDiskStorage:
         self._path(key).unlink(missing_ok=True)
 
 
+class S3Storage:
+    """Versioned private objects; conditional writes prevent replacing committed content."""
+
+    def __init__(self, settings, client=None):
+        self.settings = settings
+        if not settings.s3_bucket:
+            raise ServiceUnavailable("Cloud storage bucket is not configured", code="INTEGRATION_NOT_CONFIGURED")
+        if settings.s3_object_lock_mode not in (None, "GOVERNANCE", "COMPLIANCE"):
+            raise ValidationFailed("Choose GOVERNANCE or COMPLIANCE object retention")
+        if settings.s3_object_lock_mode and not settings.s3_retention_days:
+            raise ServiceUnavailable("An agreed retention period is required", code="INTEGRATION_NOT_CONFIGURED")
+        if client is None:
+            try:
+                import boto3
+            except ImportError as exc:
+                raise ServiceUnavailable("Install the cloud storage dependency", code="INTEGRATION_NOT_CONFIGURED") from exc
+            client = boto3.client("s3", region_name=settings.aws_region, endpoint_url=settings.s3_endpoint_url)
+        self.client = client
+
+    def _key(self, key):
+        if not key or key.startswith("/") or "\\" in key or "\x00" in key or ".." in key.split("/"):
+            raise ValidationFailed("Invalid storage key")
+        return key
+
+    def _failure(self, exc):
+        raise ServiceUnavailable("Cloud storage could not complete the operation", code="STORAGE_UNAVAILABLE") from exc
+
+    def put(self, key, data):
+        key = self._key(key)
+        digest = hashlib.sha256(data).digest()
+        try:
+            if self.client.get_bucket_versioning(Bucket=self.settings.s3_bucket).get("Status") != "Enabled":
+                raise ValidationFailed("Enable bucket versioning before storing evidence", code="STORAGE_VERSIONING_REQUIRED")
+            args = {"Bucket": self.settings.s3_bucket, "Key": key, "Body": data, "IfNoneMatch": "*",
+                    "ChecksumSHA256": base64.b64encode(digest).decode(), "Metadata": {"sha256": digest.hex()}}
+            if self.settings.s3_kms_key_id:
+                args.update(ServerSideEncryption="aws:kms", SSEKMSKeyId=self.settings.s3_kms_key_id)
+            else:
+                args["ServerSideEncryption"] = "AES256"
+            if self.settings.s3_object_lock_mode:
+                args.update(ObjectLockMode=self.settings.s3_object_lock_mode,
+                            ObjectLockRetainUntilDate=clock.now() + timedelta(days=self.settings.s3_retention_days))
+            result = self.client.put_object(**args)
+            version = result.get("VersionId")
+            if not version or version == "null":
+                raise ValidationFailed("Cloud storage did not return an immutable version", code="STORAGE_VERSIONING_REQUIRED")
+            return version
+        except ValidationFailed:
+            raise
+        except Exception as exc:
+            code = getattr(exc, "response", {}).get("Error", {}).get("Code")
+            if code in ("PreconditionFailed", "412"):
+                current = self.client.head_object(Bucket=self.settings.s3_bucket, Key=key)
+                if current.get("Metadata", {}).get("sha256") != digest.hex():
+                    raise ValidationFailed("Committed files cannot be replaced", code="IMMUTABLE_FILE") from exc
+                return current["VersionId"]
+            self._failure(exc)
+
+    def get(self, key, version_id=None):
+        args = {"Bucket": self.settings.s3_bucket, "Key": self._key(key)}
+        if version_id:
+            args["VersionId"] = version_id
+        try:
+            response = self.client.get_object(**args)
+            body = response["Body"]
+            try:
+                return body.read()
+            finally:
+                body.close()
+        except Exception as exc:
+            if getattr(exc, "response", {}).get("Error", {}).get("Code") in ("NoSuchKey", "NoSuchVersion", "404"):
+                return None
+            self._failure(exc)
+
+    def delete(self, key):
+        # Explicit reviewed erasure handles object versions/retention; a delete marker is not erasure.
+        raise ValidationFailed("Cloud evidence deletion requires a reviewed retention workflow", code="RETENTION_REVIEW_REQUIRED")
+
+    def legal_hold(self, key, version_id, enabled):
+        if not version_id:
+            raise ValidationFailed("Legal holds require an exact object version")
+        try:
+            self.client.put_object_legal_hold(Bucket=self.settings.s3_bucket, Key=self._key(key), VersionId=version_id,
+                                             LegalHold={"Status": "ON" if enabled else "OFF"})
+        except Exception as exc:
+            self._failure(exc)
+
+
 def get_storage() -> BlobStorage:
-    return LocalDiskStorage(get_settings().storage_dir)
+    settings = get_settings()
+    if settings.storage_provider == "s3":
+        return S3Storage(settings)
+    if settings.storage_provider == "local" and settings.env in ("local", "test", "development"):
+        return LocalDiskStorage(settings.storage_dir)
+    raise ServiceUnavailable("Configure production object storage", code="INTEGRATION_NOT_CONFIGURED")

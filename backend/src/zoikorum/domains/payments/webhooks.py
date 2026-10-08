@@ -14,15 +14,17 @@ refund.succeeded · refund.failed. Unknown types are stored and acknowledged so 
 from __future__ import annotations
 
 import json
+import asyncio
+import uuid
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from zoikorum.domains.payments.models import PaymentIntent, Payout, Refund, WebhookEvent
+from zoikorum.domains.payments.models import PaymentIntent, Payout, PayoutAccount, Refund, WebhookEvent
 from zoikorum.domains.payments.providers import get_provider
 from zoikorum.shared import clock
-from zoikorum.shared.errors import NotFound, Unauthenticated, ValidationFailed
+from zoikorum.shared.errors import NotFound, Unauthenticated, ValidationFailed, ServiceUnavailable
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_audit, record_event
 
@@ -35,6 +37,8 @@ async def handle(session: AsyncSession, provider_name: str, signature: str | Non
         raise Unauthenticated("Webhook signature is missing, invalid or too old", code="INVALID_SIGNATURE")
     try:
         event = json.loads(body)
+        if provider.name == "stripe":
+            event = await asyncio.to_thread(provider.normalize_event, event)
         event_id, event_type, data = str(event["id"]), str(event["type"]), dict(event.get("data") or {})
     except (ValueError, KeyError, TypeError) as exc:
         raise ValidationFailed("Webhook body is not a valid event", code="INVALID_WEBHOOK") from exc
@@ -45,6 +49,8 @@ async def handle(session: AsyncSession, provider_name: str, signature: str | Non
     if stored is None:
         return {"received": True, "duplicate": True}
     outcome = await _apply(session, event_type, data)
+    if provider.name == "stripe" and outcome.startswith("unknown"):
+        raise ServiceUnavailable("The referenced operation has not committed yet; retry this event", code="WEBHOOK_REFERENCE_PENDING")
     row = await session.get(WebhookEvent, stored)
     row.outcome = outcome[:200]
     return {"received": True, "duplicate": False, "outcome": outcome}
@@ -52,18 +58,59 @@ async def handle(session: AsyncSession, provider_name: str, signature: str | Non
 
 async def _apply(session: AsyncSession, event_type: str, data: dict) -> str:
     ref = data.get("ref")
+    if event_type == "transfer.created":
+        if not data.get("releaseReference"):
+            return "ignored unrelated transfer"
+        payout = await session.scalar(select(Payout).where(Payout.release_id == uuid.UUID(data["releaseReference"])).with_for_update())
+        if not payout:
+            return "unknown payout reference"
+        account = await session.scalar(select(PayoutAccount).where(PayoutAccount.professional_id == payout.professional_id))
+        if not account or account.provider_account_ref != data.get("account") or payout.transfer_ref != ref:
+            raise ValidationFailed("Transfer does not match the payout account", code="PROVIDER_ACCOUNT_MISMATCH")
+        if payout.provider_ref and payout.provider_ref.startswith("po_"):
+            return "bank payout already requested"
+        from zoikorum.domains.payments.service import _send_payout
+        # If the bank call fails, the durable transfer remains recorded; retries cannot transfer again.
+        try:
+            await _send_payout(session, payout, account)
+        except ValidationFailed:
+            payout.status, payout.failure_message = "FAILED", "Funds reached your partner account; the bank payout needs review or retry."
+        return "bank payout requested" if payout.status == "INITIATED" else "bank payout needs review"
+    if event_type == "account.updated":
+        account = await session.scalar(select(PayoutAccount).where(PayoutAccount.provider == "stripe", PayoutAccount.provider_account_ref == ref).with_for_update())
+        if not account:
+            return "unknown account reference"
+        account.status = "ACTIVE" if data.get("payoutsEnabled") and data.get("detailsSubmitted") else "PENDING"
+        if account.status == "ACTIVE":
+            from zoikorum.domains.payments.service import _send_payout
+            waiting = (await session.scalars(select(Payout).where(Payout.professional_id == account.professional_id, Payout.status == "QUEUED").with_for_update())).all()
+            for payout in waiting:
+                await _send_payout(session, payout, account)
+        return "account eligibility updated"
     if event_type.startswith("charge."):
         pi = await session.scalar(select(PaymentIntent).where(PaymentIntent.provider_ref == ref).with_for_update()) if ref else None
+        if pi is None and data.get("fundingReference"):
+            pi = await session.scalar(select(PaymentIntent).where(PaymentIntent.funding_id == uuid.UUID(data["fundingReference"])).with_for_update())
         if pi is None:
             return "unknown charge reference"
+        if event_type == "charge.succeeded" and data.get("amountMinor") is not None and (data["amountMinor"] != pi.amount_minor or data.get("currency") != pi.currency):
+            raise ValidationFailed("Provider amount/currency does not match the funding", code="PROVIDER_AMOUNT_MISMATCH")
         if event_type == "charge.dispute.created":
             return await chargeback(session, pi, int(data.get("amountMinor") or pi.amount_minor), str(data.get("reason") or "Card issuer dispute"))
         if event_type in ("charge.succeeded", "charge.failed"):
             return _charge_result(session, pi, event_type == "charge.succeeded", str(data.get("message") or "The payment failed"))
     if event_type.startswith("payout."):
         p = await session.scalar(select(Payout).where(Payout.provider_ref == ref).with_for_update()) if ref else None
+        if p is None and data.get("releaseReference"):
+            p = await session.scalar(select(Payout).where(Payout.release_id == uuid.UUID(data["releaseReference"])).with_for_update())
+            if p:
+                p.provider_ref = ref
         if p is None:
             return "unknown payout reference"
+        if data.get("account"):
+            account = await session.scalar(select(PayoutAccount).where(PayoutAccount.professional_id == p.professional_id))
+            if not account or account.provider_account_ref != data["account"]:
+                raise ValidationFailed("Payout account does not match", code="PROVIDER_ACCOUNT_MISMATCH")
         return _payout_result(session, p, event_type == "payout.paid", str(data.get("message") or "The bank returned the transfer"))
     if event_type.startswith("refund."):
         r = await session.scalar(select(Refund).where(Refund.provider_ref == ref).with_for_update()) if ref else None

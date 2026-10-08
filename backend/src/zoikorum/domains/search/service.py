@@ -6,6 +6,7 @@ paid-placement input.
 """
 
 from __future__ import annotations
+from zoikorum.domains.admin import facade as admin_facade
 
 import uuid
 from datetime import datetime
@@ -33,8 +34,8 @@ CANDIDATE_CAP = 500  # ranked in the application; ample for the current catalogu
 TIER_LABEL = {"A": "Fully Verified Professional", "B": "Verified Identity", "C": "Unverified (Discovery Only)"}
 TIER_RANK = {"A": 3, "B": 2, "C": 1}
 # Dimension values that count as "verified" for the `verified=` filter and policy eligibility.
-GOOD = {"identity": ("VERIFIED",), "credentials": ("VALIDATED",), "jurisdiction": ("ELIGIBLE",),
-        "insurance": ("VERIFIED",), "restrictions": ("CLEAR",)}
+GOOD = {"identity": ("VERIFIED",), "credentials": ("VALIDATED", "NOT_APPLICABLE"), "jurisdiction": ("ELIGIBLE",),
+        "insurance": ("VERIFIED", "NOT_REQUIRED"), "restrictions": ("CLEAR",)}
 AVAILABILITY_POINTS = {"NOW": 10, "TWO_WEEKS": 7, "ONE_MONTH": 4, "NOT_SPECIFIED": 2, "AT_CAPACITY": 0}
 AVAILABILITY_TEXT = {"NOW": "Available now", "TWO_WEEKS": "Can start within 2 weeks", "ONE_MONTH": "Can start within a month"}
 EXPERIENCE_RANK = {"16+": 5, "11-15": 4, "6-10": 3, "3-5": 2, "0-2": 1}
@@ -76,7 +77,8 @@ async def rebuild(session: AsyncSession, professional_id: uuid.UUID, occurred_at
     text_c = " ".join(filter(None, [pro.bio, *(o.title for o in offerings), *(d for o in offerings for d in o.deliverables),
                                     *verified_credentials]))
     values = dict(
-        professional_id=pro.id, visible=pro.status == "PUBLISHED", visibility_reduced=pro.visibility_reduced,
+        professional_id=pro.id, visible=pro.status == "PUBLISHED" and not set(await admin_facade.active_restrictions(session, "IDENTITY", pro.identity_id)).intersection({"SUSPEND_ACCOUNT", "OFFBOARD"}),
+        visibility_reduced=pro.visibility_reduced or "VISIBILITY_REDUCTION" in await admin_facade.active_restrictions(session, "PROFESSIONAL", pro.id),
         display_name=pro.display_name, headline=pro.headline, country=pro.country, city=pro.city,
         years_experience_band=pro.years_experience_band, languages=list(pro.languages),
         categories=sorted({i.category_slug for i in specs.values()}), primary_specialization=pro.primary_specialization,

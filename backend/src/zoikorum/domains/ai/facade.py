@@ -20,4 +20,9 @@ class MatchIntent:
 
 
 async def extract_match_intent(session: AsyncSession, text: str) -> MatchIntent:
-    raise NotImplementedError
+    import re
+    words = tuple(dict.fromkeys(re.findall(r"[\w-]+", text.lower())[:100]))
+    from zoikorum.domains.marketplace import facade as marketplace
+    names = await marketplace.specialization_names(session)
+    matched = tuple(slug for slug, name in names.items() if set(re.findall(r"[\w-]+", name.lower())).intersection(words))
+    return MatchIntent(specializations=matched, engagement_type=None, keywords=words, source="fallback:keyword")
