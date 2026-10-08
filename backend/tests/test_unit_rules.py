@@ -326,3 +326,35 @@ def test_payout_delay_reasons_are_plain_language():
     assert delay_reason(p) is None
     p = SimpleNamespace(status="FAILED", failure_message="Account closed", expected_at=None)
     assert delay_reason(p).startswith("Account closed")
+
+
+# ---- Development switch: authenticator codes off (ZK_DEV_SKIP_MFA) ------------------------------------------
+
+def test_mfa_switch_is_refused_outside_development():
+    from zoikorum.config import Settings
+
+    for env in ("production", "staging", "prod"):
+        with pytest.raises(ValueError, match="only allowed in development"):
+            Settings(env=env, dev_skip_mfa=True, _env_file=None)
+    assert Settings(env="test", dev_skip_mfa=True, _env_file=None).mfa_bypass is False  # tests keep real MFA
+    assert Settings(env="local", dev_skip_mfa=True, _env_file=None).mfa_bypass is True
+    assert Settings(env="local", dev_skip_mfa=False, _env_file=None).mfa_bypass is False
+
+
+def test_mfa_switch_skips_step_up_and_staff_mfa_only_when_on(monkeypatch):
+    import uuid as _uuid
+
+    from zoikorum.config import Settings
+    from zoikorum.shared import auth
+    from zoikorum.shared.errors import StepUpRequired
+
+    actor = auth.Actor(identity_id=_uuid.uuid4(), session_id=None, email=None, platform_roles=frozenset({"PLATFORM_ADMIN"}),
+                       auth_strength="PASSWORD", auth_time=None)
+    monkeypatch.setattr(auth, "get_settings", lambda: Settings(env="local", dev_skip_mfa=False, _env_file=None))
+    with pytest.raises(StepUpRequired):
+        actor.require_step_up()
+    with pytest.raises(StepUpRequired):
+        actor.require_platform_role("PLATFORM_ADMIN")
+    monkeypatch.setattr(auth, "get_settings", lambda: Settings(env="local", dev_skip_mfa=True, _env_file=None))
+    actor.require_step_up()
+    actor.require_platform_role("PLATFORM_ADMIN")

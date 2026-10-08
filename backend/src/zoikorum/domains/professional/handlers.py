@@ -49,3 +49,9 @@ async def on_contract_activated(session: AsyncSession, event: EventEnvelope) -> 
 @subscribe(E.CONTRACT_TERMINATED, consumer="professional.engagement_ended")
 async def on_contract_ended(session: AsyncSession, event: EventEnvelope) -> None:
     await service.engagement_count_changed(session, uuid.UUID(str(event.payload["professionalId"])), -1)
+
+
+
+@subscribe(E.TAXONOMY_SUGGESTION_RESOLVED, consumer="professional.add_suggested_specialization")
+async def on_suggestion_resolved(session: AsyncSession, event: EventEnvelope) -> None:
+    await service.suggestion_resolved(session, event.payload)

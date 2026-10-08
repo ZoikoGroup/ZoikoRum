@@ -90,6 +90,7 @@ class IdentityOut(BaseModel):
     mfaEnabled: bool
     # True when this account's roles demand MFA but it is not enabled yet (staff, enterprise admins).
     mfaRequired: bool
+    mfaBypass: bool = False  # development only: authenticator codes are switched off
     personas: list[str]
     primaryPersona: str | None
     platformRoles: list[str]
@@ -157,3 +158,31 @@ class DataRequestOut(BaseModel):
     status: str
     createdAt: datetime
     completedAt: datetime | None
+
+
+class DuplicateAnswerIn(BaseModel):
+    answer: Literal["MERGE_REQUESTED", "NOT_ME"]
+    note: str | None = Field(default=None, max_length=500)
+
+
+class DuplicateResolveIn(BaseModel):
+    outcome: Literal["MERGED", "NOT_DUPLICATE"]
+    keepIdentityId: uuid.UUID | None = None  # required for MERGED: the account that stays
+    note: str = Field(min_length=5, max_length=500)
+
+
+class DuplicateOut(BaseModel):
+    id: uuid.UUID
+    signal: str
+    status: str
+    userAnswer: str | None
+    userNote: str | None
+    resolutionNote: str | None
+    createdAt: datetime
+    resolvedAt: datetime | None
+    account: str | None = None  # staff only
+    accountName: str | None = None
+    otherAccount: str | None  # masked for the person, full for staff
+    otherAccountName: str | None = None
+    identityId: uuid.UUID | None = None
+    otherIdentityId: uuid.UUID | None = None

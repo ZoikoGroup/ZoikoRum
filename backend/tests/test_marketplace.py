@@ -17,7 +17,9 @@ from zoikorum.shared.errors import ValidationFailed
 async def test_public_taxonomy_has_finance_and_accounting(client):
     r = await client.get("/v1/taxonomy")
     assert r.status_code == 200
-    (cat,) = r.json()["categories"]
+    cats = r.json()["categories"]
+    assert len(cats) == 6  # Finance & Accounting first, then the starter categories
+    cat = cats[0]
     assert cat["slug"] == "finance-and-accounting" and len(cat["groups"]) == 7
     leadership = next(g for g in cat["groups"] if g["slug"] == "finance-leadership")
     assert leadership["specializations"][0]["slug"] == "fractional-cfo"

@@ -14,11 +14,15 @@ from datetime import date, datetime, time, timedelta, timezone
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from zoikorum.config import get_settings
 from zoikorum.domains.firm import facade as firm_facade
 from zoikorum.domains.professional import facade as professional_facade
-from zoikorum.domains.verification.models import EvidenceItem, VerificationCase
+from zoikorum.domains.verification.models import Appeal, EvidenceItem, VerificationCase
 from zoikorum.domains.verification.providers import get_provider
-from zoikorum.domains.verification.schemas import CaseIn, CaseOut, DecisionIn, EvidenceIn, EvidenceOut, QueueItemOut, RevokeIn
+from zoikorum.domains.verification.schemas import (
+    AppealDecisionIn, AppealIn, AppealOut, AppealQueueItemOut, CaseIn, CaseOut, DecisionIn, EvidenceIn, EvidenceOut, QueueItemOut,
+    RevokeIn,
+)
 from zoikorum.shared import clock
 from zoikorum.shared.auth import Actor, FirmRole, PlatformRole
 from zoikorum.shared.errors import Conflict, Forbidden, NotFound, ValidationFailed
@@ -34,9 +38,9 @@ CASE_STATES = StateMachine("VerificationCase", {
     "IN_REVIEW": {"NEEDS_INFO", "VERIFIED", "FAILED"},
     "NEEDS_INFO": {"IN_REVIEW", "FAILED"},
     "VERIFIED": {"EXPIRED", "REVOKED"},
-    "FAILED": set(),
+    "FAILED": {"VERIFIED"},  # only through an upheld appeal (decide_appeal)
     "EXPIRED": set(),
-    "REVOKED": set(),
+    "REVOKED": {"VERIFIED"},  # only through an upheld appeal (decide_appeal)
 })
 OPEN_STATES = ("PENDING", "IN_REVIEW", "NEEDS_INFO")
 # Published service levels (Onboarding s.15): identity 24h, credential 48h median.
@@ -97,13 +101,28 @@ async def _evidence(session: AsyncSession, case_id: uuid.UUID) -> list[EvidenceO
                         contentType=e.content_type, hasFile=bool(e.storage_key), uploadedAt=e.created_at) for e in rows]
 
 
+def _appeal_out(a: Appeal) -> AppealOut:
+    return AppealOut(id=a.id, caseId=a.case_id, status=a.status, statement=a.statement, filedAt=a.created_at,
+                     decidedAt=a.decided_at, decisionNote=a.decision_note)
+
+
+def _appeal_deadline(case: VerificationCase) -> datetime | None:
+    if case.status not in ("FAILED", "REVOKED") or case.decided_at is None:
+        return None
+    return case.decided_at + timedelta(days=get_settings().verification_appeal_days)
+
+
 async def _out(session: AsyncSession, case: VerificationCase, is_mine: bool) -> CaseOut:
+    appeal = await session.scalar(select(Appeal).where(Appeal.case_id == case.id))
+    deadline = _appeal_deadline(case) if is_mine and appeal is None else None
     return CaseOut(
         id=case.id, subjectType=case.subject_type, subjectId=case.subject_id, verificationType=case.verification_type,
         status=case.status, label=case.label, jurisdiction=case.jurisdiction, credentialClaimId=case.credential_claim_id,
         specialization=case.specialization, estimatedCompletion=case.estimated_completion, verifiedAt=case.verified_at,
         expiresAt=case.expires_at, reasonCode=case.reason_code, publicReason=case.public_reason, isMine=is_mine,
         evidence=await _evidence(session, case.id), createdAt=case.created_at, version=case.version,
+        appeal=_appeal_out(appeal) if appeal else None,
+        appealDeadline=deadline if deadline and deadline > clock.now() else None,
     )
 
 
@@ -221,7 +240,9 @@ async def add_evidence(session: AsyncSession, actor: Actor, case_id: uuid.UUID, 
     case = await _case(session, case_id, lock=True)
     if not await _is_owner(session, actor, case.subject_type, case.subject_id):
         raise NotFound("Verification case not found")
-    if case.status not in OPEN_STATES:
+    appeal_open = case.status in ("FAILED", "REVOKED") and await session.scalar(
+        select(Appeal.id).where(Appeal.case_id == case.id, Appeal.status == "OPEN"))
+    if case.status not in OPEN_STATES and not appeal_open:
         raise Conflict("Evidence can only be added while the check is open", code="CASE_CLOSED")
     stored = [(f, _checked_file(f)) for f in body.items]  # validate every file before storing any
     for f, data in stored:
@@ -232,10 +253,22 @@ async def add_evidence(session: AsyncSession, actor: Actor, case_id: uuid.UUID, 
     if case.status in ("PENDING", "NEEDS_INFO"):
         CASE_STATES.assert_can(case.status, "IN_REVIEW")
         case.status = "IN_REVIEW"
+    if body.evidenceType == "ID_DOCUMENT":
+        await _check_duplicate_documents(session, case, [f.sha256 for f in body.items])
     _evt(session, E.VERIFICATION_EVIDENCE_SUBMITTED, case, evidenceType=body.evidenceType,
          files=[{"name": f.name, "sha256": f.sha256, "size": f.size} for f in body.items])
     await session.flush()
     return await _out(session, case, True)
+
+
+async def _check_duplicate_documents(session: AsyncSession, case: VerificationCase, hashes: list[str]) -> None:
+    """The same identity document already submitted from another account suggests a duplicate account (Onboarding s.20)."""
+    others = (await session.scalars(select(VerificationCase.owner_identity_id).join(EvidenceItem, EvidenceItem.case_id == VerificationCase.id)
+                                    .where(EvidenceItem.sha256.in_(hashes), EvidenceItem.evidence_type == "ID_DOCUMENT",
+                                           VerificationCase.owner_identity_id != case.owner_identity_id).distinct())).all()
+    for other in others:
+        record_event(session, E.VERIFICATION_DUPLICATE_DOCUMENT, aggregate_type="VerificationCase", aggregate_id=case.id,
+                     payload={"identityId": case.owner_identity_id, "otherIdentityId": other})
 
 
 # ---- Decisions -------------------------------------------------------------------
@@ -310,6 +343,7 @@ async def revoke(session: AsyncSession, actor: Actor, case_id: uuid.UUID, body: 
     case = await _case(session, case_id, lock=True)
     CASE_STATES.assert_can(case.status, "REVOKED")
     case.status, case.reason_code, case.public_reason, case.reviewer_id = "REVOKED", body.reasonCode, body.publicReason, actor.identity_id
+    case.decided_at = clock.now()
     await _cancel_expiry_timers(session, case)
     _evt(session, E.VERIFICATION_REVOKED, case, reasonCode=body.reasonCode, publicReason=body.publicReason)
     await session.flush()
@@ -373,7 +407,8 @@ async def subject_cases(session: AsyncSession, actor: Actor, subject_type: str, 
 
 async def review_queue(session: AsyncSession, actor: Actor, cursor: str | None, limit: int | None, status: str | None) -> dict:
     actor.require_platform_role(*REVIEWERS)
-    states = (status,) if status in OPEN_STATES else ("PENDING", "IN_REVIEW")
+    # Default: checks waiting for a decision. "VERIFIED": decided checks, so a mistaken verification can be revoked.
+    states = (status,) if status in (*OPEN_STATES, "VERIFIED") else ("PENDING", "IN_REVIEW")
     stmt, lim = paginate(select(VerificationCase).where(VerificationCase.status.in_(states)), VerificationCase, cursor, limit)
     rows = (await session.scalars(stmt)).all()
     counts = dict((await session.execute(
@@ -391,3 +426,68 @@ async def review_queue(session: AsyncSession, actor: Actor, cursor: str | None, 
         verificationType=c.verification_type, status=c.status, label=c.label, jurisdiction=c.jurisdiction,
         providerResult=c.provider_result, evidenceCount=counts.get(c.id, 0), estimatedCompletion=c.estimated_completion,
         overdue=bool(c.estimated_completion and c.estimated_completion < now), createdAt=c.created_at))
+
+
+# ---- Appeals (Governance playbook s.11: independent reviewer, evidence-based, time-bounded, one final decision) ----
+
+async def file_appeal(session: AsyncSession, actor: Actor, case_id: uuid.UUID, body: AppealIn) -> CaseOut:
+    case = await _case(session, case_id, lock=True)
+    if not await _is_owner(session, actor, case.subject_type, case.subject_id):
+        raise NotFound("Verification case not found")
+    if case.status not in ("FAILED", "REVOKED"):
+        raise Conflict("Only a failed or revoked verification can be appealed", code="NOT_APPEALABLE")
+    if await session.scalar(select(Appeal.id).where(Appeal.case_id == case.id)):
+        raise Conflict("This decision has already been appealed; appeals are decided once", code="APPEAL_EXISTS")
+    deadline = _appeal_deadline(case)
+    if deadline is None or clock.now() > deadline:
+        raise Conflict(f"The appeal window ({get_settings().verification_appeal_days} days) has closed. Start a new check instead.",
+                       code="APPEAL_WINDOW_CLOSED")
+    a = Appeal(case_id=case.id, filed_by=actor.identity_id, statement=body.statement.strip(), case_status_at_filing=case.status,
+               original_reviewer_id=case.reviewer_id, status="OPEN")
+    session.add(a)
+    await session.flush()
+    _evt(session, E.VERIFICATION_APPEAL_FILED, case, appealId=a.id)
+    return await _out(session, case, True)
+
+
+async def appeal_queue(session: AsyncSession, actor: Actor, status: str | None) -> list[AppealQueueItemOut]:
+    actor.require_platform_role(*REVIEWERS)
+    rows = (await session.execute(select(Appeal, VerificationCase).join(VerificationCase, VerificationCase.id == Appeal.case_id)
+                                  .where(Appeal.status == (status or "OPEN")).order_by(Appeal.created_at).limit(200))).all()
+    counts = dict((await session.execute(select(EvidenceItem.case_id, func.count())
+                                         .where(EvidenceItem.case_id.in_([c.id for _, c in rows])).group_by(EvidenceItem.case_id))).all())
+    pros = await professional_facade.get_professionals(session, [c.subject_id for _, c in rows if c.subject_type == "PROFESSIONAL"])
+    return [AppealQueueItemOut(
+        id=a.id, caseId=c.id, caseLabel=c.label, verificationType=c.verification_type, subjectType=c.subject_type, subjectId=c.subject_id,
+        subjectName=pros[c.subject_id].display_name if c.subject_id in pros else None, caseStatus=c.status, originalReason=c.public_reason,
+        statement=a.statement, status=a.status, evidenceCount=counts.get(c.id, 0),
+        canDecide=a.original_reviewer_id != actor.identity_id and c.owner_identity_id != actor.identity_id, filedAt=a.created_at)
+        for a, c in rows]
+
+
+async def decide_appeal(session: AsyncSession, actor: Actor, appeal_id: uuid.UUID, body: AppealDecisionIn) -> AppealOut:
+    actor.require_platform_role(*REVIEWERS)
+    actor.require_step_up()
+    a = await session.get(Appeal, appeal_id, with_for_update=True)
+    if a is None:
+        raise NotFound("Appeal not found")
+    if a.status != "OPEN":
+        raise Conflict("This appeal has already been decided", code="APPEAL_DECIDED")
+    case = await _case(session, a.case_id, lock=True)
+    if case.owner_identity_id == actor.identity_id or (
+            case.subject_type == "FIRM" and await firm_facade.member_roles(session, case.subject_id, actor.identity_id)):
+        raise Forbidden("You cannot review your own verification or your own firm's", code="SELF_REVIEW")
+    if a.original_reviewer_id == actor.identity_id:
+        raise Forbidden("An appeal must be decided by a reviewer who did not make the original decision", code="INDEPENDENT_REVIEWER_REQUIRED")
+    now = clock.now()
+    if body.outcome == "OVERTURNED":
+        if case.verification_type != "RESTRICTIONS" and not await session.scalar(
+                select(func.count()).select_from(EvidenceItem).where(EvidenceItem.case_id == case.id)):
+            raise ValidationFailed("There are no documents to support overturning this decision", code="EVIDENCE_REQUIRED")
+        if body.expiresAt and body.expiresAt <= now:
+            raise ValidationFailed("The expiry date must be in the future", code="INVALID_EXPIRY")
+        await _verify(session, case, reviewer_id=actor.identity_id, expires_at=body.expiresAt)
+    a.status, a.decided_by, a.decided_at, a.decision_note = body.outcome, actor.identity_id, now, body.note.strip()
+    _evt(session, E.VERIFICATION_APPEAL_DECIDED, case, appealId=a.id, outcome=body.outcome)
+    await session.flush()
+    return _appeal_out(a)

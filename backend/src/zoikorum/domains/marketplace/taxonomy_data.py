@@ -1,4 +1,8 @@
-"""Default capability taxonomy (reference data), from the Finance & Accounting category doc.
+"""Default capability taxonomy (reference data).
+
+Finance & Accounting comes from its category document. The documents describe Zoikorum as a marketplace for governed
+professional services in general but detail only that category, so the other categories below are STARTER lists
+(pending management review): admins can rename, extend or deprecate them, and professionals can suggest additions.
 
 Pure data + a deterministic row builder, shared by the Alembic seed migration and tests.
 Node ids are uuid5(slug) so seeding is idempotent and ids are stable across environments.
@@ -53,6 +57,79 @@ FINANCE_ACCOUNTING = {
     ],
 }
 
+TECHNOLOGY = {
+    "name": "Technology & Software Development",
+    "credential_hints": ["AWS", "Azure", "GCP", "CISSP", "CEH", "OSCP", "ISO 27001 LA", "PMP"],
+    "groups": [
+        ("Software Development", [
+            ("Web Development", ""), ("Mobile App Development", ""), ("Backend & API Development", ""),
+            ("Full-Stack Development", ""), ("Software Architecture", ""), ("Legacy System Modernization", ""),
+        ]),
+        ("AI & Data", [
+            ("AI / Machine Learning Engineering", ""), ("Generative AI & LLM Applications", ""), ("Data Engineering", ""),
+            ("Data Analytics & Business Intelligence", ""), ("Data Science & Statistical Modeling", ""),
+        ]),
+        ("Cloud & DevOps", [
+            ("Cloud Architecture", ""), ("DevOps & CI/CD", ""), ("Site Reliability Engineering", ""), ("Cloud Migration", ""),
+        ]),
+        ("Cybersecurity", [
+            ("Application Security", ""), ("Penetration Testing", "C"), ("Security Compliance (ISO 27001 / SOC 2)", "C"),
+            ("Identity & Access Management", ""),
+        ]),
+        ("Product, Design & Quality", [
+            ("UX / UI Design", ""), ("Product Management", ""), ("QA & Test Automation", ""), ("Technical Project Management", ""),
+        ]),
+    ],
+}
+
+LEGAL = {
+    "name": "Legal Services",
+    "credential_hints": ["Bar admission", "Solicitor", "Attorney", "Advocate"],
+    "groups": [
+        ("Corporate & Commercial Law", [
+            ("Commercial Contracts", "CR"), ("Corporate Governance & Company Secretarial", "CR"), ("M&A Legal Advisory", "CR"),
+        ]),
+        ("Employment & Immigration Law", [("Employment Law", "CR"), ("Immigration Law", "CR")]),
+        ("Intellectual Property", [("Trademarks & Patents", "CR"), ("Technology Licensing Agreements", "CR")]),
+        ("Privacy & Regulatory Law", [("Data Privacy & GDPR", "C"), ("Regulatory Compliance Advisory", "C")]),
+    ],
+}
+
+PEOPLE = {
+    "name": "HR & People",
+    "credential_hints": ["CIPD", "SHRM-CP", "SHRM-SCP"],
+    "groups": [
+        ("Talent Acquisition", [("Recruitment & Talent Acquisition", ""), ("Executive Search", "")]),
+        ("People Operations", [("HR Policy & Compliance", ""), ("Payroll Administration", ""), ("Compensation & Benefits", "")]),
+        ("Organisation Development", [("Learning & Development", ""), ("Organisational Design", ""), ("Fractional HR Leadership", "")]),
+    ],
+}
+
+MARKETING = {
+    "name": "Marketing & Growth",
+    "credential_hints": [],
+    "groups": [
+        ("Digital Marketing", [
+            ("Search Engine Optimization (SEO)", ""), ("Paid Media & Performance Marketing", ""), ("Social Media Marketing", ""),
+            ("Email & Lifecycle Marketing", ""),
+        ]),
+        ("Brand & Content", [("Brand Strategy", ""), ("Content Strategy & Copywriting", ""), ("PR & Communications", "")]),
+        ("Growth & Analytics", [("Growth Strategy", ""), ("Marketing Analytics", ""), ("Fractional CMO", "")]),
+    ],
+}
+
+CONSULTING = {
+    "name": "Management Consulting",
+    "credential_hints": ["PMP", "Lean Six Sigma", "PRINCE2"],
+    "groups": [
+        ("Strategy", [("Business Strategy", ""), ("Market Entry Strategy", ""), ("Commercial Due Diligence", "")]),
+        ("Operations", [("Operations Improvement", ""), ("Supply Chain Consulting", ""), ("Lean / Six Sigma Process Excellence", "")]),
+        ("Transformation", [("Digital Transformation", ""), ("Change Management", ""), ("Programme Management (PMO)", "")]),
+    ],
+}
+
+CATEGORIES = [FINANCE_ACCOUNTING, TECHNOLOGY, LEGAL, PEOPLE, MARKETING, CONSULTING]
+
 # Typical deliverables per group (Onboarding s.8 "deliverables templates"); specific overrides below.
 GROUP_DELIVERABLES = {
     "Accounting & Reporting": ["Monthly management accounts", "Reconciliations pack", "Close checklist and timetable"],
@@ -62,6 +139,24 @@ GROUP_DELIVERABLES = {
     "Transaction & Advisory": ["Due diligence report", "Financial model", "Valuation summary"],
     "Regulatory & Compliance Finance": ["Regulatory return", "Compliance testing report", "Policy and procedure documentation"],
     "Finance Systems & Technology": ["Requirements and design document", "Configured system with test evidence", "User training and handover"],
+    "Software Development": ["Technical specification", "Working software with source code", "Deployment and handover notes"],
+    "AI & Data": ["Data assessment and approach", "Model or pipeline with evaluation results", "Documentation and handover"],
+    "Cloud & DevOps": ["Architecture design", "Infrastructure as code and pipelines", "Runbook and handover"],
+    "Cybersecurity": ["Assessment scope and plan", "Findings report with risk ratings", "Remediation plan"],
+    "Product, Design & Quality": ["Discovery findings", "Designs or test suite", "Handover and recommendations"],
+    "Corporate & Commercial Law": ["Legal advice memo", "Drafted or reviewed agreement", "Negotiation support notes"],
+    "Employment & Immigration Law": ["Legal advice memo", "Drafted policies or contracts", "Filing or application pack"],
+    "Intellectual Property": ["Clearance or search report", "Filing documents", "Licence agreement"],
+    "Privacy & Regulatory Law": ["Gap assessment", "Policies and notices", "Compliance roadmap"],
+    "Talent Acquisition": ["Role profile and search plan", "Shortlist with assessments", "Offer and onboarding support"],
+    "People Operations": ["Policy pack", "Process documentation", "Compliance checklist"],
+    "Organisation Development": ["Assessment findings", "Programme or structure design", "Implementation plan"],
+    "Digital Marketing": ["Channel audit", "Campaign plan and setup", "Performance report"],
+    "Brand & Content": ["Brand or content strategy", "Content assets", "Guidelines"],
+    "Growth & Analytics": ["Growth plan", "Measurement framework and dashboards", "Experiment results"],
+    "Strategy": ["Situation analysis", "Strategy options and recommendation", "Roadmap"],
+    "Operations": ["Current-state assessment", "Improvement plan", "Implementation support report"],
+    "Transformation": ["Transformation roadmap", "Governance and change plan", "Progress reporting"],
 }
 SPECIALIZATION_DELIVERABLES = {
     "Fractional CFO": ["Financial strategy and operating plan", "Investor and board reporting", "Fundraising support materials"],
@@ -81,11 +176,17 @@ def node_id(slug: str) -> uuid.UUID:
 
 
 def default_taxonomy_rows() -> list[dict]:
-    """Flat rows for marketplace.taxonomy_nodes (parents before children)."""
-    cat = FINANCE_ACCOUNTING
+    """Flat rows for marketplace.taxonomy_nodes (parents before children), every category."""
+    rows: list[dict] = []
+    for ci, cat in enumerate(CATEGORIES, start=1):
+        rows += _category_rows(cat, ci)
+    return rows
+
+
+def _category_rows(cat: dict, order: int) -> list[dict]:
     cat_slug = slugify(cat["name"])
     rows = [dict(id=node_id(cat_slug), slug=cat_slug, name=cat["name"], level="CATEGORY", parent_id=None,
-                 category_slug=cat_slug, sort_order=1, requires_credential=False, regulated=False, requires_insurance=False,
+                 category_slug=cat_slug, sort_order=order, requires_credential=False, regulated=False, requires_insurance=False,
                  deliverable_templates=[], credential_hints=cat["credential_hints"], status="ACTIVE",
                  taxonomy_version=TAXONOMY_VERSION)]
     for gi, (group, specs) in enumerate(cat["groups"], start=1):

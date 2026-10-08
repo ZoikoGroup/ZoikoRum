@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     access_token_ttl_seconds: int = 900
     refresh_token_ttl_seconds: int = 14 * 24 * 3600
     step_up_max_age_seconds: int = 300
+    # Development only: switch off authenticator-app codes (login, step-up, staff MFA) while building features.
+    # Active only when env is "local" or "development". Ignored in "test" (tests always use real MFA, even when a
+    # developer's .env has it on); the app refuses to start if it is set in any other environment (staging, production).
+    dev_skip_mfa: bool = False
 
     event_bus: str = "inprocess"  # inprocess | kafka
     kafka_bootstrap: str = "localhost:9092"
@@ -38,7 +42,7 @@ class Settings(BaseSettings):
     provider_breaker_reset_seconds: int = 30  # how long an open circuit waits before a trial call
 
     ai_provider: str = "offline"  # offline | anthropic
-    ai_model: str = "claude-sonnet-5"
+    ai_model: str = "claude-opus-5-5"
     anthropic_api_key: str | None = None
 
     rate_limit_enabled: bool = True
@@ -47,11 +51,26 @@ class Settings(BaseSettings):
     # Contracts (Step 7). Platform defaults until enterprise policy profiles can override them.
     signature_deadline_days: int = 7  # unsigned contracts escalate after this
     acceptance_window_days: int = 5  # buyer's review window after a milestone is submitted
+    funding_reminder_days: int = 7  # remind the buyer this many days before an unfunded milestone / retainer cycle is due
 
     # Disputes (Step 9). Direct resolution default is from the Dispute Resolution doc s.10; the evidence window is not
     # stated in the documents (management to confirm).
     dispute_evidence_days: int = 3
+    verification_appeal_days: int = 14  # time to appeal a failed or revoked verification (Governance playbook s.11)
     dispute_direct_resolution_business_days: int = 5
+
+    @property
+    def mfa_bypass(self) -> bool:
+        return self.dev_skip_mfa and self.env in DEV_ENVS
+
+    @model_validator(mode="after")
+    def _no_mfa_bypass_outside_development(self):
+        if self.dev_skip_mfa and self.env not in (*DEV_ENVS, "test"):
+            raise ValueError(f"ZK_DEV_SKIP_MFA is only allowed in development (env is {self.env!r}); remove it")
+        return self
+
+
+DEV_ENVS = ("local", "development")
 
 
 @lru_cache

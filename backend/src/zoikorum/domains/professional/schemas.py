@@ -55,6 +55,7 @@ class AvailabilityIn(BaseModel):
     availability: Availability
     maxConcurrentEngagements: int | None = Field(default=None, ge=1, le=50)
     temporarilyUnavailable: bool = False
+    weeklyHours: int | None = Field(default=None, ge=0, le=60)  # the weekly availability slider
 
 
 class SpecializationOut(BaseModel):
@@ -71,6 +72,7 @@ class PhotoIn(BaseModel):
 
 
 class ProfileOut(BaseModel):
+    pendingSpecializations: list[str] = []  # suggested by the professional, waiting for an admin
     id: uuid.UUID
     photoUrl: str | None
     firmId: uuid.UUID | None
@@ -94,6 +96,7 @@ class ProfileOut(BaseModel):
     availability: str
     maxConcurrentEngagements: int | None
     temporarilyUnavailable: bool
+    weeklyHours: int | None = None
     servedJurisdictions: list[str]
     licensedJurisdictions: list[str]
     crossBorderAcknowledged: bool
@@ -237,6 +240,7 @@ class PublicProfileOut(BaseModel):
     indicativeRate: MoneyDTO | None
     rateUnit: str | None
     availability: str
+    weeklyHours: int | None = None
     servedJurisdictions: list[str]
     licensedJurisdictions: list[str]
     verifiedJurisdictions: list[str]  # licensed jurisdictions backed by a verified check
@@ -247,3 +251,4 @@ class PublicProfileOut(BaseModel):
     isOwnProfile: bool
     firm: PublicFirmOut | None = None
     history: HistoryOut | None = None
+    pendingSpecializations: list[str] = []  # shown as "Custom (under review)"

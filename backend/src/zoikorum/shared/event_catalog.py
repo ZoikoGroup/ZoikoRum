@@ -28,6 +28,9 @@ class E:
     STEP_UP_COMPLETED = _t("identity", "session", "step_up_completed")
     IDENTITY_SUSPENDED = _t("identity", "identity", "suspended")
     IDENTITY_REINSTATED = _t("identity", "identity", "reinstated")
+    DUPLICATE_ACCOUNT_SUSPECTED = _t("identity", "duplicate", "suspected")
+    DUPLICATE_ACCOUNT_ANSWERED = _t("identity", "duplicate", "answered")
+    DUPLICATE_ACCOUNT_RESOLVED = _t("identity", "duplicate", "resolved")
     IDENTITY_SOFT_DELETED = _t("identity", "identity", "soft_deleted")
     PLATFORM_ROLE_GRANTED = _t("identity", "identity", "platform_role_granted")
     PLATFORM_ROLE_REVOKED = _t("identity", "identity", "platform_role_revoked")
@@ -78,6 +81,8 @@ class E:
 
     # ---- Marketplace ---------------------------------------------------------
     TAXONOMY_UPDATED = _t("marketplace", "taxonomy", "updated")
+    TAXONOMY_SUGGESTION_SUBMITTED = _t("marketplace", "taxonomy_suggestion", "submitted")
+    TAXONOMY_SUGGESTION_RESOLVED = _t("marketplace", "taxonomy_suggestion", "resolved")  # APPROVED | MERGED | REJECTED
     LISTING_VIEWED = _t("marketplace", "listing", "viewed")
     PROFESSIONAL_SAVED = _t("marketplace", "listing", "bookmarked")
     SEARCH_SAVED = _t("marketplace", "saved_search", "created")
@@ -123,6 +128,10 @@ class E:
     MILESTONE_ACCEPTANCE_REMINDER = _t("contract", "milestone", "acceptance_reminder")  # review window closes soon
     MILESTONE_ACCEPTANCE_OVERDUE = _t("contract", "milestone", "acceptance_overdue")  # review window passed: escalate
     MILESTONE_FUNDING_REVERSED = _t("contract", "milestone", "funding_reversed")  # back to pending funding after a chargeback
+    MILESTONE_PARTIAL_ACCEPTANCE_OFFERED = _t("contract", "milestone", "partial_acceptance_offered")
+    MILESTONE_PARTIAL_ACCEPTANCE_DECLINED = _t("contract", "milestone", "partial_acceptance_declined")
+    MILESTONE_FUNDING_REMINDER = _t("contract", "milestone", "funding_reminder")  # unfunded cycle/milestone due soon
+    MILESTONE_CANCELLED = _t("contract", "milestone", "cancelled")  # e.g. remaining retainer cycles cancelled
 
     # ---- Escrow (financial) --------------------------------------------------
     ESCROW_OPENED = _t("escrow", "account", "opened")
@@ -163,6 +172,9 @@ class E:
     VERIFICATION_EXPIRING = _t("verification", "case", "expiring")
     VERIFICATION_EXPIRED = _t("verification", "case", "expired")
     VERIFICATION_REVOKED = _t("verification", "case", "revoked")
+    VERIFICATION_APPEAL_FILED = _t("verification", "appeal", "filed")
+    VERIFICATION_DUPLICATE_DOCUMENT = _t("verification", "evidence", "duplicate_document")  # same ID document from two accounts
+    VERIFICATION_APPEAL_DECIDED = _t("verification", "appeal", "decided")
 
     # ---- Trust ---------------------------------------------------------------
     TRUST_SIGNAL_ADDED = _t("trust", "profile", "signal_added")

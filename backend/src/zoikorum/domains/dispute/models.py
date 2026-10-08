@@ -64,7 +64,7 @@ class EvidenceItem(Base, UUIDPk, CreatedAt):
     submitted_by: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     evidence_type: Mapped[str] = mapped_column(String(30), nullable=False)
     description: Mapped[str] = mapped_column(String(1000), nullable=False)
-    items: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)  # [{name, sha256, size}]
+    items: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)  # [{name, sha256, size, contentType, key}]: the files themselves live in blob storage
 
 
 class ResolutionProposal(Base, UUIDPk, Timestamps):

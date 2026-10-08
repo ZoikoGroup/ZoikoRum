@@ -74,6 +74,11 @@ class Milestone(Base, UUIDPk, Timestamps, Versioned):
     accepted_by: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
     revision_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_revision_reason: Mapped[str | None] = mapped_column(String(1000))
+    # Partial acceptance (Payments & Escrow s.18): the buyer offers to accept for less; only the professional's agreement releases it.
+    partial_offer_minor: Mapped[int | None] = mapped_column(BigInteger)
+    partial_offer_reason: Mapped[str | None] = mapped_column(String(1000))
+    partial_offered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    accepted_release_minor: Mapped[int | None] = mapped_column(BigInteger)  # set when accepted for less than the full amount
 
 
 class Signature(Base, UUIDPk, CreatedAt):
@@ -102,4 +107,4 @@ class Submission(Base, UUIDPk, CreatedAt):
     milestone_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.milestones.id"), nullable=False, index=True)
     submitted_by: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     note: Mapped[str] = mapped_column(String(2000), nullable=False, default="")
-    files: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)  # [{name, sha256, size}]
+    files: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)  # [{name, sha256, size, contentType, key}]: the files themselves live in blob storage

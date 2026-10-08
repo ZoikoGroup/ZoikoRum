@@ -177,9 +177,31 @@ Each product document was checked again against the code. Gaps that belong to St
 | Engineering Handbook 21.4: circuit breakers | `shared/circuit.py`: after `ZK_PROVIDER_BREAKER_FAILURES` (5) consecutive technical errors the payment provider circuit opens for `ZK_PROVIDER_BREAKER_RESET_SECONDS` (30) and calls fail fast with 503 `PROVIDER_UNAVAILABLE`; event consumers are retried by the worker (the decision tree's "queue retry"). A declined card is a normal answer and never trips it |
 | Payments & Escrow s.10 "start acceptance timer" | Submitting work arms two durable timers per submission: a reminder one day before the review window closes (`MILESTONE_ACCEPTANCE_REMINDER`) and the deadline (`MILESTONE_ACCEPTANCE_OVERDUE`). Timers are ignored once the buyer accepts, asks for a revision, a dispute pauses the milestone, or the work is resubmitted. Overdue work is flagged (`reviewOverdue`, next action) for both sides. **No auto-release**: the money stays in escrow, because auto-release is an enterprise policy rule (s.17) left for the policy engine. Notification delivery of these events arrives with notifications (Step 10+) |
 
+### Second re-audit (2026-10-08)
+
+| Document | Gap filled |
+|---|---|
+| Finance & Accounting category s.5–8 | Grid / List view toggle; profile **quick view** (hover ~0.7s or "Quick view": summary, verified credentials, top specializations, engagement types, 3 deliverables, actions); "Compare: (n/3)"; **shareable comparison link** `/app/compare?ids=` (signed-in) with a governance row; **show partial matches** when few results (same search, other filters relaxed, unmet filters listed); "Browse all"; education cards with three short explainers; **"Jurisdiction-limited"** badge with one-click "Show eligible professionals" (search results now carry `servedJurisdictions` / `licensedJurisdictions`) |
+| F&A category s.11.2 | Regional credential equivalency (`frontend/src/lib/equivalency.ts`): plain-language note with the nearest local qualification; "Recognised in your region" only for a verified credential issued in the buyer's country. Explanatory only (Homepage: no implied equivalence) |
+| Professional Dashboard s.13 | Weekly availability slider (`professionals.weekly_hours`, 0–60), shown on the public profile |
+| Onboarding s.20/s.22, RFP s.5/s.19 | Autosave within ~1s of a pause (profile basics, request wizard; per user, in this browser) with a resume prompt; budget range slider |
+| Buyer Dashboard s.15 | Dashboard-scoped global search: engagements, requests and professionals with autocomplete and type filters (messages join with messaging) |
+| Governance playbook s.11, Onboarding s.16 | **Verification appeals** (`verification.appeals`): the subject appeals a FAILED or REVOKED check once, within `ZK_VERIFICATION_APPEAL_DAYS` (14), adds evidence; a compliance officer who did not make the original decision decides once (step-up): OVERTURNED → VERIFIED, UPHELD → stands |
+| Payments & Escrow s.18 | **Partial acceptance**: the buyer offers to accept submitted work for less with a reason; nothing moves unless the professional agrees; then that part is released (fee on it) and the rest refunded, balanced ledger, invoice for the released part. Declining, a revision or a dispute withdraws the offer |
+| Payments & Escrow s.15, RFP s.11 | **Retainer cycles**: monthly-cycle generator in the proposal form (one milestone per cycle), cycle strip on the engagement, funding reminders `ZK_FUNDING_REMINDER_DAYS` (7) before each unfunded cycle (`MILESTONE_FUNDING_REMINDER`), buyer "Cancel remaining cycles" for unfunded cycles (escrow allocation → CANCELLED); not funding the next cycle pauses the work. Auto-funding needs a stored payment method from the live provider |
+| Onboarding s.20 | **Duplicate accounts**: the same ID document (SHA-256) from two accounts raises `identity.duplicate_suspicions`; the person asks to merge or says it is not theirs; Platform Admin / T&S analyst decides (step-up): MERGED closes the duplicate (sessions revoked) and keeps the chosen account, NOT_DUPLICATE dismisses. Data is moved by support, never automatically |
+
+### Taxonomy beyond Finance & Accounting, and "Can't find yours?" (2026-10-08)
+
+| Topic | Decision |
+|---|---|
+| Categories | The documents describe a marketplace for governed professional services in general but detail only Finance & Accounting. Five **starter** categories were added next to it (Technology & Software Development, Legal Services, HR & People, Marketing & Growth, Management Consulting; 102 specializations in total, migration `935acaf8cfd4`). Legal specializations require credentials and are regulated. **Management to review** names and flags; admins can rename, extend or deprecate |
+| Picker | The profile Services step searches all specializations (name, group, category) with a category filter; chosen items stay visible |
+| "Can't find yours?" | `POST /v1/taxonomy/suggest` maps the professional's own words to up to 5 existing specializations and, if nothing fits, drafts a new one. Claude (`ZK_AI_PROVIDER=anthropic`, `ZK_ANTHROPIC_API_KEY`, `ZK_AI_MODEL`, default `claude-opus-5-5`; needs `pip install anthropic`) with structured output; any failure or no key falls back to keyword matching (`domains/ai/specializations.py`). Drafts are never live: `POST /v1/taxonomy/suggestions` stores a PENDING suggestion (max 3 per person), shown on the profile as "Custom (under review)" |
+| Admin review | `GET /v1/admin/taxonomy/suggestions`, `POST …/{id}/decision` (Platform Admin): APPROVE creates the specialization (versioned taxonomy change), MERGE maps it to an existing one, REJECT needs a note. Approved/merged specializations are added to the professional's profile (`TAXONOMY_SUGGESTION_RESOLVED`). Frontend: Administration → Taxonomy |
+
 Deferred to Step 10+ (Maruthi) or production: messaging and "Contact professional", notifications, change orders, policy engine and enterprise approvals,
-enforcement and appeals, retainers with recurring funding, duplicate-account merge, dashboard-wide search, quick view, grid/list toggle, shareable compare
-links, regional credential equivalency, availability scheduler, saved buyers, analytics funnel, autosave, server-generated PDF exports, and real providers
+enforcement and dispute-decision appeals, retainer auto-funding, messages in global search, saved buyers, analytics funnel, server-generated PDF exports, and real providers
 (KYC, PSP, email, S3, OpenSearch).
 
 ## 7. Running it
