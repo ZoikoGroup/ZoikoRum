@@ -5,9 +5,10 @@ from typing import Literal
 
 from fastapi import APIRouter, Query, Request, Response
 from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel, Field
 
 from zoikorum.domains.contract import service
-from zoikorum.domains.contract.schemas import ContractOut, ContractSummaryOut, RevisionIn, SignIn, SubmitIn
+from zoikorum.domains.contract.schemas import ContractOut, ContractSummaryOut, PartialOfferIn, RevisionIn, SignIn, SubmitIn
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
 from zoikorum.shared.http import Page
@@ -62,6 +63,28 @@ async def submit(milestone_id: uuid.UUID, body: SubmitIn, actor: CurrentActor, s
 @router.post("/v1/milestones/{milestone_id}/accept", response_model=ContractOut)
 async def accept(milestone_id: uuid.UUID, actor: CurrentActor, session: DbSession, idem: IdempotencyKey):
     return await idem.run(session, actor, lambda: service.accept_milestone(session, actor, milestone_id))
+
+
+class CancelCyclesIn(BaseModel):
+    reason: str = Field(min_length=5, max_length=500)
+
+
+@router.post("/v1/contracts/{contract_id}/cancel-remaining-cycles", response_model=ContractOut)
+async def cancel_remaining_cycles(contract_id: uuid.UUID, body: CancelCyclesIn, actor: CurrentActor, session: DbSession, idem: IdempotencyKey):
+    """Retainers: the buyer cancels the cycles that have not been funded yet. Funded cycles are unaffected."""
+    return await idem.run(session, actor, lambda: service.cancel_remaining_cycles(session, actor, contract_id, body.reason))
+
+
+@router.post("/v1/milestones/{milestone_id}/partial-acceptance", response_model=ContractOut)
+async def offer_partial(milestone_id: uuid.UUID, body: PartialOfferIn, actor: CurrentActor, session: DbSession):
+    """Buyer: offer to accept submitted work for less (with a reason). Released only if the professional agrees."""
+    return await service.offer_partial_acceptance(session, actor, milestone_id, body)
+
+
+@router.post("/v1/milestones/{milestone_id}/partial-acceptance/{answer}", response_model=ContractOut)
+async def answer_partial(milestone_id: uuid.UUID, answer: Literal["agree", "decline"], actor: CurrentActor, session: DbSession,
+                         idem: IdempotencyKey):
+    return await idem.run(session, actor, lambda: service.answer_partial_acceptance(session, actor, milestone_id, answer == "agree"))
 
 
 @router.post("/v1/milestones/{milestone_id}/request-revision", response_model=ContractOut)

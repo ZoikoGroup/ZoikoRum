@@ -240,6 +240,7 @@ def _item(doc: Doc, why: list[str]) -> ResultItem:
         engagementTypes=doc.engagement_types, deliveryModes=doc.delivery_modes, pricingModels=doc.pricing_models,
         availability=doc.availability, startingPrice=price, tier=doc.tier, tierLabel=TIER_LABEL[doc.tier],
         trustScore=doc.trust_score, whyThisResult=why, languages=doc.languages, yearsExperienceBand=doc.years_experience_band,
+        servedJurisdictions=list(doc.served_jurisdictions), licensedJurisdictions=list(doc.licensed_jurisdictions),
         dimensions={**doc.dimensions, **({"restrictions": "UNKNOWN"} if doc.dimensions.get("restrictions") not in (None, "CLEAR") else {})},
     )
 

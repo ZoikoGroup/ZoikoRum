@@ -27,14 +27,15 @@ from zoikorum.shared.money import Money, MoneyDTO
 from zoikorum.shared.state_machine import StateMachine
 
 ALLOCATION_STATES = StateMachine("Allocation", {
-    "UNFUNDED": {"FUNDING"},
+    "UNFUNDED": {"FUNDING", "CANCELLED"},  # CANCELLED: e.g. a retainer cycle stopped before funding
     "FUNDING": {"HELD", "UNFUNDED"},
-    "HELD": {"RELEASED", "ON_HOLD", "RELEASE_PENDING_APPROVAL", "REFUNDED", "UNFUNDED"},  # UNFUNDED: chargeback
+    "HELD": {"RELEASED", "PARTIALLY_RELEASED", "ON_HOLD", "RELEASE_PENDING_APPROVAL", "REFUNDED", "UNFUNDED"},  # UNFUNDED: chargeback
     "ON_HOLD": {"HELD", "RELEASED", "PARTIALLY_RELEASED", "REFUNDED", "UNFUNDED"},
     "RELEASE_PENDING_APPROVAL": {"RELEASED", "HELD"},
     "PARTIALLY_RELEASED": set(),
     "RELEASED": set(),
     "REFUNDED": set(),
+    "CANCELLED": set(),
 })
 FUNDERS = (OrgRole.REQUESTER, OrgRole.APPROVER, OrgRole.BUDGET_OWNER)
 VIEWERS = (PlatformRole.FINANCIAL_OPS, PlatformRole.PLATFORM_ADMIN)
@@ -89,9 +90,9 @@ async def _viewer(session: AsyncSession, actor: Actor, a: EscrowAccount) -> str:
 def _status(a: EscrowAccount, allocs: list[Allocation]) -> str:
     if any(x.state == "ON_HOLD" for x in allocs):
         return "DISPUTED"
-    if allocs and all(x.state == "RELEASED" for x in allocs):
+    if allocs and any(x.state == "RELEASED" for x in allocs) and all(x.state in ("RELEASED", "CANCELLED") for x in allocs):
         return "FULLY_RELEASED"
-    settled = ("RELEASED", "PARTIALLY_RELEASED", "REFUNDED", "UNFUNDED")  # UNFUNDED also covers chargebacks
+    settled = ("RELEASED", "PARTIALLY_RELEASED", "REFUNDED", "UNFUNDED", "CANCELLED")  # UNFUNDED also covers chargebacks
     if allocs and a.refunded_minor > 0 and all(x.state in settled for x in allocs):
         return "REFUNDED" if a.released_minor == 0 else "CLOSED"
     if a.released_minor > 0:
@@ -263,7 +264,9 @@ async def milestone_accepted(session: AsyncSession, payload: dict) -> None:
         return
 
     bps = get_settings().platform_fee_bps
-    gross = x.amount_minor
+    # An agreed partial acceptance releases only that part; the rest goes back to the buyer.
+    gross = min(int(payload["releaseMinor"]), x.amount_minor) if payload.get("releaseMinor") is not None else x.amount_minor
+    refund = x.amount_minor - gross
     fee = Money(gross, a.currency).percentage_bps(bps).minor
     net = gross - fee
     r = Release(account_id=a.id, milestone_id=milestone_id, gross_minor=gross, fee_minor=fee, net_minor=net, currency=a.currency, fee_bps=bps)
@@ -273,16 +276,34 @@ async def milestone_accepted(session: AsyncSession, payload: dict) -> None:
              ("ESCROW_RELEASE", "PRO_PAYABLE", 0, net, f"M{x.sequence}: payable to professional")]
     if fee:
         lines.append(("PLATFORM_FEE", "PLATFORM_REVENUE", 0, fee, f"M{x.sequence}: platform fee {bps / 100:.2f}%"))
+    if refund:
+        lines += [("REFUND", "ESCROW_HELD", refund, 0, f"M{x.sequence}: not released (partial acceptance)"),
+                  ("REFUND", "BUYER_REFUND_PAYABLE", 0, refund, f"M{x.sequence}: refund payable to buyer")]
     _post(session, a, "RELEASE", r.id, lines, milestone_id)
-    ALLOCATION_STATES.assert_can(x.state, "RELEASED")
-    x.state, x.released_minor, x.fee_minor, x.released_at = "RELEASED", net, fee, clock.now()
-    a.held_minor -= gross
+    new_state = "PARTIALLY_RELEASED" if refund else "RELEASED"
+    ALLOCATION_STATES.assert_can(x.state, new_state)
+    x.state, x.released_minor, x.fee_minor, x.refunded_minor, x.released_at = new_state, net, fee, refund, clock.now()
+    a.held_minor -= gross + refund
     a.released_minor += net
     a.fees_minor += fee
+    a.refunded_minor += refund
     a.status = _status(a, await _allocations(session, a.id))
-    evaluated("RELEASE", "ACCEPTED")
+    evaluated("RELEASE", "PARTIAL_ACCEPTANCE" if refund else "ACCEPTED")
     _evt(session, E.ESCROW_RELEASED, a, milestoneId=milestone_id, professionalId=a.professional_id, grossMinor=gross, feeMinor=fee,
          netMinor=net, currency=a.currency, releaseId=r.id)
+    if refund:
+        _evt(session, E.ESCROW_REFUNDED, a, milestoneId=milestone_id, amountMinor=refund, currency=a.currency, refundId=uuid.uuid4(),
+             fundingIds=[x.funding_id] if x.funding_id else [])
+
+
+async def milestone_cancelled(session: AsyncSession, payload: dict) -> None:
+    """Consumer of MILESTONE_CANCELLED: an unfunded allocation is closed; it no longer counts as money to fund."""
+    x = await session.scalar(select(Allocation).where(Allocation.milestone_id == uuid.UUID(str(payload["milestoneId"]))).with_for_update())
+    if x is None or x.state != "UNFUNDED":
+        return
+    a = await _account(session, x.account_id, lock=True)
+    x.state = "CANCELLED"
+    a.status = _status(a, await _allocations(session, a.id))
 
 
 # ---- Chargebacks (Payments & Escrow s.18) ----------------------------------------------------------------

@@ -21,3 +21,14 @@ class MatchIntent:
 
 async def extract_match_intent(session: AsyncSession, text: str) -> MatchIntent:
     raise NotImplementedError
+
+
+# ---- Specialization matching ("Can't find yours?") ----------------------------------------------------------------
+from zoikorum.domains.ai.specializations import (  # noqa: E402  (contract re-export for other domains)
+    CatalogEntry,
+    Draft,
+    SpecializationMatch,
+    match_specializations,
+)
+
+__all__ = ["CatalogEntry", "Draft", "MatchIntent", "SpecializationMatch", "extract_match_intent", "match_specializations"]

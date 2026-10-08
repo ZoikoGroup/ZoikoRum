@@ -25,6 +25,11 @@ async def on_signature_deadline(session: AsyncSession, key: str, payload: dict) 
     await service.signature_deadline_passed(session, payload)
 
 
+@on_timer(service.TIMER_FUNDING_REMINDER)
+async def on_funding_reminder(session: AsyncSession, key: str, payload: dict) -> None:
+    await service.funding_reminder(session, payload)
+
+
 @on_timer(service.TIMER_REVIEW_REMINDER)
 async def on_review_reminder(session: AsyncSession, key: str, payload: dict) -> None:
     await service.review_reminder(session, payload)

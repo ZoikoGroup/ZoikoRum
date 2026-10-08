@@ -56,6 +56,8 @@ class ResultItem(BaseModel):
     dimensions: dict[str, str] = {}  # public view: screening shown only when clear
     languages: list[str] = []
     yearsExperienceBand: str | None = None
+    servedJurisdictions: list[str] = []  # where they take work (empty = unrestricted)
+    licensedJurisdictions: list[str] = []
     whyThisResult: list[str]
 
 

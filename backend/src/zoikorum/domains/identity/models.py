@@ -101,3 +101,21 @@ class DataRequest(Base, UUIDPk, Timestamps):
     request_type: Mapped[str] = mapped_column(String(20), nullable=False)  # ACCESS | ERASURE
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="RECEIVED")  # RECEIVED | IN_PROGRESS | COMPLETED
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class DuplicateSuspicion(Base, UUIDPk, Timestamps):
+    """Two accounts that look like the same person (Onboarding s.20). OPEN -> ANSWERED -> MERGED | NOT_DUPLICATE."""
+
+    __tablename__ = "duplicate_suspicions"
+    __table_args__ = (UniqueConstraint("identity_id", "other_identity_id", name="uq_duplicate_pair"), {"schema": "identity"})
+
+    identity_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)  # the account that triggered it
+    other_identity_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    signal: Mapped[str] = mapped_column(String(40), nullable=False)  # SAME_ID_DOCUMENT
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="OPEN")
+    user_answer: Mapped[str | None] = mapped_column(String(20))  # MERGE_REQUESTED | NOT_ME
+    user_note: Mapped[str | None] = mapped_column(String(500))
+    resolved_by: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolution_note: Mapped[str | None] = mapped_column(String(500))
+    kept_identity_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
