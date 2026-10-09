@@ -85,3 +85,15 @@ python -m zoikorum.cli schema-doc
 ```
 
 After the dev merge, the migration head is `f1360ce42a96`. A single head does not prove database migration success; run upgrade and `alembic check` against the intended database.
+
+## Preventing database drift errors
+
+After pulling code, apply migrations before starting the API or worker. Both now validate the migration head and model columns at startup; the dev launcher also stops if upgrade or schema checks fail.
+
+```powershell
+# From backend/ using the project virtual environment
+../.venv/Scripts/python.exe -m alembic upgrade head
+../.venv/Scripts/python.exe -m alembic check
+```
+
+If the version marker is current but columns are missing, investigate and repair the schema; do not stamp migrations as applied without executing them. Missing-table/column errors during a request produce a safe `DATABASE_SCHEMA_OUTDATED` response with a support correlation ID. Restart the API and worker after deploying the fix. These controls prevent migration drift from surfacing as unexplained per-page failures; they do not replace feature regression tests.

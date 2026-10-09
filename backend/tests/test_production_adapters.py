@@ -181,4 +181,11 @@ async def test_persona_owner_scope_receipts_and_late_events(client, make_user, d
     assert (await send("evt_late", "completed")).status_code == 200
     assert (await client.get(read, headers=owner.h)).json()["status"] == "VERIFIED"
     await drain()
-    assert (await client.get(f"/v1/trust/professionals/{profile['id']}")).json()["tier"] == "B"
+    trust_url = f"/v1/trust/professionals/{profile['id']}"
+    # The profile is still a draft: verification does not make it publicly visible.
+    assert (await client.get(trust_url)).status_code == 404
+    assert (await client.get(trust_url, headers=stranger.h)).status_code == 404
+    snapshot = await client.get(trust_url, headers=owner.h)
+    assert snapshot.status_code == 200, snapshot.text
+    assert snapshot.json()["tier"] == "B"
+    assert snapshot.json()["dimensions"]["identity"] == "VERIFIED"

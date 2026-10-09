@@ -40,7 +40,7 @@ Migration `f1360ce42a96` joins `e0259bc31d85` (integration changes) and `41e8636
 
 Never commit `.env` or put backend credentials in frontend environment variables. Existing model defaults are not a guarantee that an external model/service is available.
 
-## Latest validation
+## Merge-time validation (before CI and database repairs)
 
 - Backend: **103 unit tests passed**, 166 non-unit tests deselected; Python compilation passed.
 - Frontend: **23 tests passed**, TypeScript and production build passed. The build retains a large-bundle warning.
@@ -49,3 +49,23 @@ Never commit `.env` or put backend credentials in frontend environment variables
 - Offline migration SQL generation encountered an existing taxonomy-seeding literal-rendering limitation. Actual database upgrade and model-drift checks remain unverified for this merge.
 
 Regenerate [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md) using `python -m zoikorum.cli schema-doc` from `backend/`; the generated document describes models, not proof that a deployed database has applied migrations.
+
+## Database drift repair (2026-10-09)
+
+The local application database was still at `e0259bc31d85` after the dev merge. Missing merged columns affected the data reads used by Messages and other pages. Applied the missing migrations to `f1360ce42a96`; `alembic check` now reports no new upgrade operations, and a read-only model-column check passes.
+
+The API and worker now refuse startup against outdated migration markers or missing model columns. `start-dev.ps1` stops on migration/check failure before launching services. Runtime missing-table/column errors return safe structured service errors, and the frontend preserves their codes and correlation IDs.
+
+Verification for this repair: 19 backend schema-guard, account-page-data and messaging tests passed, covering buyer, professional, enterprise, firm and staff reads; 25 frontend tests and the production build passed. Python compilation and PowerShell launcher syntax passed. These are focused checks, not a full backend suite or exhaustive browser test. The build retains its existing bundle-size warning.
+
+## Full local CI verification (2026-10-09)
+
+After the authentication-test and schema-drift fixes:
+
+- Full backend suite: **283 passed** (unit, integration and regression tests together).
+- Fresh isolated database: Alembic upgraded from an empty database to head; `alembic check` reported no new upgrade operations.
+- Collection with the repository's strict marker configuration passed; whitespace checks passed.
+- Frontend: lint exit code 0, **25 tests passed**, TypeScript/production build passed.
+- Existing non-blocking warnings remain: 35 frontend lint warnings and the large-bundle build warning.
+
+These local checks supersede the earlier incomplete merge-time verification above. They do not claim that GitHub's hosted checks have already rerun; the pushed commit must pass that environment too. Live payment, verification, email and cloud-provider behaviour still needs its separate operational verification.

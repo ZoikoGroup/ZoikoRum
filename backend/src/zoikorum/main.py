@@ -51,8 +51,12 @@ def load_domains() -> list[str]:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    yield
-    await dispose_engine()
+    from zoikorum.shared.schema_guard import ensure_schema_current
+    try:
+        await ensure_schema_current()
+        yield
+    finally:
+        await dispose_engine()
 
 
 def create_app() -> FastAPI:

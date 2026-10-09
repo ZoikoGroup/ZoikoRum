@@ -59,11 +59,27 @@ async def test_an_appeal_is_decided_once_by_an_independent_reviewer(client, make
     assert (await client.get(f"/v1/trust/professionals/{pro['id']}", headers=u.h)).json()["dimensions"]["identity"] == "VERIFIED"
 
 
-async def test_appeals_are_time_bounded_and_upheld_decisions_stand(client, make_user, drain):
+async def test_appeals_are_time_bounded_and_upheld_decisions_stand(client, make_user, drain, sf):
     u, pro, case, first = await failed_identity_case(client, make_user, drain)
+    # Advancing time also expires the session: authentication must run first.
     clock.advance(timedelta(days=15))
-    r = await client.post(f"{V}/cases/{case['id']}/appeal", headers=u.h, json={"statement": "Late appeal after the window has closed."})
-    clock.set_now(None)
+    try:
+        expired = await client.post(f"{V}/cases/{case['id']}/appeal", headers=u.h,
+                                    json={"statement": "Late appeal after the window has closed."})
+        assert expired.status_code == 401, expired.text
+        assert expired.json()["code"] == "UNAUTHENTICATED"
+    finally:
+        clock.set_now(None)
+
+    # Age the decision independently so the appeal deadline is tested with valid authentication.
+    from zoikorum.config import get_settings
+    async with sf() as session, session.begin():
+        await session.execute(text("UPDATE verification.cases SET decided_at = :decided WHERE id = :id"),
+                              {"decided": clock.now() - timedelta(days=get_settings().verification_appeal_days + 1),
+                               "id": case["id"]})
+    r = await client.post(f"{V}/cases/{case['id']}/appeal", headers=u.h,
+                          json={"statement": "Late appeal after the window has closed."})
+    assert r.status_code == 409, r.text
     assert r.json()["code"] == "APPEAL_WINDOW_CLOSED"
 
     u2, pro2, case2, first2 = await failed_identity_case(client, make_user, drain)
@@ -212,9 +228,22 @@ async def test_the_same_id_document_from_two_accounts_opens_a_merge_flow(client,
     async with sf() as s:
         status = await s.scalar(text("SELECT status FROM identity.identities WHERE id = :i"), {"i": str(second.id)})
     assert status == "SUSPENDED"
-    # Sessions are revoked: the closed account can no longer sign in (access tokens already issued expire within minutes).
+    # Suspension revokes existing sessions immediately, including access and refresh tokens.
+    assert (await client.get("/v1/me", headers=second.h)).status_code == 401
+    assert (await client.post("/v1/auth/refresh", json={"refreshToken": second.refresh_token})).status_code == 401
+
+    # Fresh suspended sessions may read safety notices, but cannot use business APIs.
     r = await client.post("/v1/auth/login", json={"email": second.email, "password": second.password})
-    assert r.status_code in (401, 403)
+    assert r.status_code == 200, r.text
+    assert r.json()["user"]["status"] == "SUSPENDED"
+    assert r.json()["user"]["platformRoles"] == []
+    restricted = {"Authorization": f"Bearer {r.json()['tokens']['accessToken']}"}
+    assert (await client.get("/v1/me", headers=restricted)).status_code == 200
+    assert (await client.get("/v1/enforcement-cases", headers=restricted)).status_code == 200
+    blocked = await client.get("/v1/professionals/me", headers=restricted)
+    assert blocked.status_code == 403, blocked.text
+    assert blocked.json()["code"] == "ACCOUNT_NOT_ACTIVE"
+    assert (await client.get("/v1/me", headers=first.h)).status_code == 200
     assert (await client.get("/v1/admin/duplicate-accounts", headers=admin.h)).json() == []
 
 

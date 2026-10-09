@@ -102,7 +102,7 @@ Current routes include `/app/messages`, `/app/policies`, `/app/notifications`, `
 
 Hosted Stripe payments/onboarding and Persona identity controls read backend configuration and require configured external services. Credentials stay on the backend. The latest dev merge brought backend additions rather than matching frontend files: partial acceptance, verification appeals, duplicate-account handling, taxonomy suggestions, proposal attachments and retainer controls still need dedicated UI wiring or verification. See [current status](../backend/docs/CURRENT_STATUS.md).
 
-Latest merge validation (2026-10-09): 23 frontend tests and the production build passed; the build retains a large-bundle warning. This does not establish end-to-end database/provider success.
+Current local CI validation (2026-10-09): lint returned exit code 0, 25 frontend tests and the production build passed. There are 35 non-blocking lint warnings and a large-bundle warning. The full backend suite and fresh-database migration checks also passed; live provider verification remains separate.
 
 ## Layout
 ```

@@ -14,8 +14,14 @@ if ($LASTEXITCODE -ne 0) { Write-Host "Docker is not running. Open Docker Deskto
 
 Write-Host "    Applying database migrations..." -ForegroundColor Cyan
 Push-Location $backend
-& "$venv\alembic.exe" upgrade head
-Pop-Location
+try {
+  & "$venv\alembic.exe" upgrade head
+  if ($LASTEXITCODE -ne 0) { throw "Database migration failed. API and worker were not started." }
+  & "$venv\alembic.exe" check
+  if ($LASTEXITCODE -ne 0) { throw "Database schema does not match the code. API and worker were not started." }
+} finally {
+  Pop-Location
+}
 
 Write-Host "2/4 Starting API on http://localhost:8000 ..." -ForegroundColor Cyan
 Start-Process powershell -WorkingDirectory $backend -ArgumentList "-NoExit", "-Command",

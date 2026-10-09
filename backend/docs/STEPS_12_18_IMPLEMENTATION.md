@@ -35,7 +35,9 @@ Suspended accounts can authenticate to read safety notices and file appeals. The
 
 ## Verification
 
-Latest merge checks (2026-10-09): 103 backend unit tests and 23 frontend tests passed; compilation and frontend build passed. PostgreSQL was unavailable, so this merge has not passed database integration or migration execution checks. Offline migration SQL generation also hit an existing taxonomy seed rendering limitation. Earlier feature-level checks below describe test coverage, not a new full-suite pass.
+Current local CI verification: 283 backend tests passed; fresh-database migration and model-drift checks passed; frontend lint, 25 tests and build passed. See [full validation details](CURRENT_STATUS.md#full-local-ci-verification-2026-10-09) for remaining warnings and external-service limits.
+
+Earlier merge checks, before database and CI repairs (2026-10-09): 103 backend unit tests and 23 frontend tests passed; compilation and frontend build passed. PostgreSQL was unavailable, so this merge has not passed database integration or migration execution checks. Offline migration SQL generation also hit an existing taxonomy seed rendering limitation. Earlier feature-level checks below describe test coverage, not a new full-suite pass.
 
 Currency-summary follow-up: earnings totals now aggregate the entire payout history per currency, independently of the latest-200 payout detail window. Monthly settled earnings use the current UTC month. `totalsByCurrency` is the authoritative summary; legacy `totals` remains available for a single currency and is empty for multiple currencies. Buyer payments, engagement values, protected funds and dispute totals display currencies separately without an implied exchange rate.
 
