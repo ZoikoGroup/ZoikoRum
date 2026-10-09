@@ -21,9 +21,9 @@ professional and opens the profile; accepts delivered work and downloads the agr
 set up through the API (`e2e/api.ts`): a professional who publishes and passes the identity check through the simulated
 identity partner, a buyer organisation, and an engagement up to submitted work.
 
-The tests never touch your running app or data: `e2e/global-setup.ts` recreates a separate database (`zk_e2e`;
-`backend/scripts/e2e_database.py` refuses any other name), and Playwright starts its own API and worker on :8100
-(`backend/scripts/e2e_stack.py`, fixed development settings) and this app on :5174. Needs PostgreSQL from
+The tests never touch your running app or data: Playwright starts `backend/scripts/e2e_stack.py`, which recreates and
+migrates a separate database (`zk_e2e`; `backend/scripts/e2e_database.py` refuses any other name) and then runs its own
+API and worker on :8100 with fixed development settings; this app runs on :5174. Needs PostgreSQL from
 `docker-compose.yml`, the backend virtualenv (`ZK_E2E_PYTHON` overrides its path) and, once, `npx playwright install chromium`.
 On failure, `test-results/` holds screenshots and a trace (`npx playwright show-trace <trace.zip>`). CI runs them in the
 `browser` job.

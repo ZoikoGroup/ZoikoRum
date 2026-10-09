@@ -1,7 +1,9 @@
 """API and worker in one process for the browser tests (frontend/playwright.config.ts starts it).
 
-Fixed settings for a repeatable run, independent of any developer .env: its own database (zk_e2e), local environment,
-no two-step codes, simulated identity partner, test payment provider, no rate limits, a throwaway file store.
+It first recreates and migrates its own database (e2e_database.py), so the servers never start before their database
+exists and nothing drops the database under a running server. Fixed settings for a repeatable run, independent of any
+developer .env: its own database (zk_e2e), local environment, no two-step codes, simulated identity partner, test
+payment provider, no rate limits, a throwaway file store.
 """
 
 from __future__ import annotations
@@ -28,6 +30,14 @@ SETTINGS = {
 }
 
 
+def prepare_database() -> None:
+    """Fresh, migrated database before anything connects (only zk_e2e* names are ever dropped)."""
+    from e2e_database import main as recreate_and_migrate
+
+    os.environ["ZK_E2E_DATABASE_URL"] = SETTINGS["ZK_DATABASE_URL"]
+    recreate_and_migrate()
+
+
 async def main() -> None:
     os.environ.update(SETTINGS)
     os.chdir(Path(__file__).resolve().parents[2])  # repository root: no developer .env is read
@@ -41,4 +51,5 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
+    prepare_database()
     asyncio.run(main())

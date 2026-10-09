@@ -3,7 +3,8 @@ import { defineConfig, devices } from '@playwright/test'
 /* Browser tests: a real Chrome drives the app against its own API, worker and database (zk_e2e), so a developer's
    running app (5173 / 8000) and data are never touched.
      npm run e2e          (needs PostgreSQL from docker-compose.yml and the backend virtualenv)
-   e2e/global-setup.ts recreates the database; backend/scripts/e2e_stack.py runs the API and worker on 8100. */
+   backend/scripts/e2e_stack.py recreates and migrates the database, then runs the API and worker on 8100 (one step, so
+   the servers never start before their database exists). */
 
 const API_PORT = 8100
 const WEB_PORT = 5174
@@ -12,7 +13,6 @@ const python = process.env.ZK_E2E_PYTHON ?? (process.platform === 'win32' ? '../
 export default defineConfig({
   testDir: './e2e',
   testMatch: '**/*.e2e.ts',  // not *.test.ts / *.spec.ts, which Vitest runs
-  globalSetup: './e2e/global-setup.ts',
   fullyParallel: false,
   workers: 1,
   retries: process.env.CI ? 1 : 0,
