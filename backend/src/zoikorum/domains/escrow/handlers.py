@@ -29,6 +29,11 @@ async def on_payment_failed(session: AsyncSession, event: EventEnvelope) -> None
     await service.payment_failed(session, event.payload)
 
 
+@subscribe(E.MILESTONE_CANCELLED, consumer="escrow.cancel_allocation")
+async def on_milestone_cancelled(session: AsyncSession, event: EventEnvelope) -> None:
+    await service.milestone_cancelled(session, event.payload)
+
+
 @subscribe(E.PAYMENT_CHARGED_BACK, consumer="escrow.chargeback")
 async def on_payment_charged_back(session: AsyncSession, event: EventEnvelope) -> None:
     await service.payment_charged_back(session, event.payload)

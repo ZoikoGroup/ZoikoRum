@@ -77,3 +77,11 @@ async def saved_by(session: AsyncSession, professional_id: uuid.UUID) -> list[uu
     """Identity ids that saved this professional (availability alerts)."""
     return list((await session.scalars(select(SavedProfessional.identity_id).where(
         SavedProfessional.professional_id == professional_id))).all())
+
+
+
+async def pending_specialization_names(session: AsyncSession, professional_id: uuid.UUID) -> list[str]:
+    """Suggested specializations still waiting for an admin (shown on the profile as "under review")."""
+    from zoikorum.domains.marketplace.service import pending_names
+
+    return await pending_names(session, professional_id)

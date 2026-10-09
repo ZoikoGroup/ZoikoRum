@@ -11,17 +11,17 @@ Migrations: `backend/alembic/versions/` (`alembic upgrade head`).
 ## Contents
 
 - [platform](#schema-platform) — 5 tables
-- [identity](#schema-identity) — 5 tables
+- [identity](#schema-identity) — 6 tables
 - [buyer](#schema-buyer) — 6 tables
 - [firm](#schema-firm) — 3 tables
 - [professional](#schema-professional) — 3 tables
-- [marketplace](#schema-marketplace) — 5 tables
+- [marketplace](#schema-marketplace) — 6 tables
 - [search](#schema-search) — 1 tables
 - [proposal](#schema-proposal) — 2 tables
 - [contract](#schema-contract) — 4 tables
 - [escrow](#schema-escrow) — 5 tables
 - [payments](#schema-payments) — 7 tables
-- [verification](#schema-verification) — 2 tables
+- [verification](#schema-verification) — 3 tables
 - [trust](#schema-trust) — 3 tables
 - [dispute](#schema-dispute) — 4 tables
 - [audit](#schema-audit) — 2 tables
@@ -140,6 +140,28 @@ A person's privacy request (GDPR/CCPA access or erasure). Logged and handled by 
 | `id` | UUID | no | PK |
 | `updated_at` | DATETIME | no |  |
 | `created_at` | DATETIME | no |  |
+
+### `identity.duplicate_suspicions`
+
+Two accounts that look like the same person (Onboarding s.20). OPEN -> ANSWERED -> MERGED | NOT_DUPLICATE.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `identity_id` | UUID | no | indexed |
+| `other_identity_id` | UUID | no | indexed |
+| `signal` | varchar(40) | no |  |
+| `status` | varchar(20) | no |  |
+| `user_answer` | varchar(20) | yes |  |
+| `user_note` | varchar(500) | yes |  |
+| `resolved_by` | UUID | yes |  |
+| `resolved_at` | DATETIME | yes |  |
+| `resolution_note` | varchar(500) | yes |  |
+| `kept_identity_id` | UUID | yes |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+
+Unique together: (identity_id, other_identity_id)
 
 ### `identity.identities`
 
@@ -451,6 +473,7 @@ Aggregate root. Lifecycle: DRAFT -> PUBLISHED <-> UNPUBLISHED; any -> SUSPENDED 
 | `availability` | varchar(20) | no |  |
 | `max_concurrent_engagements` | INTEGER | yes |  |
 | `temporarily_unavailable` | BOOLEAN | no |  |
+| `weekly_hours` | INTEGER | yes |  |
 | `active_engagements` | INTEGER | no |  |
 | `served_jurisdictions` | ARRAY | no |  |
 | `licensed_jurisdictions` | ARRAY | no |  |
@@ -524,6 +547,30 @@ A buyer's saved search (Buyer Dashboard s.13): filters persist; "new since you l
 | `created_at` | DATETIME | no |  |
 
 Unique together: (identity_id, name)
+
+### `marketplace.specialization_suggestions`
+
+A professional's "can't find mine" suggestion (AI-drafted or typed). PENDING until an admin approves it (new specialization), merges it into an existing one, or rejects it. Nothing goes live without that decision.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `identity_id` | UUID | no | indexed |
+| `professional_id` | UUID | yes | indexed |
+| `text` | varchar(1000) | no |  |
+| `name` | varchar(200) | no |  |
+| `category_slug` | varchar(120) | yes |  |
+| `group_slug` | varchar(120) | yes |  |
+| `description` | varchar(500) | no |  |
+| `credential_likely` | BOOLEAN | no |  |
+| `source` | varchar(80) | no |  |
+| `status` | varchar(20) | no |  |
+| `resolved_slug` | varchar(120) | yes |  |
+| `resolved_by` | UUID | yes |  |
+| `resolved_at` | DATETIME | yes |  |
+| `resolution_note` | varchar(500) | yes |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
 
 ### `marketplace.taxonomy_nodes`
 
@@ -734,6 +781,10 @@ PENDING_FUNDING -> IN_PROGRESS -> SUBMITTED -> (REVISION_REQUESTED -> SUBMITTED)
 | `accepted_by` | UUID | yes |  |
 | `revision_count` | INTEGER | no |  |
 | `last_revision_reason` | varchar(1000) | yes |  |
+| `partial_offer_minor` | BIGINT | yes |  |
+| `partial_offer_reason` | varchar(1000) | yes |  |
+| `partial_offered_at` | DATETIME | yes |  |
+| `accepted_release_minor` | BIGINT | yes |  |
 | `id` | UUID | no | PK |
 | `updated_at` | DATETIME | no |  |
 | `created_at` | DATETIME | no |  |
@@ -1023,6 +1074,25 @@ Unique together: (provider, event_id)
 
 <a id="schema-verification"></a>
 ## Schema `verification`
+
+### `verification.appeals`
+
+An appeal against a FAILED or REVOKED verification (Governance playbook s.11, Onboarding s.16 "appeal path"). One per case, time-bounded, evidence-based, decided once by a compliance officer who did not make the original decision.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `case_id` | UUID | no | FK → verification.cases.id, unique |
+| `filed_by` | UUID | no |  |
+| `statement` | varchar(2000) | no |  |
+| `case_status_at_filing` | varchar(20) | no |  |
+| `original_reviewer_id` | UUID | yes |  |
+| `status` | varchar(20) | no |  |
+| `decided_by` | UUID | yes |  |
+| `decided_at` | DATETIME | yes |  |
+| `decision_note` | varchar(1000) | yes |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
 
 ### `verification.cases`
 

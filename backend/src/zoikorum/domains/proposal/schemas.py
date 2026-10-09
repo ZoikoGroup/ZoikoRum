@@ -12,7 +12,6 @@ from zoikorum.shared.uploads import StoredFileOut, UploadIn
 EngagementType = Literal["ADVISORY", "PROJECT", "RETAINER", "FRACTIONAL"]
 Duration = Literal["ONE_TWO_WEEKS", "THREE_SIX_WEEKS", "TWO_THREE_MONTHS", "THREE_SIX_MONTHS", "ONGOING"]
 DeclineReason = Literal["OUT_OF_SCOPE", "NO_CAPACITY", "TIMELINE", "BUDGET", "CONFLICT_OF_INTEREST", "JURISDICTION", "OTHER"]
-ATTACHMENT_TYPES = (".pdf", ".docx", ".xlsx", ".png", ".jpg", ".jpeg")
 
 
 class Budget(BaseModel):
@@ -24,18 +23,6 @@ class Budget(BaseModel):
     def _range(self):
         if self.minMinor is not None and self.minMinor > self.maxMinor:
             raise ValueError("budget minimum is above the maximum")
-        return self
-
-
-class Attachment(BaseModel):
-    name: str = Field(min_length=1, max_length=255)
-    sha256: str = Field(pattern="^[a-f0-9]{64}$")
-    size: int = Field(gt=0, le=25 * 1024 * 1024)
-
-    @model_validator(mode="after")
-    def _type(self):
-        if not self.name.lower().endswith(ATTACHMENT_TYPES):
-            raise ValueError("attachments must be PDF, DOCX, XLSX, PNG or JPG")
         return self
 
 
@@ -267,6 +254,11 @@ class ProposalOut(BaseModel):
     reasonNote: str | None
     termsHash: str | None
     deltas: list[Delta]
+    attachments: list[StoredFileOut] = []  # proposalAttachments: portfolio items / supporting docs
     createdAt: datetime
     updatedAt: datetime
     version: int
+
+
+class ProposalAttachmentsIn(BaseModel):
+    files: list[UploadIn] = Field(min_length=1, max_length=3)

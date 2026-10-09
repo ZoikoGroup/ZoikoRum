@@ -77,3 +77,21 @@ class EvidenceItem(Base, UUIDPk, CreatedAt):
     storage_key: Mapped[str | None] = mapped_column(String(500))  # blob storage key (the file itself)
     content_type: Mapped[str | None] = mapped_column(String(100))
     uploaded_by: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+
+
+class Appeal(Base, UUIDPk, Timestamps):
+    """An appeal against a FAILED or REVOKED verification (Governance playbook s.11, Onboarding s.16 "appeal path").
+    One per case, time-bounded, evidence-based, decided once by a compliance officer who did not make the original decision."""
+
+    __tablename__ = "appeals"
+    __table_args__ = (Index("ix_appeals_status", "status", "created_at"), {"schema": SCHEMA})
+
+    case_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.cases.id"), nullable=False, unique=True)
+    filed_by: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    statement: Mapped[str] = mapped_column(String(2000), nullable=False)
+    case_status_at_filing: Mapped[str] = mapped_column(String(20), nullable=False)  # FAILED | REVOKED
+    original_reviewer_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="OPEN")  # OPEN | UPHELD | OVERTURNED
+    decided_by: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    decision_note: Mapped[str | None] = mapped_column(String(1000))

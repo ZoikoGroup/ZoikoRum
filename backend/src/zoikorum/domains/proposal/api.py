@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from zoikorum.domains.proposal import service
 from zoikorum.domains.proposal.schemas import (
+    ProposalAttachmentsIn,
     CancelIn, DeclineIn, ProposalIn, ProposalOut, RejectIn, RequestIn, RequestOut, RequestSummaryOut, RevisionIn,
 )
 from zoikorum.shared.auth import CurrentActor
@@ -96,6 +97,23 @@ async def get_proposal(proposal_id: uuid.UUID, actor: CurrentActor, session: DbS
 @router.patch(f"{P}/{{proposal_id}}", response_model=ProposalOut)
 async def update_proposal(proposal_id: uuid.UUID, body: ProposalIn, actor: CurrentActor, session: DbSession):
     return await service.update_proposal(session, actor, proposal_id, body)
+
+
+@router.post(f"{P}/{{proposal_id}}/attachments", response_model=ProposalOut)
+async def add_proposal_attachments(proposal_id: uuid.UUID, body: ProposalAttachmentsIn, actor: CurrentActor, session: DbSession):
+    """Professional: attach up to 3 files (portfolio items or supporting documents) while drafting or revising."""
+    return await service.add_proposal_attachments(session, actor, proposal_id, body)
+
+
+@router.delete(f"{P}/{{proposal_id}}/attachments/{{sha256}}", response_model=ProposalOut)
+async def remove_proposal_attachment(proposal_id: uuid.UUID, sha256: str, actor: CurrentActor, session: DbSession):
+    return await service.remove_proposal_attachment(session, actor, proposal_id, sha256)
+
+
+@router.get(f"{P}/{{proposal_id}}/attachments/{{sha256}}")
+async def proposal_attachment(proposal_id: uuid.UUID, sha256: str, actor: CurrentActor, session: DbSession) -> Response:
+    """Opens a proposal attachment (the professional, or the buyer's organisation once sent). Audited."""
+    return file_response(*await service.proposal_attachment_file(session, actor, proposal_id, sha256))
 
 
 @router.post(f"{P}/{{proposal_id}}/submit", response_model=ProposalOut)

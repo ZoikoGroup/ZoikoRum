@@ -51,6 +51,7 @@ class Professional(Base, UUIDPk, Timestamps, Versioned):
     availability: Mapped[str] = mapped_column(String(20), nullable=False, default="NOT_SPECIFIED")
     max_concurrent_engagements: Mapped[int | None] = mapped_column(Integer)
     temporarily_unavailable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    weekly_hours: Mapped[int | None] = mapped_column(Integer)  # hours a week open for Zoikorum work (Professional Dashboard s.13)
     active_engagements: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     # Jurisdiction & eligibility (s.13)

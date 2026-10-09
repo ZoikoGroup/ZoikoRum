@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +20,7 @@ from zoikorum.domains.buyer import facade as buyer_facade
 from zoikorum.domains.policy import facade as policy_facade
 from zoikorum.domains.contract.models import ChangeOrder, Contract, ContractRevision, Milestone, Signature, Submission
 from zoikorum.domains.contract.schemas import (
-    ChangeOrderIn, ChangePreviewOut, ContractOut, ContractRevisionOut, ContractSummaryOut, MilestoneOut,
+    PartialOfferIn, PartialOfferOut, ChangeOrderIn, ChangePreviewOut, ContractOut, ContractRevisionOut, ContractSummaryOut, MilestoneOut,
     PartyOut, RevisionIn, SignatureOut, SignIn, SubmissionOut, SubmitIn,
 )
 from zoikorum.domains.escrow import facade as escrow_facade
@@ -29,7 +29,7 @@ from zoikorum.domains.identity import facade as identity_facade
 from zoikorum.domains.professional import facade as professional_facade
 from zoikorum.shared import clock
 from zoikorum.shared.auth import Actor, OrgRole, PlatformRole
-from zoikorum.shared.errors import Conflict, Forbidden, NotFound
+from zoikorum.shared.errors import Conflict, Forbidden, NotFound, ValidationFailed
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_audit, record_event
 from zoikorum.shared.http import page_of, paginate
@@ -63,6 +63,7 @@ TIMER_SIGNATURE = "contract.signature_deadline"
 TIMER_REVIEW_REMINDER = "contract.review_reminder"  # one day before the buyer's review window closes
 TIMER_REVIEW_DUE = "contract.review_due"  # the review window has passed
 TIMER_AUTO_ACCEPT = "contract.policy_auto_accept"
+TIMER_FUNDING_REMINDER = "contract.funding_reminder"  # an unfunded milestone / retainer cycle is coming up (P&E s.15)
 LABEL = {"ADVISORY": "Advisory", "PROJECT": "Project", "RETAINER": "Retainer", "FRACTIONAL": "Fractional",
          "HOURLY": "Hourly", "FIXED": "Fixed fee"}
 MAX_MONEY_MINOR = 9_223_372_036_854_775_807
@@ -648,6 +649,11 @@ async def _out(session: AsyncSession, actor: Actor, c: Contract, viewer: str) ->
             status=m.status, startedAt=m.started_at, submittedAt=m.submitted_at, acceptanceDueAt=m.acceptance_due_at,
             reviewOverdue=_review_overdue(m),
             acceptedAt=m.accepted_at, revisionCount=m.revision_count, lastRevisionReason=m.last_revision_reason,
+            partialOffer=PartialOfferOut(amount=MoneyDTO(amountMinor=m.partial_offer_minor, currency=m.currency),
+                                         refund=MoneyDTO(amountMinor=m.amount_minor - m.partial_offer_minor, currency=m.currency),
+                                         reason=m.partial_offer_reason or "", offeredAt=m.partial_offered_at)
+            if m.partial_offer_minor is not None and m.partial_offered_at is not None else None,
+            acceptedRelease=MoneyDTO(amountMinor=m.accepted_release_minor, currency=m.currency) if m.accepted_release_minor is not None else None,
             submissions=[SubmissionOut(id=s.id, note=s.note, files=[file_out(f) for f in s.files], submittedAt=s.created_at)
                          for s in subs if s.milestone_id == m.id],
         ) for m in ms],
@@ -886,11 +892,64 @@ async def sign(session: AsyncSession, actor: Actor, contract_id: uuid.UUID, body
             c.activated_at = now
             _evt(session, E.CONTRACT_ACTIVATED, c, buyerIdentityId=c.buyer_identity_id, currency=c.currency,
                  totalMinor=c.total_minor, policyVersionId=c.policy_version_id, milestones=_milestone_list(await _milestones(session, c.id)))
+        await _schedule_funding_reminders(session, c, now)
     await session.flush()
     return await _out(session, actor, c, viewer)
 
 
 # ---- Milestones -----------------------------------------------------------------------------------
+
+async def _schedule_funding_reminders(session: AsyncSession, c: Contract, now: datetime) -> None:
+    """Upcoming funding reminders (Payments & Escrow s.15): a few days before each dated milestone or retainer cycle."""
+    days = get_settings().funding_reminder_days
+    for m in await _milestones(session, c.id):
+        if m.due_date is None:
+            continue
+        fire = datetime.combine(m.due_date, datetime.min.time(), tzinfo=timezone.utc) - timedelta(days=days)
+        if fire > now:
+            await schedule_timer(session, TIMER_FUNDING_REMINDER, str(m.id), fire, {"milestoneId": str(m.id)})
+
+
+async def funding_reminder(session: AsyncSession, payload: dict) -> None:
+    m = await session.get(Milestone, uuid.UUID(payload["milestoneId"]))
+    if m is None or m.status != "PENDING_FUNDING":
+        return  # already funded, cancelled or done
+    c = await _contract(session, m.contract_id)
+    if c.status == "ACTIVE":
+        _evt(session, E.MILESTONE_FUNDING_REMINDER, c, milestoneId=m.id, dueDate=m.due_date, amountMinor=m.amount_minor, currency=m.currency)
+
+
+async def cancel_remaining_cycles(session: AsyncSession, actor: Actor, contract_id: uuid.UUID, reason: str) -> ContractOut:
+    """Retainer cancel control (Payments & Escrow s.15, policy-bound): the buyer stops future cycles that have not been
+    funded. Funded cycles continue (or are settled through a dispute); nothing already paid moves."""
+    c = await _contract(session, contract_id, lock=True)
+    viewer = await _viewer(session, actor, c)
+    await _require_decider(session, actor, c, viewer)
+    if c.engagement_type != "RETAINER" and c.pricing_model != "RETAINER":
+        raise Conflict("Only retainer cycles can be cancelled this way; for other engagements raise a dispute or agree a change",
+                       code="NOT_A_RETAINER")
+    if c.status != "ACTIVE":
+        raise Conflict("Only an active retainer can be changed", code="CONTRACT_NOT_ACTIVE")
+    ms = await _milestones(session, c.id, lock=True)
+    future = [m for m in ms if m.status == "PENDING_FUNDING"]
+    if not future:
+        raise Conflict("There are no unfunded cycles left to cancel", code="NOTHING_TO_CANCEL")
+    for m in future:
+        MILESTONE_STATES.assert_can(m.status, "CANCELLED")
+        m.status = "CANCELLED"
+        await cancel_timer(session, TIMER_FUNDING_REMINDER, str(m.id))
+        _evt(session, E.MILESTONE_CANCELLED, c, milestoneId=m.id, reason=reason.strip()[:500], cancelledBy=actor.identity_id)
+    if all(m.status in ("ACCEPTED", "CANCELLED") for m in ms):
+        now = clock.now()
+        if any(m.status == "ACCEPTED" for m in ms):
+            c.status, c.completed_at = "COMPLETED", now
+            _evt(session, E.CONTRACT_COMPLETED, c, reason="REMAINING_CYCLES_CANCELLED")
+        else:
+            c.status = "TERMINATED"
+            _evt(session, E.CONTRACT_TERMINATED, c, reason="ALL_CYCLES_CANCELLED")
+    await session.flush()
+    return await _out(session, actor, c, viewer)
+
 
 async def _milestone_ctx(session: AsyncSession, actor: Actor, milestone_id: uuid.UUID) -> tuple[Milestone, Contract, str]:
     m = await session.get(Milestone, milestone_id, with_for_update=True)
@@ -928,6 +987,7 @@ async def dispute_initiated(session: AsyncSession, payload: dict) -> None:
     for m in await _milestones(session, c.id, lock=True):
         if m.id in ids and MILESTONE_STATES.can(m.status, "DISPUTED"):
             m.status = "DISPUTED"
+            m.partial_offer_minor = m.partial_offer_reason = m.partial_offered_at = None
     if c.status == "ACTIVE":
         c.status = "DISPUTED"
         _evt(session, E.CONTRACT_DISPUTED, c, disputeId=payload["disputeId"])
@@ -1087,7 +1147,7 @@ async def policy_auto_accept(session, payload):
     _evt(session, E.MILESTONE_ACCEPTED, c, milestoneId=m.id, amountMinor=m.amount_minor, currency=m.currency,
         acceptedBy=None, onTime=m.due_date is None or m.submitted_at.date() <= m.due_date, auto=True)
     await session.flush()
-    if all(x.status == "ACCEPTED" for x in await _milestones(session, c.id)):
+    if all(x.status in ("ACCEPTED", "CANCELLED") for x in await _milestones(session, c.id)):
         CONTRACT_STATES.assert_can(c.status, "COMPLETED")
         c.status, c.completed_at = "COMPLETED", clock.now()
         _evt(session, E.CONTRACT_COMPLETED, c, reason="ALL_MILESTONES_ACCEPTED")
@@ -1098,6 +1158,24 @@ async def _require_decider(session: AsyncSession, actor: Actor, c: Contract, vie
         raise Forbidden("Only the buyer reviews submitted work")
     if not (await buyer_facade.get_member_roles(session, c.organization_id, actor.identity_id)).intersection(DECIDERS):
         raise Forbidden("Reviewing work needs the Requester or Approver role in your organisation", code="ROLE_REQUIRED")
+
+
+async def _accept(session: AsyncSession, m: Milestone, c: Contract, accepted_by: uuid.UUID, release_minor: int | None = None) -> None:
+    """Accept a milestone; with ``release_minor`` (agreed partial acceptance) only that part is released, the rest refunded."""
+    now = clock.now()
+    MILESTONE_STATES.assert_can(m.status, "ACCEPTED")
+    m.status, m.accepted_at, m.accepted_by = "ACCEPTED", now, accepted_by
+    m.accepted_release_minor = release_minor
+    m.partial_offer_minor = m.partial_offer_reason = m.partial_offered_at = None
+    extra = {"releaseMinor": release_minor} if release_minor is not None else {}
+    _evt(session, E.MILESTONE_ACCEPTED, c, milestoneId=m.id, amountMinor=m.amount_minor, currency=m.currency, acceptedBy=accepted_by,
+         onTime=m.due_date is None or (m.submitted_at is not None and m.submitted_at.date() <= m.due_date), auto=False, **extra)
+    await session.flush()
+    if all(x.status in ("ACCEPTED", "CANCELLED") for x in await _milestones(session, c.id)):  # cancelled retainer cycles do not hold it open
+        CONTRACT_STATES.assert_can(c.status, "COMPLETED")
+        c.status, c.completed_at = "COMPLETED", now
+        _evt(session, E.CONTRACT_COMPLETED, c, reason="ALL_MILESTONES_ACCEPTED")
+        await session.flush()
 
 
 async def accept_milestone(session: AsyncSession, actor: Actor, milestone_id: uuid.UUID) -> ContractOut:
@@ -1112,16 +1190,39 @@ async def accept_milestone(session: AsyncSession, actor: Actor, milestone_id: uu
         pinned_version_id=c.policy_version_id, platform_default_pinned=c.policy_version_id is None,
         extra={"contract.termsHash": c.terms_hash, "contract.version": c.contract_version,
             "milestone.submissionId": str(await session.scalar(select(Submission.id).where(Submission.milestone_id == m.id).order_by(Submission.created_at.desc()).limit(1)))}))
-    now = clock.now()
-    MILESTONE_STATES.assert_can(m.status, "ACCEPTED")
-    m.status, m.accepted_at, m.accepted_by = "ACCEPTED", now, actor.identity_id
-    _evt(session, E.MILESTONE_ACCEPTED, c, milestoneId=m.id, amountMinor=m.amount_minor, currency=m.currency, acceptedBy=actor.identity_id,
-         onTime=m.due_date is None or (m.submitted_at is not None and m.submitted_at.date() <= m.due_date), auto=False)
+    await _accept(session, m, c, actor.identity_id)
+    return await _out(session, actor, c, viewer)
+
+
+async def offer_partial_acceptance(session: AsyncSession, actor: Actor, milestone_id: uuid.UUID, body: PartialOfferIn) -> ContractOut:
+    """Buyer: accept this work for less, with a reason. Nothing moves until the professional agrees (no unilateral cut)."""
+    m, c, viewer = await _milestone_ctx(session, actor, milestone_id)
+    await _require_decider(session, actor, c, viewer)
+    if m.status != "SUBMITTED":
+        raise Conflict("Only submitted work can be accepted", code="MILESTONE_NOT_SUBMITTED")
+    if body.amountMinor >= m.amount_minor:
+        raise ValidationFailed("A partial acceptance must be less than the milestone amount; use Accept for the full amount",
+                               code="NOT_PARTIAL")
+    m.partial_offer_minor, m.partial_offer_reason, m.partial_offered_at = body.amountMinor, body.reason.strip(), clock.now()
+    _evt(session, E.MILESTONE_PARTIAL_ACCEPTANCE_OFFERED, c, milestoneId=m.id, releaseMinor=body.amountMinor,
+         refundMinor=m.amount_minor - body.amountMinor, currency=m.currency)
     await session.flush()
-    if all(x.status == "ACCEPTED" for x in await _milestones(session, c.id)):
-        CONTRACT_STATES.assert_can(c.status, "COMPLETED")
-        c.status, c.completed_at = "COMPLETED", now
-        _evt(session, E.CONTRACT_COMPLETED, c, reason="ALL_MILESTONES_ACCEPTED")
+    return await _out(session, actor, c, viewer)
+
+
+async def answer_partial_acceptance(session: AsyncSession, actor: Actor, milestone_id: uuid.UUID, agree: bool) -> ContractOut:
+    """Professional: agree (that part is released, the rest refunded) or decline (the buyer accepts in full, asks for a revision
+    or raises a dispute)."""
+    m, c, viewer = await _milestone_ctx(session, actor, milestone_id)
+    if viewer != "PROFESSIONAL":
+        raise Forbidden("Only the professional answers a partial acceptance")
+    if m.status != "SUBMITTED" or m.partial_offer_minor is None:
+        raise Conflict("There is no partial acceptance waiting for your answer", code="NO_PARTIAL_OFFER")
+    if agree:
+        await _accept(session, m, c, actor.identity_id, release_minor=m.partial_offer_minor)
+    else:
+        _evt(session, E.MILESTONE_PARTIAL_ACCEPTANCE_DECLINED, c, milestoneId=m.id)
+        m.partial_offer_minor = m.partial_offer_reason = m.partial_offered_at = None
         await session.flush()
     return await _out(session, actor, c, viewer)
 
@@ -1133,6 +1234,7 @@ async def request_revision(session: AsyncSession, actor: Actor, milestone_id: uu
         raise Conflict("Only submitted work can be sent back for revision", code="MILESTONE_NOT_SUBMITTED")
     MILESTONE_STATES.assert_can(m.status, "REVISION_REQUESTED")
     m.status, m.last_revision_reason = "REVISION_REQUESTED", body.reason.strip()
+    m.partial_offer_minor = m.partial_offer_reason = m.partial_offered_at = None
     m.revision_count += 1
     _evt(session, E.MILESTONE_REVISION_REQUESTED, c, milestoneId=m.id, reason=m.last_revision_reason, revisionCount=m.revision_count)
     await session.flush()

@@ -9,7 +9,7 @@ from zoikorum.domains.marketplace.schemas import (
     SavedSearchIn,
     SavedSearchOut,
     CollectionIn, CollectionItemsIn, CollectionOut, CompareItem, SavedOut, SaveIn, SpecializationAdminOut, SpecializationIn,
-    SpecializationPatch,
+    SpecializationPatch, SuggestIn, SuggestionDecisionIn, SuggestionIn, SuggestionOut, SuggestOut,
 )
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
@@ -21,6 +21,33 @@ router = APIRouter(tags=["marketplace"])
 async def taxonomy(session: DbSession) -> dict:
     """Public: the full capability taxonomy (category -> groups -> specializations)."""
     return {"categories": await service.tree(session)}
+
+
+@router.post("/v1/taxonomy/suggest", response_model=SuggestOut)
+async def suggest(body: SuggestIn, actor: CurrentActor, session: DbSession):
+    """"Can't find yours?": match your own words to existing specializations (AI when configured, keywords otherwise)."""
+    return await service.suggest(session, actor, body)
+
+
+@router.post("/v1/taxonomy/suggestions", response_model=SuggestionOut, status_code=status.HTTP_201_CREATED)
+async def submit_suggestion(body: SuggestionIn, actor: CurrentActor, session: DbSession):
+    """Suggest a new specialization; an admin approves, merges or rejects it."""
+    return await service.submit_suggestion(session, actor, body)
+
+
+@router.get("/v1/taxonomy/suggestions/mine", response_model=list[SuggestionOut])
+async def my_suggestions(actor: CurrentActor, session: DbSession):
+    return await service.my_suggestions(session, actor)
+
+
+@router.get("/v1/admin/taxonomy/suggestions", response_model=list[SuggestionOut])
+async def suggestion_queue(actor: CurrentActor, session: DbSession):
+    return await service.suggestion_queue(session, actor)
+
+
+@router.post("/v1/admin/taxonomy/suggestions/{suggestion_id}/decision", response_model=SuggestionOut)
+async def decide_suggestion(suggestion_id: uuid.UUID, body: SuggestionDecisionIn, actor: CurrentActor, session: DbSession):
+    return await service.decide_suggestion(session, actor, suggestion_id, body)
 
 
 @router.get("/v1/taxonomy/{category}")

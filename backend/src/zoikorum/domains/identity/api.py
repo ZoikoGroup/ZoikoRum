@@ -5,9 +5,12 @@ import uuid
 from fastapi import APIRouter, Request, status
 
 from zoikorum.config import get_settings
-from zoikorum.domains.identity import service
+from zoikorum.domains.identity import duplicates, service
 from zoikorum.domains.identity.schemas import (
     DataRequestIn,
+    DuplicateAnswerIn,
+    DuplicateOut,
+    DuplicateResolveIn,
     DataRequestOut,
     MePatch,
     SessionOut,
@@ -178,3 +181,27 @@ async def revoke_role(identity_id: uuid.UUID, role: str, actor: CurrentActor, se
 async def lookup_identity(email: str, actor: CurrentActor, session: DbSession) -> StaffMemberOut:
     """Find an account by email so an admin can grant it a staff role."""
     return await service.lookup_by_email(session, actor, email)
+
+
+
+@router.get("/me/duplicate-accounts", response_model=list[DuplicateOut])
+async def my_duplicates(actor: CurrentActor, session: DbSession):
+    """Possible duplicate accounts for the signed-in person (Onboarding s.20)."""
+    return await duplicates.mine(session, actor)
+
+
+@router.post("/me/duplicate-accounts/{suspicion_id}/answer", response_model=DuplicateOut)
+async def answer_duplicate(suspicion_id: uuid.UUID, body: DuplicateAnswerIn, actor: CurrentActor, session: DbSession):
+    """Ask support to merge the accounts, or say the other account is not yours."""
+    return await duplicates.answer(session, actor, suspicion_id, body)
+
+
+@router.get("/admin/duplicate-accounts", response_model=list[DuplicateOut])
+async def duplicate_queue(actor: CurrentActor, session: DbSession):
+    return await duplicates.queue(session, actor)
+
+
+@router.post("/admin/duplicate-accounts/{suspicion_id}/resolve", response_model=DuplicateOut)
+async def resolve_duplicate(suspicion_id: uuid.UUID, body: DuplicateResolveIn, actor: CurrentActor, session: DbSession):
+    """Support decision (step-up): MERGED closes the duplicate and keeps the chosen account; NOT_DUPLICATE dismisses."""
+    return await duplicates.resolve(session, actor, suspicion_id, body)

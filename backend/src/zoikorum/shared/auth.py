@@ -112,8 +112,8 @@ class Actor:
     def require_platform_role(self, *roles: str) -> None:
         if not self.has_platform_role(*roles):
             raise Forbidden(f"Requires one of platform roles: {', '.join(roles)}")
-        # Staff accounts must always work from an MFA-backed session.
-        if self.auth_strength not in AuthStrength.ELEVATED:
+        # Staff accounts must always work from an MFA-backed session (except the development switch ZK_DEV_SKIP_MFA).
+        if self.auth_strength not in AuthStrength.ELEVATED and not get_settings().mfa_bypass:
             raise StepUpRequired("Staff access requires multi-factor authentication")
 
     @property
@@ -158,6 +158,8 @@ class Actor:
 
     # ---- Step-up (Architecture 11.4) ---------------------------------------
     def require_step_up(self, max_age_seconds: int | None = None) -> None:
+        if get_settings().mfa_bypass:
+            return  # development only: authenticator codes are switched off (ZK_DEV_SKIP_MFA)
         max_age = max_age_seconds or get_settings().step_up_max_age_seconds
         if self.auth_strength not in AuthStrength.ELEVATED or self.auth_time is None:
             raise StepUpRequired("Confirm with MFA or a passkey to continue")

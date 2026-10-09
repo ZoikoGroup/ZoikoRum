@@ -23,6 +23,7 @@ class MilestoneSummary:
     status: str  # PENDING_FUNDING|IN_PROGRESS|SUBMITTED|REVISION_REQUESTED|ACCEPTANCE_PENDING_APPROVAL|ACCEPTED|DISPUTED|CANCELLED
     due_date: date | None
     accepted_at: datetime | None
+    accepted_release_minor: int | None = None
 
 
 @dataclass(frozen=True)
@@ -44,7 +45,7 @@ class ContractSummary:
 
 
 def _milestone(m: Milestone) -> MilestoneSummary:
-    return MilestoneSummary(m.id, m.contract_id, m.sequence, m.title, m.amount_minor, m.currency, m.status, m.due_date, m.accepted_at)
+    return MilestoneSummary(m.id, m.contract_id, m.sequence, m.title, m.amount_minor, m.currency, m.status, m.due_date, m.accepted_at, m.accepted_release_minor)
 
 
 async def _summary(session: AsyncSession, c: Contract | None) -> ContractSummary | None:

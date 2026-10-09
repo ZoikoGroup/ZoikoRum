@@ -19,6 +19,18 @@ class SubmitIn(BaseModel):
     files: list[UploadIn] = Field(default_factory=list, max_length=10)
 
 
+class PartialOfferIn(BaseModel):
+    amountMinor: int = Field(gt=0)  # to release; the rest of the milestone is refunded to the buyer
+    reason: str = Field(min_length=10, max_length=1000)  # against the acceptance criteria
+
+
+class PartialOfferOut(BaseModel):
+    amount: MoneyDTO
+    refund: MoneyDTO
+    reason: str
+    offeredAt: datetime
+
+
 class RevisionIn(BaseModel):
     reason: str = Field(min_length=5, max_length=1000)
 
@@ -126,6 +138,8 @@ class MilestoneOut(BaseModel):
     revisionCount: int
     lastRevisionReason: str | None
     submissions: list[SubmissionOut]
+    partialOffer: "PartialOfferOut | None" = None  # a pending offer to accept for less
+    acceptedRelease: MoneyDTO | None = None  # what was released when accepted for less than the full amount
 
 
 class ContractOut(BaseModel):

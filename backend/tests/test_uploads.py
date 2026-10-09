@@ -113,3 +113,30 @@ async def test_a_decision_or_resubmission_silences_the_old_review_timers(client,
     await drain()
     clock.set_now(None)
     assert await outbox_count(sf, "milestone.acceptance_overdue", c["id"]) == 0
+
+
+async def test_proposal_attachments_are_private_until_sent_and_locked_after(client, make_user, drain, sf):
+    from test_proposal import P, proposal_body
+
+    pro_user, pro = await tier_b(client, make_user, drain, "ann")
+    buyer, org = await buyer_org(client, make_user, drain)
+    req = (await client.post(R, headers=buyer.idem(), json=request_body(org, pro))).json()[0]
+    p = (await client.post(f"{R}/{req['id']}/proposals", headers=pro_user.h, json=proposal_body())).json()
+    sample = upload("case-study.pdf", b"past project")
+    url = f"{P}/{p['id']}/attachments"
+    r = await client.post(url, headers=pro_user.h, json={"files": [sample]})
+    assert r.status_code == 200 and r.json()["attachments"][0]["hasFile"] is True
+    many = [upload(f"x{i}.pdf", bytes([i])) for i in range(3)]
+    assert (await client.post(url, headers=pro_user.h, json={"files": many})).json()["code"] == "TOO_MANY_ATTACHMENTS"
+    assert (await client.post(url, headers=buyer.h, json={"files": [sample]})).status_code in (403, 404)
+    file_url = f"{url}/{sample['sha256']}"
+    assert (await client.get(file_url, headers=buyer.h)).status_code == 404  # draft: the buyer cannot see it yet
+
+    await client.post(f"{P}/{p['id']}/submit", headers=pro_user.idem())
+    got = await client.get(file_url, headers=buyer.h)
+    assert got.status_code == 200 and got.content == raw(sample)
+    assert (await client.post(url, headers=pro_user.h, json={"files": [upload("late.pdf", b"late")]})).json()["code"] == "PROPOSAL_LOCKED"
+    stranger = await make_user("sam")
+    assert (await client.get(file_url, headers=stranger.h)).status_code == 404
+    await drain()
+    assert await audited(sf, "proposal.attachment.viewed") == 1

@@ -24,7 +24,7 @@ from zoikorum.domains.policy import facade as policy_facade
 from zoikorum.domains.professional import facade as professional_facade
 from zoikorum.domains.proposal.models import Proposal, ProposalRequest
 from zoikorum.domains.proposal.schemas import (
-    Budget, CancelIn, DeclineIn, Delta, ProfessionalBrief, ProposalBrief, ProposalIn, ProposalOut, RejectIn,
+    Budget, CancelIn, DeclineIn, Delta, ProfessionalBrief, ProposalAttachmentsIn, ProposalBrief, ProposalIn, ProposalOut, RejectIn,
     RequestIn, RequestOut, RequestSummaryOut, RevisionIn,
 )
 from zoikorum.domains.trust import facade as trust_facade
@@ -273,6 +273,7 @@ async def _proposals_out(session: AsyncSession, rows: list[Proposal]) -> list[Pr
         exclusions=p.exclusions, validUntil=p.valid_until, expired=_expired(p), revisionRequests=p.revision_requests,
         revisionCount=p.revision_count, submittedAt=p.submitted_at, decidedAt=p.decided_at, reasonCode=p.reason_code,
         reasonNote=p.reason_note, termsHash=p.terms_hash, deltas=_deltas(reqs[p.request_id], p),
+        attachments=[file_out(a) for a in p.attachments or []],
         createdAt=p.created_at, updatedAt=p.updated_at, version=p.version,
     ) for p in rows]
 
@@ -768,3 +769,46 @@ async def expire(session: AsyncSession, payload: dict) -> None:
     await _end_proposal(session, p, "EXPIRED", "VALIDITY_ENDED", None)
     if r is not None and r.status in OPEN_REQUEST:
         _close_request(r, "CLOSED", "PROPOSAL_EXPIRED")
+
+
+
+# ---- Proposal attachments (RFP flow s.8: optional portfolio items or supporting documents) -------------------------
+
+MAX_PROPOSAL_ATTACHMENTS = 3
+
+
+async def add_proposal_attachments(session: AsyncSession, actor: Actor, proposal_id: uuid.UUID, body: ProposalAttachmentsIn) -> ProposalOut:
+    p = await _proposal(session, proposal_id, lock=True)
+    await _require_owner(session, actor, p.professional_id)
+    if p.status not in ("DRAFT", "REVISION_REQUESTED"):
+        raise Conflict("Files can be changed while the proposal is a draft or being revised", code="PROPOSAL_LOCKED")
+    existing = list(p.attachments or [])
+    new = [f for f in body.files if f.sha256 not in {a["sha256"] for a in existing}]
+    if len(existing) + len(new) > MAX_PROPOSAL_ATTACHMENTS:
+        raise ValidationFailed(f"Attach at most {MAX_PROPOSAL_ATTACHMENTS} files to a proposal", code="TOO_MANY_ATTACHMENTS")
+    p.attachments = existing + store_uploads(f"proposals/{p.request_id}/proposal-{p.id}", new)
+    await session.flush()
+    return (await _proposals_out(session, [p]))[0]
+
+
+async def remove_proposal_attachment(session: AsyncSession, actor: Actor, proposal_id: uuid.UUID, sha256: str) -> ProposalOut:
+    p = await _proposal(session, proposal_id, lock=True)
+    await _require_owner(session, actor, p.professional_id)
+    if p.status not in ("DRAFT", "REVISION_REQUESTED"):
+        raise Conflict("Files can be changed while the proposal is a draft or being revised", code="PROPOSAL_LOCKED")
+    p.attachments = [a for a in p.attachments or [] if a["sha256"] != sha256]
+    await session.flush()
+    return (await _proposals_out(session, [p]))[0]
+
+
+async def proposal_attachment_file(session: AsyncSession, actor: Actor, proposal_id: uuid.UUID, sha256: str) -> tuple[bytes, str | None, str]:
+    """The professional who wrote it, or the buyer's organisation once it has been sent. Every opening is audited."""
+    p = await _proposal(session, proposal_id)
+    if p.professional_id != await _my_professional_id(session, actor):
+        if p.status == "DRAFT" or not await _buyer_roles(session, actor, p.organization_id):
+            raise NotFound("Proposal not found")
+    rec = find_file(p.attachments or [], sha256)
+    data = read_file(rec)
+    record_audit(session, "proposal.attachment.viewed", object_type="Proposal", object_id=p.id, tenant_id=p.organization_id,
+                 evidence_hash=rec["sha256"])
+    return data, rec.get("contentType"), rec["name"]

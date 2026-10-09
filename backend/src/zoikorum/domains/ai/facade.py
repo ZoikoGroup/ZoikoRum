@@ -26,3 +26,14 @@ async def extract_match_intent(session: AsyncSession, text: str) -> MatchIntent:
     names = await marketplace.specialization_names(session)
     matched = tuple(slug for slug, name in names.items() if set(re.findall(r"[\w-]+", name.lower())).intersection(words))
     return MatchIntent(specializations=matched, engagement_type=None, keywords=words, source="fallback:keyword")
+
+
+# ---- Specialization matching ("Can't find yours?") ----------------------------------------------------------------
+from zoikorum.domains.ai.specializations import (  # noqa: E402  (contract re-export for other domains)
+    CatalogEntry,
+    Draft,
+    SpecializationMatch,
+    match_specializations,
+)
+
+__all__ = ["CatalogEntry", "Draft", "MatchIntent", "SpecializationMatch", "extract_match_intent", "match_specializations"]

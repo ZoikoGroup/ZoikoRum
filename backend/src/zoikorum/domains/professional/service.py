@@ -164,12 +164,14 @@ def _rate(pro: Professional) -> MoneyDTO | None:
 
 async def _profile_out(session: AsyncSession, pro: Professional) -> ProfileOut:
     return ProfileOut(
+        pendingSpecializations=await marketplace_facade.pending_specialization_names(session, pro.id),
         id=pro.id, photoUrl=photo_url(pro), firmId=pro.firm_id, status=pro.status, displayName=pro.display_name, legalName=pro.legal_name,
         headline=pro.headline, yearsExperienceBand=pro.years_experience_band, bio=pro.bio, languages=list(pro.languages),
         country=pro.country, city=pro.city, website=pro.website, primaryCategory=pro.primary_category,
         specializations=await _spec_out(session, pro), engagementTypes=list(pro.engagement_types),
         deliveryModes=list(pro.delivery_modes), pricingModels=list(pro.pricing_models), indicativeRate=_rate(pro),
         rateUnit=pro.rate_unit, availability=pro.availability, maxConcurrentEngagements=pro.max_concurrent_engagements,
+        weeklyHours=pro.weekly_hours,
         temporarilyUnavailable=pro.temporarily_unavailable, servedJurisdictions=list(pro.served_jurisdictions),
         licensedJurisdictions=list(pro.licensed_jurisdictions),
         crossBorderAcknowledged=pro.cross_border_acknowledged_at is not None, publishedAt=pro.published_at,
@@ -355,11 +357,11 @@ async def engagement_count_changed(session: AsyncSession, professional_id: uuid.
 
 async def set_availability(session: AsyncSession, actor: Actor, body: AvailabilityIn) -> ProfileOut:
     pro = await _mine(session, actor, lock=True)
-    new = (body.availability, body.maxConcurrentEngagements, body.temporarilyUnavailable)
-    if new != (pro.availability, pro.max_concurrent_engagements, pro.temporarily_unavailable):
-        pro.availability, pro.max_concurrent_engagements, pro.temporarily_unavailable = new
+    new = (body.availability, body.maxConcurrentEngagements, body.temporarilyUnavailable, body.weeklyHours)
+    if new != (pro.availability, pro.max_concurrent_engagements, pro.temporarily_unavailable, pro.weekly_hours):
+        pro.availability, pro.max_concurrent_engagements, pro.temporarily_unavailable, pro.weekly_hours = new
         _evt(session, E.AVAILABILITY_UPDATED, pro, availability=effective_availability(pro),
-             activeEngagements=pro.active_engagements, maxConcurrent=pro.max_concurrent_engagements)
+             activeEngagements=pro.active_engagements, maxConcurrent=pro.max_concurrent_engagements, weeklyHours=pro.weekly_hours)
         await session.flush()
     return await _profile_out(session, pro)
 
@@ -685,7 +687,7 @@ async def public_profile(session: AsyncSession, actor: Actor | None, professiona
         medianResponseHours=response["medianHours"],
         newToPlatform=delivery["completed"] == 0 and (pro.published_at is None or (clock.now() - pro.published_at).days < 30))
     return PublicProfileOut(
-        history=history,
+        history=history, pendingSpecializations=await marketplace_facade.pending_specialization_names(session, pro.id),
         firm=PublicFirmOut(id=firm.id, name=firm.trading_name or firm.legal_name, verified=firm.status == "VERIFIED")
         if firm and firm.status != "SUSPENDED" else None,
         id=pro.id, photoUrl=photo_url(pro), displayName=pro.display_name, headline=pro.headline,
@@ -694,7 +696,7 @@ async def public_profile(session: AsyncSession, actor: Actor | None, professiona
         primaryCategory=pro.primary_category, primaryCategoryName=category.name if category else None,
         specializations=await _spec_out(session, pro), engagementTypes=list(pro.engagement_types),
         deliveryModes=list(pro.delivery_modes), pricingModels=list(pro.pricing_models), indicativeRate=_rate(pro),
-        rateUnit=pro.rate_unit, availability=effective_availability(pro),
+        rateUnit=pro.rate_unit, availability=effective_availability(pro), weeklyHours=pro.weekly_hours,
         servedJurisdictions=list(pro.served_jurisdictions), licensedJurisdictions=list(pro.licensed_jurisdictions),
         verifiedJurisdictions=verified_jurisdictions,
         credentials=[PublicCredentialOut(name=c.name, issuingBody=c.issuing_body, jurisdiction=c.jurisdiction,
@@ -706,3 +708,23 @@ async def public_profile(session: AsyncSession, actor: Actor | None, professiona
                              explanation=public_explanation(trust.explanation), updatedAt=trust.updated_at),
         publishedAt=pro.published_at, isOwnProfile=own,
     )
+
+
+
+async def suggestion_resolved(session: AsyncSession, payload: dict) -> None:
+    """Consumer of TAXONOMY_SUGGESTION_RESOLVED: an approved or merged suggestion joins the professional's specializations
+    (as primary if they have none, otherwise as a secondary while there is room)."""
+    slug = payload.get("slug")
+    if payload.get("outcome") not in ("APPROVED", "MERGED") or not slug or not payload.get("professionalId"):
+        return
+    pro = await session.get(Professional, uuid.UUID(str(payload["professionalId"])), with_for_update=True)
+    if pro is None or slug in specializations_of(pro):
+        return
+    if not pro.primary_specialization:
+        pro.primary_specialization = slug
+        pro.primary_category = (await marketplace_facade.get_specializations(session, [slug]))[slug].category_slug
+    elif len(pro.secondary_specializations) < 5:
+        pro.secondary_specializations = [*pro.secondary_specializations, slug]
+    else:
+        return  # no room: it stays available to pick by hand
+    _evt(session, E.PROFILE_UPDATED, pro, changes=["specializations"], specializations=specializations_of(pro))

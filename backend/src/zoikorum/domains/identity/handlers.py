@@ -70,3 +70,12 @@ async def on_enforcement_reversed(session: AsyncSession, event: EventEnvelope) -
         if set(await admin.active_restrictions(session, "IDENTITY", _uuid(p["subjectId"]))).intersection({"SUSPEND_ACCOUNT", "OFFBOARD"}):
             return
         await service.set_status(session, _uuid(p["subjectId"]), "ACTIVE", "ENFORCEMENT_REVERSED")
+
+
+
+@subscribe(E.VERIFICATION_DUPLICATE_DOCUMENT, consumer="identity.duplicate_suspected")
+async def on_duplicate_document(session: AsyncSession, event: EventEnvelope) -> None:
+    from zoikorum.domains.identity import duplicates
+
+    p = event.payload
+    await duplicates.suspect(session, _uuid(p["identityId"]), _uuid(p["otherIdentityId"]), "SAME_ID_DOCUMENT")

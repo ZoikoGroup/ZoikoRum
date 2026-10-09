@@ -81,6 +81,8 @@ class CaseOut(BaseModel):
     evidence: list[EvidenceOut]
     createdAt: datetime
     version: int
+    appeal: "AppealOut | None" = None
+    appealDeadline: datetime | None = None  # set while the owner can still appeal
 
 
 class QueueItemOut(BaseModel):
@@ -97,3 +99,40 @@ class QueueItemOut(BaseModel):
     estimatedCompletion: datetime | None
     overdue: bool
     createdAt: datetime
+
+
+class AppealIn(BaseModel):
+    statement: str = Field(min_length=20, max_length=2000)  # why the decision is wrong; add new documents as evidence
+
+
+class AppealDecisionIn(BaseModel):
+    outcome: Literal["UPHELD", "OVERTURNED"]
+    note: str = Field(min_length=10, max_length=1000)  # shown to the professional
+    expiresAt: datetime | None = None  # when overturned: the verification's expiry, if any
+
+
+class AppealOut(BaseModel):
+    id: uuid.UUID
+    caseId: uuid.UUID
+    status: str
+    statement: str
+    filedAt: datetime
+    decidedAt: datetime | None
+    decisionNote: str | None
+
+
+class AppealQueueItemOut(BaseModel):
+    id: uuid.UUID
+    caseId: uuid.UUID
+    caseLabel: str
+    verificationType: str
+    subjectType: str
+    subjectId: uuid.UUID
+    subjectName: str | None
+    caseStatus: str
+    originalReason: str | None
+    statement: str
+    status: str
+    evidenceCount: int
+    canDecide: bool  # false for the officer who made the original decision
+    filedAt: datetime

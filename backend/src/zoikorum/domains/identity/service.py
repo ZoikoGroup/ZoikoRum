@@ -62,6 +62,8 @@ def default_dashboard(identity: Identity) -> str:
 
 
 def mfa_required(identity: Identity) -> bool:
+    if get_settings().mfa_bypass:
+        return False  # development only (ZK_DEV_SKIP_MFA)
     needs = bool(identity.platform_roles) or bool(_MFA_PERSONAS.intersection(identity.personas or []))
     return needs and identity.mfa_enabled_at is None
 
@@ -84,7 +86,7 @@ def to_out(identity: Identity, links: list[IdentityLink]) -> IdentityOut:
         status=identity.status,
         emailConfirmed=identity.email_confirmed_at is not None,
         mfaEnabled=identity.mfa_enabled_at is not None,
-        mfaRequired=mfa_required(identity),
+        mfaRequired=mfa_required(identity), mfaBypass=get_settings().mfa_bypass,
         personas=sorted(identity.personas or []),
         primaryPersona=identity.primary_persona,
         platformRoles=sorted(identity.platform_roles or []) if identity.status == "ACTIVE" else [],
@@ -191,7 +193,7 @@ async def login(
         return LoginFailure("Email or password is incorrect")
 
     strength = AuthStrength.PASSWORD
-    if identity.mfa_enabled_at is not None:
+    if identity.mfa_enabled_at is not None and not (get_settings().mfa_bypass and not totp):
         if not totp:
             raise Unauthenticated("Enter the 6-digit code from your authenticator", code="MFA_REQUIRED")
         if not pyotp.TOTP(decrypt_field(identity.mfa_secret_enc)).verify(totp, valid_window=1):
@@ -297,7 +299,7 @@ async def grant_platform_role(session: AsyncSession, actor: Actor, identity_id: 
 
 
 async def set_status(session: AsyncSession, identity_id: uuid.UUID, status: str, reason: str) -> None:
-    """Called from enforcement events only - never directly from an HTTP handler."""
+    """Called from enforcement events, or when support confirms a duplicate account (duplicates.resolve)."""
     identity = await _get_for_update(session, identity_id)
     if identity.status == status:
         return

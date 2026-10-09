@@ -8,12 +8,14 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from zoikorum.domains.marketplace.models import Collection, CollectionItem, SavedProfessional, SavedSearch, TaxonomyNode
+from zoikorum.domains.ai import facade as ai_facade
+from zoikorum.domains.marketplace.models import Collection, CollectionItem, SavedProfessional, SavedSearch, SpecializationSuggestion, TaxonomyNode
 from zoikorum.domains.marketplace.schemas import (
     SEARCH_KEYS,
     SavedSearchIn,
     SavedSearchOut,
-    CollectionOut, CompareItem, SavedOut, SpecializationAdminOut, SpecializationIn, SpecializationPatch,
+    CollectionOut, CompareItem, SavedOut, SpecializationAdminOut, SpecializationDraftOut, SpecializationIn, SpecializationMatchOut,
+    SpecializationPatch, SuggestIn, SuggestionDecisionIn, SuggestionIn, SuggestionOut, SuggestOut,
 )
 from zoikorum.domains.marketplace.taxonomy_data import default_taxonomy_rows, slugify
 from zoikorum.domains.professional import facade as professional_facade
@@ -365,3 +367,122 @@ async def mark_search_viewed(session: AsyncSession, actor: Actor, search_id: uui
 
 async def delete_search(session: AsyncSession, actor: Actor, search_id: uuid.UUID) -> None:
     await session.delete(await _my_search(session, actor, search_id))
+
+
+# ---- "Can't find yours?" (specialization suggestions) ---------------------------------------------------------------
+
+MAX_PENDING_SUGGESTIONS = 3
+
+
+async def _catalog(session: AsyncSession) -> list:
+    nodes = (await session.scalars(select(TaxonomyNode).where(TaxonomyNode.status == "ACTIVE"))).all()
+    by_id = {n.id: n for n in nodes}
+    out = []
+    for n in nodes:
+        if n.level != "SPECIALIZATION":
+            continue
+        group = by_id.get(n.parent_id)
+        cat = by_id.get(group.parent_id) if group else None
+        if group and cat:
+            out.append(ai_facade.CatalogEntry(slug=n.slug, name=n.name, category_slug=cat.slug, category_name=cat.name,
+                                              group_slug=group.slug, group_name=group.name))
+    return out
+
+
+async def suggest(session: AsyncSession, actor: Actor, body: SuggestIn) -> SuggestOut:
+    """Match the professional's own words to the taxonomy (AI assists; the person chooses)."""
+    catalog = await _catalog(session)
+    result = await ai_facade.match_specializations(body.text, catalog)
+    by_slug = {e.slug: e for e in catalog}
+    draft = result.draft
+    return SuggestOut(
+        matches=[SpecializationMatchOut(slug=s, name=by_slug[s].name, groupName=by_slug[s].group_name, categoryName=by_slug[s].category_name)
+                 for s in result.slugs if s in by_slug],
+        draft=SpecializationDraftOut(name=draft.name, categorySlug=draft.category_slug, groupSlug=draft.group_slug,
+                                     description=draft.description, credentialLikely=draft.credential_likely) if draft else None,
+        source=result.source)
+
+
+def _suggestion_out(s: SpecializationSuggestion, professional_name: str | None = None) -> SuggestionOut:
+    return SuggestionOut(id=s.id, text=s.text, name=s.name, categorySlug=s.category_slug, groupSlug=s.group_slug, description=s.description,
+                         credentialLikely=s.credential_likely, source=s.source, status=s.status, resolvedSlug=s.resolved_slug,
+                         resolutionNote=s.resolution_note, professionalId=s.professional_id, professionalName=professional_name,
+                         createdAt=s.created_at, resolvedAt=s.resolved_at)
+
+
+async def submit_suggestion(session: AsyncSession, actor: Actor, body: SuggestionIn) -> SuggestionOut:
+    pro = await professional_facade.get_professional_by_identity(session, actor.identity_id)
+    if pro is None:
+        raise ValidationFailed("Create your professional profile first", code="PROFILE_REQUIRED")
+    pending = await session.scalar(select(func.count()).select_from(SpecializationSuggestion).where(
+        SpecializationSuggestion.identity_id == actor.identity_id, SpecializationSuggestion.status == "PENDING"))
+    if pending >= MAX_PENDING_SUGGESTIONS:
+        raise Conflict(f"You already have {MAX_PENDING_SUGGESTIONS} suggestions waiting for review", code="TOO_MANY_SUGGESTIONS")
+    name = " ".join(body.name.split())
+    existing = await session.scalar(select(TaxonomyNode).where(TaxonomyNode.slug == slugify(name), TaxonomyNode.level == "SPECIALIZATION"))
+    if existing is not None:
+        raise Conflict(f"“{existing.name}” already exists: pick it from the list", code="SPECIALIZATION_EXISTS")
+    group = await session.scalar(select(TaxonomyNode).where(TaxonomyNode.slug == body.groupSlug, TaxonomyNode.level == "GROUP")) \
+        if body.groupSlug else None
+    s = SpecializationSuggestion(identity_id=actor.identity_id, professional_id=pro.id, text=body.text.strip(), name=name,
+                                 category_slug=group.category_slug if group else body.categorySlug, group_slug=group.slug if group else None,
+                                 description=body.description.strip(), credential_likely=body.credentialLikely,
+                                 source=body.source if body.source.startswith(("ai:", "fallback:")) else "manual", status="PENDING")
+    session.add(s)
+    await session.flush()
+    record_event(session, E.TAXONOMY_SUGGESTION_SUBMITTED, aggregate_type="SpecializationSuggestion", aggregate_id=s.id,
+                 payload={"suggestionId": s.id, "professionalId": pro.id, "name": name, "categorySlug": s.category_slug})
+    return _suggestion_out(s)
+
+
+async def my_suggestions(session: AsyncSession, actor: Actor) -> list[SuggestionOut]:
+    rows = (await session.scalars(select(SpecializationSuggestion).where(SpecializationSuggestion.identity_id == actor.identity_id)
+                                  .order_by(SpecializationSuggestion.created_at.desc()).limit(50))).all()
+    return [_suggestion_out(s) for s in rows]
+
+
+async def pending_names(session: AsyncSession, professional_id: uuid.UUID) -> list[str]:
+    rows = await session.scalars(select(SpecializationSuggestion.name).where(
+        SpecializationSuggestion.professional_id == professional_id, SpecializationSuggestion.status == "PENDING"))
+    return list(rows.all())
+
+
+async def suggestion_queue(session: AsyncSession, actor: Actor) -> list[SuggestionOut]:
+    actor.require_platform_role(PlatformRole.PLATFORM_ADMIN)
+    rows = (await session.scalars(select(SpecializationSuggestion).where(SpecializationSuggestion.status == "PENDING")
+                                  .order_by(SpecializationSuggestion.created_at).limit(200))).all()
+    pros = await professional_facade.get_professionals(session, [s.professional_id for s in rows if s.professional_id])
+    return [_suggestion_out(s, pros[s.professional_id].display_name if s.professional_id in pros else None) for s in rows]
+
+
+async def decide_suggestion(session: AsyncSession, actor: Actor, suggestion_id: uuid.UUID, body: SuggestionDecisionIn) -> SuggestionOut:
+    actor.require_platform_role(PlatformRole.PLATFORM_ADMIN)
+    s = await session.get(SpecializationSuggestion, suggestion_id, with_for_update=True)
+    if s is None:
+        raise NotFound("Suggestion not found")
+    if s.status != "PENDING":
+        raise Conflict("This suggestion has already been decided", code="ALREADY_DECIDED")
+    if body.action == "APPROVE":
+        group = body.groupSlug or s.group_slug
+        if not group:
+            raise ValidationFailed("Choose the group the new specialization belongs to", code="GROUP_REQUIRED")
+        created = await create_specialization(session, actor, SpecializationIn(
+            groupSlug=group, name=(body.name or s.name).strip(), requiresCredential=body.requiresCredential or s.credential_likely,
+            regulated=body.regulated))
+        s.status, s.resolved_slug = "APPROVED", created.slug
+    elif body.action == "MERGE":
+        target = await session.scalar(select(TaxonomyNode).where(TaxonomyNode.slug == (body.mergeSlug or ""),
+                                                                 TaxonomyNode.level == "SPECIALIZATION", TaxonomyNode.status == "ACTIVE"))
+        if target is None:
+            raise ValidationFailed("Choose an existing specialization to merge into", code="MERGE_TARGET_REQUIRED")
+        s.status, s.resolved_slug = "MERGED", target.slug
+    else:
+        if len(body.note.strip()) < 5:
+            raise ValidationFailed("Tell the professional why, in a sentence", code="NOTE_REQUIRED")
+        s.status = "REJECTED"
+    s.resolved_by, s.resolved_at, s.resolution_note = actor.identity_id, clock.now(), body.note.strip() or None
+    record_event(session, E.TAXONOMY_SUGGESTION_RESOLVED, aggregate_type="SpecializationSuggestion", aggregate_id=s.id,
+                 payload={"suggestionId": s.id, "professionalId": s.professional_id, "outcome": s.status, "slug": s.resolved_slug})
+    await session.flush()
+    return _suggestion_out(s)
+

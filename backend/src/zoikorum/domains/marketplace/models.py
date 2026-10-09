@@ -76,3 +76,26 @@ class SavedSearch(Base, UUIDPk, Timestamps):
     name: Mapped[str] = mapped_column(String(80), nullable=False)
     params: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)  # search query parameters
     last_viewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class SpecializationSuggestion(Base, UUIDPk, Timestamps):
+    """A professional's "can't find mine" suggestion (AI-drafted or typed). PENDING until an admin approves it
+    (new specialization), merges it into an existing one, or rejects it. Nothing goes live without that decision."""
+
+    __tablename__ = "specialization_suggestions"
+    __table_args__ = {"schema": SCHEMA}
+
+    identity_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    professional_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), index=True)
+    text: Mapped[str] = mapped_column(String(1000), nullable=False)  # the professional's own words
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    category_slug: Mapped[str | None] = mapped_column(String(120))
+    group_slug: Mapped[str | None] = mapped_column(String(120))
+    description: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    credential_likely: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    source: Mapped[str] = mapped_column(String(80), nullable=False)  # ai:<model>@<prompt> | fallback:keyword | manual
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="PENDING")
+    resolved_slug: Mapped[str | None] = mapped_column(String(120))
+    resolved_by: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolution_note: Mapped[str | None] = mapped_column(String(500))

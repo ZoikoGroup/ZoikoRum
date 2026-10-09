@@ -6,7 +6,9 @@ from typing import Literal
 from fastapi import APIRouter, Query, Request, Response, status
 
 from zoikorum.domains.verification import service
-from zoikorum.domains.verification.schemas import CaseIn, CaseOut, DecisionIn, EvidenceIn, QueueItemOut, RevokeIn
+from zoikorum.domains.verification.schemas import (
+    AppealDecisionIn, AppealIn, AppealOut, AppealQueueItemOut, CaseIn, CaseOut, DecisionIn, EvidenceIn, QueueItemOut, RevokeIn,
+)
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
 from zoikorum.shared.http import Page
@@ -65,7 +67,7 @@ async def subject_cases(subject_type: Literal["PROFESSIONAL", "FIRM"], subject_i
 @router.get("/review-queue", response_model=Page[QueueItemOut])
 async def review_queue(actor: CurrentActor, session: DbSession, cursor: str | None = None,
                        limit: int | None = Query(default=None, ge=1, le=100),
-                       status_: Literal["PENDING", "IN_REVIEW", "NEEDS_INFO"] | None = Query(default=None, alias="status")):
+                       status_: Literal["PENDING", "IN_REVIEW", "NEEDS_INFO", "VERIFIED"] | None = Query(default=None, alias="status")):
     """Compliance officers: open checks, newest first. Each item shows whether its SLA is overdue."""
     return await service.review_queue(session, actor, cursor, limit, status_)
 
@@ -78,3 +80,22 @@ async def decide(case_id: uuid.UUID, body: DecisionIn, actor: CurrentActor, sess
 @router.post("/cases/{case_id}/revoke", response_model=CaseOut)
 async def revoke(case_id: uuid.UUID, body: RevokeIn, actor: CurrentActor, session: DbSession):
     return await service.revoke(session, actor, case_id, body)
+
+
+@router.post("/cases/{case_id}/appeal", response_model=CaseOut, status_code=status.HTTP_201_CREATED)
+async def file_appeal(case_id: uuid.UUID, body: AppealIn, actor: CurrentActor, session: DbSession):
+    """The subject appeals a failed or revoked check, once, within the appeal window. Add new documents as evidence."""
+    return await service.file_appeal(session, actor, case_id, body)
+
+
+@router.get("/appeals", response_model=list[AppealQueueItemOut])
+async def appeal_queue(actor: CurrentActor, session: DbSession,
+                       status_: Literal["OPEN", "UPHELD", "OVERTURNED"] | None = Query(default=None, alias="status")):
+    """Compliance officers: appeals to decide (canDecide is false for the officer who made the original decision)."""
+    return await service.appeal_queue(session, actor, status_)
+
+
+@router.post("/appeals/{appeal_id}/decision", response_model=AppealOut)
+async def decide_appeal(appeal_id: uuid.UUID, body: AppealDecisionIn, actor: CurrentActor, session: DbSession):
+    """One final decision by an independent compliance officer (step-up). Overturned -> the check becomes verified."""
+    return await service.decide_appeal(session, actor, appeal_id, body)

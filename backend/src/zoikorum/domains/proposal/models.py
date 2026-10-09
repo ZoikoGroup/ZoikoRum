@@ -52,7 +52,7 @@ class ProposalRequest(Base, UUIDPk, Timestamps, Versioned):
     location: Mapped[str | None] = mapped_column(String(200))
     nda_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     nda_accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    attachments: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)  # [{name, sha256, size}] metadata only
+    attachments: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)  # [{name, sha256, size, contentType, key}]: the files themselves live in blob storage
     # Scope builder (RFP wireframe s.6-7): deliverables checklist, dependencies, commercial preferences.
     deliverables: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)  # titles, from templates or custom
     dependencies: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)  # BUYER_DATA | THIRD_PARTY_ACCESS | INTERNAL_APPROVALS
@@ -87,6 +87,8 @@ class Proposal(Base, UUIDPk, Timestamps, Versioned):
     scope_notes: Mapped[str | None] = mapped_column(String(1000))
     deliverables: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     milestones: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    # Optional attachments (RFP flow s.8: "portfolio items or supporting docs"): stored files, at most 3.
+    attachments: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
     pricing_model: Mapped[str] = mapped_column(String(20), nullable=False, default="FIXED")
     total_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)

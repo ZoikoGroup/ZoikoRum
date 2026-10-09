@@ -29,14 +29,15 @@ from zoikorum.shared.money import Money, MoneyDTO
 from zoikorum.shared.state_machine import StateMachine
 
 ALLOCATION_STATES = StateMachine("Allocation", {
-    "UNFUNDED": {"FUNDING"},
+    "UNFUNDED": {"FUNDING", "CANCELLED"},  # CANCELLED: e.g. a retainer cycle stopped before funding
     "FUNDING": {"HELD", "UNFUNDED"},
-    "HELD": {"RELEASED", "ON_HOLD", "RELEASE_PENDING_APPROVAL", "REFUNDED", "UNFUNDED"},  # UNFUNDED: chargeback
+    "HELD": {"RELEASED", "PARTIALLY_RELEASED", "ON_HOLD", "RELEASE_PENDING_APPROVAL", "REFUNDED", "UNFUNDED"},  # UNFUNDED: chargeback
     "ON_HOLD": {"HELD", "RELEASED", "PARTIALLY_RELEASED", "REFUNDED", "UNFUNDED"},
     "RELEASE_PENDING_APPROVAL": {"RELEASED", "HELD", "ON_HOLD", "REFUNDED", "UNFUNDED"},
     "PARTIALLY_RELEASED": set(),
     "RELEASED": set(),
     "REFUNDED": set(),
+    "CANCELLED": set(),
 })
 FUNDERS = (OrgRole.REQUESTER, OrgRole.APPROVER, OrgRole.BUDGET_OWNER)
 VIEWERS = (PlatformRole.FINANCIAL_OPS, PlatformRole.PLATFORM_ADMIN)
@@ -91,9 +92,9 @@ async def _viewer(session: AsyncSession, actor: Actor, a: EscrowAccount) -> str:
 def _status(a: EscrowAccount, allocs: list[Allocation]) -> str:
     if any(x.state == "ON_HOLD" for x in allocs):
         return "DISPUTED"
-    if allocs and all(x.state == "RELEASED" for x in allocs):
+    if allocs and any(x.state == "RELEASED" for x in allocs) and all(x.state in ("RELEASED", "CANCELLED") for x in allocs):
         return "FULLY_RELEASED"
-    settled = ("RELEASED", "PARTIALLY_RELEASED", "REFUNDED", "UNFUNDED")  # UNFUNDED also covers chargebacks
+    settled = ("RELEASED", "PARTIALLY_RELEASED", "REFUNDED", "UNFUNDED", "CANCELLED")  # UNFUNDED also covers chargebacks
     if allocs and a.refunded_minor > 0 and all(x.state in settled for x in allocs):
         return "REFUNDED" if a.released_minor == 0 else "CLOSED"
     if a.released_minor > 0:
@@ -287,6 +288,15 @@ async def payment_failed(session: AsyncSession, payload: dict) -> None:
 
 # ---- Release decision tree (Handbook 15.2) ---------------------------------------------------------
 
+def _accepted_gross(accepted_release_minor: int | None, funded_minor: int) -> int:
+    """Use persisted acceptance terms, including when an approval resumes release."""
+    if accepted_release_minor is None:
+        return funded_minor
+    if not 0 < accepted_release_minor <= funded_minor:
+        raise Conflict("The accepted release amount does not match funded work", code="INVALID_ACCEPTED_RELEASE")
+    return accepted_release_minor
+
+
 async def milestone_accepted(session: AsyncSession, payload: dict) -> None:
     """Consumer of MILESTONE_ACCEPTED. Releases the milestone's escrow to the professional, minus the platform fee."""
     milestone_id = uuid.UUID(str(payload["milestoneId"]))
@@ -315,7 +325,7 @@ async def milestone_accepted(session: AsyncSession, payload: dict) -> None:
         return
     settings = await policy_facade.get_settings_for_org(session,
         a.organization_id if contract.policy_version_id else None, contract.policy_version_id)
-    if not settings.partial_release_allowed and any(m.status != "ACCEPTED" for m in contract.milestones):
+    if not settings.partial_release_allowed and any(m.status not in ("ACCEPTED", "CANCELLED") for m in contract.milestones):
         evaluated("BLOCKED", "ALL_MILESTONES_MUST_BE_ACCEPTED")
         return
     decision = await policy_facade.evaluate(session, await policy_facade.commercial_context(session,
@@ -325,7 +335,7 @@ async def milestone_accepted(session: AsyncSession, payload: dict) -> None:
         amount=x.amount_minor, currency=a.currency, pinned_version_id=contract.policy_version_id,
         platform_default_pinned=contract.policy_version_id is None,
         extra={"contract.termsHash": contract.terms_hash, "contract.version": contract.contract_version,
-            "engagement.allMilestonesAccepted": all(m.status == "ACCEPTED" for m in contract.milestones),
+            "engagement.allMilestonesAccepted": all(m.status in ("ACCEPTED", "CANCELLED") for m in contract.milestones),
             "milestone.acceptedAt": next((m.accepted_at.isoformat() for m in contract.milestones if m.id == milestone_id and m.accepted_at), None)}))
     if not decision.allowed:
         if decision.decision == policy_facade.Decision.REQUIRE_APPROVAL and x.state == "HELD":
@@ -334,7 +344,9 @@ async def milestone_accepted(session: AsyncSession, payload: dict) -> None:
         evaluated(decision.decision, decision.first_reason.code if decision.first_reason else "POLICY")
         return
     bps = get_settings().platform_fee_bps
-    gross = x.amount_minor
+    # An agreed partial acceptance releases only that part; the rest goes back to the buyer.
+    gross = _accepted_gross(milestone.accepted_release_minor, x.amount_minor)
+    refund = x.amount_minor - gross
     fee = Money(gross, a.currency).percentage_bps(bps).minor
     net = gross - fee
     r = Release(account_id=a.id, milestone_id=milestone_id, gross_minor=gross, fee_minor=fee, net_minor=net, currency=a.currency, fee_bps=bps)
@@ -344,23 +356,41 @@ async def milestone_accepted(session: AsyncSession, payload: dict) -> None:
              ("ESCROW_RELEASE", "PRO_PAYABLE", 0, net, f"M{x.sequence}: payable to professional")]
     if fee:
         lines.append(("PLATFORM_FEE", "PLATFORM_REVENUE", 0, fee, f"M{x.sequence}: platform fee {bps / 100:.2f}%"))
+    if refund:
+        lines += [("REFUND", "ESCROW_HELD", refund, 0, f"M{x.sequence}: not released (partial acceptance)"),
+                  ("REFUND", "BUYER_REFUND_PAYABLE", 0, refund, f"M{x.sequence}: refund payable to buyer")]
     _post(session, a, "RELEASE", r.id, lines, milestone_id)
-    ALLOCATION_STATES.assert_can(x.state, "RELEASED")
-    x.state, x.released_minor, x.fee_minor, x.released_at = "RELEASED", net, fee, clock.now()
-    a.held_minor -= gross
+    new_state = "PARTIALLY_RELEASED" if refund else "RELEASED"
+    ALLOCATION_STATES.assert_can(x.state, new_state)
+    x.state, x.released_minor, x.fee_minor, x.refunded_minor, x.released_at = new_state, net, fee, refund, clock.now()
+    a.held_minor -= gross + refund
     a.released_minor += net
     a.fees_minor += fee
+    a.refunded_minor += refund
     a.status = _status(a, await _allocations(session, a.id))
-    evaluated("RELEASE", "ACCEPTED")
+    evaluated("RELEASE", "PARTIAL_ACCEPTANCE" if refund else "ACCEPTED")
     _evt(session, E.ESCROW_RELEASED, a, milestoneId=milestone_id, professionalId=a.professional_id, grossMinor=gross, feeMinor=fee,
          netMinor=net, currency=a.currency, releaseId=r.id)
+    if refund:
+        _evt(session, E.ESCROW_REFUNDED, a, milestoneId=milestone_id, amountMinor=refund, currency=a.currency, refundId=uuid.uuid4(),
+             fundingIds=[x.funding_id] if x.funding_id else [])
+
+
+async def milestone_cancelled(session: AsyncSession, payload: dict) -> None:
+    """Consumer of MILESTONE_CANCELLED: an unfunded allocation is closed; it no longer counts as money to fund."""
+    x = await session.scalar(select(Allocation).where(Allocation.milestone_id == uuid.UUID(str(payload["milestoneId"]))).with_for_update())
+    if x is None or x.state != "UNFUNDED":
+        return
+    a = await _account(session, x.account_id, lock=True)
+    x.state = "CANCELLED"
+    a.status = _status(a, await _allocations(session, a.id))
 
 
 # ---- Chargebacks (Payments & Escrow s.18) ----------------------------------------------------------------
 
 async def release_accepted_siblings(session, contract_id):
     contract = await contract_facade.get_contract(session, uuid.UUID(str(contract_id)))
-    if not contract or any(m.status != "ACCEPTED" for m in contract.milestones):
+    if not contract or any(m.status not in ("ACCEPTED", "CANCELLED") for m in contract.milestones):
         return
     controls = await contract_facade.policy_controls(session, contract.id)
     if controls.get("partialReleaseAllowed", True):

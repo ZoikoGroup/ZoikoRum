@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -119,3 +120,66 @@ class SavedSearchOut(BaseModel):
     params: dict[str, str]
     lastViewedAt: datetime
     createdAt: datetime
+
+
+class SuggestIn(BaseModel):
+    text: str = Field(min_length=3, max_length=1000)  # "I build ML models that read invoices"
+
+
+class SpecializationMatchOut(BaseModel):
+    slug: str
+    name: str
+    groupName: str
+    categoryName: str
+
+
+class SpecializationDraftOut(BaseModel):
+    name: str
+    categorySlug: str | None
+    groupSlug: str | None
+    description: str
+    credentialLikely: bool
+
+
+class SuggestOut(BaseModel):
+    matches: list[SpecializationMatchOut]
+    draft: SpecializationDraftOut | None
+    source: str  # "ai:..." when Claude answered, "fallback:keyword" otherwise
+
+
+class SuggestionIn(BaseModel):
+    text: str = Field(min_length=3, max_length=1000)
+    name: str = Field(min_length=2, max_length=200)
+    categorySlug: str | None = Field(default=None, max_length=120)
+    groupSlug: str | None = Field(default=None, max_length=120)
+    description: str = Field(default="", max_length=500)
+    credentialLikely: bool = False
+    source: str = Field(default="manual", max_length=80)
+
+
+class SuggestionOut(BaseModel):
+    id: uuid.UUID
+    text: str
+    name: str
+    categorySlug: str | None
+    groupSlug: str | None
+    description: str
+    credentialLikely: bool
+    source: str
+    status: str
+    resolvedSlug: str | None
+    resolutionNote: str | None
+    professionalId: uuid.UUID | None = None
+    professionalName: str | None = None
+    createdAt: datetime
+    resolvedAt: datetime | None
+
+
+class SuggestionDecisionIn(BaseModel):
+    action: Literal["APPROVE", "MERGE", "REJECT"]
+    name: str | None = Field(default=None, max_length=200)  # APPROVE: final name (defaults to the suggestion)
+    groupSlug: str | None = Field(default=None, max_length=120)  # APPROVE: where it lives
+    requiresCredential: bool = False
+    regulated: bool = False
+    mergeSlug: str | None = Field(default=None, max_length=120)  # MERGE: the existing specialization it means
+    note: str = Field(default="", max_length=500)  # shown to the professional (required to reject)
