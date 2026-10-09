@@ -83,6 +83,9 @@ class CaseOut(BaseModel):
     version: int
     appeal: "AppealOut | None" = None
     appealDeadline: datetime | None = None  # set while the owner can still appeal
+    hostedProvider: str | None = None  # identity checks in a partner's hosted flow: persona | veriff | simulated
+    hostedStatus: str | None = None  # pending | submitted | approved | declined | needs_review | resubmission_requested | ...
+    hostedReason: str | None = None  # the partner's reason, shown to the reviewer
 
 
 class QueueItemOut(BaseModel):
@@ -95,6 +98,9 @@ class QueueItemOut(BaseModel):
     label: str
     jurisdiction: str | None
     providerResult: str | None
+    hostedProvider: str | None = None
+    hostedStatus: str | None = None
+    hostedReason: str | None = None
     evidenceCount: int
     estimatedCompletion: datetime | None
     overdue: bool
@@ -136,3 +142,7 @@ class AppealQueueItemOut(BaseModel):
     evidenceCount: int
     canDecide: bool  # false for the officer who made the original decision
     filedAt: datetime
+
+
+class HostedSimulateIn(BaseModel):
+    status: Literal["approved", "declined", "needs_review", "resubmission_requested"]

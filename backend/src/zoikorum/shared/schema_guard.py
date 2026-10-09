@@ -18,6 +18,17 @@ def missing_columns(actual: set[tuple[str, str, str]]) -> list[str]:
                   if (table.schema, table.name, column.name) not in actual)
 
 
+async def readiness() -> str | None:
+    """Cheap check for load balancers: the database answers and its migrations are current. None means ready."""
+    try:
+        async with get_engine().connect() as connection:
+            exists = await connection.scalar(text("SELECT to_regclass('platform.alembic_version')"))
+            current = set((await connection.execute(text("SELECT version_num FROM platform.alembic_version"))).scalars()) if exists else set()
+    except Exception:  # noqa: BLE001 - any database failure means "not ready"
+        return "database unavailable"
+    return None if current == expected_heads() else "migrations not current"
+
+
 async def ensure_schema_current() -> None:
     """Read-only checks; migrations remain an explicit deployment operation."""
     try:

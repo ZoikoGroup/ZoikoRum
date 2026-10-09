@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from zoikorum.config import get_settings
+
 from zoikorum.domains.policy.facade import Attr, PolicyAction
 from zoikorum.shared.auth import OrgRole
 from zoikorum.shared.uploads import UploadIn
@@ -19,12 +21,14 @@ class SettingsIn(BaseModel):
     allowedCurrencies: list[str] | None = None
     escrowRequired: bool = True
     partialReleaseAllowed: bool = True
-    acceptanceWindowDays: int = Field(default=14, ge=1, le=90)
+    # Deadlines: leave empty to use the platform defaults (ZK_ACCEPTANCE_WINDOW_DAYS, ...; policy.service.platform_deadlines),
+    # so a profile that only sets other rules never changes them silently.
+    acceptanceWindowDays: int | None = Field(default=None, ge=1, le=90)
     autoAcceptAfterDays: int | None = Field(default=None, ge=1, le=90)
-    signatureDeadlineDays: int = Field(default=3, ge=1, le=90)
-    disputeEvidenceDays: int = Field(default=7, ge=1, le=90)
-    directResolutionBusinessDays: int = Field(default=5, ge=1, le=90)
-    challengeWindowDays: int = Field(default=14, ge=1, le=90)
+    signatureDeadlineDays: int | None = Field(default=None, ge=1, le=90)
+    disputeEvidenceDays: int | None = Field(default=None, ge=1, le=90)
+    directResolutionBusinessDays: int | None = Field(default=None, ge=1, le=90)
+    challengeWindowDays: int | None = Field(default=None, ge=1, le=90)
     autoDisputeMissedDeadline: bool = False
     autoDisputeRejectionCount: int | None = Field(default=None, ge=2, le=20)
     autoDisputeComplianceFlag: bool = False
@@ -53,7 +57,8 @@ class SettingsIn(BaseModel):
             raise ValueError("clause texts must use supported clause names with nonempty text of at most 6000 characters")
         if not self.escrowRequired:
             raise ValueError("the platform baseline requires escrow before work; enterprise profiles cannot disable it")
-        if self.autoAcceptAfterDays is not None and self.autoAcceptAfterDays < self.acceptanceWindowDays:
+        window = self.acceptanceWindowDays or get_settings().acceptance_window_days
+        if self.autoAcceptAfterDays is not None and self.autoAcceptAfterDays < window:
             raise ValueError("automatic acceptance cannot precede the review window")
         return self
 

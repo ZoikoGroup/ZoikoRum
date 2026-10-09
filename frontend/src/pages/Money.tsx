@@ -9,7 +9,7 @@ import { Icon } from '../components/dashboard'
 import { EmptyTable, PortalHeader, SidePanel, StatCard, Tabs } from '../components/portal'
 import { ErrorAlert, Field, useStepUp } from '../components/ui'
 import { COUNTRIES } from './Join'
-import { csv, downloadFile, printReceipt } from '../lib/exports'
+import { csv, downloadFile, saveBlob } from '../lib/exports'
 import { formatCurrencies } from '../lib/money'
 
 /* Money screens (Step 8): the professional's Earnings (payout account + payouts) and the customer's Payments
@@ -99,7 +99,7 @@ export function EarningsPage() {
                 <dt>Holder</dt><dd>{data.payoutAccount.holderName}</dd>
                 <dt>Currency</dt><dd>{data.payoutAccount.currency} · {data.payoutAccount.country}</dd>
               </dl>
-            ) : !user?.mfaEnabled ? (
+            ) : !user?.mfaEnabled && !user?.mfaBypass ? (
               <div className="tip"><Icon name="lock" /><span>Adding a payout account needs two-step verification. <Link to="/app/security">Turn it on</Link>, then come back.</span></div>
             ) : (
               <form onSubmit={save}>
@@ -134,7 +134,6 @@ export function EarningsPage() {
 
 /** Payments & Protection (management design 7), now with real escrow data. */
 export function CustomerPaymentsPage() {
-  const { user } = useAuth()
   const [contracts, setContracts] = useState<Contract[] | null>(null)
   const [escrows, setEscrows] = useState<Escrow[]>([])
   const [charges, setCharges] = useState<Charge[]>([])
@@ -203,8 +202,9 @@ export function CustomerPaymentsPage() {
             <tbody>{invoices.map((i) => <tr key={i.id}><td><code>{i.number}</code></td><td className="small">{title(i.contractId)}</td>
               <td className="small">{i.lines.map((l) => l.description).join(', ')}</td><td>{formatMoney(i.total)}</td>
               <td className="small">{new Date(i.issuedAt).toLocaleDateString()}</td>
-              <td><button className="btn btn-ghost btn-sm" onClick={() => printReceipt(i, title(i.contractId), user?.displayName ?? '')}>
-                <Icon name="download" /> Receipt</button></td></tr>)}</tbody></table>
+              <td><button className="btn btn-ghost btn-sm" onClick={() => paymentsApi.invoicePdf(i.id)
+                .then((b) => saveBlob(`${i.number}.pdf`, b)).catch(setError)}>
+                <Icon name="download" /> PDF</button></td></tr>)}</tbody></table>
         ))}
         {(charges.length > 0 || invoices.length > 0) && (
           <div className="row" style={{ justifyContent: 'flex-end', marginTop: 12 }}>

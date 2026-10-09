@@ -109,3 +109,13 @@ async def delivery_stats(session: AsyncSession, professional_id: uuid.UUID) -> d
         Contract.professional_id == professional_id, Milestone.status == "ACCEPTED", Milestone.due_date.is_not(None)))).all()
     on_time = sum(1 for submitted, due in rows if submitted is not None and submitted.date() <= due)
     return {"completed": completed, "weightedCompleted": weighted_completed, "engagements": engagements, "milestonesWithDueDate": len(rows), "onTime": on_time}
+
+
+async def engagements_by_organization(session: AsyncSession, professional_id: uuid.UUID) -> dict[uuid.UUID, dict]:
+    """Per buyer organisation: engagements with this professional, how many completed, last activity (saved buyers)."""
+    from sqlalchemy import func
+
+    rows = (await session.execute(select(
+        Contract.organization_id, func.count(), func.count().filter(Contract.status == "COMPLETED"), func.max(Contract.updated_at))
+        .where(Contract.professional_id == professional_id).group_by(Contract.organization_id))).all()
+    return {org: {"engagements": n, "completed": done, "lastEngagementAt": last} for org, n, done, last in rows}

@@ -7,7 +7,6 @@ import json
 import logging
 import time
 import uuid
-from collections import defaultdict
 from datetime import datetime
 from typing import Any, Generic, TypeVar
 
@@ -20,7 +19,7 @@ from sqlalchemy.exc import ProgrammingError
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from zoikorum.config import get_settings
-from zoikorum.shared import context
+from zoikorum.shared import context, ratelimit
 from zoikorum.shared.errors import DomainError, RateLimited, ValidationFailed, VersionConflict, ServiceUnavailable
 
 log = logging.getLogger("zoikorum.http")
@@ -49,51 +48,78 @@ class CorrelationMiddleware(BaseHTTPMiddleware):
             started = time.perf_counter()
             response = await call_next(request)
             response.headers["X-Correlation-Id"] = cid
-            log.info(
-                json.dumps(
-                    {
-                        "msg": "request",
-                        "correlationId": cid,
-                        "method": request.method,
-                        "route": request.url.path,
-                        "status": response.status_code,
-                        "ms": round((time.perf_counter() - started) * 1000, 1),
-                    }
-                )
-            )
+            log.info("request", extra={"fields": {
+                "method": request.method, "route": request.url.path, "status": response.status_code,
+                "ms": round((time.perf_counter() - started) * 1000, 1)}})
             return response
 
 
-class RateLimitMiddleware(BaseHTTPMiddleware):
-    """Token bucket per caller (Architecture 7.4). In-memory for one node;
-    swap the bucket store for Redis when running more than one replica."""
+class SecurityHeadersMiddleware:
+    """Security headers on every API response (OWASP secure headers). Pure ASGI, so streaming responses pass through.
+    A response that sets its own header keeps it (stored documents use ``Content-Security-Policy: sandbox``); the
+    interactive API docs keep their scripts. HSTS is sent only where the API is served over HTTPS (not local/test)."""
 
-    LIMITS = {"anonymous": (60, 120), "user": (300, 600)}
+    ALWAYS = {
+        b"x-content-type-options": b"nosniff",
+        b"x-frame-options": b"DENY",
+        b"referrer-policy": b"no-referrer",
+        b"permissions-policy": b"camera=(), microphone=(), geolocation=(), payment=()",
+        b"cross-origin-opener-policy": b"same-origin",
+    }
+    API_CSP = b"default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+    DOCS_PATHS = ("/docs", "/redoc", "/openapi.json")
 
     def __init__(self, app):
-        super().__init__(app)
-        self._buckets: dict[str, list[float]] = defaultdict(lambda: [0.0, 0.0])
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        path = scope.get("path", "")
+        signed_in = any(name == b"authorization" for name, _ in scope.get("headers", []))
+        https = get_settings().env not in ("local", "development", "test")
+
+        async def send_with_headers(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                present = {name.lower() for name, _ in headers}
+                wanted = dict(self.ALWAYS)
+                if not path.startswith(self.DOCS_PATHS):
+                    wanted[b"content-security-policy"] = self.API_CSP
+                if signed_in:
+                    wanted[b"cache-control"] = b"no-store"  # personal data is never cached by browsers or proxies
+                if https:
+                    wanted[b"strict-transport-security"] = b"max-age=63072000; includeSubDomains"
+                headers += [(name, value) for name, value in wanted.items() if name not in present]
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
+
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    """Token bucket per caller (Architecture 7.4): per signed-in session, or per client address (behind the load
+    balancer uvicorn takes it from X-Forwarded-For). Shared across servers through Redis when ZK_REDIS_URL is set
+    (shared/ratelimit.py)."""
+
+    LIMITS = {"anonymous": (60, 120), "user": (300, 600)}  # (requests per minute, burst)
 
     async def dispatch(self, request: Request, call_next):
         if not get_settings().rate_limit_enabled:
             return await call_next(request)
         auth = request.headers.get("Authorization")
         kind = "user" if auth else "anonymous"
-        key = (auth[-24:] if auth else (request.client.host if request.client else "unknown"))
+        identifier = auth or (request.client.host if request.client else "unknown")
         rate_per_min, burst = self.LIMITS[kind]
-        tokens, last = self._buckets[key]
-        now = time.monotonic()
-        tokens = burst if last == 0 else min(burst, tokens + (now - last) * rate_per_min / 60)
-        if tokens < 1:
-            self._buckets[key] = [tokens, now]
+        if not await ratelimit.get_buckets().take(ratelimit.bucket_key(kind, identifier), rate_per_min, burst):
             return problem(RateLimited())
-        self._buckets[key] = [tokens - 1, now]
         return await call_next(request)
 
 
 def install(app: FastAPI) -> None:
     app.add_middleware(RateLimitMiddleware)
     app.add_middleware(CorrelationMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)  # outermost: also covers rate-limit and error responses
 
     @app.exception_handler(DomainError)
     async def _domain(_: Request, exc: DomainError):

@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
+import { api } from '../api/client'
 import { Link } from 'react-router-dom'
 
 /* Building blocks shared by every role's dashboard: icons, summary cards, the pending-actions list. */
@@ -87,8 +88,21 @@ export function ComingSoon({ children }: { children: ReactNode }) {
 /** Photo when there is one, otherwise initials. */
 export function Avatar({ name, photoUrl, size = 40 }: { name: string; photoUrl?: string | null; size?: number }) {
   const initials = name.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase()
-  return photoUrl
-    ? <img className="avatar-img" src={photoUrl} alt="" width={size} height={size} style={{ width: size, height: size }} />
+  // Photos of published profiles load directly. A draft profile's photo is only served to its owner (and staff), and a
+  // plain <img> request carries no sign-in, so on failure the photo is fetched again with the session and shown from memory.
+  const [img, setImg] = useState<{ url: string | null | undefined; src: string | null; failed: boolean }>({ url: photoUrl, src: null, failed: false })
+  if (img.url !== photoUrl) setImg({ url: photoUrl, src: null, failed: false })  // a new photo starts fresh
+  const { src, failed } = img
+  useEffect(() => () => { if (src?.startsWith('blob:')) URL.revokeObjectURL(src) }, [src])
+  async function retryWithSession() {
+    if (!photoUrl || src) { setImg((x) => ({ ...x, failed: true })); return }
+    try {
+      const blob = URL.createObjectURL(await api<Blob>(photoUrl, { blob: true }))
+      setImg((x) => ({ ...x, src: blob }))
+    } catch { setImg((x) => ({ ...x, failed: true })) }
+  }
+  return photoUrl && !failed
+    ? <img className="avatar-img" src={src ?? photoUrl} alt="" width={size} height={size} style={{ width: size, height: size }} onError={retryWithSession} />
     : <span className="avatar" aria-hidden style={{ width: size, height: size, fontSize: size / 2.6 }}>{initials}</span>
 }
 

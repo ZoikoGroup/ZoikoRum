@@ -28,7 +28,10 @@ from zoikorum.config import get_settings
 EMAIL_TIMER = 'notification.email_delivery'
 WEBHOOK_TIMER = 'notification.webhook_delivery'
 EVENT_TITLES = {
-    E.IDENTITY_CREATED: 'Confirm your email address', E.PASSWORD_RESET_REQUESTED: 'Reset your password',
+    E.IDENTITY_CREATED: 'Confirm your email address', E.EMAIL_CONFIRMATION_REQUESTED: 'Confirm your email address',
+    E.PASSWORD_RESET_REQUESTED: 'Reset your password',
+    E.DATA_REQUEST_CREATED: 'Privacy request received', E.DATA_REQUEST_COMPLETED: 'Your privacy request is complete',
+    E.DATA_REQUEST_BLOCKED: 'Account deletion on hold', E.DATA_REQUEST_CANCELLED: 'Account deletion cancelled',
     E.MFA_ENROLLED: 'Two-step verification enabled', E.PASSWORD_CHANGED: 'Your password changed',
     E.AUTHENTICATION_FAILED: 'Account security alert', E.IDENTITY_SUSPENDED: 'Account restricted',
     E.IDENTITY_REINSTATED: 'Account restored',
@@ -102,6 +105,8 @@ async def recipients(session, event):
 
 def target_url(event, recipient, professional_identity):
     p = event.payload
+    if event.eventType in (E.DATA_REQUEST_CREATED, E.DATA_REQUEST_COMPLETED, E.DATA_REQUEST_BLOCKED, E.DATA_REQUEST_CANCELLED):
+        return '/app/settings'  # Settings > Privacy
     if domain_of(event.eventType) == 'identity':
         return '/app/security'
     if domain_of(event.eventType) == 'admin':
@@ -128,18 +133,22 @@ async def queue_event(session, event):
         return
     found, org_id, pro_identity = await recipients(session, event)
     mandatory = domain_of(event.eventType) in {'identity', 'admin'}
+    saved_buyer = (event.eventType == E.PROPOSAL_REQUESTED and org_id and _uuid(event.payload.get('professionalId'))
+                   and await professional.saved_buyer_alerts(session, _uuid(event.payload['professionalId']), org_id))
     notice = event.payload.get('notice') if domain_of(event.eventType) == 'admin' else None
     body = '\n'.join(f'{key}: {value}' for key, value in notice.items()) if notice else 'Open your workspace to review this update and any required action.'
     for recipient in found:
         prefs = await session.scalar(select(Preference).where(Preference.identity_id == recipient))
-        email_on = mandatory or prefs is None or prefs.email
-        in_app = mandatory or prefs is None or prefs.in_app
+        priority = bool(saved_buyer and recipient == pro_identity)  # the professional asked to always hear from this buyer
+        email_on = mandatory or priority or prefs is None or prefs.email
+        in_app = mandatory or priority or prefs is None or prefs.in_app
         if not email_on and not in_app:
             continue
         nid = uuid.uuid4()
         result = await session.execute(insert(Notification).values(id=nid, source_event_id=event.eventId,
-            identity_id=recipient, event_type=event.eventType, title=EVENT_TITLES[event.eventType], body=body,
-            url=target_url(event, recipient, pro_identity), notice=notice, mandatory=mandatory, in_app=in_app,
+            identity_id=recipient, event_type=event.eventType,
+            title='New request from a saved buyer' if priority else EVENT_TITLES[event.eventType], body=body,
+            url=target_url(event, recipient, pro_identity), notice=notice, mandatory=mandatory or priority, in_app=in_app,
             email_status='PENDING' if email_on else 'DISABLED', created_at=event.occurredAt).on_conflict_do_nothing(
                 index_elements=['source_event_id', 'identity_id']).returning(Notification.id))
         if result.scalar_one_or_none():
@@ -197,8 +206,8 @@ async def deliver_email(session, key):
         row.email_status = 'DISABLED'
         return
     url = get_settings().frontend_url.rstrip('/') + row.url
-    if row.event_type in {E.IDENTITY_CREATED, E.PASSWORD_RESET_REQUESTED}:
-        purpose = 'email_confirm' if row.event_type == E.IDENTITY_CREATED else 'password_reset'
+    if row.event_type in {E.IDENTITY_CREATED, E.EMAIL_CONFIRMATION_REQUESTED, E.PASSWORD_RESET_REQUESTED}:
+        purpose = 'password_reset' if row.event_type == E.PASSWORD_RESET_REQUESTED else 'email_confirm'
         url = await identity.notification_account_link(session, row.identity_id, purpose, requested_at=row.created_at)
         if not url:
             row.email_status = 'CANCELLED'

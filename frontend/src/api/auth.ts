@@ -19,6 +19,7 @@ export interface User {
   emailConfirmed: boolean
   mfaEnabled: boolean
   mfaRequired: boolean
+  mfaBypass?: boolean  // development only: authenticator codes switched off
   personas: Persona[]
   primaryPersona: Persona | null
   platformRoles: PlatformRole[]
@@ -42,6 +43,22 @@ export interface RegisterInput {
   acceptTerms: true
 }
 
+/** One account in the staff Users list. */
+export interface UserRow {
+  id: string
+  email: string
+  displayName: string
+  country: string
+  personas: string[]
+  platformRoles: string[]
+  status: 'ACTIVE' | 'SUSPENDED' | 'DELETED'
+  emailConfirmed: boolean
+  mfaEnabled: boolean
+  createdAt: string
+  lastSignInAt: string | null
+}
+export type UserRoleFilter = '' | 'BUYER' | 'PROFESSIONAL' | 'FIRM_ADMIN' | 'ENTERPRISE_ADMIN' | 'ENTERPRISE_MEMBER' | 'STAFF'
+
 export interface StaffMember {
   id: string
   email: string
@@ -59,6 +76,8 @@ export const authApi = {
   logout: () => api<void>('/v1/auth/logout', { method: 'POST' }),
   me: () => api<User>('/v1/me'),
   confirmEmail: (token: string) => api<User>('/v1/auth/confirm-email', { method: 'POST', body: { token }, auth: false }),
+  /** Sends a new confirmation link (one a minute). The token comes back only in local development. */
+  resendConfirmation: () => api<{ message: string; emailConfirmationToken: string | null }>('/v1/me/email-confirmation', { method: 'POST' }),
   forgotPassword: (email: string) =>
     api<{ message: string; resetToken: string | null }>('/v1/auth/password/forgot', { method: 'POST', body: { email }, auth: false }),
   resetPassword: (token: string, newPassword: string) =>
@@ -69,7 +88,10 @@ export const authApi = {
   addAccountType: (accountType: 'BUYER' | 'PROFESSIONAL') =>
     api<AuthResult>('/v1/me/account-types', { method: 'POST', body: { accountType } }),
 
-  // Platform Admin
+  // Platform Admin / Trust & Safety
+  listUsers: (filters: { q?: string; role?: UserRoleFilter; status?: string; cursor?: string | null }) =>
+    api<{ items: UserRow[]; nextCursor: string | null }>('/v1/admin/users', { query: Object.fromEntries(
+      Object.entries({ ...filters, limit: '50' }).filter(([, v]) => v)) as Record<string, string> }),
   listStaff: () => api<StaffMember[]>('/v1/admin/staff'),
   lookup: (email: string) => api<StaffMember>('/v1/admin/identities/lookup', { query: { email } }),
   grantRole: (id: string, role: PlatformRole) =>

@@ -194,12 +194,15 @@ export function FirmProfilePage() {
   const [saved, setSaved] = useState(false)
   const [busy, setBusy] = useState(false)
 
-  useEffect(() => {
-    if (firm) setForm({
+  // Fill the form from each new version of the firm while rendering (no extra effect pass).
+  const [formVersion, setFormVersion] = useState<number | null>(null)
+  if (firm && formVersion !== firm.version) {
+    setFormVersion(firm.version)
+    setForm({
       legalName: firm.legalName, tradingName: firm.tradingName ?? '', registrationNumber: firm.registrationNumber ?? '',
       hqCountry: firm.hqCountry, sizeBand: firm.sizeBand ?? '', website: firm.website ?? '',
     })
-  }, [firm])
+  }
   if (loading || !firm) return <p className="muted">Loading…</p>
   const set = (k: string) => (e: { target: { value: string } }) => { setSaved(false); setForm({ ...form, [k]: e.target.value }) }
 

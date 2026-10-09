@@ -5,12 +5,13 @@ import { ApiError } from '../api/client'
 import { formatMoney } from '../api/orgs'
 import { CURRENCIES, LABEL, proApi, toMinor, type Offering } from '../api/professional'
 import {
-  attachmentUrl, budgetText, CADENCES, DECLINE_REASONS, DEPENDENCIES, DURATION_LABEL, PRICING_PREFS, PROPOSAL_STATUS, proposalApi, requestStatus,
+  attachmentUrl, budgetText, proposalFileUrl, CADENCES, DECLINE_REASONS, DEPENDENCIES, DURATION_LABEL, PRICING_PREFS, PROPOSAL_STATUS, proposalApi, requestStatus,
   type DeclineReason, type Deliverable, type Proposal, type ProposalInput, type ProposalRequest,
 } from '../api/proposals'
 import { Avatar, Icon } from '../components/dashboard'
 import { EmptyTable, PortalHeader, SidePanel, StatCard, Tabs } from '../components/portal'
 import { FileLink } from '../components/FileLink'
+import { DOC_ACCEPT, toUpload } from '../api/files'
 import { ErrorAlert, Field } from '../components/ui'
 
 /* Professional side of Step 6 (Professional Dashboard doc s.7–8): incoming requests, NDA, the structured proposal
@@ -18,6 +19,35 @@ import { ErrorAlert, Field } from '../components/ui'
 
 const fmtDate = (d: string | null) => (d ? new Date(d.length === 10 ? `${d}T00:00:00` : d).toLocaleDateString() : '—')
 const plusDays = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10)
+
+/** Retainer proposals (P&E s.15, RFP s.11): one milestone per monthly cycle, each funded and accepted on its own. */
+function RetainerCycleBuilder({ deliverableKeys, onGenerate }: {
+  deliverableKeys: string[]; onGenerate: (cycles: ProposalInput['milestones'], fee: string) => void
+}) {
+  const [count, setCount] = useState('3')
+  const [fee, setFee] = useState('')
+  const [first, setFirst] = useState(plusDays(30))
+  const n = Math.min(Math.max(Number(count) || 0, 1), 24)
+  function generate() {
+    const start = new Date(`${first}T00:00:00`)
+    onGenerate(Array.from({ length: n }, (_, i) => {
+      const due = new Date(start.getFullYear(), start.getMonth() + i, start.getDate())
+      const label = due.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+      return { title: `Cycle ${i + 1} (${label})`, description: 'Monthly retainer cycle', amountMinor: 0,
+        dueDate: `${due.getFullYear()}-${String(due.getMonth() + 1).padStart(2, '0')}-${String(due.getDate()).padStart(2, '0')}`,
+        deliverableKeys: [...deliverableKeys] }
+    }), fee)
+  }
+  return (
+    <div className="tip" style={{ marginBottom: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+      <span style={{ flexBasis: '100%' }}><strong>Retainer cycles</strong>: one milestone per month, funded and accepted cycle by cycle.</span>
+      <label className="filter-box"><span>Cycles</span><input type="number" min={1} max={24} value={count} onChange={(e) => setCount(e.target.value)} /></label>
+      <label className="filter-box"><span>Monthly fee</span><input inputMode="decimal" value={fee} onChange={(e) => setFee(e.target.value.replace(/[^0-9.]/g, ''))} /></label>
+      <label className="filter-box"><span>First cycle ends</span><input type="date" value={first} onChange={(e) => setFirst(e.target.value)} /></label>
+      <button type="button" className="btn btn-secondary btn-sm" disabled={!fee || !deliverableKeys.length} onClick={generate}>Create {n} cycles</button>
+    </div>
+  )
+}
 type Bucket = 'new' | 'sent' | 'revision' | 'closed'
 
 function bucket(r: ProposalRequest): Bucket {
@@ -33,6 +63,8 @@ export function ProfessionalRequestsPage() {
   const [error, setError] = useState<unknown>(null)
   const [tab, setTab] = useState<Bucket | 'all'>('new')
   useEffect(() => { proposalApi.list('professional').then(setList).catch(setError) }, [])
+  const [savedOrgs, setSavedOrgs] = useState<Set<string>>(new Set())  // requests from saved buyers are marked
+  useEffect(() => { proApi.savedBuyers().then((s) => setSavedOrgs(new Set(s.map((b) => b.organizationId)))).catch(() => {}) }, [])
   const rows = list ?? []
   const n = (b: Bucket) => rows.filter((r) => bucket(r) === b).length
   const shown = rows.filter((r) => tab === 'all' || bucket(r) === tab)
@@ -64,7 +96,9 @@ export function ProfessionalRequestsPage() {
               const st = requestStatus(r)
               return (
                 <tr key={r.id}>
-                  <td><strong>{r.organizationName ?? r.buyerName}</strong><div className="muted small">{r.buyerName}</div></td>
+                  <td><strong>{r.organizationName ?? r.buyerName}</strong>
+                    {savedOrgs.has(r.organizationId) && <> <span className="badge green">Saved buyer</span></>}
+                    <div className="muted small">{r.buyerName}</div></td>
                   <td className="small">{r.service}{r.ndaRequired && <> <span className="badge">NDA</span></>}</td>
                   <td className="small">{LABEL[r.engagementType]}</td>
                   <td className="small">{budgetText(r.budget)}</td>
@@ -252,6 +286,8 @@ export function ProfessionalRequestDetail() {
                 <Field label="Currency" id="p-cur"><select id="p-cur" className="input" value={form.currency} onChange={(e) => set('currency', e.target.value)}>
                   {CURRENCIES.map((c) => <option key={c}>{c}</option>)}</select></Field>
               </div>
+              {form.pricingModel === 'RETAINER' && <RetainerCycleBuilder deliverableKeys={form.deliverables.map((d) => d.key)}
+                onGenerate={(cycles, fee) => { set('milestones', cycles); setAmounts(cycles.map(() => fee)) }} />}
               {form.milestones.map((m, i) => (
                 <div key={i} className="builder-row">
                   <span className="n">{i + 1}</span>
@@ -289,6 +325,22 @@ export function ProfessionalRequestDetail() {
                   onChange={(e) => set('assumptions', e.target.value.split('\n').filter((l) => l.trim()).slice(0, 20))} /></Field>
                 <Field label="Exclusions (one per line)" id="p-exc"><textarea id="p-exc" className="input" rows={3} value={form.exclusions.join('\n')}
                   onChange={(e) => set('exclusions', e.target.value.split('\n').filter((l) => l.trim()).slice(0, 20))} /></Field>
+              </div>
+              <div className="field"><span className="label">Attachments (optional, up to 3)</span>
+                <p className="muted small" style={{ margin: '0 0 6px' }}>Portfolio items or supporting documents: a past case study, a sample report, a CV for regulated work.
+                  The buyer can open them once you send the proposal.</p>
+                {(proposal?.attachments ?? []).map((a) => <div key={a.sha256} className="file-row"><Icon name="request" />
+                  <FileLink file={a} url={proposalFileUrl(proposal!.id, a.sha256)} />
+                  {editable && <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => run(async () => setProposal(await proposalApi.removeProposalFile(proposal!.id, a.sha256)), 'File removed.')}>Remove</button>}
+                </div>)}
+                {editable && (proposal?.attachments ?? []).length < 3 && <input type="file" multiple accept={DOC_ACCEPT} onChange={(e) => {
+                  const picked = Array.from(e.target.files ?? []).slice(0, 3 - (proposal?.attachments ?? []).length)
+                  e.target.value = ''
+                  run(async () => {
+                    const saved = proposal ?? await save()  // files belong to a saved draft
+                    setProposal(await proposalApi.addProposalFiles(saved.id, await Promise.all(picked.map((f) => toUpload(f)))))
+                  }, 'File attached.')
+                }} />}
               </div>
               <ul className="assurance compact governance-note">
                 <li><Icon name="contract" /><span>The contract will be generated from the accepted proposal.</span></li>

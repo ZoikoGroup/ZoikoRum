@@ -88,7 +88,8 @@ export function MessagesPage() {
   const [threads, setThreads] = useState<MessageThread[]>([])
   const [threadsCursor, setThreadsCursor] = useState<string | null>(null)
   const [loadingMoreThreads, setLoadingMoreThreads] = useState(false)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  // A link like /app/messages?thread=<id> (Global Search) opens that conversation.
+  const [selectedId, setSelectedId] = useState<string | null>(() => searchParams.get('thread'))
   const [messages, setMessages] = useState<ConversationMessage[]>([])
   const [earlierCursor, setEarlierCursor] = useState<string | null>(null)
   const [loadingEarlier, setLoadingEarlier] = useState(false)

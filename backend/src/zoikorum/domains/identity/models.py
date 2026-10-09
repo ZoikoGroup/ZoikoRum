@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import ARRAY, DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -20,6 +21,7 @@ class Identity(Base, UUIDPk, Timestamps, Versioned):
 
     email: Mapped[str] = mapped_column(String(320), unique=True, nullable=False)
     email_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    confirmation_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # last "resend the link"
     password_hash: Mapped[str | None] = mapped_column(String(255))
     display_name: Mapped[str] = mapped_column(String(200), nullable=False)
     country: Mapped[str] = mapped_column(String(2), nullable=False)
@@ -99,8 +101,13 @@ class DataRequest(Base, UUIDPk, Timestamps):
         PG_UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.identities.id"), nullable=False, index=True
     )
     request_type: Mapped[str] = mapped_column(String(20), nullable=False)  # ACCESS | ERASURE
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="RECEIVED")  # RECEIVED | IN_PROGRESS | COMPLETED
+    # ACCESS: RECEIVED -> COMPLETED (export ready). ERASURE: SCHEDULED -> COMPLETED | BLOCKED | CANCELLED.
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="RECEIVED")
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # erasure after the cooling-off period
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # export download link
+    export_key: Mapped[str | None] = mapped_column(String(300))  # blob storage key of the export file
+    detail: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")  # reasons / summary
 
 
 class DuplicateSuspicion(Base, UUIDPk, Timestamps):

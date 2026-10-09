@@ -11,7 +11,22 @@ npm install
 npm run dev        # http://localhost:5173  (proxies /v1/* to the API on :8000)
 npm test             # unit tests (Vitest): upload helpers, CSV export, password strength, money format
 npm run build      # type-check + production build into dist/
+npm run e2e        # browser tests (Playwright): see below
 ```
+
+### Browser tests (`e2e/`)
+
+A real Chrome drives the main journeys: a customer signs up, confirms their email and signs back in; finds a verified
+professional and opens the profile; accepts delivered work and downloads the agreement and invoice PDFs. Test data is
+set up through the API (`e2e/api.ts`): a professional who publishes and passes the identity check through the simulated
+identity partner, a buyer organisation, and an engagement up to submitted work.
+
+The tests never touch your running app or data: `e2e/global-setup.ts` recreates a separate database (`zk_e2e`;
+`backend/scripts/e2e_database.py` refuses any other name), and Playwright starts its own API and worker on :8100
+(`backend/scripts/e2e_stack.py`, fixed development settings) and this app on :5174. Needs PostgreSQL from
+`docker-compose.yml`, the backend virtualenv (`ZK_E2E_PYTHON` overrides its path) and, once, `npx playwright install chromium`.
+On failure, `test-results/` holds screenshots and a trace (`npx playwright show-trace <trace.zip>`). CI runs them in the
+`browser` job.
 
 ## Step 1 — role-based login (built)
 
@@ -24,6 +39,10 @@ npm run build      # type-check + production build into dist/
 | `/app/buyer` · `/app/professional` · `/app/firm` · `/app/enterprise` | by account role | Role workspaces (summary cards fill in later steps) |
 | `/app/ops`, `/app/ops/staff` | platform staff / Platform Admin | Operations home; grant/revoke staff roles (step-up MFA) |
 | `/app/ops/reconciliation` | Financial Ops, Platform Admin | Nightly reconciliation results per day; re-run a day; mismatch details |
+| `/app/ops/users` | Platform Admin, T&S analyst | Every account: search, role and status filters, last sign-in; "Open safety case" to restrict one (audited) |
+| `/app/ops/duplicates` | Platform Admin, T&S analyst | Possible duplicate accounts (same ID document): keep one, close the other, or dismiss |
+| `/app/ops/taxonomy` | Platform Admin | Specializations suggested by professionals: approve, merge into an existing one, or reject |
+| `/app/compare?ids=` | Buyer, Enterprise | Shared comparison of up to 3 professionals (signed-in link) |
 | `/app/account`, `/app/security` | signed in | Roles held, add Buyer/Professional role, set up two-step verification |
 
 ## Step 2 — organizations, firms & team roles (built)

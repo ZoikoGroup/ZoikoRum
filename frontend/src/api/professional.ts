@@ -14,8 +14,24 @@ export interface TaxonomySpecialization {
 export interface TaxonomyGroup extends TaxonomySpecialization { specializations: TaxonomySpecialization[] }
 export interface TaxonomyCategory extends TaxonomySpecialization { version: number; groups: TaxonomyGroup[] }
 
+export interface SpecializationMatch { slug: string; name: string; groupName: string; categoryName: string }
+export interface SpecializationDraft { name: string; categorySlug: string | null; groupSlug: string | null; description: string; credentialLikely: boolean }
+export interface SpecializationSuggestion {
+  id: string; text: string; name: string; categorySlug: string | null; groupSlug: string | null; description: string; credentialLikely: boolean
+  source: string; status: 'PENDING' | 'APPROVED' | 'MERGED' | 'REJECTED'; resolvedSlug: string | null; resolutionNote: string | null
+  professionalId: string | null; professionalName: string | null; createdAt: string; resolvedAt: string | null
+}
+
 export const taxonomyApi = {
   all: () => api<{ categories: TaxonomyCategory[] }>('/v1/taxonomy', { auth: false }).then((r) => r.categories),
+  /** "Can't find yours?": match your own words to existing specializations (AI when configured, keywords otherwise). */
+  suggest: (text: string) => api<{ matches: SpecializationMatch[]; draft: SpecializationDraft | null; source: string }>('/v1/taxonomy/suggest', { method: 'POST', body: { text } }),
+  submitSuggestion: (body: { text: string; name: string; categorySlug?: string | null; groupSlug?: string | null; description?: string; credentialLikely?: boolean; source?: string }) =>
+    api<SpecializationSuggestion>('/v1/taxonomy/suggestions', { method: 'POST', body }),
+  mySuggestions: () => api<SpecializationSuggestion[]>('/v1/taxonomy/suggestions/mine'),
+  queue: () => api<SpecializationSuggestion[]>('/v1/admin/taxonomy/suggestions'),
+  decide: (id: string, body: { action: 'APPROVE' | 'MERGE' | 'REJECT'; name?: string; groupSlug?: string; requiresCredential?: boolean; regulated?: boolean; mergeSlug?: string; note?: string }) =>
+    api<SpecializationSuggestion>(`/v1/admin/taxonomy/suggestions/${id}/decision`, { method: 'POST', body }),
 }
 
 // ---- Professional profile ----------------------------------------------------
@@ -50,6 +66,7 @@ export const RATE_UNIT_LABEL: Record<string, string> = { HOUR: 'per hour', DAY: 
 export interface SpecializationRef { slug: string; name: string; primary: boolean; requiresCredential: boolean; regulated: boolean }
 
 export interface Profile {
+  pendingSpecializations?: string[]  // suggested, waiting for an admin
   id: string
   photoUrl: string | null
   firmId: string | null
@@ -73,6 +90,7 @@ export interface Profile {
   availability: Availability
   maxConcurrentEngagements: number | null
   temporarilyUnavailable: boolean
+  weeklyHours?: number | null
   servedJurisdictions: string[]
   licensedJurisdictions: string[]
   crossBorderAcknowledged: boolean
@@ -170,6 +188,7 @@ export interface PublicProfile {
   indicativeRate: Money | null
   rateUnit: string | null
   availability: string
+  weeklyHours?: number | null
   servedJurisdictions: string[]
   licensedJurisdictions: string[]
   credentials: { name: string; issuingBody: string; jurisdiction: string | null; status: string; displayLabel: string }[]
@@ -180,10 +199,27 @@ export interface PublicProfile {
   isOwnProfile: boolean
   history: { completedEngagements: number; onTimeRate: number | null; medianResponseHours: number | null; newToPlatform: boolean } | null
   firm: { id: string; name: string; verified: boolean } | null
+  pendingSpecializations?: string[]
 }
 
 const P = '/v1/professionals'
+/** Professional Dashboard s.17: a buyer organisation in the professional's client list. */
+export interface SavedBuyer {
+  id: string; organizationId: string; name: string; country: string | null; note: string | null; alerts: boolean
+  requests: number; engagements: number; completed: number; lastActivityAt: string | null; savedAt: string
+}
+export interface BuyerCandidate {
+  organizationId: string; name: string; country: string | null; saved: boolean
+  requests: number; engagements: number; completed: number; lastActivityAt: string | null
+}
+
 export const proApi = {
+  savedBuyers: () => api<SavedBuyer[]>(`${P}/me/saved-buyers`),
+  buyerCandidates: () => api<BuyerCandidate[]>(`${P}/me/buyer-candidates`),
+  saveBuyer: (organizationId: string) => api<SavedBuyer>(`${P}/me/saved-buyers`, { method: 'POST', body: { organizationId } }),
+  updateSavedBuyer: (id: string, body: { note?: string; alerts?: boolean }) =>
+    api<SavedBuyer>(`${P}/me/saved-buyers/${id}`, { method: 'PATCH', body }),
+  removeSavedBuyer: (id: string) => api<void>(`${P}/me/saved-buyers/${id}`, { method: 'DELETE' }),
   create: (body: { firmId?: string | null }) => api<Profile>(P, { method: 'POST', body }),
   setFirm: (firmId: string | null) => api<Profile>(`${P}/me/firm`, { method: 'PUT', body: { firmId } }),
   me: () => api<Profile>(`${P}/me`),
@@ -196,7 +232,7 @@ export const proApi = {
     api<Profile>(`${P}/me/specializations`, { method: 'PUT', body: { primary, secondary } }),
   setJurisdictions: (body: { served: string[]; licensed: string[]; crossBorderAcknowledged: boolean }) =>
     api<Profile>(`${P}/me/jurisdictions`, { method: 'PUT', body }),
-  setAvailability: (body: { availability: Availability; maxConcurrentEngagements: number | null; temporarilyUnavailable: boolean }) =>
+  setAvailability: (body: { availability: Availability; maxConcurrentEngagements: number | null; temporarilyUnavailable: boolean; weeklyHours?: number | null }) =>
     api<Profile>(`${P}/me/availability`, { method: 'PUT', body }),
   readiness: () => api<Readiness>(`${P}/me/readiness`),
   publish: () => api<Profile>(`${P}/me/publish`, { method: 'POST', body: { attestAccurate: true } }),

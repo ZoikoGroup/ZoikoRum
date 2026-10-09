@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Header, Request
+from fastapi import APIRouter, Header, Request, Response
 
 from zoikorum.domains.payments import reconciliation, service, webhooks
 from zoikorum.domains.payments.schemas import (
@@ -28,6 +28,14 @@ async def earnings(actor: CurrentActor, session: DbSession):
 @router.get("/v1/payments/invoices", response_model=list[InvoiceOut])
 async def invoices(organizationId: uuid.UUID, actor: CurrentActor, session: DbSession):
     return await service.invoices(session, actor, organizationId)
+
+
+@router.get("/v1/payments/invoices/{invoice_id}/pdf")
+async def invoice_pdf(invoice_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> Response:
+    """The invoice as a PDF (members of the buyer organisation). Audited."""
+    data, name = await service.invoice_pdf(session, actor, invoice_id)
+    return Response(data, media_type="application/pdf", headers={
+        "Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
 
 
 @router.get("/v1/payments/charges", response_model=list[ChargeOut])

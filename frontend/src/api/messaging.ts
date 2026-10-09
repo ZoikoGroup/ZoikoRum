@@ -53,8 +53,12 @@ interface Page<T> {
 const T = '/v1/threads'
 const idem = () => ({ 'Idempotency-Key': crypto.randomUUID() })
 
+export interface MessageHit { threadId: string; threadTitle: string; sequence: number | null; senderName: string | null; snippet: string; sentAt: string }
+
 export const messagingApi = {
   summary: () => api<{ unreadThreads: number; unreadMessages: number }>(`${T}/summary`),
+  /** Messages and conversations the viewer can open, newest first (Global Search). */
+  search: (q: string) => api<MessageHit[]>('/v1/messaging/search', { query: { q, limit: '5' } }),
   list: (cursor?: string) => api<Page<MessageThread>>(T, {
     query: { limit: '100', ...(cursor ? { cursor } : {}) },
   }),

@@ -48,6 +48,22 @@ async def document(contract_id: uuid.UUID, actor: CurrentActor, session: DbSessi
 async def version_document(contract_id: uuid.UUID, version: int, actor: CurrentActor, session: DbSession):
     text, sha = await service.get_document(session, actor, contract_id, version)
     return PlainTextResponse(text, headers={"X-Document-SHA256": sha})
+@router.get("/v1/contracts/{contract_id}/document.pdf")
+async def document_pdf(contract_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> Response:
+    """The agreement as a PDF (current version), with its SHA-256 on every page. Audited."""
+    return _pdf(*await service.document_pdf(session, actor, contract_id))
+
+
+@router.get("/v1/contracts/{contract_id}/versions/{version}/document.pdf")
+async def version_document_pdf(contract_id: uuid.UUID, version: int, actor: CurrentActor, session: DbSession) -> Response:
+    return _pdf(*await service.document_pdf(session, actor, contract_id, version))
+
+
+def _pdf(data: bytes, name: str) -> Response:
+    return Response(data, media_type="application/pdf", headers={
+        "Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
+
+
 @router.get("/v1/contracts/{contract_id}/files/{sha256}")
 async def delivered_file(contract_id: uuid.UUID, sha256: str, actor: CurrentActor, session: DbSession) -> Response:
     """Opens a file the professional delivered with a milestone. Audited."""

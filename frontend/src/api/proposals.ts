@@ -111,6 +111,7 @@ export interface ProposalInput {
 }
 
 export interface Proposal extends ProposalInput {
+  attachments?: StoredFile[]  // portfolio items / supporting documents
   id: string
   requestId: string
   groupId: string
@@ -139,6 +140,7 @@ const P = '/v1/proposals'
 const idem = () => ({ 'Idempotency-Key': crypto.randomUUID() })
 
 export const attachmentUrl = (requestId: string, sha256: string) => `${R}/${requestId}/attachments/${sha256}`
+export const proposalFileUrl = (proposalId: string, sha256: string) => `${P}/${proposalId}/attachments/${sha256}`
 
 export const proposalApi = {
   createRequests: (body: RequestInput) => api<ProposalRequest[]>(R, { method: 'POST', body, headers: idem() }),
@@ -155,6 +157,8 @@ export const proposalApi = {
   createProposal: (requestId: string, body: ProposalInput) => api<Proposal>(`${R}/${requestId}/proposals`, { method: 'POST', body }),
   getProposal: (id: string) => api<Proposal>(`${P}/${id}`),
   updateProposal: (id: string, body: ProposalInput) => api<Proposal>(`${P}/${id}`, { method: 'PATCH', body }),
+  addProposalFiles: (id: string, files: Upload[]) => api<Proposal>(`${P}/${id}/attachments`, { method: 'POST', body: { files } }),
+  removeProposalFile: (id: string, sha256: string) => api<Proposal>(`${P}/${id}/attachments/${sha256}`, { method: 'DELETE' }),
   submit: (id: string) => api<Proposal>(`${P}/${id}/submit`, { method: 'POST', headers: idem() }),
   withdraw: (id: string) => api<Proposal>(`${P}/${id}/withdraw`, { method: 'POST' }),
   requestRevision: (id: string, changes: { field: string; requested: string }[], note?: string) =>

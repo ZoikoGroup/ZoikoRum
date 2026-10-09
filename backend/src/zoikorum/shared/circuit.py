@@ -10,7 +10,7 @@ retried by the worker later, which is the "queue retry" step of the release deci
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, TypeVar
+from typing import Any, Awaitable, Callable, TypeVar
 
 from zoikorum.shared import clock
 from zoikorum.shared.errors import ServiceUnavailable
@@ -44,6 +44,22 @@ class CircuitBreaker:
         except Exception:
             self.failures += 1
             # A failed trial call (half-open) or too many failures in a row: open (again) for another cool-down.
+            if self.opened_at is not None or self.failures >= self.failure_threshold:
+                log.warning("circuit %s open after %d consecutive failures", self.name, self.failures)
+                self.opened_at = clock.now()
+            raise
+        self.failures, self.opened_at = 0, None
+        return result
+
+    async def acall(self, fn: Callable[..., Awaitable[T]], *args: Any, **kwargs: Any) -> T:
+        """``call`` for async providers (HTTP clients)."""
+        if self.state == "OPEN":
+            raise ServiceUnavailable(f"The {self.name} is temporarily unavailable. We will retry automatically.",
+                                     code="PROVIDER_UNAVAILABLE")
+        try:
+            result = await fn(*args, **kwargs)
+        except Exception:
+            self.failures += 1
             if self.opened_at is not None or self.failures >= self.failure_threshold:
                 log.warning("circuit %s open after %d consecutive failures", self.name, self.failures)
                 self.opened_at = clock.now()

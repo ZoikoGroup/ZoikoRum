@@ -9,7 +9,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from zoikorum.domains.professional.models import Offering, Professional
+from zoikorum.domains.professional.models import Offering, Professional, SavedBuyer
 from zoikorum.domains.professional.service import effective_availability, photo_url, specializations_of
 
 
@@ -124,3 +124,9 @@ async def count_profiles(session: AsyncSession) -> dict[str, int]:
 
     rows = dict((await session.execute(select(Professional.status, func.count()).group_by(Professional.status))).all())
     return {"total": sum(rows.values()), "published": rows.get("PUBLISHED", 0)}
+
+
+async def saved_buyer_alerts(session: AsyncSession, professional_id: uuid.UUID, organization_id: uuid.UUID) -> bool:
+    """Whether the professional saved this buyer organisation with alerts on (notification domain)."""
+    return bool(await session.scalar(select(SavedBuyer.id).where(
+        SavedBuyer.professional_id == professional_id, SavedBuyer.organization_id == organization_id, SavedBuyer.alerts.is_(True))))

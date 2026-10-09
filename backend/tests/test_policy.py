@@ -235,3 +235,36 @@ async def test_authority_revocation_invalidates_unconsumed_grant(client, make_us
         await session.execute(text("UPDATE buyer.members SET roles='{}' WHERE organization_id=:o AND identity_id=:i"),
             {'o': uuid.UUID(org['id']), 'i': reviewer.id})
         assert (await service.evaluate(session, ctx)).decision == Decision.BLOCK
+
+
+@pytest.mark.unit
+async def test_deadlines_have_one_source_the_platform_settings(monkeypatch):
+    """A profile that leaves deadlines empty keeps the platform's (ZK_ACCEPTANCE_WINDOW_DAYS, ...); it never falls back to
+    a second, hidden set of numbers. Deadlines a profile does set win."""
+    from zoikorum.config import get_settings
+
+    platform = get_settings()
+    stored = service.stored_settings(SettingsIn(minTrustTier="A"))
+    assert not set(service.DEADLINE_SETTINGS) & set(stored)  # empty deadlines are not saved as numbers
+    profile, version = SimpleNamespace(id=uuid.uuid4(), name="Strict"), SimpleNamespace(id=uuid.uuid4(), number=1, settings=stored)
+
+    async def effective(*_args, **_kwargs):
+        return profile, version
+
+    monkeypatch.setattr(service, "effective_version", effective)
+    s = await service.settings_for_org(None, uuid.uuid4())
+    assert s.min_trust_tier == "A"
+    assert (s.acceptance_window_days, s.signature_deadline_days, s.dispute_evidence_days, s.direct_resolution_business_days,
+            s.challenge_window_days) == (platform.acceptance_window_days, platform.signature_deadline_days,
+                                         platform.dispute_evidence_days, platform.dispute_direct_resolution_business_days,
+                                         platform.dispute_challenge_window_days)
+    version.settings = service.stored_settings(SettingsIn(acceptanceWindowDays=10, signatureDeadlineDays=4))
+    s = await service.settings_for_org(None, uuid.uuid4())
+    assert (s.acceptance_window_days, s.signature_deadline_days) == (10, 4)
+
+    async def none(*_args, **_kwargs):
+        return None, None
+
+    monkeypatch.setattr(service, "effective_version", none)
+    default = await service.settings_for_org(None, uuid.uuid4())
+    assert default.policy_version_label == "platform-default@1" and default.acceptance_window_days == platform.acceptance_window_days

@@ -248,3 +248,18 @@ async def test_closed_dispute_cannot_be_reopened_by_delayed_initiation(client, m
     threads = (await client.get("/v1/threads", headers=buyer.h)).json()["items"]
     assert next(t for t in threads if t["contextType"] == "CONTRACT")["canSend"]
     assert not any(t["contextType"] == "DISPUTE" and t["contextId"] == case_id for t in threads)
+
+
+async def test_global_search_finds_only_messages_the_viewer_may_read(client, make_user, drain):
+    pro, buyer, request, thread = await request_conversation(client, make_user, drain)
+    url = f"/v1/threads/{thread['id']}/messages"
+    await client.post(url, headers=buyer.idem(), json={"body": "Please share the quarterly reconciliation workbook by Friday."})
+    await client.post(url, headers=buyer.idem(), json={"body": "Budget is 50% fixed, 50% on delivery."})
+    found = (await client.get("/v1/messaging/search", headers=buyer.h, params={"q": "RECONCILIATION"})).json()
+    assert len(found) == 1 and found[0]["threadId"] == thread["id"] and "reconciliation workbook" in found[0]["snippet"]
+    assert found[0]["sequence"] and found[0]["senderName"]
+    percent = (await client.get("/v1/messaging/search", headers=buyer.h, params={"q": "50%"})).json()
+    assert len(percent) == 1 and "50% fixed" in percent[0]["snippet"]  # % is matched literally, not as "anything"
+    assert (await client.get("/v1/messaging/search", headers=buyer.h, params={"q": "%"})).status_code == 422  # too short
+    outsider = await make_user("eve")
+    assert (await client.get("/v1/messaging/search", headers=outsider.h, params={"q": "reconciliation"})).json() == []

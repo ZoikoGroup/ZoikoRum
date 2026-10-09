@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import uuid
+from typing import Literal
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, Query, Request, Response, status
 
 from zoikorum.config import get_settings
-from zoikorum.domains.identity import duplicates, service
+from zoikorum.domains.identity import duplicates, privacy_requests, service
 from zoikorum.domains.identity.schemas import (
     DataRequestIn,
     DuplicateAnswerIn,
@@ -13,6 +14,8 @@ from zoikorum.domains.identity.schemas import (
     DuplicateResolveIn,
     DataRequestOut,
     MePatch,
+    ResendConfirmationOut,
+    UserOut,
     SessionOut,
     AddPersonaIn,
     AuthOut,
@@ -35,6 +38,7 @@ from zoikorum.domains.identity.schemas import (
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession, session_factory
 from zoikorum.shared.errors import Unauthenticated
+from zoikorum.shared.http import Page
 
 router = APIRouter(prefix="/v1", tags=["identity"])
 
@@ -44,8 +48,8 @@ def _ua(request: Request) -> str | None:
 
 
 def _expose_dev_tokens() -> bool:
-    # Development-only tokens support local flows; production delivers them through the email adapter.
-    return get_settings().env != "production"
+    # Local development and tests only: everywhere else (staging included) links arrive by email, never in a response.
+    return get_settings().env in ("local", "development", "test")
 
 
 @router.post("/auth/register", response_model=RegisterOut, status_code=status.HTTP_201_CREATED)
@@ -141,15 +145,36 @@ async def sign_out_device(session_id: uuid.UUID, actor: CurrentActor, session: D
     await service.revoke_session(session, actor, session_id)
 
 
+@router.post("/me/email-confirmation", response_model=ResendConfirmationOut)
+async def resend_email_confirmation(actor: CurrentActor, session: DbSession) -> ResendConfirmationOut:
+    """Send a new email-confirmation link (at most one a minute)."""
+    token = await service.resend_email_confirmation(session, actor)
+    return ResendConfirmationOut(emailConfirmationToken=token if _expose_dev_tokens() else None)
+
+
 @router.post("/me/data-requests", response_model=DataRequestOut, status_code=status.HTTP_201_CREATED)
 async def create_data_request(body: DataRequestIn, actor: CurrentActor, session: DbSession):
-    """Settings > Privacy: download my data (ACCESS) or delete my account (ERASURE)."""
-    return await service.create_data_request(session, actor, body.requestType)
+    """Settings > Privacy: download my data (ACCESS) or delete my account (ERASURE, two-step check, 14-day cooling-off)."""
+    return await privacy_requests.create(session, actor, body.requestType)
+
+
+@router.post("/me/data-requests/{request_id}/cancel", response_model=DataRequestOut)
+async def cancel_data_request(request_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    """Cancel a scheduled account deletion."""
+    return await privacy_requests.cancel(session, actor, request_id)
+
+
+@router.get("/me/data-requests/{request_id}/download")
+async def download_data_export(request_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> Response:
+    """The data export file (two-step check; audited; never cached)."""
+    data, name = await privacy_requests.download(session, actor, request_id)
+    return Response(data, media_type="application/json", headers={
+        "Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
 
 
 @router.get("/me/data-requests", response_model=list[DataRequestOut])
 async def data_requests(actor: CurrentActor, session: DbSession):
-    return await service.list_data_requests(session, actor)
+    return await privacy_requests.mine(session, actor)
 
 
 @router.post("/me/account-types", response_model=AuthOut)
@@ -175,6 +200,14 @@ async def grant_role(identity_id: uuid.UUID, body: GrantRoleIn, actor: CurrentAc
 async def revoke_role(identity_id: uuid.UUID, role: str, actor: CurrentActor, session: DbSession) -> IdentityOut:
     identity = await service.revoke_platform_role(session, actor, identity_id, role)
     return service.to_out(identity, [])
+
+
+@router.get("/admin/users", response_model=Page[UserOut])
+async def list_users(actor: CurrentActor, session: DbSession, q: str | None = Query(default=None, max_length=200),
+                     role: str | None = None, status_: Literal["ACTIVE", "SUSPENDED", "DELETED"] | None = Query(default=None, alias="status"),
+                     cursor: str | None = None, limit: int | None = Query(default=None, ge=1, le=100)):
+    """Platform Admin / Trust & Safety: every account, searchable. Reads are audited."""
+    return await service.list_users(session, actor, q, role, status_, cursor, limit)
 
 
 @router.get("/admin/identities/lookup", response_model=StaffMemberOut)

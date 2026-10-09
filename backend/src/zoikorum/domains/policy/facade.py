@@ -128,12 +128,14 @@ class ProfileSettings:
     allowed_jurisdictions: tuple[str, ...] | None = None
     escrow_required: bool = True
     partial_release_allowed: bool = True
-    acceptance_window_days: int = 14
+    # Deadlines are always filled from the platform configuration first (service.platform_deadlines), then from the
+    # profile; these placeholders are never the effective values.
+    acceptance_window_days: int = 0
     auto_accept_after_days: int | None = None  # None => never auto-accept
-    signature_deadline_days: int = 3
-    dispute_evidence_days: int = 7
-    direct_resolution_business_days: int = 5
-    challenge_window_days: int = 14  # accepted milestones may be disputed within this window
+    signature_deadline_days: int = 0
+    dispute_evidence_days: int = 0
+    direct_resolution_business_days: int = 0
+    challenge_window_days: int = 0  # accepted milestones may be disputed within this window (not enforced yet)
     required_clauses: tuple[str, ...] = ("CONFIDENTIALITY", "IP_OWNERSHIP", "TERMINATION", "GOVERNING_LAW")
     allowed_currencies: tuple[str, ...] | None = None
     step_up_for_approvals: bool = True

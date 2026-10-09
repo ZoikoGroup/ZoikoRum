@@ -4,7 +4,11 @@ import type { User } from './auth'
 /* Settings: profile details, signed-in devices, privacy requests, notification preferences. */
 
 export interface DeviceSession { id: string; device: string | null; authStrength: string; signedInAt: string; current: boolean }
-export interface DataRequest { id: string; requestType: 'ACCESS' | 'ERASURE'; status: string; createdAt: string; completedAt: string | null }
+/** ACCESS: RECEIVED -> COMPLETED (download until expiresAt). ERASURE: SCHEDULED -> COMPLETED | BLOCKED | CANCELLED. */
+export interface DataRequest {
+  id: string; requestType: 'ACCESS' | 'ERASURE'; status: string; createdAt: string; completedAt: string | null
+  scheduledFor: string | null; expiresAt: string | null; downloadable: boolean; reasons: string[]; retained: Record<string, string>
+}
 export interface NotificationPreferences { email: boolean; inApp: boolean; sms: boolean; marketing: boolean; mandatoryNotice?: string }
 export type ProfileDetails = User & { phone: string | null; language: string; timeZone: string | null }
 
@@ -16,6 +20,8 @@ export const accountApi = {
   signOutDevice: (id: string) => api<void>(`/v1/me/sessions/${id}`, { method: 'DELETE' }),
   dataRequests: () => api<DataRequest[]>('/v1/me/data-requests'),
   requestData: (requestType: 'ACCESS' | 'ERASURE') => api<DataRequest>('/v1/me/data-requests', { method: 'POST', body: { requestType } }),
+  cancelDeletion: (id: string) => api<DataRequest>(`/v1/me/data-requests/${id}/cancel`, { method: 'POST' }),
+  downloadData: (id: string) => api<Blob>(`/v1/me/data-requests/${id}/download`, { blob: true }),
   notifications: () => api<NotificationPreferences>('/v1/notification-preferences'),
   setNotifications: (body: NotificationPreferences) =>
     api<NotificationPreferences>('/v1/notification-preferences', { method: 'PUT', body }),

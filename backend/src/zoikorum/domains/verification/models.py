@@ -21,6 +21,9 @@ class ProviderSession(Base, UUIDPk, Timestamps):
     case_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.cases.id"), nullable=False, unique=True)
     provider_ref: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending")
+    provider: Mapped[str | None] = mapped_column(String(20))  # persona | veriff | simulated
+    hosted_url: Mapped[str | None] = mapped_column(String(1000))  # resume link, for partners whose links are reusable
+    reason: Mapped[str | None] = mapped_column(String(300))  # the partner's reason for a decline or a retake, for the reviewer
 
 
 class ProviderEvent(Base, UUIDPk, CreatedAt):

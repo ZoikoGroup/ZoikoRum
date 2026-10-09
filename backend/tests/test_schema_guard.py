@@ -1,8 +1,10 @@
 """Prevent schema drift from becoming per-page HTTP 500 errors."""
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from alembic.script import ScriptDirectory
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.exc import ProgrammingError
@@ -17,7 +19,9 @@ def test_guard_includes_messaging_and_merged_profile_columns():
     missing = schema_guard.missing_columns(set())
     assert "professional.professionals.weekly_hours" in missing
     assert "messaging.threads.id" in missing
-    assert "f1360ce42a96" in schema_guard.expected_heads()
+    (head,) = schema_guard.expected_heads()  # one migration head, which includes the dev + messaging merge
+    script = ScriptDirectory(str(Path(schema_guard.__file__).resolve().parents[3] / "alembic"))
+    assert "f1360ce42a96" in {r.revision for r in script.iterate_revisions(head, "base")}
 
 
 @pytest.mark.unit

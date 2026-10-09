@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { WELCOME_KEY } from '../lib/welcome'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { authApi, type AccountType } from '../api/auth'
 import { ApiError } from '../api/client'
@@ -67,10 +68,12 @@ export default function Join() {
         organizationName: needsOrg ? form.organizationName.trim() : undefined,
         acceptTerms: true,
       })
+      // Handed to the dashboard through this tab's session storage: signing in makes the guest-only guard redirect
+      // at once, which would drop navigation state. The token is only returned in local development.
+      try { sessionStorage.setItem(WELCOME_KEY, JSON.stringify({ confirmToken: result.emailConfirmationToken })) } catch { /* private mode */ }
       accept(result)
-      // Dev only: the backend returns the email-confirmation token until an email provider is connected.
       const dest = result.user.mfaRequired ? '/app/security' : safeNext ?? `/app/${result.user.defaultDashboard}`
-      navigate(dest, { replace: true, state: { welcome: true, confirmToken: result.emailConfirmationToken } })
+      navigate(dest, { replace: true })
     } catch (err) {
       if (err instanceof ApiError && err.code === 'EMAIL_TAKEN') setFieldErrors({ email: err.message })
       else setError(err)

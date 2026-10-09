@@ -113,6 +113,12 @@ class RegisterOut(AuthOut):
     emailConfirmationToken: str | None = None
 
 
+class ResendConfirmationOut(BaseModel):
+    message: str = "We have sent a new confirmation link to your email address."
+    # Only returned in local development and tests (no email provider there).
+    emailConfirmationToken: str | None = None
+
+
 class ForgotPasswordOut(BaseModel):
     message: str = "If an account exists for that email, a reset link has been sent."
     # Only returned outside production (no email provider yet).
@@ -126,6 +132,22 @@ class StaffMemberOut(BaseModel):
     platformRoles: list[str]
     mfaEnabled: bool
     status: str
+
+
+class UserOut(BaseModel):
+    """One account in the staff Users list (Platform Admin, Trust & Safety)."""
+
+    id: uuid.UUID
+    email: str
+    displayName: str
+    country: str
+    personas: list[str]
+    platformRoles: list[str]
+    status: str  # ACTIVE | SUSPENDED | DELETED
+    emailConfirmed: bool
+    mfaEnabled: bool
+    createdAt: datetime
+    lastSignInAt: datetime | None
 
 
 class MfaEnrollOut(BaseModel):
@@ -155,9 +177,14 @@ class DataRequestIn(BaseModel):
 class DataRequestOut(BaseModel):
     id: uuid.UUID
     requestType: str
-    status: str
+    status: str  # RECEIVED | COMPLETED | SCHEDULED | BLOCKED | CANCELLED
     createdAt: datetime
     completedAt: datetime | None
+    scheduledFor: datetime | None = None  # erasure date (cancellable until then)
+    expiresAt: datetime | None = None  # export download available until
+    downloadable: bool = False
+    reasons: list[str] = []  # why an erasure is on hold
+    retained: dict[str, str] = {}  # what is kept by law, per area
 
 
 class DuplicateAnswerIn(BaseModel):
