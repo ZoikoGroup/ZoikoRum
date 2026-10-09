@@ -252,3 +252,41 @@ class PublicProfileOut(BaseModel):
     firm: PublicFirmOut | None = None
     history: HistoryOut | None = None
     pendingSpecializations: list[str] = []  # shown as "Custom (under review)"
+
+
+# ---- Saved buyers (Professional Dashboard s.17) ----------------------------------
+
+class SavedBuyerIn(BaseModel):
+    organizationId: uuid.UUID
+    note: str | None = Field(default=None, max_length=500)
+    alerts: bool = True
+
+
+class SavedBuyerPatch(BaseModel):
+    note: str | None = Field(default=None, max_length=500)
+    alerts: bool | None = None
+
+
+class BuyerCandidateOut(BaseModel):
+    organizationId: uuid.UUID
+    name: str
+    country: str | None
+    saved: bool
+    requests: int
+    engagements: int
+    completed: int
+    lastActivityAt: datetime | None
+
+
+class SavedBuyerOut(BaseModel):
+    id: uuid.UUID
+    organizationId: uuid.UUID
+    name: str
+    country: str | None
+    note: str | None
+    alerts: bool  # their requests are always emailed and marked as from a saved buyer
+    requests: int
+    engagements: int
+    completed: int
+    lastActivityAt: datetime | None
+    savedAt: datetime

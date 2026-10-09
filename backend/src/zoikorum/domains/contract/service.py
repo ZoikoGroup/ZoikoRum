@@ -27,7 +27,7 @@ from zoikorum.domains.escrow import facade as escrow_facade
 from zoikorum.domains.firm import facade as firm_facade
 from zoikorum.domains.identity import facade as identity_facade
 from zoikorum.domains.professional import facade as professional_facade
-from zoikorum.shared import clock
+from zoikorum.shared import clock, pdf
 from zoikorum.shared.auth import Actor, OrgRole, PlatformRole
 from zoikorum.shared.errors import Conflict, Forbidden, NotFound, ValidationFailed
 from zoikorum.shared.event_catalog import E
@@ -687,6 +687,27 @@ async def get_document(
     record_audit(session, "contract.document.viewed", object_type="Contract", object_id=c.id, tenant_id=c.organization_id,
                  evidence_hash=document_hash, details={"version": selected_version})
     return document, document_hash
+
+
+async def document_pdf(session: AsyncSession, actor: Actor, contract_id: uuid.UUID, version: int | None = None) -> tuple[bytes, str]:
+    """The agreement as a PDF: the exact text whose SHA-256 is recorded (shown on every page), plus the signatures for
+    that version. Same access rules and audit as the text (get_document)."""
+    text, sha = await get_document(session, actor, contract_id, version)
+    c = await _contract(session, contract_id)
+    v = version or c.contract_version
+    revision = await session.scalar(select(ContractRevision).where(ContractRevision.contract_id == c.id,
+                                                                   ContractRevision.contract_version == v))
+    signatures = (await session.scalars(select(Signature).where(Signature.contract_id == c.id, Signature.contract_version == v)
+                                        .order_by(Signature.signed_at))).all()
+    rows = [("Buyer" if s.party == "BUYER" else "Professional",
+             f"{s.signer_name}, {s.signed_at:%d %B %Y %H:%M} UTC ({'two-step verified' if s.auth_strength == 'MFA' else s.auth_strength.lower()})")
+            for s in signatures] or [("Status", "Not signed yet")]
+    doc = pdf.PdfDocument(title="Engagement agreement", reference=c.reference, fingerprint=sha,
+                          issued=revision.created_at if revision else c.created_at, subtitle=f"{c.title} · version {v}",
+                          sections=[pdf.Section("Signatures", rows=rows), pdf.Section("Agreement", text=text)])
+    record_audit(session, "contract.document.pdf_downloaded", object_type="Contract", object_id=c.id,
+                 tenant_id=c.organization_id, evidence_hash=sha, details={"version": v})
+    return pdf.render(doc), f"{c.reference}-v{v}.pdf"
 
 
 async def _scope(session: AsyncSession, actor: Actor, role: str):

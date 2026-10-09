@@ -3,21 +3,35 @@ import { Link, useLocation } from 'react-router-dom'
 import { authApi, ROLE_LABEL } from '../api/auth'
 import { useAuth } from '../auth/AuthContext'
 import { ErrorAlert } from '../components/ui'
+import { ResendConfirmation } from '../components/ResendConfirmation'
+import { WELCOME_KEY } from '../lib/welcome'
+
+/** Read once, on the first dashboard view after sign-up (Join.tsx). */
+function takeWelcome(): { confirmToken?: string | null } | null {
+  try {
+    const raw = sessionStorage.getItem(WELCOME_KEY)
+    sessionStorage.removeItem(WELCOME_KEY)
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
 
 /** Welcome message after sign-up and the email-confirmation reminder, shown on every dashboard. */
 export function AccountAlerts() {
   const { user } = useAuth()
-  const welcome = (useLocation().state as { welcome?: boolean; confirmToken?: string } | null) ?? {}
+  const [welcome] = useState(takeWelcome)
   if (!user) return null
   return (
     <>
-      {welcome.welcome && <div className="alert alert-success" role="status">Welcome to Zoikorum, {user.displayName}. Your account is ready.</div>}
+      {welcome && <div className="alert alert-success" role="status">Welcome to Zoikorum, {user.displayName}. Your account is ready.</div>}
       {!user.emailConfirmed && (
         <div className="alert alert-warn">
-          Please confirm your email address. Your profile cannot be published until it is confirmed.
-          {welcome.confirmToken && (
+          Please confirm your email address: open the link we emailed you. Some actions wait until it is confirmed.
+          {welcome?.confirmToken && (
             <> {' '}Development mode: <Link to={`/confirm-email?token=${encodeURIComponent(welcome.confirmToken)}`}>confirm now</Link>.</>
           )}
+          {' '}<ResendConfirmation />
         </div>
       )}
     </>
@@ -51,7 +65,7 @@ export function AccountPage() {
       <section className="card panel">
         <ul className="checklist">
           <li><span>Name</span><strong>{user.displayName}</strong></li>
-          <li><span>Email</span><span>{user.email} {user.emailConfirmed ? <span className="badge green">Confirmed</span> : <span className="badge warn">Not confirmed</span>}</span></li>
+          <li><span>Email</span><span>{user.email} {user.emailConfirmed ? <span className="badge green">Confirmed</span> : <><span className="badge warn">Not confirmed</span> <ResendConfirmation /></>}</span></li>
           <li><span>Country</span><span>{user.country}</span></li>
           {user.organizationName && <li><span>Organization</span><span>{user.organizationName}</span></li>}
           <li><span>Two-step verification</span>{user.mfaEnabled ? <span className="badge green">On</span> : <Link to="/app/security">Turn on</Link>}</li>

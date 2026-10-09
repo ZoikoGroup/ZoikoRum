@@ -4,7 +4,7 @@ import { contractApi } from '../../api/contracts'
 import { formatMoney } from '../../api/orgs'
 import { LABEL } from '../../api/professional'
 import {
-  attachmentUrl, budgetText, CADENCES, DEPENDENCIES, DURATION_LABEL, PRICING_PREFS, PROPOSAL_STATUS, proposalApi, requestStatus, type Proposal, type ProposalRequest,
+  attachmentUrl, budgetText, proposalFileUrl, CADENCES, DEPENDENCIES, DURATION_LABEL, PRICING_PREFS, PROPOSAL_STATUS, proposalApi, requestStatus, type Proposal, type ProposalRequest,
 } from '../../api/proposals'
 import { Avatar, Icon } from '../../components/dashboard'
 import { EmptyTable, PortalHeader, SidePanel, StatCard, Tabs, TierBadge } from '../../components/portal'
@@ -342,6 +342,8 @@ function ProposalCard({ p, busy, canDecide, onAccept, onReject, onRevise }: {
           {p.assumptions.length > 0 && <div style={{ flex: 1 }}><h3>Assumptions</h3><ul className="why">{p.assumptions.map((a) => <li key={a}>{a}</li>)}</ul></div>}
           {p.exclusions.length > 0 && <div style={{ flex: 1 }}><h3>Exclusions</h3><ul className="why">{p.exclusions.map((a) => <li key={a}>{a}</li>)}</ul></div>}
         </div>
+        {(p.attachments ?? []).length > 0 && <><h3>Attachments</h3>
+          <ul className="pro-list">{(p.attachments ?? []).map((a) => <li key={a.sha256}><Icon name="request" /><span className="small"><FileLink file={a} url={proposalFileUrl(p.id, a.sha256)} /></span><span /></li>)}</ul></>}
         {p.revisionRequests.length > 0 && <p className="muted small">You requested {p.revisionRequests.length} revision{p.revisionRequests.length > 1 ? 's' : ''}; this is the latest version.</p>}
       </div>}
       {revising && <div className="revise-box">

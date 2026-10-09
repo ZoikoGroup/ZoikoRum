@@ -7,6 +7,8 @@ Tokens only: no raw card or bank data. Provider webhooks live in ``webhooks.py``
 
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 import asyncio
 
@@ -21,7 +23,7 @@ from zoikorum.domains.payments.schemas import ChargeOut, EarningsOut, InvoiceOut
 from zoikorum.domains.professional import facade as professional_facade
 from zoikorum.domains.trust import facade as trust_facade
 from zoikorum.config import get_settings
-from zoikorum.shared import clock
+from zoikorum.shared import clock, pdf
 from zoikorum.shared.auth import Actor
 from zoikorum.shared.errors import Forbidden, NotFound, PolicyBlocked, ValidationFailed
 from zoikorum.shared.event_catalog import E
@@ -226,6 +228,35 @@ async def invoices(session: AsyncSession, actor: Actor, organization_id: uuid.UU
     rows = (await session.scalars(select(Invoice).where(Invoice.organization_id == organization_id).order_by(Invoice.created_at.desc()).limit(200))).all()
     return [InvoiceOut(id=i.id, number=i.number, contractId=i.contract_id, milestoneId=i.milestone_id, lines=i.lines, tax=_m(i.tax_minor, i.currency),
                        total=_m(i.total_minor, i.currency), issuedAt=i.issued_at) for i in rows]
+
+
+async def invoice_pdf(session: AsyncSession, actor: Actor, invoice_id: uuid.UUID) -> tuple[bytes, str]:
+    """The invoice as a PDF for members of the buyer organisation. The footer carries the SHA-256 of the invoice's
+    recorded content (number, lines, tax, total, date), so a copy can be checked. Audited."""
+    inv = await session.get(Invoice, invoice_id)
+    if inv is None:
+        raise NotFound("Invoice not found")
+    await _require_member(session, actor, inv.organization_id)
+    org = await buyer_facade.get_organization(session, inv.organization_id)
+    engagement = await contract_facade.get_contract(session, inv.contract_id)
+    pro = await professional_facade.get_professional(session, engagement.professional_id) if engagement else None
+    content = json.dumps({"number": inv.number, "lines": inv.lines, "taxMinor": inv.tax_minor, "totalMinor": inv.total_minor,
+                          "currency": inv.currency, "issuedAt": inv.issued_at.isoformat()}, sort_keys=True, separators=(",", ":"))
+    fingerprint = hashlib.sha256(content.encode()).hexdigest()
+    items = [(str(line.get("description", "")), pdf.money(int(line.get("amountMinor", 0)), inv.currency)) for line in inv.lines]
+    if inv.tax_minor:
+        items.append(("Tax", pdf.money(inv.tax_minor, inv.currency)))
+    doc = pdf.PdfDocument(
+        title="Invoice", reference=inv.number, issued=inv.issued_at, fingerprint=fingerprint,
+        subtitle=f"For engagement {engagement.reference}" if engagement else None,
+        sections=[pdf.Section("Billed to", rows=[("Organisation", org.name if org else "—"),
+                                                 ("Professional", pro.display_name if pro else "—")]),
+                  pdf.Section("Items", table=items, total=("Total paid", pdf.money(inv.total_minor, inv.currency))),
+                  pdf.Section(text="Funds were held in escrow and released for accepted work. Zoikorum provides the marketplace "
+                                   "and payment protection; the services were provided by the professional named above.")])
+    record_audit(session, "payments.invoice.pdf_downloaded", object_type="Invoice", object_id=inv.id,
+                 tenant_id=inv.organization_id, evidence_hash=fingerprint)
+    return pdf.render(doc), f"{inv.number}.pdf"
 
 
 async def charges(session: AsyncSession, actor: Actor, organization_id: uuid.UUID) -> list[ChargeOut]:

@@ -76,6 +76,16 @@ class ThreadOut(BaseModel):
     lastMessageFromSystem: bool
 
 
+class MessageHitOut(BaseModel):
+    """One search result: a message (or a conversation whose title matches) the viewer can open."""
+    threadId: uuid.UUID
+    threadTitle: str
+    sequence: int | None  # the matching message; None when only the conversation title matched
+    senderName: str | None
+    snippet: str
+    sentAt: datetime
+
+
 class ReadIn(BaseModel):
     throughSequence: int = Field(ge=0)
 

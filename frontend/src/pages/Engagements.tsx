@@ -15,7 +15,7 @@ import { useAuth } from '../auth/AuthContext'
 import { Icon } from '../components/dashboard'
 import { EmptyTable, PortalHeader, SidePanel, StatCard, Tabs } from '../components/portal'
 import { ErrorAlert, useStepUp } from '../components/ui'
-import { downloadFile } from '../lib/exports'
+import { downloadFile, saveBlob } from '../lib/exports'
 import { formatCurrencies } from '../lib/money'
 
 /* Engagements (Step 7) for both sides: the contract generated from an accepted proposal, signatures (buyer first,
@@ -194,7 +194,11 @@ export function EngagementDetail({ side }: { side: Side }) {
       {tab === 'agreement' && (
         <div className="home-grid wide">
           <section className="card panel">
-            <div className="panel-head"><h2>Agreement summary</h2><span className="muted small">Terms ref {c.termsHash.slice(0, 12)}…</span></div>
+            <div className="panel-head"><h2>Agreement summary</h2>
+              <span className="row" style={{ flexWrap: 'nowrap' }}><span className="muted small">Terms ref {c.termsHash.slice(0, 12)}…</span>
+                <button className="btn btn-secondary btn-sm" onClick={() => contractApi.documentPdf(c.id)
+                  .then((b) => saveBlob(`${c.reference}-v${c.contractVersion}.pdf`, b)).catch(setError)}>
+                  <Icon name="download" /> Download PDF</button></span></div>
             <h3>Deliverables &amp; acceptance criteria</h3>
             <ul className="why">{c.terms.deliverables.map((d) => <li key={d.key}><strong>{d.title}:</strong> {d.acceptanceCriteria}</li>)}</ul>
             <h3>Payment schedule</h3>
@@ -220,7 +224,7 @@ export function EngagementDetail({ side }: { side: Side }) {
                     <span className="muted small">{s ? `${s.signerName} · ${new Date(s.signedAt).toLocaleString()} · two-step confirmed` : 'Not signed yet'}</span></span></li>
                 })}
               </ol>
-              {c.canSign && (user?.mfaEnabled ? <>
+              {c.canSign && (user?.mfaEnabled || user?.mfaBypass ? <>
                 <label className="checkbox" style={{ marginTop: 12 }}><input type="checkbox" checked={read} onChange={(e) => setRead(e.target.checked)} />
                   <span>I have read the agreement and agree to its terms (version {c.contractVersion}).</span></label>
                 <button className="btn btn-primary btn-lg" style={{ width: '100%', marginTop: 10 }} disabled={!read || busy}
@@ -230,7 +234,7 @@ export function EngagementDetail({ side }: { side: Side }) {
                     setNotice(side === 'buyer' ? 'Signed. The professional will be asked to countersign.' : 'Countersigned. The engagement is now active.')
                   }) }}>
                   {side === 'buyer' ? 'Sign contract' : 'Countersign contract'}</button>
-                <p className="muted small" style={{ margin: '8px 0 0' }}>You'll be asked for a code from your authenticator app.</p>
+                <p className="muted small" style={{ margin: '8px 0 0' }}>{user?.mfaBypass ? 'Development mode: no authenticator code is asked.' : "You'll be asked for a code from your authenticator app."}</p>
               </> : <div className="tip" style={{ marginTop: 12 }}><Icon name="lock" /><span>Signing needs two-step verification.
                 {' '}<Link to="/app/security">Turn it on</Link>, then come back to sign.</span></div>)}
             </section>
@@ -263,13 +267,17 @@ export function EngagementDetail({ side }: { side: Side }) {
       {tab === 'milestones' && (
         <>
           {c.status === 'PENDING_SIGNATURE' && <p className="muted">Milestones start after both parties sign and each milestone is funded.</p>}
+          {(c.engagementType === 'RETAINER' || c.pricingModel === 'RETAINER') && <RetainerCycles c={c} side={side} busy={busy}
+            onCancel={(reason) => act(() => contractApi.cancelRemainingCycles(c.id, reason), 'Remaining unfunded cycles cancelled.').then(refreshSoon)} />}
           {c.milestones.map((m) => <MilestoneCard key={m.id} m={m} c={c} side={side} busy={busy}
             canFund={!!escrow?.canFund && escrow.allocations.some((x) => x.milestoneId === m.id && x.state === 'UNFUNDED')}
             funding={escrow?.allocations.find((x) => x.milestoneId === m.id)?.state === 'FUNDING'}
             onFund={() => setFundFor([m.id])}
             onSubmit={(note, files) => act(() => contractApi.submit(m.id, note, files), 'Work submitted for review.')}
             onAccept={() => { if (confirm(`Accept M${m.sequence} "${m.title}"? This releases ${formatMoney(m.amount)} from escrow to the professional (minus the platform fee). It cannot be undone.`)) act(() => contractApi.accept(m.id), 'Milestone accepted. The funds are being released to the professional.').then(refreshSoon) }}
-            onRevise={(reason) => act(() => contractApi.requestRevision(m.id, reason), 'Revision requested.')} />)}
+            onRevise={(reason) => act(() => contractApi.requestRevision(m.id, reason), 'Revision requested.')}
+            onOfferPartial={(amount, reason) => act(() => contractApi.offerPartial(m.id, amount, reason), 'Offer sent. The professional must agree before anything is released.')}
+            onAnswerPartial={(agree) => act(() => contractApi.answerPartial(m.id, agree), agree ? 'Agreed. The agreed amount is being released and the rest refunded.' : 'Offer declined.').then(refreshSoon)} />)}
         </>
       )}
 
@@ -487,10 +495,37 @@ function ChangeOrdersPanel({ c, side, busy, onPropose, onApprove, onReject }: {
   )
 }
 
-function MilestoneCard({ m, c, side, busy, canFund, funding, onFund, onSubmit, onAccept, onRevise }: {
+/** Retainer cycles as a calendar strip (Payments & Escrow s.15): funding and acceptance per cycle, cancel future cycles. */
+function RetainerCycles({ c, side, busy, onCancel }: { c: Contract; side: Side; busy: boolean; onCancel: (reason: string) => void }) {
+  const future = c.milestones.filter((m) => m.status === 'PENDING_FUNDING').length
+  return (
+    <section className="card panel">
+      <div className="panel-head"><h2>Retainer cycles</h2>
+        {side === 'buyer' && c.status === 'ACTIVE' && future > 0 && <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => {
+          const reason = prompt(`Cancel the ${future} cycle(s) not funded yet? Funded cycles continue. Reason:`)
+          if (reason && reason.trim().length >= 5) onCancel(reason.trim())
+        }}>Cancel remaining cycles</button>}</div>
+      <ol className="cycle-strip">{c.milestones.map((m) => (
+        <li key={m.id} className={`cycle ${m.status.toLowerCase()}`}>
+          <strong>{m.dueDate ? new Date(`${m.dueDate}T00:00:00`).toLocaleDateString(undefined, { month: 'short', year: 'numeric' }) : `Cycle ${m.sequence}`}</strong>
+          <span className="small">{formatMoney(m.amount)}</span>
+          <span className={`badge ${MILESTONE_STATUS[m.status].tone}`}>{MILESTONE_STATUS[m.status].label}</span>
+        </li>))}</ol>
+      <p className="muted small" style={{ margin: 0 }}>Each cycle is funded and accepted on its own. You get a reminder before an unfunded cycle is due;
+        not funding the next cycle pauses the work. Automatic funding needs a saved payment method from the live payment provider.</p>
+    </section>
+  )
+}
+
+function MilestoneCard({ m, c, side, busy, canFund, funding, onFund, onSubmit, onAccept, onRevise, onOfferPartial, onAnswerPartial }: {
   m: ContractMilestone; c: Contract; side: Side; busy: boolean; canFund: boolean; funding: boolean; onFund: () => void
   onSubmit: (note: string, files: Upload[]) => void; onAccept: () => void; onRevise: (reason: string) => void
+  onOfferPartial: (amountMinor: number, reason: string) => void; onAnswerPartial: (agree: boolean) => void
 }) {
+  const [partial, setPartial] = useState(false)
+  const [partialAmount, setPartialAmount] = useState('')
+  const [partialReason, setPartialReason] = useState('')
+  const partialMinor = Math.round(Number(partialAmount || 0) * 100)
   const [note, setNote] = useState('')
   const [files, setFiles] = useState<Upload[]>([])
   const [fileError, setFileError] = useState('')
@@ -540,6 +575,27 @@ function MilestoneCard({ m, c, side, busy, canFund, funding, onFund, onSubmit, o
           onClick={() => { onSubmit(note.trim(), files); setNote(''); setFiles([]) }}>{m.status === 'REVISION_REQUESTED' ? 'Resubmit for review' : 'Submit for review'}</button>
       </div>}
 
+      {m.acceptedRelease && <p className="small muted" style={{ margin: '8px 0 0' }}>Accepted for {formatMoney(m.acceptedRelease)} by agreement;
+        {' '}{formatMoney({ amountMinor: m.amount.amountMinor - m.acceptedRelease.amountMinor, currency: m.amount.currency })} was refunded to the buyer.</p>}
+      {m.partialOffer && m.status === 'SUBMITTED' && <div className="tip" style={{ marginTop: 10 }}><Icon name="wallet" /><span>
+        <strong>Offer to accept for {formatMoney(m.partialOffer.amount)}</strong> ({formatMoney(m.partialOffer.refund)} back to the buyer): {m.partialOffer.reason}
+        {side === 'buyer' ? <span className="muted"> Waiting for the professional to agree. Nothing moves until they do.</span> : <span className="row" style={{ marginTop: 8 }}>
+          <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => { if (confirm(`Agree to ${formatMoney(m.partialOffer!.amount)} for M${m.sequence}? That amount is released to you (minus the platform fee) and the rest is refunded. It cannot be undone.`)) onAnswerPartial(true) }}>Agree</button>
+          <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => onAnswerPartial(false)}>Decline</button></span>}
+      </span></div>}
+      {canReview && partial && <div className="revise-box">
+        <div className="row">
+          <label className="filter-box"><span>Release ({m.amount.currency})</span>
+            <input inputMode="decimal" value={partialAmount} onChange={(e) => setPartialAmount(e.target.value.replace(/[^0-9.]/g, ''))} placeholder={`less than ${m.amount.amountMinor / 100}`} /></label>
+          <label className="filter-box grow"><span>Why, against the acceptance criteria?</span>
+            <input value={partialReason} maxLength={1000} onChange={(e) => setPartialReason(e.target.value)} /></label>
+        </div>
+        <p className="muted small">The professional must agree. If they do, {formatMoney({ amountMinor: Math.min(partialMinor, m.amount.amountMinor), currency: m.amount.currency })} is released
+          and {formatMoney({ amountMinor: Math.max(m.amount.amountMinor - partialMinor, 0), currency: m.amount.currency })} is refunded to you.</p>
+        <div className="row"><button className="btn btn-primary btn-sm" disabled={busy || partialMinor <= 0 || partialMinor >= m.amount.amountMinor || partialReason.trim().length < 10}
+          onClick={() => { onOfferPartial(partialMinor, partialReason.trim()); setPartial(false) }}>Send offer</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => setPartial(false)}>Cancel</button></div>
+      </div>}
       {canReview && <div className="row card-actions">
         {revising ? <>
           <input className="input" style={{ flex: 1 }} placeholder="What needs to change, against the acceptance criteria?" value={reason} maxLength={1000} onChange={(e) => setReason(e.target.value)} />
@@ -547,6 +603,7 @@ function MilestoneCard({ m, c, side, busy, canFund, funding, onFund, onSubmit, o
           <button className="btn btn-ghost btn-sm" onClick={() => setRevising(false)}>Cancel</button>
         </> : <>
           <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => setRevising(true)}>Request revision</button>
+          {!m.partialOffer && <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => setPartial(true)}>Accept for less…</button>}
           <button className="btn btn-primary" disabled={busy} onClick={onAccept}>Accept milestone</button>
         </>}
       </div>}

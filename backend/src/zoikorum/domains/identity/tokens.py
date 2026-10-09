@@ -78,12 +78,16 @@ def mint_purpose_token(identity_id: uuid.UUID, purpose: str, ttl_seconds: int, e
 
 def read_purpose_claims(token: str, purpose: str) -> dict:
     s = get_settings()
-    # Expiry is checked against the domain clock (tests travel in time).
-    claims = jwt.decode(token, s.jwt_secret, algorithms=["HS256"], issuer=s.jwt_issuer, options={"verify_exp": False})
+    # Expiry is checked against the domain clock (tests travel in time); "issued at" too, for the same reason.
+    claims = jwt.decode(token, s.jwt_secret, algorithms=["HS256"], issuer=s.jwt_issuer,
+                        options={"verify_exp": False, "verify_iat": False})
     if claims.get("typ") != purpose:
         raise jwt.InvalidTokenError("wrong token purpose")
-    if claims.get("exp", 0) < clock.now().timestamp():
+    now = clock.now().timestamp()
+    if claims.get("exp", 0) < now:
         raise jwt.ExpiredSignatureError("token expired")
+    if claims.get("iat", 0) > now + 60:  # issued in the future (beyond a minute of clock skew)
+        raise jwt.ImmatureSignatureError("token not yet valid")
     return claims
 
 

@@ -16,21 +16,22 @@ import jwt
 import pyotp
 from argon2 import PasswordHasher
 from argon2.exceptions import VerificationError
-from sqlalchemy import select, update
+from sqlalchemy import any_, func, literal, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.config import get_settings
 from zoikorum.domains.identity import tokens
-from zoikorum.domains.identity.models import ConsentRecord, DataRequest, Identity, IdentityLink, Session
+from zoikorum.domains.identity.models import ConsentRecord, Identity, IdentityLink, Session
 from zoikorum.domains.identity.schemas import (
-    AuthOut, DataRequestOut, IdentityOut, LinkOut, MePatch, RegisterIn, SessionOut, StaffMemberOut, TokenPair,
+    AuthOut, IdentityOut, LinkOut, MePatch, RegisterIn, SessionOut, StaffMemberOut, TokenPair, UserOut,
 )
 from zoikorum.shared import clock
 from zoikorum.shared.auth import Actor, AuthStrength, Persona, PlatformRole
 from zoikorum.shared.crypto import decrypt_field, encrypt_field, sha256_hex
-from zoikorum.shared.errors import Conflict, Forbidden, NotFound, Unauthenticated, ValidationFailed
+from zoikorum.shared.errors import Conflict, Forbidden, NotFound, RateLimited, Unauthenticated, ValidationFailed
 from zoikorum.shared.event_catalog import E
-from zoikorum.shared.events import record_event
+from zoikorum.shared.events import record_audit, record_event
+from zoikorum.shared.http import page_of, paginate
 
 _hasher = PasswordHasher()
 MAX_FAILED_LOGINS = 5
@@ -147,6 +148,26 @@ async def register(session: AsyncSession, data: RegisterIn, user_agent: str | No
     pair = await _start_session(session, identity, AuthStrength.PASSWORD, user_agent)
     confirm = tokens.mint_purpose_token(identity.id, "email_confirm", EMAIL_TOKEN_TTL)
     return identity, pair, confirm
+
+
+CONFIRMATION_RESEND_SECONDS = 60  # one new link a minute; the global rate limit still applies
+
+
+async def resend_email_confirmation(session: AsyncSession, actor: Actor) -> str:
+    """Sends a new confirmation link (the notification domain emails it; the link is minted at send time).
+    Returns a link token for development and tests only (see api._expose_dev_tokens)."""
+    identity = await session.get(Identity, actor.identity_id, with_for_update=True)
+    if identity is None:
+        raise NotFound("Identity not found")
+    if identity.email_confirmed_at is not None:
+        raise Conflict("Your email address is already confirmed", code="EMAIL_ALREADY_CONFIRMED")
+    now = clock.now()
+    wait = CONFIRMATION_RESEND_SECONDS - int((now - (identity.confirmation_requested_at or identity.created_at)).total_seconds())
+    if wait > 0:
+        raise RateLimited(f"A link was sent a moment ago. You can ask for another in {wait} seconds.", code="RESEND_TOO_SOON")
+    identity.confirmation_requested_at = now
+    _evt(session, E.EMAIL_CONFIRMATION_REQUESTED, identity)
+    return tokens.mint_purpose_token(identity.id, "email_confirm", EMAIL_TOKEN_TTL)
 
 
 async def confirm_email(session: AsyncSession, token: str) -> Identity:
@@ -499,6 +520,45 @@ async def lookup_by_email(session: AsyncSession, actor: Actor, email: str) -> St
                           mfaEnabled=i.mfa_enabled_at is not None, status=i.status)
 
 
+def _like_escape(text: str) -> str:
+    """Searches match literally: % and _ typed by staff are not wildcards."""
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+USER_ADMINS = (PlatformRole.PLATFORM_ADMIN, PlatformRole.TS_ANALYST)
+USER_FILTERS = {"BUYER", "PROFESSIONAL", "FIRM_ADMIN", "ENTERPRISE_ADMIN", "ENTERPRISE_MEMBER", "STAFF"}
+
+
+async def list_users(session: AsyncSession, actor: Actor, q: str | None, role: str | None, status: str | None,
+                     cursor: str | None, limit: int | None) -> dict:
+    """Staff Users list: search by name or email, filter by role and status, newest first. Every read is audited.
+    Suspending is not done here: it goes through an evidence-based safety case (admin domain, four-eyes)."""
+    actor.require_platform_role(*USER_ADMINS)
+    stmt = select(Identity)
+    if q and q.strip():
+        term = "%" + _like_escape(q.strip().lower()) + "%"
+        stmt = stmt.where(or_(func.lower(Identity.email).like(term, escape="\\"),
+                              func.lower(Identity.display_name).like(term, escape="\\")))
+    if role == "STAFF":
+        stmt = stmt.where(Identity.platform_roles != [])
+    elif role in USER_FILTERS:
+        stmt = stmt.where(literal(role) == any_(Identity.personas))
+    elif role:
+        raise ValidationFailed("Unknown role filter", code="INVALID_FILTER")
+    if status:
+        stmt = stmt.where(Identity.status == status)
+    stmt, lim = paginate(stmt, Identity, cursor, limit)
+    rows = (await session.scalars(stmt)).all()
+    last = dict((await session.execute(select(Session.identity_id, func.max(Session.auth_time))
+                                       .where(Session.identity_id.in_([i.id for i in rows])).group_by(Session.identity_id))).all())
+    record_audit(session, "identity.admin.users_listed", object_type="Identity", object_id=actor.identity_id,
+                 details={"search": bool(q and q.strip()), "role": role, "status": status, "count": min(len(rows), lim)})
+    return page_of(list(rows), lim, lambda i: UserOut(
+        id=i.id, email=i.email, displayName=i.display_name, country=i.country, personas=sorted(i.personas),
+        platformRoles=sorted(i.platform_roles), status=i.status, emailConfirmed=i.email_confirmed_at is not None,
+        mfaEnabled=i.mfa_enabled_at is not None, createdAt=i.created_at, lastSignInAt=last.get(i.id)))
+
+
 # ---- Settings: profile details, sessions, privacy requests ---------------------------
 
 async def update_me(session: AsyncSession, actor: Actor, patch: MePatch) -> IdentityOut:
@@ -548,26 +608,3 @@ async def revoke_session(session: AsyncSession, actor: Actor, session_id: uuid.U
                      payload={"identityId": actor.identity_id, "sessionId": s.id, "reason": "USER_SIGNED_OUT_DEVICE"})
 
 
-def _dr_out(r: DataRequest) -> DataRequestOut:
-    return DataRequestOut(id=r.id, requestType=r.request_type, status=r.status, createdAt=r.created_at, completedAt=r.completed_at)
-
-
-async def create_data_request(session: AsyncSession, actor: Actor, request_type: str) -> DataRequestOut:
-    """Download-my-data or delete-my-account request. One open request per type."""
-    open_one = await session.scalar(select(DataRequest).where(
-        DataRequest.identity_id == actor.identity_id, DataRequest.request_type == request_type,
-        DataRequest.status != "COMPLETED"))
-    if open_one:
-        return _dr_out(open_one)
-    identity = await _get_for_update(session, actor.identity_id)
-    r = DataRequest(identity_id=identity.id, request_type=request_type, status="RECEIVED")
-    session.add(r)
-    await session.flush()
-    _evt(session, E.DATA_REQUEST_CREATED, identity, dataRequestId=r.id, requestType=request_type)
-    return _dr_out(r)
-
-
-async def list_data_requests(session: AsyncSession, actor: Actor) -> list[DataRequestOut]:
-    rows = (await session.scalars(select(DataRequest).where(DataRequest.identity_id == actor.identity_id)
-                                  .order_by(DataRequest.created_at.desc()))).all()
-    return [_dr_out(r) for r in rows]

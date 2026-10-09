@@ -19,7 +19,7 @@ from zoikorum.domains.identity import facade as identity
 from zoikorum.domains.professional import facade as professional
 from zoikorum.domains.proposal import facade as proposal
 from zoikorum.domains.messaging.models import Attachment, DisputeContext, Message, ReadPosition, Thread
-from zoikorum.domains.messaging.schemas import AttachmentOut, MessageIn, MessageOut, ThreadIn, ThreadOut, UploadIn
+from zoikorum.domains.messaging.schemas import AttachmentOut, MessageHitOut, MessageIn, MessageOut, ThreadIn, ThreadOut, UploadIn
 from zoikorum.shared import clock
 from zoikorum.shared.auth import Actor
 from zoikorum.shared.errors import Conflict, Forbidden, NotFound, ValidationFailed
@@ -180,6 +180,54 @@ async def list_threads(session, actor, before=None, limit=30, *, context_type=No
     elif not exhausted and position:
         next_cursor = encode_cursor(*position)
     return Page(items=visible[:limit], nextCursor=next_cursor)
+
+
+def _like(term: str) -> str:
+    return "%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
+
+def _snippet(body: str, term: str, width: int = 140) -> str:
+    at = body.lower().find(term.lower())
+    start = max(0, at - width // 3) if at >= 0 else 0
+    text = body[start:start + width].replace("\n", " ")
+    return ("…" if start else "") + text + ("…" if start + width < len(body) else "")
+
+
+async def search_messages(session, actor, q: str, limit: int = 10) -> list[MessageHitOut]:
+    """Messages and conversation titles matching ``q``, newest first, only in conversations the viewer may open
+    (the same check as reading a thread). Literal match: % and _ are not wildcards."""
+    term = q.strip()
+    orgs = await buyer.list_identity_organizations(session, actor.identity_id)
+    pro = await professional.get_professional_by_identity(session, actor.identity_id)
+    scope = or_(Thread.organization_id.in_(orgs), Thread.professional_id == pro.id if pro else False)
+    like = _like(term)
+    messages = (await session.execute(
+        select(Message, Thread).join(Thread, Thread.id == Message.thread_id)
+        .where(scope, Message.body.ilike(like, escape="\\")).order_by(Message.created_at.desc()).limit(limit * 5))).all()
+    titled = (await session.scalars(select(Thread).where(scope, Thread.title.ilike(like, escape="\\"))
+                                    .order_by(Thread.updated_at.desc()).limit(limit))).all()
+    allowed: dict[uuid.UUID, bool] = {}
+
+    async def may_open(thread_id) -> bool:
+        if thread_id not in allowed:
+            try:
+                await checked_thread(session, actor, thread_id)
+                allowed[thread_id] = True
+            except (Forbidden, NotFound):
+                allowed[thread_id] = False
+        return allowed[thread_id]
+
+    hits: list[MessageHitOut] = []
+    for m, t in messages:
+        if len(hits) < limit and await may_open(t.id):
+            hits.append(MessageHitOut(threadId=t.id, threadTitle=t.title, sequence=m.sequence, senderName=m.sender_name,
+                                      snippet=_snippet(m.body, term), sentAt=m.created_at))
+    seen = {h.threadId for h in hits}
+    for t in titled:
+        if len(hits) < limit and t.id not in seen and await may_open(t.id):
+            hits.append(MessageHitOut(threadId=t.id, threadTitle=t.title, sequence=None, senderName=None,
+                                      snippet="Conversation", sentAt=t.updated_at))
+    return hits
 
 
 async def unread_summary(session, actor):

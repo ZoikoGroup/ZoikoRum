@@ -21,6 +21,8 @@ export interface SearchResult {
   dimensions: Record<string, string>
   languages: string[]
   yearsExperienceBand: string | null
+  servedJurisdictions: string[]
+  licensedJurisdictions: string[]
 }
 
 export interface Facet { value: string; label: string; count: number }

@@ -33,6 +33,39 @@ END;
 $$ LANGUAGE plpgsql;
 """
 
+# Append-only tables that copy a person's name onto each row. A privacy erasure (shared/privacy.py) may replace that
+# name with "Deleted user" - nothing else, and only while the erasure job has set zoikorum.privacy_erasure for its
+# transaction. Every other update or delete is still rejected.
+NAME_ERASURE_COLUMNS: dict[str, str] = {"messaging.messages": "sender_name", "review.reviews": "reviewer_name"}
+ERASED_NAME = "Deleted user"
+
+NAME_ERASURE_FN = """
+CREATE OR REPLACE FUNCTION platform.prevent_mutation_except_name_erasure() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'UPDATE'
+     AND coalesce(current_setting('zoikorum.privacy_erasure', true), '') = 'on'
+     AND (to_jsonb(NEW) ->> TG_ARGV[0]) = 'Deleted user'
+     AND (to_jsonb(NEW) - TG_ARGV[0]) = (to_jsonb(OLD) - TG_ARGV[0]) THEN
+    RETURN NEW;
+  END IF;
+  RAISE EXCEPTION 'table %.% is append-only (% rejected)', TG_TABLE_SCHEMA, TG_TABLE_NAME, TG_OP
+    USING ERRCODE = 'insufficient_privilege';
+END;
+$$ LANGUAGE plpgsql;
+"""
+
+
+def name_erasure_trigger(qualified_table: str) -> list[str]:
+    schema, table = qualified_table.split(".")
+    name = f"trg_{table}_append_only"
+    return [
+        f"DROP TRIGGER IF EXISTS {name} ON {schema}.{table};",
+        f"DROP TRIGGER IF EXISTS prevent_mutation ON {schema}.{table};",
+        f"CREATE TRIGGER {name} BEFORE UPDATE OR DELETE ON {schema}.{table} FOR EACH ROW "
+        f"EXECUTE FUNCTION platform.prevent_mutation_except_name_erasure('{NAME_ERASURE_COLUMNS[qualified_table]}');",
+    ]
+
+
 POLICY_VERSION_GUARD = """
 CREATE OR REPLACE FUNCTION policy.guard_active_version() RETURNS trigger AS $$
 BEGIN
@@ -97,7 +130,7 @@ def append_only_trigger(qualified_table: str) -> list[str]:
 
 
 def all_statements(existing_tables: set[str]) -> list[str]:
-    stmts = [PREVENT_MUTATION_FN]
+    stmts = [PREVENT_MUTATION_FN, NAME_ERASURE_FN]
     if "ai.prompt_versions" in existing_tables:
         stmts.extend(["""CREATE OR REPLACE FUNCTION ai.guard_prompt() RETURNS trigger AS $$
         BEGIN
@@ -140,7 +173,7 @@ def all_statements(existing_tables: set[str]) -> list[str]:
             "FOR EACH ROW EXECUTE FUNCTION policy.guard_active_version();"])
     for t in APPEND_ONLY_TABLES:
         if t in existing_tables:
-            stmts.extend(append_only_trigger(t))
+            stmts.extend(name_erasure_trigger(t) if t in NAME_ERASURE_COLUMNS else append_only_trigger(t))
     if "contract.change_orders" in existing_tables:
         stmts.extend(
             [

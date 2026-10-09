@@ -131,15 +131,31 @@ def label(profile, version):
     return f"{profile.name}@v{version.number}" if profile and version else "platform-default@1"
 
 
+# Deadline settings a profile may leave empty: one source of truth, the platform configuration.
+DEADLINE_SETTINGS = ("acceptanceWindowDays", "signatureDeadlineDays", "disputeEvidenceDays", "directResolutionBusinessDays",
+                     "challengeWindowDays")
+
+
+def platform_deadlines() -> dict:
+    s = get_settings()
+    return {"acceptance_window_days": s.acceptance_window_days, "signature_deadline_days": s.signature_deadline_days,
+            "dispute_evidence_days": s.dispute_evidence_days,
+            "direct_resolution_business_days": s.dispute_direct_resolution_business_days,
+            "challenge_window_days": s.dispute_challenge_window_days}
+
+
+def stored_settings(settings) -> dict:
+    """Profile settings as saved: deadlines left empty are not saved, so they keep following the platform defaults."""
+    return {k: v for k, v in settings.model_dump().items() if not (k in DEADLINE_SETTINGS and v is None)}
+
+
 async def settings_for_org(session, org_id, pinned=None):
     profile, version = await effective_version(session, org_id, pinned)
     if not version:
-        defaults = get_settings()
-        return ProfileSettings(None, None, "platform-default@1", acceptance_window_days=defaults.acceptance_window_days,
-            signature_deadline_days=defaults.signature_deadline_days, dispute_evidence_days=defaults.dispute_evidence_days,
-            direct_resolution_business_days=defaults.dispute_direct_resolution_business_days)
-    values = {SETTING_NAMES[k]: tuple(v) if isinstance(v, list) else v for k, v in version.settings.items() if k in SETTING_NAMES}
-    return ProfileSettings(profile.id, version.id, label(profile, version), **values)
+        return ProfileSettings(None, None, "platform-default@1", **platform_deadlines())
+    values = {SETTING_NAMES[k]: tuple(v) if isinstance(v, list) else v for k, v in version.settings.items()
+              if k in SETTING_NAMES and v is not None}
+    return ProfileSettings(profile.id, version.id, label(profile, version), **{**platform_deadlines(), **values})
 
 
 async def profile_out(session, profile):
@@ -180,7 +196,7 @@ async def create_profile(session, actor, body: ProfileIn):
         risk_level=body.riskLevel, business_unit_ids=sorted(set(str(x) for x in body.businessUnitIds)), created_at=clock.now())
     session.add(profile)
     await session.flush()
-    version = PolicyVersion(profile_id=profile.id, number=1, settings=settings.model_dump(),
+    version = PolicyVersion(profile_id=profile.id, number=1, settings=stored_settings(settings),
         rules=[r.model_dump(exclude_none=True) for r in rules], created_by=actor.identity_id, created_at=clock.now())
     session.add(version)
     await session.flush()
@@ -202,7 +218,7 @@ async def update_draft(session, actor, profile_id, body: DraftIn):
     draft = await session.get(PolicyVersion, profile.draft_version_id, with_for_update=True)
     if draft.status != "DRAFT":
         raise Conflict("Only draft policy versions can be edited")
-    draft.settings, draft.rules = body.settings.model_dump(), [r.model_dump(exclude_none=True) for r in body.rules]
+    draft.settings, draft.rules = stored_settings(body.settings), [r.model_dump(exclude_none=True) for r in body.rules]
     profile.updated_at = clock.now()
     record_event(session, E.POLICY_DRAFT_UPDATED, aggregate_type="PolicyProfile", aggregate_id=profile.id,
         tenant_id=profile.organization_id, payload={"organizationId": profile.organization_id, "profileId": profile.id,

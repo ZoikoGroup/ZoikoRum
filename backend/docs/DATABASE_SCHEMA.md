@@ -14,7 +14,7 @@ Migrations: `backend/alembic/versions/` (`alembic upgrade head`).
 - [identity](#schema-identity) — 6 tables
 - [buyer](#schema-buyer) — 6 tables
 - [firm](#schema-firm) — 3 tables
-- [professional](#schema-professional) — 3 tables
+- [professional](#schema-professional) — 4 tables
 - [marketplace](#schema-marketplace) — 6 tables
 - [search](#schema-search) — 1 tables
 - [proposal](#schema-proposal) — 2 tables
@@ -141,6 +141,10 @@ A person's privacy request (GDPR/CCPA access or erasure). Logged and handled by 
 | `request_type` | varchar(20) | no |  |
 | `status` | varchar(20) | no |  |
 | `completed_at` | DATETIME | yes |  |
+| `scheduled_for` | DATETIME | yes |  |
+| `expires_at` | DATETIME | yes |  |
+| `export_key` | varchar(300) | yes |  |
+| `detail` | JSONB | no |  |
 | `id` | UUID | no | PK |
 | `updated_at` | DATETIME | no |  |
 | `created_at` | DATETIME | no |  |
@@ -175,6 +179,7 @@ Aggregate root: one ZoikoID per human or service actor.
 |---|---|---|---|
 | `email` | varchar(320) | no | unique |
 | `email_confirmed_at` | DATETIME | yes |  |
+| `confirmation_requested_at` | DATETIME | yes |  |
 | `password_hash` | varchar(255) | yes |  |
 | `display_name` | varchar(200) | no |  |
 | `country` | varchar(2) | no |  |
@@ -492,6 +497,22 @@ Aggregate root. Lifecycle: DRAFT -> PUBLISHED <-> UNPUBLISHED; any -> SUSPENDED 
 | `updated_at` | DATETIME | no |  |
 | `created_at` | DATETIME | no |  |
 | `version` | BIGINT | no |  |
+
+### `professional.saved_buyers`
+
+A buyer organisation a professional keeps in their client list (Professional Dashboard s.17). Only organisations that have already sent the professional a request can be saved: no buyer directory, no cold outreach.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `professional_id` | UUID | no | FK → professional.professionals.id, indexed |
+| `organization_id` | UUID | no |  |
+| `note` | varchar(500) | yes |  |
+| `alerts` | BOOLEAN | no |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+
+Unique together: (professional_id, organization_id)
 
 <a id="schema-marketplace"></a>
 ## Schema `marketplace`
@@ -1217,6 +1238,9 @@ Base class used for declarative class definitions.  The :class:`_orm.Declarative
 | `case_id` | UUID | no | FK → verification.cases.id, unique |
 | `provider_ref` | varchar(120) | no | unique |
 | `status` | varchar(30) | no |  |
+| `provider` | varchar(20) | yes |  |
+| `hosted_url` | varchar(1000) | yes |  |
+| `reason` | varchar(300) | yes |  |
 | `id` | UUID | no | PK |
 | `updated_at` | DATETIME | no |  |
 | `created_at` | DATETIME | no |  |
@@ -1610,7 +1634,7 @@ Base class used for declarative class definitions.  The :class:`_orm.Declarative
 | `id` | UUID | no | PK |
 | `created_at` | DATETIME | no |  |
 
-Unique together: (thread_id, sequence); (thread_id, source_event_id)
+Unique together: (thread_id, source_event_id); (thread_id, sequence)
 
 ### `messaging.read_positions`
 

@@ -9,10 +9,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="ZK_", env_file=".env", extra="ignore")
+    # hide_input_in_errors: a configuration error must never print configuration values (passwords, keys).
+    model_config = SettingsConfigDict(env_prefix="ZK_", env_file=".env", extra="ignore", hide_input_in_errors=True)
 
     env: str = "local"
     service_name: str = "zoikorum-api"
+    release: str = "dev"  # build/version identifier, reported with errors
+    log_level: str = "INFO"
+    log_format: str | None = None  # json | text; default text in local development, json elsewhere
+    sentry_dsn: str | None = None  # error reporting (needs backend[monitoring]); personal data is never sent
     frontend_url: str = "http://localhost:5173"  # used to build links in invitations / emails
     database_url: str = "postgresql+asyncpg://zoikorum:zoikorum@localhost:5434/zoikorum"
     db_pool_size: int = 10
@@ -39,10 +44,15 @@ class Settings(BaseSettings):
     stripe_api_version: str | None = None
     payment_operating_countries: list[str] = Field(default_factory=list)
     payment_flow_approved: bool = False  # Explicit partner/business approval of the configured funds flow.
-    verification_provider: str = "fake"  # fake | manual | persona
+    # fake | simulated | manual | persona | veriff. persona and veriff run the identity check in the partner's hosted flow;
+    # simulated (development only) does the same with a page where you pick the partner's answer.
+    verification_provider: str = "fake"
     persona_api_key: str | None = None
     persona_template_id: str | None = None
     persona_webhook_secret: str | None = None
+    veriff_api_key: str | None = None
+    veriff_shared_secret: str | None = None  # signs requests to Veriff and verifies its webhooks
+    veriff_base_url: str = "https://stationapi.veriff.com"
     webhook_secret: str = "dev-webhook-secret"
     webhook_tolerance_seconds: int = 300  # signed webhooks older than this are refused (replay protection)
     platform_fee_bps: int = 1000  # 10.00% platform fee, basis points
@@ -64,6 +74,7 @@ class Settings(BaseSettings):
     email_from: str = "notifications@zoikorum.com"
 
     rate_limit_enabled: bool = True
+    redis_url: str | None = None  # shared rate limits across API servers, e.g. redis://redis:6379/0
     storage_dir: str = "var/storage"  # LocalDiskStorage root (development); S3 bucket in production
     storage_provider: str = "local"  # local | s3
     s3_bucket: str | None = None
@@ -81,8 +92,12 @@ class Settings(BaseSettings):
     # Disputes (Step 9). Direct resolution default is from the Dispute Resolution doc s.10; the evidence window is not
     # stated in the documents (management to confirm).
     dispute_evidence_days: int = 3
+    erasure_cooling_off_days: int = 14  # account deletion can be cancelled until then
+    data_export_days: int = 7  # how long a data export can be downloaded
     verification_appeal_days: int = 14  # time to appeal a failed or revoked verification (Governance playbook s.11)
     dispute_direct_resolution_business_days: int = 5
+    # Days after acceptance in which accepted work may still be disputed. 0 until management sets one (not enforced yet).
+    dispute_challenge_window_days: int = 0
 
     @property
     def mfa_bypass(self) -> bool:
@@ -92,6 +107,22 @@ class Settings(BaseSettings):
     def _no_mfa_bypass_outside_development(self):
         if self.dev_skip_mfa and self.env not in (*DEV_ENVS, "test"):
             raise ValueError(f"ZK_DEV_SKIP_MFA is only allowed in development (env is {self.env!r}); remove it")
+        if self.verification_provider == "simulated" and self.env not in (*DEV_ENVS, "test"):
+            raise ValueError(f"ZK_VERIFICATION_PROVIDER=simulated is only allowed in development (env is {self.env!r})")
+        return self
+
+    @model_validator(mode="after")
+    def _real_secrets_outside_development(self):
+        """Staging and production refuse to start with the development defaults: anyone could forge sign-ins with them."""
+        if self.env in (*DEV_ENVS, "test"):
+            return self
+        defaults = {name: field.default for name, field in type(self).model_fields.items()}
+        for name in ("jwt_secret", "field_encryption_key", "webhook_secret"):
+            value = getattr(self, name)
+            if value == defaults[name] or len(value) < 32:
+                raise ValueError(f"ZK_{name.upper()} must be set to a long random value (32+ characters) in {self.env}")
+        if not self.frontend_url.startswith("https://"):
+            raise ValueError(f"ZK_FRONTEND_URL must be the public https:// address in {self.env} (it is used in email links)")
         return self
 
 

@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from zoikorum.config import get_settings
 from zoikorum.domains.firm import facade as firm_facade
 from zoikorum.domains.professional import facade as professional_facade
-from zoikorum.domains.verification.models import Appeal, EvidenceItem, VerificationCase
+from zoikorum.domains.verification.models import Appeal, EvidenceItem, ProviderSession, VerificationCase
 from zoikorum.domains.verification.providers import get_provider
 from zoikorum.domains.verification.schemas import (
     AppealDecisionIn, AppealIn, AppealOut, AppealQueueItemOut, CaseIn, CaseOut, DecisionIn, EvidenceIn, EvidenceOut, QueueItemOut,
@@ -123,7 +123,19 @@ async def _out(session: AsyncSession, case: VerificationCase, is_mine: bool) -> 
         evidence=await _evidence(session, case.id), createdAt=case.created_at, version=case.version,
         appeal=_appeal_out(appeal) if appeal else None,
         appealDeadline=deadline if deadline and deadline > clock.now() else None,
+        **_hosted_fields(await session.scalar(select(ProviderSession).where(ProviderSession.case_id == case.id))),
     )
+
+
+def _hosted_fields(ps: ProviderSession | None) -> dict:
+    """The identity partner's view of a case (integration.py), when the check runs in a hosted flow."""
+    if ps is None:
+        return {}
+    return {"hostedProvider": ps.provider, "hostedStatus": ps.status, "hostedReason": ps.reason}
+
+
+# A partner answer that leaves the decision to a compliance officer; the documents are in the partner's dashboard.
+PARTNER_REVIEW = ("declined", "failed", "needs_review", "completed", "expired", "resubmission_requested")
 
 
 def _clean_details(details: dict) -> dict:
@@ -315,11 +327,16 @@ async def decide(session: AsyncSession, actor: Actor, case_id: uuid.UUID, body: 
     if body.decision == "VERIFIED":
         if body.expiresAt and body.expiresAt <= clock.now():
             raise ValidationFailed("The expiry date must be in the future", code="INVALID_EXPIRY")
-        # Evidence-based verification (Trust charter s.6): screening is checked against lists, everything else needs a document.
-        if case.verification_type != "RESTRICTIONS" and not await session.scalar(
+        # Evidence-based verification (Trust charter s.6): screening is checked against lists, everything else needs a
+        # document - uploaded here, or captured by the identity partner (the reviewer opens it in the partner's dashboard).
+        partner = await session.scalar(select(ProviderSession.status).where(ProviderSession.case_id == case.id))
+        captured_by_partner = partner in PARTNER_REVIEW
+        if case.verification_type != "RESTRICTIONS" and not captured_by_partner and not await session.scalar(
                 select(func.count()).select_from(EvidenceItem).where(EvidenceItem.case_id == case.id)):
             raise ValidationFailed("Ask for supporting documents before verifying: none have been submitted",
                                    code="EVIDENCE_REQUIRED")
+        if captured_by_partner and case.status == "NEEDS_INFO":
+            case.status = "IN_REVIEW"  # the reviewer accepts the partner's capture instead of waiting for a new one
         await _verify(session, case, reviewer_id=actor.identity_id, expires_at=body.expiresAt)
     elif body.decision == "FAILED":
         _fail(session, case, reviewer_id=actor.identity_id, reason_code=body.reasonCode, public_reason=body.publicReason)
@@ -420,8 +437,10 @@ async def review_queue(session: AsyncSession, actor: Actor, cursor: str | None, 
         if c.subject_type == "FIRM" and c.subject_id not in names:
             firm = await firm_facade.get_firm(session, c.subject_id)
             names[c.subject_id] = firm.legal_name if firm else None
+    hosted = {ps.case_id: ps for ps in (await session.scalars(
+        select(ProviderSession).where(ProviderSession.case_id.in_([c.id for c in rows])))).all()}
     now = clock.now()
-    return page_of(list(rows), lim, lambda c: QueueItemOut(
+    return page_of(list(rows), lim, lambda c: QueueItemOut(**_hosted_fields(hosted.get(c.id)),
         id=c.id, subjectType=c.subject_type, subjectId=c.subject_id, subjectName=names.get(c.subject_id),
         verificationType=c.verification_type, status=c.status, label=c.label, jurisdiction=c.jurisdiction,
         providerResult=c.provider_result, evidenceCount=counts.get(c.id, 0), estimatedCompletion=c.estimated_completion,

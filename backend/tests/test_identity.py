@@ -74,3 +74,53 @@ async def test_platform_role_grant_requires_admin_and_step_up(client, make_user)
     await admin.step_up()
     r = await client.post(url, headers=admin.h, json={"role": "MEDIATOR"})
     assert r.status_code == 200 and "MEDIATOR" in r.json()["platformRoles"]
+
+
+async def test_resend_email_confirmation(client, make_user, drain, sf):
+    from sqlalchemy import text
+
+    u = await make_user("erin")
+    me = (await client.get("/v1/me", headers=u.h)).json()
+    url = "/v1/me/email-confirmation"
+    r = await client.post(url, headers=u.h)
+    assert r.status_code == 429 and r.json()["code"] == "RESEND_TOO_SOON"  # the sign-up link was just sent
+    clock.advance(timedelta(seconds=61))
+    r = await client.post(url, headers=u.h)
+    assert r.status_code == 200 and r.json()["emailConfirmationToken"]
+    assert (await client.post(url, headers=u.h)).json()["code"] == "RESEND_TOO_SOON"  # one link a minute
+    await drain()
+    async with sf() as s:
+        queued = (await s.execute(text("SELECT title, email_status FROM notification.notifications "
+                                       "WHERE identity_id = :i AND event_type LIKE '%email_confirmation_requested%'"),
+                                  {"i": me["id"]})).all()
+    assert [q.title for q in queued] == ["Confirm your email address"]  # emailed by the notification domain
+
+    confirmed = await client.post("/v1/auth/confirm-email", json={"token": r.json()["emailConfirmationToken"]})
+    assert confirmed.json()["emailConfirmed"] is True
+    clock.advance(timedelta(seconds=61))
+    assert (await client.post(url, headers=u.h)).json()["code"] == "EMAIL_ALREADY_CONFIRMED"
+
+
+async def test_staff_users_list(client, make_user, drain, sf):
+    from sqlalchemy import text
+
+    buyer = await make_user("zelda", account_type="BUYER")
+    pro = await make_user("zeno-pro", account_type="PROFESSIONAL")
+    admin = await make_user("admin", platform_roles=("PLATFORM_ADMIN",))
+    url = "/v1/admin/users"
+    assert (await client.get(url, headers=buyer.h)).status_code == 403  # staff only
+
+    await admin.step_up()  # staff tools need two-step verification
+    found = (await client.get(url, headers=admin.h, params={"q": "ZENO"})).json()["items"]
+    assert [u["email"] for u in found] == [pro.email]
+    assert found[0]["personas"] == ["PROFESSIONAL"] and found[0]["emailConfirmed"] is False and found[0]["lastSignInAt"]
+    pros = (await client.get(url, headers=admin.h, params={"role": "PROFESSIONAL", "limit": 100})).json()["items"]
+    assert pro.email in [u["email"] for u in pros] and buyer.email not in [u["email"] for u in pros]
+    staff = (await client.get(url, headers=admin.h, params={"role": "STAFF", "limit": 100})).json()["items"]
+    assert admin.email in [u["email"] for u in staff] and pro.email not in [u["email"] for u in staff]
+    assert (await client.get(url, headers=admin.h, params={"q": "%"})).json()["items"] == []  # % is literal, not "everything"
+    assert (await client.get(url, headers=admin.h, params={"role": "NOPE"})).json()["code"] == "INVALID_FILTER"
+    await drain()
+    async with sf() as s:
+        audited = await s.scalar(text("SELECT count(*) FROM audit.audit_records WHERE action LIKE '%users_listed%'"))
+    assert audited >= 4  # every staff read of the users list is recorded

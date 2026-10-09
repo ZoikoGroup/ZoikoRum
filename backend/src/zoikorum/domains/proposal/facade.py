@@ -92,3 +92,13 @@ async def response_stats(session: AsyncSession, professional_id: uuid.UUID) -> d
         if answered:
             hours.append(max(0.0, (answered - r.sent_at).total_seconds() / 3600))
     return {"requests": len(reqs), "responded": len(hours), "medianHours": round(median(hours), 1) if hours else None}
+
+
+async def buyer_relationships(session: AsyncSession, professional_id: uuid.UUID) -> dict[uuid.UUID, dict]:
+    """Organisations that have sent this professional a request: how many, and when last (saved buyers)."""
+    from sqlalchemy import func
+
+    rows = (await session.execute(select(ProposalRequest.organization_id, func.count(), func.max(ProposalRequest.sent_at))
+                                  .where(ProposalRequest.professional_id == professional_id, ProposalRequest.sent_at.is_not(None))
+                                  .group_by(ProposalRequest.organization_id))).all()
+    return {org: {"requests": n, "lastRequestAt": last} for org, n, last in rows}

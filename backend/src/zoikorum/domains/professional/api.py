@@ -5,8 +5,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, Header, Response, status
 
-from zoikorum.domains.professional import service
+from zoikorum.domains.professional import saved_buyers, service
 from zoikorum.domains.professional.schemas import (
+    BuyerCandidateOut, SavedBuyerIn, SavedBuyerOut, SavedBuyerPatch,
     AvailabilityIn,
     CredentialIn,
     CredentialOut,
@@ -156,3 +157,32 @@ async def pause_offering(offering_id: uuid.UUID, actor: CurrentActor, session: D
 async def public_profile(professional_id: uuid.UUID, actor: OptionalActor, session: DbSession):
     """Public profile. Works without signing in."""
     return await service.public_profile(session, actor, professional_id)
+
+
+# ---- Saved buyers (Professional Dashboard s.17) ----------------------------------
+
+@router.get("/me/saved-buyers", response_model=list[SavedBuyerOut])
+async def my_saved_buyers(actor: CurrentActor, session: DbSession):
+    return await saved_buyers.mine(session, actor)
+
+
+@router.get("/me/buyer-candidates", response_model=list[BuyerCandidateOut])
+async def buyer_candidates(actor: CurrentActor, session: DbSession):
+    """Organisations that have sent you a request (the only ones you can save)."""
+    return await saved_buyers.candidates(session, actor)
+
+
+@router.post("/me/saved-buyers", response_model=SavedBuyerOut, status_code=status.HTTP_201_CREATED)
+async def save_buyer(body: SavedBuyerIn, actor: CurrentActor, session: DbSession):
+    return await saved_buyers.save(session, actor, body)
+
+
+@router.patch("/me/saved-buyers/{saved_id}", response_model=SavedBuyerOut)
+async def update_saved_buyer(saved_id: uuid.UUID, body: SavedBuyerPatch, actor: CurrentActor, session: DbSession):
+    return await saved_buyers.update(session, actor, saved_id, body)
+
+
+@router.delete("/me/saved-buyers/{saved_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_saved_buyer(saved_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> Response:
+    await saved_buyers.remove(session, actor, saved_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

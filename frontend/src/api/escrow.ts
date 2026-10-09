@@ -62,6 +62,8 @@ export const paymentsApi = {
   setPayoutAccount: (body: { holderName: string; country: string; currency: string; accountNumber: string }) =>
     api<Earnings['payoutAccount']>('/v1/payout-accounts/me', { method: 'PUT', body }),
   invoices: (organizationId: string) => api<Invoice[]>('/v1/payments/invoices', { query: { organizationId } }),
+  /** The invoice as a PDF (members of the buyer organisation; audited). */
+  invoicePdf: (id: string) => api<Blob>(`/v1/payments/invoices/${id}/pdf`, { blob: true }),
   charges: (organizationId: string) => api<Charge[]>('/v1/payments/charges', { query: { organizationId } }),
   reconciliations: () => api<Reconciliation[]>('/v1/payments/reconciliations'),
   reconcile: (day: string) => api<Reconciliation>('/v1/payments/reconciliations', { method: 'POST', body: { day } }),

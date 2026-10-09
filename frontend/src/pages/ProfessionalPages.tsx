@@ -13,8 +13,13 @@ import { budgetText, proposalApi, requestStatus, type ProposalRequest } from '..
 import { DIMENSION_VALUE, DIMENSIONS, trustApi, verificationApi, type Trust, type VerificationCase } from '../api/verification'
 import { useAuth } from '../auth/AuthContext'
 import { ActionList, Avatar, greeting, Icon, Kpi, type Action } from '../components/dashboard'
+import { HoursSlider } from '../components/HoursSlider'
+import { CantFindSpecialization } from '../components/CantFindSpecialization'
+import { DraftSaved, ResumeDraft } from '../components/ResumeDraft'
+import { clearDraft, readDraft, useAutosave } from '../lib/autosave'
 import { ErrorAlert, Field } from '../components/ui'
 import { AccountAlerts } from './Dashboards'
+import { ResendConfirmation } from '../components/ResendConfirmation'
 import { formatCurrencies } from '../lib/money'
 import { COUNTRIES } from './Join'
 
@@ -146,6 +151,7 @@ export function ProfessionalDashboard() {
   const [contracts, setContracts] = useState<Contract[]>([])
   const [earnings, setEarnings] = useState<Earnings | null>(null)
   const [actionError, setActionError] = useState<unknown>(null)
+  const [now] = useState(() => Date.now())  // read the clock once, not on every render
 
   const load = useCallback(async () => {
     if (!profile) return
@@ -172,8 +178,8 @@ export function ProfessionalDashboard() {
 
   const monthPaid = earnings ? formatCurrencies(earnings.monthlySettledByCurrency) : '—'
   const earningsTotal = (key: 'pending' | 'settled') => earnings ? formatCurrencies(Object.values(earnings.totalsByCurrency).map(t => t[key])) : '—'
-  const soon = Date.now() + 30 * 86400_000
-  const soon14 = Date.now() + 14 * 86400_000
+  const soon = now + 30 * 86400_000
+  const soon14 = now + 14 * 86400_000
   const expiring = cases.filter((c) => c.status === 'VERIFIED' && c.expiresAt && new Date(c.expiresAt).getTime() < soon)
   const actions: Action[] = []
   const newRequests = requests.filter((r) => r.status === 'OPEN')
@@ -471,14 +477,21 @@ function FirmPicker({ profile, onSaved }: { profile: Profile; onSaved: (p: Profi
 }
 
 function BasicsStep({ profile, onSaved, next }: StepProps) {
-  const [f, setF] = useState({
+  const initial = {
     displayName: profile.displayName, legalName: profile.legalName ?? '', headline: profile.headline ?? '',
     yearsExperienceBand: profile.yearsExperienceBand ?? '', bio: profile.bio ?? '', languages: profile.languages.join(', '),
     city: profile.city ?? '', country: profile.country, website: profile.website ?? '',
-  })
+  }
+  const [f, setF] = useState(initial)
   const [error, setError] = useState<unknown>(null)
   const { busy, save } = useSave(setError)
-  const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value })
+  const set = (k: keyof typeof f) => (e: { target: { value: string } }) => { setTouched(true); setF({ ...f, [k]: e.target.value }) }
+  // Autosave (Onboarding s.20/s.22): an unfinished step is kept in this browser and offered back on return.
+  const { user } = useAuth()
+  const draftKey = user ? `${user.id}.profile.basics` : null
+  const [touched, setTouched] = useState(false)
+  const [pending, setPending] = useState(() => readDraft<typeof initial>(draftKey))
+  const savedAt = useAutosave(draftKey, f, touched)
 
   function submit(e: FormEvent) {
     e.preventDefault()
@@ -488,14 +501,18 @@ function BasicsStep({ profile, onSaved, next }: StepProps) {
         ...rest, languages: languages.split(',').map((l) => l.trim()).filter(Boolean),
         ...(yearsExperienceBand ? { yearsExperienceBand } : {}),
       }))
+      clearDraft(draftKey)
       next()
     })
   }
 
   return (
     <form onSubmit={submit}>
+      {pending && !touched && <ResumeDraft savedAt={pending.savedAt}
+        onResume={() => { setF(pending.value); setPending(null); setTouched(true) }} onDiscard={() => { clearDraft(draftKey); setPending(null) }} />}
       <PhotoUploader profile={profile} onSaved={onSaved} />
       <ErrorAlert error={error} />
+      <div style={{ textAlign: 'right', minHeight: 18 }}><DraftSaved at={savedAt} /></div>
       <div className="row">
         <Field label="Display name" id="b-name" hint="Shown to buyers.">
           <input id="b-name" className="input" value={f.displayName} onChange={set('displayName')} required />
@@ -548,6 +565,8 @@ function SpecializationsStep({ profile, onSaved, next }: StepProps) {
   const [taxonomy, setTaxonomy] = useState<TaxonomyCategory[]>([])
   const [primary, setPrimary] = useState(profile.specializations.find((s) => s.primary)?.slug ?? '')
   const [secondary, setSecondary] = useState(profile.specializations.filter((s) => !s.primary).map((s) => s.slug))
+  const [query, setQuery] = useState('')
+  const [category, setCategory] = useState('')
   const [error, setError] = useState<unknown>(null)
   const { busy, save } = useSave(setError)
   useEffect(() => { taxonomyApi.all().then(setTaxonomy).catch(setError) }, [])
@@ -564,29 +583,53 @@ function SpecializationsStep({ profile, onSaved, next }: StepProps) {
     <>{s.requiresCredential && <span className="badge warn">Credential required</span>}{' '}
       {s.regulated && <span className="badge">Regulated</span>}</>
   )
+  // Search across every category (name, group or category); chosen ones always stay visible.
+  const term = query.trim().toLowerCase()
+  const all = taxonomy.flatMap((c) => c.groups.flatMap((g) => g.specializations.map((s) => ({ ...s, group: g, category: c }))))
+  const byName = Object.fromEntries(all.map((s) => [s.slug, s]))
+  const visible = (c: TaxonomyCategory, g: TaxonomyCategory['groups'][number]) => g.specializations.filter((s) =>
+    (!category || c.slug === category) && (!term || `${s.name} ${g.name} ${c.name}`.toLowerCase().includes(term)))
+  const shown = taxonomy.flatMap((c) => c.groups.map((g) => ({ c, g, specs: visible(c, g) }))).filter((x) => x.specs.length > 0)
+  const total = all.length
+  const pick = (slug: string, as: 'primary' | 'secondary') => {
+    if (as === 'primary') { if (primary && primary !== slug) setSecondary([...secondary.filter((x) => x !== slug), primary].slice(0, 5)); setPrimary(slug) }
+    else if (slug !== primary && !secondary.includes(slug) && secondary.length < 5) setSecondary([...secondary, slug])
+  }
 
   return (
     <form onSubmit={submit}>
       <ErrorAlert error={error} />
       <p className="muted small">
-        Choose from the Zoikorum taxonomy so buyers can find you: one primary specialization and up to five more.
+        Pick from the Zoikorum list so buyers can find you: one primary specialization and up to five more.
         Specializations marked “Credential required” need a verified credential before you reach Tier A for them.
       </p>
-      <Field label="Primary specialization" id="s-primary">
+      <div className="row" style={{ alignItems: 'flex-end' }}>
+        <label className="filter-box grow"><span>Search {total} specializations</span>
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="e.g. machine learning, tax, contracts, SEO" aria-label="Search specializations" /></label>
+        <label className="filter-box"><span>Category</span>
+          <select value={category} onChange={(e) => setCategory(e.target.value)}><option value="">All categories</option>
+            {taxonomy.map((c) => <option key={c.slug} value={c.slug}>{c.name}</option>)}</select></label>
+      </div>
+      <Field label="Primary specialization" id="s-primary" hint={primary ? `${byName[primary]?.category.name ?? ''} · ${byName[primary]?.group.name ?? ''}` : 'Your main expertise: the one buyers filter by first.'}>
         <select id="s-primary" className="input" value={primary} onChange={(e) => setPrimary(e.target.value)} required>
-          <option value="">Select…</option>
-          {taxonomy.flatMap((c) => c.groups).map((g) => (
-            <optgroup key={g.slug} label={g.name}>
-              {g.specializations.map((s) => <option key={s.slug} value={s.slug}>{s.name}</option>)}
+          <option value="">{shown.length ? 'Select…' : 'No match: clear the search or use “Can’t find yours?” below'}</option>
+          {primary && !shown.some((x) => x.specs.some((s) => s.slug === primary)) && byName[primary] && <option value={primary}>{byName[primary].name}</option>}
+          {shown.map(({ c, g, specs }) => (
+            <optgroup key={g.slug} label={`${c.name} › ${g.name}`}>
+              {specs.map((s) => <option key={s.slug} value={s.slug}>{s.name}</option>)}
             </optgroup>
           ))}
         </select>
       </Field>
+      {(profile.pendingSpecializations ?? []).length > 0 && <p className="small">Under review: {(profile.pendingSpecializations ?? []).map((n) => <span key={n} className="badge warn" style={{ marginRight: 4 }}>{n}</span>)}</p>}
       <h3>Other specializations <span className="muted small">({secondary.filter((s) => s !== primary).length}/5)</span></h3>
-      {taxonomy.flatMap((c) => c.groups).map((g) => (
+      {secondary.filter((s) => s !== primary).length > 0 && <div className="chips" style={{ marginBottom: 8 }}>{secondary.filter((s) => s !== primary).map((slug) => (
+        <button type="button" key={slug} className="pill on" onClick={() => setSecondary(secondary.filter((x) => x !== slug))}>{byName[slug]?.name ?? slug} ×</button>))}</div>}
+      {shown.length === 0 && <p className="muted small">Nothing matches “{query}”.</p>}
+      {shown.map(({ c, g, specs }) => (
         <fieldset key={g.slug} className="group-set">
-          <legend>{g.name}</legend>
-          <Choices name={g.name} options={g.specializations.filter((s) => s.slug !== primary).map((s) => s.slug)}
+          <legend>{g.name} <span className="muted small">· {c.name}</span></legend>
+          <Choices name={g.name} options={specs.filter((s) => s.slug !== primary).map((s) => s.slug)}
             value={secondary} onChange={setSecondary}
             disabled={() => secondary.filter((s) => s !== primary).length >= 5}
             label={(slug) => {
@@ -595,6 +638,7 @@ function SpecializationsStep({ profile, onSaved, next }: StepProps) {
             }} />
         </fieldset>
       ))}
+      <CantFindSpecialization taxonomy={taxonomy} onPick={pick} />
       <StepActions busy={busy || !primary} />
     </form>
   )
@@ -657,13 +701,14 @@ function AvailabilityStep({ profile, onSaved, next }: StepProps) {
   const [availability, setAvailability] = useState<Availability>(profile.availability)
   const [max, setMax] = useState(profile.maxConcurrentEngagements?.toString() ?? '')
   const [paused, setPaused] = useState(profile.temporarilyUnavailable)
+  const [hours, setHours] = useState<number | null>(profile.weeklyHours ?? null)
   const [error, setError] = useState<unknown>(null)
   const { busy, save } = useSave(setError)
 
   function submit(e: FormEvent) {
     e.preventDefault()
     save(async () => {
-      onSaved(await proApi.setAvailability({ availability, maxConcurrentEngagements: max ? Number(max) : null, temporarilyUnavailable: paused }))
+      onSaved(await proApi.setAvailability({ availability, maxConcurrentEngagements: max ? Number(max) : null, temporarilyUnavailable: paused, weeklyHours: hours }))
       next()
     })
   }
@@ -681,7 +726,7 @@ function AvailabilityStep({ profile, onSaved, next }: StepProps) {
           <input id="a-max" className="input" type="number" min={1} max={50} value={max} onChange={(e) => setMax(e.target.value)} />
         </Field>
       </div>
-      <div style={{ height: 16 }} />
+      <HoursSlider value={hours} onChange={setHours} />
       <label className="checkbox">
         <input type="checkbox" checked={paused} onChange={(e) => setPaused(e.target.checked)} />
         <span>I'm temporarily not taking new work (buyers see “At capacity”)</span>
@@ -980,7 +1025,7 @@ export function ProfileSetupPage() {
           </nav>
           {saved && <div className="alert alert-success" role="status">Saved.</div>}
           {!user?.emailConfirmed && step === 'publish' && (
-            <div className="alert alert-warn">Confirm your email address before publishing. <Link to="/app/account">Account settings</Link></div>
+            <div className="alert alert-warn">Confirm your email address before publishing: open the link we emailed you. <ResendConfirmation /></div>
           )}
           <section className="card panel">
             <h2>{STEPS[index].label}</h2>

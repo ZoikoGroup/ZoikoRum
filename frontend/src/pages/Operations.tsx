@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import { formatMoney, orgApi, type Organization } from '../api/orgs'
 import { useAuth } from '../auth/AuthContext'
@@ -34,6 +35,7 @@ export function SafetyPage({ operator = false }: { operator?: boolean }) {
   const { user } = useAuth()
   const can = (...roles: string[]) => roles.some((role) => user?.platformRoles.some((held) => held === role))
   const [rows, setRows] = useState<Case[]>([])
+  const [params] = useSearchParams()  // the Users page links here with ?subjectType=IDENTITY&subjectId=<id>
   const [offset, setOffset] = useState(0)
   const [error, setError] = useState<unknown>(null)
   const [busy, setBusy] = useState(false)
@@ -106,7 +108,7 @@ export function SafetyPage({ operator = false }: { operator?: boolean }) {
           <div className="row" style={{ marginBottom: 12 }}>
             <div className="field" style={{ flex: 1 }}>
               <label>Subject Type</label>
-              <select className="input" name="subjectType">
+              <select className="input" name="subjectType" defaultValue={params.get('subjectType') ?? 'IDENTITY'}>
                 <option value="IDENTITY">Identity</option>
                 <option value="PROFESSIONAL">Professional</option>
                 <option value="ORGANIZATION">Organization</option>
@@ -114,7 +116,7 @@ export function SafetyPage({ operator = false }: { operator?: boolean }) {
             </div>
             <div className="field" style={{ flex: 1 }}>
               <label>Subject UUID</label>
-              <input className="input" name="subjectId" required placeholder="Subject UUID" />
+              <input className="input" name="subjectId" required placeholder="Subject UUID" defaultValue={params.get('subjectId') ?? ''} />
             </div>
             <div className="field" style={{ flex: 1 }}>
               <label>Signal Source</label>

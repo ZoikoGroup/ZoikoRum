@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -111,3 +111,17 @@ class Offering(Base, UUIDPk, Timestamps, Versioned):
     currency: Mapped[str | None] = mapped_column(String(3))
     typical_duration: Mapped[str | None] = mapped_column(String(50))
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="DRAFT")  # DRAFT | ACTIVE | PAUSED
+
+
+class SavedBuyer(Base, UUIDPk, Timestamps):
+    """A buyer organisation a professional keeps in their client list (Professional Dashboard s.17). Only organisations
+    that have already sent the professional a request can be saved: no buyer directory, no cold outreach."""
+
+    __tablename__ = "saved_buyers"
+    __table_args__ = (UniqueConstraint("professional_id", "organization_id"), {"schema": SCHEMA})
+
+    professional_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.professionals.id"),
+                                                       nullable=False, index=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    note: Mapped[str | None] = mapped_column(String(500))  # private to the professional
+    alerts: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)  # their requests always emailed, marked as from a saved buyer

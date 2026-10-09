@@ -31,6 +31,28 @@ export interface VerificationCase {
   evidence: Evidence[]
   createdAt: string
   version: number
+  appeal: Appeal | null
+  appealDeadline: string | null
+  hostedProvider?: string | null  // identity check in a partner's hosted flow: persona | veriff | simulated
+  hostedStatus?: HostedStatus | null
+  hostedReason?: string | null
+}
+
+export type HostedStatus = 'pending' | 'submitted' | 'approved' | 'declined' | 'failed' | 'needs_review' | 'completed'
+  | 'expired' | 'resubmission_requested' | 'abandoned'
+export const PARTNER_NAME: Record<string, string> = { persona: 'Persona', veriff: 'Veriff', simulated: 'Veriff (simulated)' }
+/** What the identity partner's answer means, for staff. */
+export const HOSTED_NOTE: Record<string, string> = {
+  pending: 'waiting for the person to finish', submitted: 'partner is deciding', approved: 'approved',
+  declined: 'declined, needs your decision', failed: 'failed, needs your decision', needs_review: 'could not decide, needs your decision',
+  completed: 'finished, needs your decision', expired: 'expired, needs your decision', resubmission_requested: 'asked for new photos',
+  abandoned: 'not finished',
+}
+
+export interface Appeal { id: string; caseId: string; status: 'OPEN' | 'UPHELD' | 'OVERTURNED'; statement: string; filedAt: string; decidedAt: string | null; decisionNote: string | null }
+export interface AppealQueueItem {
+  id: string; caseId: string; caseLabel: string; verificationType: string; subjectType: SubjectType; subjectId: string; subjectName: string | null
+  caseStatus: string; originalReason: string | null; statement: string; status: string; evidenceCount: number; canDecide: boolean; filedAt: string
 }
 
 export interface QueueItem {
@@ -43,6 +65,9 @@ export interface QueueItem {
   label: string
   jurisdiction: string | null
   providerResult: string | null
+  hostedProvider?: string | null
+  hostedStatus?: HostedStatus | null
+  hostedReason?: string | null
   evidenceCount: number
   estimatedCompletion: string | null
   overdue: boolean
@@ -67,8 +92,11 @@ export interface TrustHistory {
 
 const V = '/v1/verification'
 export const verificationApi = {
-  configuration: () => api<{ provider: string; hostedIdentity: boolean; configured: boolean }>(`${V}/configuration`),
-  hosted: (id: string) => api<{ url: string; status: string }>(`${V}/cases/${id}/hosted-session`, { method: 'POST' }),
+  configuration: () => api<{ provider: string; hostedIdentity: boolean; configured: boolean; partnerName: string | null }>(`${V}/configuration`),
+  hosted: (id: string) => api<{ url: string | null; status: string; provider: string }>(`${V}/cases/${id}/hosted-session`, { method: 'POST' }),
+  hostedRefresh: (id: string) => api<VerificationCase>(`${V}/cases/${id}/hosted-refresh`, { method: 'POST' }),
+  hostedSimulate: (id: string, status: 'approved' | 'declined' | 'needs_review' | 'resubmission_requested') =>
+    api<VerificationCase>(`${V}/cases/${id}/hosted-simulate`, { method: 'POST', body: { status } }),
   start: (body: { verificationType: SelfServiceType; subjectType: SubjectType; subjectId: string; jurisdiction?: string }) =>
     api<VerificationCase>(`${V}/cases`, { method: 'POST', body }),
   get: (id: string) => api<VerificationCase>(`${V}/cases/${id}`),
@@ -77,8 +105,13 @@ export const verificationApi = {
     api<VerificationCase>(`${V}/cases/${id}/evidence`, { method: 'POST', body: { evidenceType, items } }),
   queue: (cursor?: string | null) =>
     api<{ items: QueueItem[]; nextCursor: string | null }>(`${V}/review-queue`, { query: cursor ? { cursor } : undefined }),
+  verified: () => api<{ items: QueueItem[]; nextCursor: string | null }>(`${V}/review-queue`, { query: { status: 'VERIFIED', limit: '50' } }),
   decide: (id: string, body: { decision: 'VERIFIED' | 'FAILED' | 'NEEDS_INFO'; reasonCode: string; publicReason?: string; expiresAt?: string }) =>
     api<VerificationCase>(`${V}/cases/${id}/decision`, { method: 'POST', body }),
+  appeal: (id: string, statement: string) => api<VerificationCase>(`${V}/cases/${id}/appeal`, { method: 'POST', body: { statement } }),
+  appeals: () => api<AppealQueueItem[]>(`${V}/appeals`),
+  decideAppeal: (id: string, body: { outcome: 'UPHELD' | 'OVERTURNED'; note: string; expiresAt?: string }) =>
+    api<Appeal>(`${V}/appeals/${id}/decision`, { method: 'POST', body }),
   revoke: (id: string, reasonCode: string, publicReason: string) =>
     api<VerificationCase>(`${V}/cases/${id}/revoke`, { method: 'POST', body: { reasonCode, publicReason } }),
 }

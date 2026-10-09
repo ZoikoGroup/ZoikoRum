@@ -8,10 +8,14 @@ import { Avatar } from './dashboard'
 import { TierBadge } from './portal'
 import { ErrorAlert } from './ui'
 
-/** Side-by-side comparison of up to 3 professionals (Professional Profile doc: compare max 3). */
-export function CompareDialog({ ids, onClose }: { ids: string[]; onClose: () => void }) {
+/** Shareable link to the same comparison (Category doc s.7.2: "shareable comparison link (signed-in)"). */
+export const compareLink = (ids: string[]) => `${window.location.origin}/app/compare?ids=${ids.join(',')}`
+
+/** The comparison table for up to 3 professionals (Category doc s.7.2 must-have rows). */
+export function CompareTable({ ids }: { ids: string[] }) {
   const [items, setItems] = useState<CompareItem[] | null>(null)
   const [error, setError] = useState<unknown>(null)
+  const [copied, setCopied] = useState(false)
   useEffect(() => { savedApi.compare(ids).then(setItems).catch(setError) }, [ids])
 
   const rows: { label: string; render: (c: CompareItem) => React.ReactNode }[] = [
@@ -32,13 +36,12 @@ export function CompareDialog({ ids, onClose }: { ids: string[]; onClose: () => 
     { label: 'Availability', render: (c) => LABEL[c.availability] ?? c.availability },
     { label: 'Serves', render: (c) => c.servedJurisdictions.join(', ') || '—' },
     { label: 'Languages', render: (c) => c.languages.join(', ') || '—' },
+    { label: 'Governance', render: (c) => (c.tier === 'C' ? 'Discovery only: cannot take contract-required work'
+      : 'Contract-ready · Payment protection · Engagement records') },
   ]
 
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="compare-title" onClick={onClose}>
-      <div className="card modal compare-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="panel-head"><h2 id="compare-title">Compare professionals</h2>
-          <button className="icon-btn" aria-label="Close" onClick={onClose}>×</button></div>
+    <>
         <ErrorAlert error={error} />
         {!items ? <p className="muted">Loading…</p> : (
           <div className="compare-scroll">
@@ -57,9 +60,24 @@ export function CompareDialog({ ids, onClose }: { ids: string[]; onClose: () => 
         )}
         <div className="row" style={{ marginTop: 12, alignItems: 'center' }}>
           <p className="muted small" style={{ margin: 0, flex: 1 }}>Checks are made by a verification provider or a compliance reviewer — never by AI.</p>
+          {items && items.length > 0 && <button className="btn btn-secondary" onClick={() => navigator.clipboard.writeText(compareLink(ids))
+            .then(() => setCopied(true)).catch(() => prompt('Copy this link', compareLink(ids)))}>{copied ? 'Link copied' : 'Copy share link'}</button>}
           {items && items.length > 0 && <Link className="btn btn-primary" to={`/app/requests/new?${items.map((c) => `pro=${c.professionalId}`).join('&')}`}>
             Request proposal{items.length > 1 ? 's from these' : ''}</Link>}
         </div>
+        {copied && <p className="muted small" style={{ margin: '6px 0 0' }}>Anyone you send it to must sign in to see the comparison.</p>}
+    </>
+  )
+}
+
+/** Side-by-side comparison of up to 3 professionals, as a dialog over search or the shortlist. */
+export function CompareDialog({ ids, onClose }: { ids: string[]; onClose: () => void }) {
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="compare-title" onClick={onClose}>
+      <div className="card modal compare-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="panel-head"><h2 id="compare-title">Compare professionals</h2>
+          <button className="icon-btn" aria-label="Close" onClick={onClose}>×</button></div>
+        <CompareTable ids={ids} />
       </div>
     </div>
   )

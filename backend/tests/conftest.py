@@ -30,6 +30,7 @@ os.environ.setdefault("ZK_ENV", "test")
 os.environ.setdefault("ZK_RATE_LIMIT_ENABLED", "false")
 os.environ["ZK_WEBHOOK_SECRET"] = "dev-webhook-secret"  # deterministic fixture signing; ignore local .env secrets
 os.environ.setdefault("ZK_STORAGE_DIR", tempfile.mkdtemp(prefix="zk-storage-"))  # uploads never touch the repo
+os.environ["ZK_VERIFICATION_PROVIDER"] = "fake"  # a developer .env must not change tests; partner tests swap in their own settings
 
 ADMIN_URL = os.environ.get("ZK_TEST_ADMIN_URL", "postgresql+asyncpg://zoikorum:zoikorum@localhost:5434/zoikorum")
 TEST_DB = os.environ.get("ZK_TEST_DATABASE", "zoikorum_test")

@@ -40,7 +40,9 @@ export function StaffHome() {
       </div>
 
       <div className="kpi-row">
-        <Kpi icon="team" tone="green" label="Total Accounts" value={o?.accounts.total ?? '—'} note={o ? `${o.accounts.enterprise} enterprise users` : ' '} />
+        {roles.some((r) => r === 'PLATFORM_ADMIN' || r === 'TS_ANALYST')
+          ? <Link to="/app/ops/users"><Kpi icon="team" tone="green" label="Total Accounts" value={o?.accounts.total ?? '—'} note={o ? `${o.accounts.enterprise} enterprise users · view all` : ' '} /></Link>
+          : <Kpi icon="team" tone="green" label="Total Accounts" value={o?.accounts.total ?? '—'} note={o ? `${o.accounts.enterprise} enterprise users` : ' '} />}
         <Kpi icon="building" tone="blue" label="Buyers" value={o?.accounts.buyers ?? '—'} note="Accounts that hire" />
         <Kpi icon="user" tone="violet" label="Professionals" value={o?.professionalProfiles.published ?? '—'}
           note={o ? `published of ${o.professionalProfiles.total} profiles` : ' '} />

@@ -5,7 +5,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Query, Response
 from zoikorum.domains.messaging import service
-from zoikorum.domains.messaging.schemas import MessageIn, MessageOut, ReadIn, ThreadIn, ThreadOut, UploadIn, AttachmentOut, UnreadSummaryOut
+from zoikorum.domains.messaging.schemas import MessageHitOut, MessageIn, MessageOut, ReadIn, ThreadIn, ThreadOut, UploadIn, AttachmentOut, UnreadSummaryOut
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
 from zoikorum.shared.http import Page
@@ -27,6 +27,13 @@ async def list_threads(actor: CurrentActor, session: DbSession, cursor: str | No
     contextId: uuid.UUID | None = None,
     limit: int = Query(30, ge=1, le=100)):
     return await service.list_threads(session, actor, cursor, limit, context_type=contextType, context_id=contextId)
+
+
+@router.get("/v1/messaging/search", response_model=list[MessageHitOut])
+async def search(actor: CurrentActor, session: DbSession, q: str = Query(min_length=2, max_length=100),
+                 limit: int = Query(default=10, ge=1, le=25)):
+    """Global search: messages and conversations the viewer can open, newest first."""
+    return await service.search_messages(session, actor, q, limit)
 
 
 @router.get("/v1/threads/summary", response_model=UnreadSummaryOut)

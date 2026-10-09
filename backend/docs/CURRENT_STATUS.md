@@ -36,7 +36,7 @@ Migration `f1360ce42a96` joins `e0259bc31d85` (integration changes) and `41e8636
 - Persona hosted identity code lives in `domains/verification/integration.py` and `providers.py`, with `HostedVerification` frontend controls. Configure `ZK_VERIFICATION_PROVIDER=persona`, API key, template ID and webhook secret. Other checks still require human review or separate live providers.
 - S3 versioned storage and optional Object Lock code lives in `shared/storage.py`; install `backend[cloud]` and configure bucket, region, AWS identity, encryption and agreed retention settings. Full archival/legal-hold operations and deployment compliance are not established by the adapter.
 - SMTP and optional Anthropic assistance are configurable; real delivery, provider outcomes and model availability were not verified in this merge. Search remains PostgreSQL full-text; OpenSearch/vector search is not implemented.
-- Enterprise SSO/SCIM/passkeys, privacy-request fulfilment, authorised retainer auto-funding, saved buyers/followed organisations, and agreed post-settlement recovery rules remain gaps. See the [product decisions and limits](STEPS_12_18_IMPLEMENTATION.md#product-document-decisions-and-limits).
+- Enterprise SSO/SCIM/passkeys, authorised retainer auto-funding, and agreed post-settlement recovery rules remain gaps. See the [product decisions and limits](STEPS_12_18_IMPLEMENTATION.md#product-document-decisions-and-limits).
 
 Never commit `.env` or put backend credentials in frontend environment variables. Existing model defaults are not a guarantee that an external model/service is available.
 

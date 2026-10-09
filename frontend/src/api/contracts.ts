@@ -26,6 +26,8 @@ export interface ContractMilestone {
   revisionCount: number
   lastRevisionReason: string | null
   submissions: { id: string; note: string; files: StoredFile[]; submittedAt: string }[]
+  partialOffer: { amount: Money; refund: Money; reason: string; offeredAt: string } | null
+  acceptedRelease: Money | null
 }
 
 export interface ContractTerms {
@@ -119,6 +121,10 @@ export const contractApi = {
   document: (id: string, version?: number) => api<string>(
     version ? `${C}/${id}/versions/${version}/document` : `${C}/${id}/document`, { text: true },
   ),
+  /** The agreement as a PDF with its SHA-256 on every page (audited). */
+  documentPdf: (id: string, version?: number) => api<Blob>(
+    version ? `${C}/${id}/versions/${version}/document.pdf` : `${C}/${id}/document.pdf`, { blob: true },
+  ),
   sign: (id: string, termsHash: string) => api<Contract>(`${C}/${id}/sign`, { method: 'POST', body: { termsHash }, headers: idem() }),
   proposeChange: (id: string, body: { type: ChangeOrder['type']; delta: Record<string, unknown>; impact: string }) =>
     api<Contract>(`${C}/${id}/change-orders`, { method: 'POST', body, headers: idem() }),
@@ -129,6 +135,12 @@ export const contractApi = {
   submit: (milestoneId: string, note: string, files: Upload[]) =>
     api<Contract>(`/v1/milestones/${milestoneId}/submit`, { method: 'POST', body: { note, files } }),
   accept: (milestoneId: string) => api<Contract>(`/v1/milestones/${milestoneId}/accept`, { method: 'POST', headers: idem() }),
+  offerPartial: (milestoneId: string, amountMinor: number, reason: string) =>
+    api<Contract>(`/v1/milestones/${milestoneId}/partial-acceptance`, { method: 'POST', body: { amountMinor, reason } }),
+  answerPartial: (milestoneId: string, agree: boolean) =>
+    api<Contract>(`/v1/milestones/${milestoneId}/partial-acceptance/${agree ? 'agree' : 'decline'}`, { method: 'POST', headers: idem() }),
+  cancelRemainingCycles: (id: string, reason: string) =>
+    api<Contract>(`${C}/${id}/cancel-remaining-cycles`, { method: 'POST', body: { reason }, headers: idem() }),
   requestRevision: (milestoneId: string, reason: string) =>
     api<Contract>(`/v1/milestones/${milestoneId}/request-revision`, { method: 'POST', body: { reason } }),
 }

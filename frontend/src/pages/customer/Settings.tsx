@@ -5,7 +5,7 @@ import { authApi } from '../../api/auth'
 import { useAuth } from '../../auth/AuthContext'
 import { Icon } from '../../components/dashboard'
 import { PortalHeader, SidePanel, Tabs } from '../../components/portal'
-import { ErrorAlert, Field } from '../../components/ui'
+import { ErrorAlert, Field, useStepUp } from '../../components/ui'
 import { countryName } from '../ProfessionalPages'
 
 type Tab = 'account' | 'security' | 'notifications' | 'privacy' | 'payments' | 'platform' | 'linked'
@@ -162,32 +162,93 @@ function NotificationsTab({ onSaved }: { onSaved: () => void }) {
   )
 }
 
+const REQUEST_STATUS: Record<string, { label: string; tone: string }> = {
+  RECEIVED: { label: 'Preparing', tone: '' }, COMPLETED: { label: 'Done', tone: 'green' },
+  SCHEDULED: { label: 'Scheduled', tone: 'warn' }, BLOCKED: { label: 'On hold', tone: 'warn' }, CANCELLED: { label: 'Cancelled', tone: '' },
+}
+const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' }) : '—')
+
+/** Download my data and delete my account. Deleting needs a fresh two-step check and can be cancelled for 14 days. */
 function PrivacyTab({ onNotice }: { onNotice: (m: string) => void }) {
   const [requests, setRequests] = useState<DataRequest[] | null>(null)
   const [error, setError] = useState<unknown>(null)
+  const { run, modal } = useStepUp(setError)
   const load = useCallback(() => accountApi.dataRequests().then(setRequests).catch(setError), [])
   useEffect(() => { load() }, [load])
-  async function ask(type: 'ACCESS' | 'ERASURE') {
-    if (type === 'ERASURE' && !confirm('Request deletion of your personal data? Records we must keep by law (contracts, payments, audit) are retained and anonymised where possible.')) return
+  const pending = (t: string, statuses: string[]) => requests?.find((r) => r.requestType === t && statuses.includes(r.status))
+  const copy = pending('ACCESS', ['RECEIVED'])
+  const deletion = pending('ERASURE', ['SCHEDULED'])
+  const kept = requests?.find((r) => r.requestType === 'ERASURE')?.retained
+
+  function requestCopy() {
     setError(null)
-    try { await accountApi.requestData(type); await load(); onNotice(type === 'ACCESS' ? 'Data copy requested. We will email you when it is ready.' : 'Deletion requested. Our privacy team will contact you.') } catch (err) { setError(err) }
+    run(async () => {
+      await accountApi.requestData('ACCESS')
+      await load()
+      onNotice('We are preparing your data. It is usually ready in a minute; we will email you too.')
+    })
   }
-  const open = (t: string) => requests?.some((r) => r.requestType === t && !r.completedAt)
+  function requestDeletion() {
+    if (!confirm('Delete your account? It is deleted in 14 days; until then you can cancel here. Records we must keep by law '
+      + '(contracts, payments, disputes, identity checks) stay, with your name removed.')) return
+    setError(null)
+    run(async () => { await accountApi.requestData('ERASURE'); await load(); onNotice('Account deletion scheduled. We have emailed you.') })
+  }
+  function cancelDeletion(id: string) {
+    setError(null)
+    run(async () => { await accountApi.cancelDeletion(id); await load(); onNotice('Account deletion cancelled.') })
+  }
+  function download(r: DataRequest) {
+    setError(null)
+    run(async () => {
+      const blob = await accountApi.downloadData(r.id)
+      const href = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = href
+      a.download = `zoikorum-data-${r.createdAt.slice(0, 10)}.json`
+      a.click()
+      URL.revokeObjectURL(href)
+    })
+  }
+
   return (
     <section className="card panel">
+      {modal}
       <div className="panel-head"><h2>Privacy &amp; data</h2></div>
       <ErrorAlert error={error} />
       <ul className="settings-list">
-        <li><Icon name="download" /><span><strong>Get a copy of your data</strong><br /><span className="muted small">Everything we hold about you, in a portable format.</span></span>
-          <button className="btn btn-secondary btn-sm" disabled={open('ACCESS')} onClick={() => ask('ACCESS')}>{open('ACCESS') ? 'Requested' : 'Request copy'}</button></li>
-        <li><Icon name="trash" /><span><strong>Delete your data</strong><br /><span className="muted small">Legally required records are kept; the rest is erased.</span></span>
-          <button className="btn btn-danger btn-sm" disabled={open('ERASURE')} onClick={() => ask('ERASURE')}>{open('ERASURE') ? 'Requested' : 'Request deletion'}</button></li>
+        <li><Icon name="download" /><span><strong>Get a copy of your data</strong><br /><span className="muted small">Everything we hold about
+          you, as one file. You can download it for 7 days.</span></span>
+          <button className="btn btn-secondary btn-sm" disabled={!!copy} onClick={requestCopy}>{copy ? 'Preparing…' : 'Request copy'}</button></li>
+        <li><Icon name="trash" /><span><strong>Delete your account</strong><br /><span className="muted small">
+          {deletion ? `Scheduled for ${day(deletion.scheduledFor)}. You can still cancel.` : 'Takes effect after 14 days, so you can change your mind.'}</span></span>
+          {deletion
+            ? <button className="btn btn-secondary btn-sm" onClick={() => cancelDeletion(deletion.id)}>Cancel deletion</button>
+            : <button className="btn btn-danger btn-sm" onClick={requestDeletion}>Delete account</button>}</li>
       </ul>
       {requests && requests.length > 0 && (
-        <table className="data"><thead><tr><th>Request</th><th>Status</th><th>Requested</th></tr></thead>
-          <tbody>{requests.map((r) => <tr key={r.id}><td>{r.requestType === 'ACCESS' ? 'Data copy' : 'Deletion'}</td>
-            <td><span className="badge">{r.status.replace(/_/g, ' ').toLowerCase()}</span></td><td className="small">{new Date(r.createdAt).toLocaleDateString()}</td></tr>)}</tbody></table>
+        <div className="table-scroll">
+          <table className="data"><thead><tr><th>Request</th><th>Status</th><th>Requested</th><th /></tr></thead>
+            <tbody>{requests.map((r) => {
+              const st = REQUEST_STATUS[r.status] ?? { label: r.status, tone: '' }
+              return <tr key={r.id}>
+                <td>{r.requestType === 'ACCESS' ? 'Copy of your data' : 'Account deletion'}
+                  {r.status === 'BLOCKED' && <ul className="why small" style={{ margin: '6px 0 0' }}>{r.reasons.map((x) => <li key={x}>{x}</li>)}</ul>}
+                  {r.status === 'BLOCKED' && <div className="muted small">Sort these out, then ask again.</div>}</td>
+                <td><span className={`badge ${st.tone}`}>{st.label}</span></td>
+                <td className="small">{day(r.createdAt)}</td>
+                <td style={{ textAlign: 'right' }}>
+                  {r.downloadable && <button className="btn btn-ghost btn-sm" onClick={() => download(r)}>Download (until {day(r.expiresAt)})</button>}
+                  {r.requestType === 'ACCESS' && r.status === 'COMPLETED' && !r.downloadable && <span className="muted small">Expired</span>}
+                </td>
+              </tr>
+            })}</tbody></table>
+        </div>
       )}
+      {kept && Object.keys(kept).length > 0 && <details style={{ marginTop: 12 }}>
+        <summary className="small">What we keep after deleting your account, and why</summary>
+        <ul className="why small">{Object.entries(kept).map(([area, why]) => <li key={area}>{why}</li>)}</ul>
+      </details>}
       <p className="muted small" style={{ marginBottom: 0 }}>See the <Link to="/legal/privacy">privacy notice</Link> for how we use your data.</p>
     </section>
   )

@@ -4,6 +4,7 @@ import {
   AVAILABILITY, CURRENCIES, ENGAGEMENT_TYPES, LABEL, PRICING_MODELS, proApi, taxonomyApi, toMajor, toMinor,
   type Availability, type EngagementType, type Offering, type PricingModel, type Profile, type TaxonomySpecialization,
 } from '../api/professional'
+import { HoursSlider } from '../components/HoursSlider'
 import { ErrorAlert, Field } from '../components/ui'
 import { priceText, useMyProfile } from './ProfessionalPages'
 
@@ -36,6 +37,7 @@ function OfferingWizard({ profile: initialProfile, offering: initial, onDone, on
     availability: initialProfile.availability as Availability,
     max: initialProfile.maxConcurrentEngagements?.toString() ?? '',
     paused: initialProfile.temporarilyUnavailable,
+    hours: initialProfile.weeklyHours ?? null,
   })
   const [templates, setTemplates] = useState<Record<string, TaxonomySpecialization>>({})
   const [busy, setBusy] = useState(false)
@@ -76,7 +78,7 @@ function OfferingWizard({ profile: initialProfile, offering: initial, onDone, on
         }))
       } else if (step === 3) {
         setProfile(await proApi.setAvailability({ availability: avail.availability,
-          maxConcurrentEngagements: avail.max ? Number(avail.max) : null, temporarilyUnavailable: avail.paused }))
+          maxConcurrentEngagements: avail.max ? Number(avail.max) : null, temporarilyUnavailable: avail.paused, weeklyHours: avail.hours }))
       }
       setStep((s) => Math.min(s + 1, WIZARD.length - 1))
     } catch (err) {
@@ -191,6 +193,7 @@ function OfferingWizard({ profile: initialProfile, offering: initial, onDone, on
                 onChange={(e) => setAvail({ ...avail, max: e.target.value })} />
             </Field>
           </div>
+          <HoursSlider value={avail.hours} onChange={(hours) => setAvail({ ...avail, hours })} />
           <label className="checkbox" style={{ marginTop: 12 }}>
             <input type="checkbox" checked={avail.paused} onChange={(e) => setAvail({ ...avail, paused: e.target.checked })} />
             <span>I'm temporarily not taking new work</span>

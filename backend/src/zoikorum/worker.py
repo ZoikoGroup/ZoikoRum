@@ -48,5 +48,7 @@ async def run(poll_seconds: float = 0.5) -> None:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+    from zoikorum.shared import observability
+
+    observability.setup("worker")
     asyncio.run(run())

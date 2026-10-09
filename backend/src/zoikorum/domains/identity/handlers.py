@@ -10,9 +10,21 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from zoikorum.domains.identity import service
+from zoikorum.domains.identity import privacy_requests, service
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import EventEnvelope, subscribe
+from zoikorum.shared.relay import on_timer
+
+
+@subscribe(E.DATA_REQUEST_CREATED, consumer="identity.build_data_export")
+async def on_data_request(session: AsyncSession, event: EventEnvelope) -> None:
+    if event.payload.get("requestType") == "ACCESS":
+        await privacy_requests.build_export(session, _uuid(event.payload["dataRequestId"]))
+
+
+@on_timer(privacy_requests.TIMER_ERASURE)
+async def on_erasure_due(session: AsyncSession, key: str, payload: dict) -> None:
+    await privacy_requests.run_erasure(session, payload)
 
 
 def _uuid(v) -> uuid.UUID:

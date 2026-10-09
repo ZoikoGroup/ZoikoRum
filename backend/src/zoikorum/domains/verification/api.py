@@ -7,7 +7,8 @@ from fastapi import APIRouter, Query, Request, Response, status
 
 from zoikorum.domains.verification import service
 from zoikorum.domains.verification.schemas import (
-    AppealDecisionIn, AppealIn, AppealOut, AppealQueueItemOut, CaseIn, CaseOut, DecisionIn, EvidenceIn, QueueItemOut, RevokeIn,
+    AppealDecisionIn, AppealIn, AppealOut, AppealQueueItemOut, CaseIn, CaseOut, DecisionIn, EvidenceIn, HostedSimulateIn, QueueItemOut,
+    RevokeIn,
 )
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
@@ -26,6 +27,27 @@ async def provider_configuration(actor: CurrentActor):
 async def hosted_session(case_id: uuid.UUID, actor: CurrentActor, session: DbSession):
     from zoikorum.domains.verification.integration import hosted
     return await hosted(session, actor, case_id)
+
+
+@router.post("/cases/{case_id}/hosted-refresh", response_model=CaseOut)
+async def hosted_refresh(case_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    """Back from the identity partner: fetch its answer now."""
+    from zoikorum.domains.verification.integration import refresh
+    return await refresh(session, actor, case_id)
+
+
+@router.post("/cases/{case_id}/hosted-simulate", response_model=CaseOut)
+async def hosted_simulate(case_id: uuid.UUID, body: HostedSimulateIn, actor: CurrentActor, session: DbSession):
+    """Development only (ZK_VERIFICATION_PROVIDER=simulated): give the answer an identity partner would give."""
+    from zoikorum.domains.verification.integration import simulate
+    return await simulate(session, actor, case_id, body.status)
+
+
+@router.post("/webhooks/veriff")
+async def veriff_receipt(request: Request, session: DbSession):
+    """Veriff decision and event webhooks, signed with the shared secret."""
+    from zoikorum.domains.verification.integration import veriff_receipt
+    return await veriff_receipt(session, request.headers, await request.body())
 
 
 @router.post("/webhooks/persona")

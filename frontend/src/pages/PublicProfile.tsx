@@ -6,6 +6,7 @@ import { DIMENSION_VALUE, DIMENSIONS } from '../api/verification'
 import { useAuth } from '../auth/AuthContext'
 import { Avatar } from '../components/dashboard'
 import { ErrorAlert, SiteFooter, SiteHeader } from '../components/ui'
+import { equivalency } from '../lib/equivalency'
 import { countryName, priceText } from './ProfessionalPages'
 import { SaveButton, useSavedIds } from './SavedPage'
 import { PublicReviews } from '../components/PublicReviews'
@@ -63,6 +64,7 @@ export default function PublicProfilePage() {
                 <div className="badges" style={{ marginTop: 12 }}>
                   <span className={`badge ${p.trust.tier === 'C' ? 'warn' : 'green'}`}>Tier {p.trust.tier} · {TIER_LABEL[p.trust.tier]}</span>
                   <span className={`badge ${AVAILABILITY_CLASS[p.availability] ?? ''}`}>{LABEL[p.availability]}</span>
+                  {!!p.weeklyHours && <span className="badge">{p.weeklyHours} h / week</span>}
                   {keyCredentials.map((c) => <span key={c.name} className="badge green">✓ {c.name}</span>)}
                 </div>
                 {p.trust.updatedAt && <p className="muted small" style={{ margin: '8px 0 0' }}>Last verified {new Date(p.trust.updatedAt).toLocaleDateString()}</p>}
@@ -92,6 +94,7 @@ export default function PublicProfilePage() {
                 <section className="card panel"><h2>Specializations</h2>
                   <div className="badges">
                     {p.specializations.map((s) => <span key={s.slug} className={`badge ${s.primary ? 'green' : ''}`}>{s.name}{s.primary && ' · Primary'}</span>)}
+                    {(p.pendingSpecializations ?? []).map((n) => <span key={n} className="badge" title="Suggested by the professional; not yet reviewed">{n} · Custom (under review)</span>)}
                   </div>
                 </section>
                 {p.offerings.length > 0 && (
@@ -151,10 +154,15 @@ export default function PublicProfilePage() {
                 <section className="card panel"><h2>Credentials</h2>
                   {p.credentials.length === 0 ? <p className="muted small" style={{ margin: 0 }}>None listed.</p> : (
                     <ul className="checklist">
-                      {p.credentials.map((c, i) => (
-                        <li key={i}><span><strong>{c.name}</strong><br /><span className="muted small">{c.issuingBody}{c.jurisdiction && ` · ${c.jurisdiction}`}</span></span>
-                          <span className={`badge ${c.status === 'VERIFIED' ? 'green' : ''}`}>{c.displayLabel}</span></li>
-                      ))}
+                      {p.credentials.map((c, i) => {
+                        const eq = equivalency(c, buyerCountry, countryName)
+                        return (
+                          <li key={i}><span><strong>{c.name}</strong><br /><span className="muted small">{c.issuingBody}{c.jurisdiction && ` · ${c.jurisdiction}`}</span>
+                            {eq.explanation && <><br /><span className="muted small" title={eq.explanation}>ⓘ {eq.explanation}</span></>}</span>
+                            <span className="row" style={{ gap: 6 }}>{eq.recognisedHere && <span className="badge green">Recognised in your region</span>}
+                              <span className={`badge ${c.status === 'VERIFIED' ? 'green' : ''}`}>{c.displayLabel}</span></span></li>
+                        )
+                      })}
                     </ul>
                   )}
                 </section>

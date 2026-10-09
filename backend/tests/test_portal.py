@@ -41,6 +41,9 @@ async def test_privacy_requests_are_logged_once(client, make_user):
     first = (await client.post("/v1/me/data-requests", headers=u.h, json={"requestType": "ACCESS"})).json()
     again = (await client.post("/v1/me/data-requests", headers=u.h, json={"requestType": "ACCESS"})).json()
     assert first["status"] == "RECEIVED" and again["id"] == first["id"]  # one open request per type
+    refused = await client.post("/v1/me/data-requests", headers=u.h, json={"requestType": "ERASURE"})
+    assert refused.json()["code"] == "STEP_UP_REQUIRED"  # deleting an account needs a fresh two-step check
+    await u.step_up()
     await client.post("/v1/me/data-requests", headers=u.h, json={"requestType": "ERASURE"})
     assert {r["requestType"] for r in (await client.get("/v1/me/data-requests", headers=u.h)).json()} == {"ACCESS", "ERASURE"}
 

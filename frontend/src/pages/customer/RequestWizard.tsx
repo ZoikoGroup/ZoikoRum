@@ -9,7 +9,10 @@ import {
 import { DOC_ACCEPT, toUpload, type Upload } from '../../api/files'
 import { Avatar, Icon } from '../../components/dashboard'
 import { PortalHeader, TierBadge } from '../../components/portal'
+import { DraftSaved, ResumeDraft } from '../../components/ResumeDraft'
 import { ErrorAlert, Field } from '../../components/ui'
+import { useAuth } from '../../auth/AuthContext'
+import { clearDraft, readDraft, useAutosave } from '../../lib/autosave'
 
 /* Request Proposal flow (RFP wireframe s.3–10): context → scope → commercial → governance → review & send.
    One requirement can go to up to 3 chosen professionals; each answers with their own proposal. */
@@ -47,8 +50,15 @@ export default function RequestWizard() {
   })
   const [templates, setTemplates] = useState<string[]>([])
   const [custom, setCustom] = useState('')
-  const set = <K extends keyof Form>(k: K, v: Form[K]) => setF((x) => ({ ...x, [k]: v }))
+  const set = <K extends keyof Form>(k: K, v: Form[K]) => { setTouched(true); setF((x) => ({ ...x, [k]: v })) }
   const fromId = params.get('from')
+  // Autosave (RFP s.5 "auto-save on input"): per user and per set of professionals; attachments are not kept in drafts.
+  const { user } = useAuth()
+  const draftKey = user && ids.length ? `${user.id}.request.${[...ids].sort().join('+')}` : null
+  const [touched, setTouched] = useState(false)
+  const [pending, setPending] = useState(() => readDraft<Form>(draftKey))
+  const draftable = useMemo(() => ({ ...f, attachments: [] }), [f])
+  const savedAt = useAutosave(draftKey, draftable, touched && !sent)
 
   useEffect(() => {
     let live = true
@@ -125,6 +135,7 @@ export default function RequestWizard() {
         ndaRequired: f.ndaRequired, attachments: f.attachments, deliverables: f.deliverables, dependencies: f.dependencies,
         pricingPreferences: f.pricingPreferences, paymentCadence: f.paymentCadence || null, acknowledged: f.acknowledged, draft,
       })
+      clearDraft(draftKey)
       if (draft) navigate(`/app/requests/${result[0].id}`)
       else setSent(result)
     } catch (err) {
@@ -172,7 +183,11 @@ export default function RequestWizard() {
         {outOfArea.map((p) => p.displayName).join(', ')} {outOfArea.length > 1 ? 'do' : 'does'} not list your country ({org?.country}) among the places they serve.
         You can still ask, but an engagement cannot be agreed unless they serve your country. <Link to={`/app/find?jurisdiction=${org?.country ?? ''}`}>Show professionals who serve {org?.country}</Link>
       </div>}
+      {pending && !touched && <ResumeDraft savedAt={pending.savedAt} note="Attachments are not kept in drafts; add them again."
+        onResume={() => { setF((x) => ({ ...x, ...pending.value, attachments: x.attachments })); setPending(null); setTouched(true) }}
+        onDiscard={() => { clearDraft(draftKey); setPending(null) }} />}
       <ErrorAlert error={error} />
+      <div style={{ textAlign: 'right', minHeight: 18 }}><DraftSaved at={savedAt} /></div>
 
       <div className="home-grid wide">
         <section className="card panel wizard-body">
@@ -237,6 +252,12 @@ export default function RequestWizard() {
               <Field label="Currency" id="w-cur"><select id="w-cur" className="input" value={f.currency} onChange={(e) => set('currency', e.target.value)}>{CURRENCIES.map((c) => <option key={c}>{c}</option>)}</select></Field>
               <Field label="Minimum (optional)" id="w-min"><input id="w-min" className="input" inputMode="decimal" value={f.budgetMin} onChange={(e) => set('budgetMin', e.target.value.replace(/[^0-9.]/g, ''))} /></Field>
               <Field label="Maximum" id="w-max"><input id="w-max" className="input" inputMode="decimal" value={f.budgetMax} onChange={(e) => set('budgetMax', e.target.value.replace(/[^0-9.]/g, ''))} /></Field>
+            </div>}
+            {f.budgetOn && <div className="field">
+              <label htmlFor="w-range">Budget range (slide to adjust the maximum)</label>
+              <input id="w-range" type="range" min={0} max={200000} step={500} value={Math.min(Number(f.budgetMax) || 0, 200000)}
+                onChange={(e) => set('budgetMax', e.target.value)} aria-valuetext={`Up to ${f.currency} ${f.budgetMax || 0}`} />
+              <span className="hint">{f.budgetMin ? `${f.currency} ${f.budgetMin} – ` : 'Up to '}{f.currency} {f.budgetMax || 0}. Type above for exact amounts.</span>
             </div>}
             <p className="muted small">This does not lock pricing. Each professional proposes their own price and milestones.</p>
             <label className="checkbox"><input type="checkbox" checked={f.ndaRequired} onChange={(e) => set('ndaRequired', e.target.checked)} />

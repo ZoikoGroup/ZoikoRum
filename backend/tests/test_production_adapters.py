@@ -5,6 +5,7 @@ from urllib.parse import parse_qs
 import httpx
 import pytest
 
+from prodsettings import PRODUCTION
 from zoikorum.config import Settings
 from zoikorum.domains.payments import providers
 from zoikorum.domains.payments.stripe_provider import StripeProvider
@@ -17,7 +18,7 @@ def stripe_settings(**kwargs):
 
 
 def test_production_never_selects_fake_payment_or_local_storage(monkeypatch):
-    settings = Settings(_env_file=None, env="production", payment_provider="fake", storage_provider="local")
+    settings = Settings(_env_file=None, **PRODUCTION, payment_provider="fake", storage_provider="local")
     monkeypatch.setattr(providers, "get_settings", lambda: settings)
     monkeypatch.setattr(storage, "get_settings", lambda: settings)
     with pytest.raises(ServiceUnavailable): providers.get_provider()

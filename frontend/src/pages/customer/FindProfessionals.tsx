@@ -1,9 +1,11 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { formatMoney } from '../../api/orgs'
+import { formatMoney, orgApi } from '../../api/orgs'
 import { LABEL, taxonomyApi, type TaxonomyCategory } from '../../api/professional'
 import { searchApi, type SearchResponse, type SearchResult } from '../../api/search'
 import { CompareDialog, CompareTray } from '../../components/CompareDialog'
+import { EducationCards } from '../../components/Explainers'
+import { QuickView } from '../../components/QuickView'
 import { Avatar, Icon } from '../../components/dashboard'
 import { PortalHeader, TierBadge, VerifyChips } from '../../components/portal'
 import { ErrorAlert } from '../../components/ui'
@@ -22,6 +24,28 @@ const VERIFIED: [string, string][] = [
   ['identity', 'Identity verified'], ['credentials', 'Credentials verified'], ['jurisdiction', 'Eligibility current'], ['insurance', 'Professional indemnity'],
 ]
 const PRICING: [string, string][] = [['HOURLY', 'Hourly rate'], ['FIXED', 'Fixed fee'], ['RETAINER', 'Retainer'], ['CUSTOM', 'Request quote']]
+const GOOD: Record<string, string> = { identity: 'VERIFIED', credentials: 'VALIDATED', jurisdiction: 'ELIGIBLE', insurance: 'VERIFIED' }
+const VIEW_KEY = 'zk.findView'
+const readView = (): 'list' | 'grid' => { try { return localStorage.getItem(VIEW_KEY) === 'grid' ? 'grid' : 'list' } catch { return 'list' } }
+
+/** Filters (other than the search text and expertise) a result does not meet: labels for "partial matches". */
+function unmet(r: SearchResult, params: URLSearchParams): string[] {
+  const list = (k: string) => (params.get(k) ?? '').split(',').filter(Boolean)
+  const out: string[] = []
+  if (list('tier').length && !list('tier').includes(r.tier)) out.push(`Tier ${r.tier}`)
+  const j = params.get('jurisdiction')
+  if (j && r.servedJurisdictions.length && !r.servedJurisdictions.includes(j) && !r.licensedJurisdictions.includes(j)) out.push(`Does not serve ${countryName(j)}`)
+  for (const [k, values] of [['delivery', r.deliveryModes], ['engagementType', r.engagementTypes], ['pricingModel', r.pricingModels]] as const) {
+    const want = params.get(k)
+    if (want && !values.includes(want)) out.push(`No ${(LABEL[want] ?? want).toLowerCase()}`)
+  }
+  const a = params.get('availability')
+  if (a && r.availability !== a) out.push(LABEL[r.availability] ?? 'Different availability')
+  for (const d of list('verified')) if (r.dimensions[d] !== GOOD[d]) out.push(`${d} not verified`)
+  const x = params.get('experience')
+  if (x && r.yearsExperienceBand !== x) out.push(`${r.yearsExperienceBand ?? 'Unknown'} years`)
+  return out
+}
 
 /** Find Professionals (management design 2): filter bar, filter panel, verified results, save and compare. */
 export default function FindProfessionals() {
@@ -37,12 +61,20 @@ export default function FindProfessionals() {
   const [notice, setNotice] = useState<string | null>(null)
   const saved = useSavedIds()
   const key = params.toString()
+  const [view, setViewState] = useState<'list' | 'grid'>(readView)
+  const [quick, setQuick] = useState<string | null>(null)
+  const hover = useRef<number | undefined>(undefined)
+  const [buyerCountry, setBuyerCountry] = useState<string | null>(null)
+  const [partial, setPartial] = useState<SearchResult[] | null>(null)
+  const setView = (v: 'list' | 'grid') => { setViewState(v); try { localStorage.setItem(VIEW_KEY, v) } catch { /* per-viewer convenience only */ } }
+
+  useEffect(() => { if (saved.canSave) orgApi.mine().then((o) => setBuyerCountry(o[0]?.country?.toUpperCase() ?? null)).catch(() => {}) }, [saved.canSave])
 
   useEffect(() => { taxonomyApi.all().then(setTaxonomy).catch(() => {}) }, [])
   useEffect(() => {
     let cancelled = false
     searchApi.professionals({ ...Object.fromEntries(new URLSearchParams(key)), limit: String(PAGE), offset: '0' })
-      .then((r) => { if (!cancelled) { setData(r); setItems(r.items); setOffset(0); setError(null) } })
+      .then((r) => { if (!cancelled) { setData(r); setItems(r.items); setOffset(0); setError(null); setPartial(null) } })
       .catch((err) => { if (!cancelled) setError(err) })
     return () => { cancelled = true }
   }, [key])
@@ -68,6 +100,17 @@ export default function FindProfessionals() {
     setOffset(next)
   }
   function submit(e: FormEvent) { e.preventDefault(); set('q', q.trim() || null) }
+  /** Few results (Category doc s.5.5): the same search and expertise with the other filters relaxed, clearly labelled. */
+  async function showPartial() {
+    const keep = Object.fromEntries(['q', 'spec', 'sort'].flatMap((k) => (params.get(k) ? [[k, params.get(k)!]] : [])))
+    const r = await searchApi.professionals({ ...keep, limit: String(PAGE) })
+    const shown = new Set(items.map((i) => i.professionalId))
+    setPartial(r.items.filter((i) => !shown.has(i.professionalId)))
+  }
+  const hoverOpen = (id: string) => { window.clearTimeout(hover.current); hover.current = window.setTimeout(() => setQuick(id), 700) }
+  const hoverCancel = () => window.clearTimeout(hover.current)
+  const limited = (r: SearchResult) => !!buyerCountry && r.servedJurisdictions.length > 0
+    && !r.servedJurisdictions.includes(buyerCountry) && !r.licensedJurisdictions.includes(buyerCountry)
 
   const groups = taxonomy.flatMap((c) => c.groups)
   // Active filter summary bar (Category doc s.4.5): every filter visible and removable on its own.
@@ -79,6 +122,7 @@ export default function FindProfessionals() {
     credential: (v) => `Credential: ${v}`,
   }
   const active: [string, string][] = [...params.entries()].filter(([k]) => k in NAMES).map(([k, v]) => [k, NAMES[k](v)])
+  const relaxable = active.some(([k]) => !['q', 'spec'].includes(k))
   const names = Object.fromEntries(items.map((r) => [r.professionalId, { name: r.displayName, photoUrl: r.photoUrl }]))
   const select = (name: string, label: string, options: [string, string][], any = 'Any') => (
     <label className="filter-box">
@@ -88,6 +132,54 @@ export default function FindProfessionals() {
         {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
       </select>
     </label>
+  )
+
+  const card = (r: SearchResult, misses?: string[]) => (
+    <article key={r.professionalId} className={view === 'grid' ? 'pro-card' : 'pro-row'} onMouseLeave={hoverCancel}>
+      <input type="checkbox" aria-label={`Select ${r.displayName} to compare`} checked={selected.includes(r.professionalId)}
+        disabled={!selected.includes(r.professionalId) && selected.length >= MAX_COMPARE} onChange={() => toggleSelect(r.professionalId)} />
+      <span onMouseEnter={() => hoverOpen(r.professionalId)}><Avatar name={r.displayName} photoUrl={r.photoUrl} size={view === 'grid' ? 48 : 64} /></span>
+      <div className="pro-main" onMouseEnter={() => hoverOpen(r.professionalId)}>
+        <div className="name-line"><Link to={`/professionals/${r.professionalId}`}><strong>{r.displayName}</strong></Link> <TierBadge tier={r.tier} />
+          {saved.canSave && saved.ids && <button className="icon-btn" aria-label={saved.ids.has(r.professionalId) ? 'Saved' : 'Save'} title={saved.ids.has(r.professionalId) ? 'Saved' : 'Save'}
+            onClick={() => saved.toggle(r.professionalId).catch(setError)}><Icon name="bookmark" />{saved.ids.has(r.professionalId) ? '✓' : ''}</button>}</div>
+        {r.headline && <div className="small">{r.headline}</div>}
+        <div className="muted small"><Icon name="globe" /> {[r.city, countryName(r.country)].filter(Boolean).join(', ')}
+          {r.deliveryModes.length > 0 && ` · ${r.deliveryModes.map((d) => LABEL[d] ?? d).join(', ')}`}
+          {view === 'list' && r.languages.length > 0 && ` · ${r.languages.join(', ')}`}</div>
+        {limited(r) && <div className="small" style={{ marginTop: 4 }}><span className="badge warn">Jurisdiction-limited</span>{' '}
+          <span className="muted">Does not take work in {countryName(buyerCountry!)}.</span>{' '}
+          <button className="link-btn small" style={{ display: 'inline', padding: 0 }} onClick={() => set('jurisdiction', buyerCountry)}>Show eligible professionals</button></div>}
+        {misses && misses.length > 0 && <div className="small" style={{ marginTop: 4 }}><span className="badge">Partial match</span> <span className="muted">Not met: {misses.join(' · ')}</span></div>}
+      </div>
+      <VerifyChips dimensions={r.dimensions} compact />
+      <div className="pro-expertise">
+        <div className="muted small">Key expertise</div>
+        <div className="chips">{r.specializations.slice(0, 3).map((s) => <span key={s.slug} className="chip">{s.name}</span>)}
+          {r.specializations.length > 3 && <span className="chip muted">+{r.specializations.length - 3} more</span>}</div>
+      </div>
+      <div className="pro-facts small">
+        {r.yearsExperienceBand && <div><Icon name="clock" /> {r.yearsExperienceBand} years experience</div>}
+        <div><Icon name="check" /> {LABEL[r.availability] ?? r.availability}</div>
+        {r.engagementTypes.length > 0 && <div><Icon name="briefcase" /> {r.engagementTypes.map((t) => LABEL[t] ?? t).join(', ')}</div>}
+        <div className="muted"><Icon name="shield" /> Contract-ready · Payment protection · Engagement records</div>
+      </div>
+      <div className="pro-cta">
+        <div className="price">{r.startingPrice ? <>From <strong>{formatMoney(r.startingPrice)}</strong></> : r.pricingModels.includes('CUSTOM') ? 'Quote on request' : ''}</div>
+        <div className="row">
+          <Link className="btn btn-primary btn-sm" to={`/professionals/${r.professionalId}`}>View profile</Link>
+          <Link className="btn btn-secondary btn-sm" to={`/app/requests/new?pro=${r.professionalId}`}>Request proposal</Link>
+          <button className="btn btn-ghost btn-sm" onClick={() => setQuick(quick === r.professionalId ? null : r.professionalId)} aria-expanded={quick === r.professionalId}>Quick view</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => toggleSelect(r.professionalId)}
+            disabled={!selected.includes(r.professionalId) && selected.length >= MAX_COMPARE}><Icon name="compare" /> {selected.includes(r.professionalId) ? 'Selected' : 'Compare'}</button>
+        </div>
+      </div>
+      {view === 'list' && r.whyThisResult.length > 0 && <ul className="why-inline">{r.whyThisResult.map((w) => <li key={w}>{w}</li>)}</ul>}
+      {view === 'grid' && r.whyThisResult.length > 0 && <details className="why-inline small"><summary>Why this result?</summary>{r.whyThisResult.join(' · ')}</details>}
+      {quick === r.professionalId && <QuickView id={r.professionalId} buyerCountry={buyerCountry}
+        saved={saved.canSave && saved.ids ? saved.ids.has(r.professionalId) : null}
+        onSave={() => saved.toggle(r.professionalId).catch(setError)} onClose={() => setQuick(null)} />}
+    </article>
   )
 
   return (
@@ -149,6 +241,11 @@ export default function FindProfessionals() {
           {notice && <div className="alert alert-success" role="status">{notice}</div>}
           <div className="results-head">
             <h2 style={{ margin: 0 }}>{data ? `${data.total} professional${data.total === 1 ? '' : 's'} found` : 'Searching…'}</h2>
+            <div className="view-toggle" role="group" aria-label="View">
+              <button className={`btn btn-sm ${view === 'grid' ? 'btn-primary' : 'btn-ghost'}`} aria-pressed={view === 'grid'} onClick={() => setView('grid')}>Grid</button>
+              <button className={`btn btn-sm ${view === 'list' ? 'btn-primary' : 'btn-ghost'}`} aria-pressed={view === 'list'} onClick={() => setView('list')}>List</button>
+            </div>
+            <span className="small muted">Compare: ({selected.length}/{MAX_COMPARE})</span>
             <label className="small">Sort by{' '}
               <select className="input" value={params.get('sort') ?? 'best'} onChange={(e) => set('sort', e.target.value === 'best' ? null : e.target.value)}>
                 {SORTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
@@ -157,45 +254,23 @@ export default function FindProfessionals() {
           </div>
           <ErrorAlert error={error} />
           {data && data.total === 0 && <div className="empty-row" style={{ padding: 24 }}>
-            <strong>No professionals match these filters.</strong> Relax a filter (above), or start again.
+            <strong>No professionals match these filters.</strong> {active.length > 0 ? `Filters in use: ${active.map(([, l]) => l).join(', ')}. Remove one to widen the search.` : 'Try a different search term.'}
             <div className="row" style={{ justifyContent: 'center', marginTop: 10 }}>
-              <button className="btn btn-secondary btn-sm" onClick={() => { setQ(''); setParams({}) }}>Reset filters</button></div></div>}
-          {items.map((r) => (
-            <article key={r.professionalId} className="pro-row">
-              <input type="checkbox" aria-label={`Select ${r.displayName} to compare`} checked={selected.includes(r.professionalId)}
-                disabled={!selected.includes(r.professionalId) && selected.length >= MAX_COMPARE} onChange={() => toggleSelect(r.professionalId)} />
-              <Avatar name={r.displayName} photoUrl={r.photoUrl} size={64} />
-              <div className="pro-main">
-                <div className="name-line"><Link to={`/professionals/${r.professionalId}`}><strong>{r.displayName}</strong></Link> <TierBadge tier={r.tier} /></div>
-                {r.headline && <div className="small">{r.headline}</div>}
-                <div className="muted small"><Icon name="globe" /> {[r.city, countryName(r.country)].filter(Boolean).join(', ')}
-                  {r.languages.length > 0 && ` · ${r.languages.join(', ')}`}</div>
-              </div>
-              <VerifyChips dimensions={r.dimensions} compact />
-              <div className="pro-expertise">
-                <div className="muted small">Key expertise</div>
-                <div className="chips">{r.specializations.slice(0, 4).map((s) => <span key={s.slug} className="chip">{s.name}</span>)}</div>
-              </div>
-              <div className="pro-facts small">
-                {r.yearsExperienceBand && <div><Icon name="clock" /> {r.yearsExperienceBand} years experience</div>}
-                <div><Icon name="check" /> {LABEL[r.availability] ?? r.availability}</div>
-              </div>
-              <div className="pro-cta">
-                <div className="price">{r.startingPrice ? <>From <strong>{formatMoney(r.startingPrice)}</strong></> : r.pricingModels.includes('CUSTOM') ? 'Quote on request' : ''}</div>
-                <div className="row">
-                  <Link className="btn btn-primary btn-sm" to={`/professionals/${r.professionalId}`}>View profile</Link>
-                  <Link className="btn btn-secondary btn-sm" to={`/app/requests/new?pro=${r.professionalId}`}>Request proposal</Link>
-                  {saved.canSave && saved.ids && (
-                    <button className="btn btn-secondary btn-sm" onClick={() => saved.toggle(r.professionalId).catch(setError)}>
-                      <Icon name="bookmark" /> {saved.ids.has(r.professionalId) ? 'Saved' : 'Save'}</button>
-                  )}
-                  <button className="btn btn-secondary btn-sm" onClick={() => toggleSelect(r.professionalId)}
-                    disabled={!selected.includes(r.professionalId) && selected.length >= MAX_COMPARE}><Icon name="compare" /> Compare</button>
-                </div>
-              </div>
-              {r.whyThisResult.length > 0 && <ul className="why-inline">{r.whyThisResult.map((w) => <li key={w}>{w}</li>)}</ul>}
-            </article>
-          ))}
+              <button className="btn btn-secondary btn-sm" onClick={() => { setQ(''); setParams({}) }}>Reset filters</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => { setQ(''); setParams({}) }}>Browse all</button></div></div>}
+          <div className={view === 'grid' ? 'pro-grid' : 'pro-list'}>{items.map((r) => card(r))}</div>
+          {data && data.total > 0 && data.total < 3 && relaxable && !partial && <div className="tip" style={{ marginTop: 12 }}>
+            <Icon name="help" /><span>Only {data.total} professional{data.total === 1 ? '' : 's'} meet every filter.{' '}
+              <button className="link-btn small" style={{ display: 'inline', padding: 0 }} onClick={() => showPartial().catch(setError)}>Show partial matches</button></span></div>}
+          {data && data.total === 0 && relaxable && !partial && <div className="row" style={{ justifyContent: 'center' }}>
+            <button className="btn btn-ghost btn-sm" onClick={() => showPartial().catch(setError)}>Show partial matches</button></div>}
+          {partial && <>
+            <h3 style={{ marginTop: 20 }}>Partial matches</h3>
+            <p className="muted small">These match your search but not every filter. What they do not meet is listed on each.</p>
+            {partial.length === 0 ? <p className="muted small">No partial matches either. Try Reset filters.</p>
+              : <div className={view === 'grid' ? 'pro-grid' : 'pro-list'}>{partial.map((r) => card(r, unmet(r, params)))}</div>}
+          </>}
+          {(params.size > 0 || items.length >= 20) && <EducationCards />}
           {data && items.length < data.total && <button className="btn btn-secondary" onClick={() => more().catch(setError)}>Show more</button>}
         </section>
       </div>

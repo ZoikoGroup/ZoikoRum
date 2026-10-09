@@ -14,10 +14,11 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 
 from zoikorum.config import get_settings
 from zoikorum.domains import DOMAINS
-from zoikorum.shared import http
+from zoikorum.shared import http, observability
 from zoikorum.shared import platform_models  # noqa: F401 - registers platform tables
 from zoikorum.shared.db import dispose_engine
 
@@ -45,6 +46,7 @@ def load_domains() -> list[str]:
             continue
         _maybe_import(f"{base}.models")
         _maybe_import(f"{base}.handlers")
+        _maybe_import(f"{base}.privacy")  # personal-data export/erasure (shared/privacy.py)
         loaded.append(d)
     return loaded
 
@@ -61,6 +63,9 @@ async def lifespan(_: FastAPI):
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    observability.setup("api")
+    if settings.env not in ("local", "development", "test") and settings.rate_limit_enabled and not settings.redis_url:
+        log.warning("ZK_REDIS_URL is not set: rate limits are counted per API process, not across servers")
     app = FastAPI(
         title="Zoikorum API",
         version="1.0.0",
@@ -88,7 +93,18 @@ def create_app() -> FastAPI:
 
     @app.get("/health", tags=["platform"])
     async def health() -> dict:
+        """Liveness: the process is up."""
         return {"status": "ok", "service": settings.service_name}
+
+    @app.get("/ready", tags=["platform"])
+    async def ready() -> JSONResponse:
+        """Readiness: the database answers and is migrated. 503 tells the load balancer to send traffic elsewhere."""
+        from zoikorum.shared.schema_guard import readiness
+
+        problem = await readiness()
+        if problem:
+            return JSONResponse({"status": "not_ready", "reason": problem}, status_code=503)
+        return JSONResponse({"status": "ready", "service": settings.service_name})
 
     return app
 

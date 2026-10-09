@@ -16,6 +16,7 @@ const yesterday = () => new Date(Date.now() - 86_400_000).toISOString().slice(0,
 export default function ReconciliationPage() {
   const [rows, setRows] = useState<Reconciliation[] | null>(null)
   const [day, setDay] = useState(yesterday)
+  const [today] = useState(() => new Date().toISOString().slice(0, 10))  // read the clock once, not on every render
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const [open, setOpen] = useState<string | null>(null)
@@ -42,7 +43,7 @@ export default function ReconciliationPage() {
       {bad > 0 && <div className="alert alert-error" role="alert"><strong>{bad} day(s) do not reconcile.</strong> Investigate before the next payout run.</div>}
       <section className="card panel">
         <div className="row" style={{ alignItems: 'flex-end', gap: 12 }}>
-          <label className="filter-box"><span>Day (UTC)</span><input type="date" value={day} max={new Date().toISOString().slice(0, 10)} onChange={(e) => setDay(e.target.value)} /></label>
+          <label className="filter-box"><span>Day (UTC)</span><input type="date" value={day} max={today} onChange={(e) => setDay(e.target.value)} /></label>
           <button className="btn btn-primary" disabled={busy || !day} onClick={run}>{busy ? 'Checking…' : 'Run reconciliation'}</button>
         </div>
       </section>

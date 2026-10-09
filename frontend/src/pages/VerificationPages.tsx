@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { Link } from 'react-router-dom'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
-  CASE_STATUS, DIMENSION_VALUE, DIMENSIONS, evidenceFileUrl, trustApi, verificationApi,
-  type EvidenceType, type QueueItem, type SelfServiceType, type SubjectType, type Trust, type VerificationCase,
+  CASE_STATUS, DIMENSION_VALUE, DIMENSIONS, evidenceFileUrl, HOSTED_NOTE, PARTNER_NAME, trustApi, verificationApi,
+  type AppealQueueItem, type EvidenceType, type QueueItem, type SelfServiceType, type SubjectType, type Trust, type VerificationCase,
 } from '../api/verification'
 import { toUpload } from '../api/files'
 import { FileLink } from '../components/FileLink'
@@ -24,9 +24,9 @@ const EVIDENCE_FOR: Record<string, { type: EvidenceType; label: string }> = {
 }
 
 const START_INFO: Record<SelfServiceType, { title: string; desc: string }> = {
-  IDENTITY: { title: 'Verify your identity', desc: 'Needed for Tier B. Reviewed within about 24 hours.' },
-  JURISDICTION: { title: 'Verify a licensed jurisdiction', desc: 'Needed for Tier A: proves where you may practise.' },
-  INSURANCE: { title: 'Verify professional indemnity insurance', desc: 'Needed for Tier A when your work is regulated.' },
+  IDENTITY: { title: 'Verify your identity (start here)', desc: 'Required for everyone: passport, national ID (e.g. Aadhaar) or driving licence. Gives Tier B. Reviewed within about 24 hours.' },
+  JURISDICTION: { title: 'Verify a professional licence for a country', desc: 'Only if you hold a licence to practise (e.g. CA, CPA, bar admission). Upload the licence, not your ID. Not needed for most technology or advisory work.' },
+  INSURANCE: { title: 'Verify professional indemnity insurance', desc: 'Only for regulated work (legal, audit, tax filing). Upload the policy schedule.' },
   FIRM_REGISTRATION: { title: 'Verify the firm registration', desc: 'Confirms the firm is a registered legal entity.' },
 }
 
@@ -101,9 +101,17 @@ function EvidenceUpload({ c, onDone }: { c: VerificationCase; onDone: (c: Verifi
   )
 }
 
-function CaseCard({ c, onChange }: { c: VerificationCase; onChange: (c: VerificationCase) => void }) {
+function CaseCard({ c, onChange, hostedOn }: { c: VerificationCase; onChange: (c: VerificationCase) => void; hostedOn: boolean }) {
+  // Identity checks run in the partner's hosted flow when one is switched on; uploading stays available.
+  const hosted = hostedOn && c.verificationType === 'IDENTITY' && c.isMine && c.evidence.length === 0 && OPEN.includes(c.status)
+  const [uploadInstead, setUploadInstead] = useState(false)
+  const needsUpload = c.isMine && OPEN.includes(c.status) && c.evidence.length === 0 && c.verificationType !== 'RESTRICTIONS'
+    && !(hosted && c.status === 'IN_REVIEW')
   return (
-    <article className="case">
+    <article className={`case ${needsUpload && c.verificationType === 'IDENTITY' ? 'case-highlight' : ''}`}>
+      {needsUpload && <div className="small" style={{ marginBottom: 6 }}><span className="badge warn">Action needed</span>{' '}
+        {hosted ? <>Verify your identity online, below</>
+          : <>Upload: <strong>{(EVIDENCE_FOR[c.verificationType] ?? { label: 'a supporting document' }).label}</strong></>}</div>}
       <div className="offering-top">
         <div>
           <h3>{c.label}</h3>
@@ -121,9 +129,123 @@ function CaseCard({ c, onChange }: { c: VerificationCase; onChange: (c: Verifica
       {c.evidence.length > 0 && (
         <ul className="deliverables">{c.evidence.map((e) => <li key={e.id}><FileLink file={{ name: e.fileName, hasFile: e.hasFile }} url={evidenceFileUrl(e.id)} /> <span className="muted small">· {fmtDate(e.uploadedAt)}</span></li>)}</ul>
       )}
-      {c.isMine && OPEN.includes(c.status) && c.verificationType === 'IDENTITY' && <HostedVerification caseId={c.id} />}
-      {c.isMine && OPEN.includes(c.status) && c.verificationType !== 'RESTRICTIONS' && <EvidenceUpload c={c} onDone={onChange} />}
+      {hosted && <HostedVerification c={c} onChange={onChange} />}
+      {hosted && !uploadInstead && <button type="button" className="text-btn small"
+        onClick={() => setUploadInstead(true)}>Can't use a camera? Upload your document for a person to review instead</button>}
+      {c.isMine && OPEN.includes(c.status) && c.verificationType !== 'RESTRICTIONS' && (!hosted || uploadInstead) && <EvidenceUpload c={c} onDone={onChange} />}
+      {c.appeal && <div className={`alert ${c.appeal.status === 'OVERTURNED' ? 'alert-success' : 'alert-info'}`} style={{ marginTop: 10 }}>
+        <strong>Appeal {c.appeal.status === 'OPEN' ? 'under review' : c.appeal.status === 'OVERTURNED' ? 'successful' : 'not upheld'}</strong>
+        {c.appeal.status === 'OPEN' ? ' — an independent reviewer will decide. You can add new documents below.' : c.appeal.decisionNote ? `: ${c.appeal.decisionNote}` : ''}
+      </div>}
+      {c.isMine && c.appeal?.status === 'OPEN' && c.verificationType !== 'RESTRICTIONS' && <EvidenceUpload c={c} onDone={onChange} />}
+      {c.isMine && c.appealDeadline && !c.appeal && <AppealForm c={c} onDone={onChange} />}
     </article>
+  )
+}
+
+/** Appeal a failed or revoked check (Governance s.11): once, before the deadline, decided by an independent reviewer. */
+function AppealForm({ c, onDone }: { c: VerificationCase; onDone: (c: VerificationCase) => void }) {
+  const [open, setOpen] = useState(false)
+  const [statement, setStatement] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<unknown>(null)
+  if (!open) return <p className="small" style={{ marginTop: 8 }}>Think this decision is wrong?{' '}
+    <button className="link-btn small" style={{ display: 'inline', padding: 0 }} onClick={() => setOpen(true)}>Appeal it</button>{' '}
+    <span className="muted">(by {fmtDate(c.appealDeadline)})</span></p>
+  return (
+    <form className="evidence-form" onSubmit={async (e) => {
+      e.preventDefault(); setBusy(true); setError(null)
+      try { onDone(await verificationApi.appeal(c.id, statement.trim())) } catch (err) { setError(err) } finally { setBusy(false) }
+    }}>
+      <ErrorAlert error={error} />
+      <Field label="Why is the decision wrong?" id={`ap-${c.id}`} hint="Be specific. After sending you can add new documents. A different reviewer decides, once.">
+        <textarea id={`ap-${c.id}`} className="input" rows={3} maxLength={2000} value={statement} onChange={(e) => setStatement(e.target.value)} />
+      </Field>
+      <div className="row"><button className="btn btn-primary btn-sm" disabled={busy || statement.trim().length < 20}>{busy ? 'Sending…' : 'Send appeal'}</button>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => setOpen(false)}>Cancel</button></div>
+    </form>
+  )
+}
+
+/** Compliance officers: open appeals. The officer who made the original decision cannot decide its appeal. */
+function AppealsPanel({ onDecided }: { onDecided: (msg: string) => void }) {
+  const [items, setItems] = useState<AppealQueueItem[]>([])
+  const [selected, setSelected] = useState<{ appeal: AppealQueueItem; c: VerificationCase } | null>(null)
+  const [note, setNote] = useState('')
+  const [error, setError] = useState<unknown>(null)
+  const { run, modal } = useStepUp(setError)
+  const load = useCallback(() => verificationApi.appeals().then(setItems).catch(setError), [])
+  useEffect(() => { load() }, [load])
+  const decide = (outcome: 'UPHELD' | 'OVERTURNED') => selected && run(async () => {
+    await verificationApi.decideAppeal(selected.appeal.id, { outcome, note: note.trim() })
+    onDecided(`Appeal ${outcome === 'OVERTURNED' ? 'granted: the check is now verified' : 'not upheld'} for ${selected.appeal.caseLabel}.`)
+    setSelected(null); setNote(''); await load()
+  })
+  return (
+    <section className="card panel">
+      <div className="panel-head"><h2>Appeals</h2><span className="muted small">{items.length} open</span></div>
+      <ErrorAlert error={error} />
+      {modal}
+      {selected && <div className="evidence-form">
+        <strong>{selected.appeal.caseLabel}</strong> · {selected.appeal.subjectName}
+        <p className="small"><span className="muted">Original reason:</span> {selected.appeal.originalReason ?? '—'}</p>
+        <p className="small"><span className="muted">Appeal:</span> {selected.appeal.statement}</p>
+        <ul className="deliverables">{selected.c.evidence.map((e) => <li key={e.id}><FileLink file={{ name: e.fileName, hasFile: e.hasFile }} url={evidenceFileUrl(e.id)} /> <span className="muted small">· {fmtDate(e.uploadedAt)}</span></li>)}</ul>
+        <Field label="Decision note (shown to the professional)" id="appeal-note">
+          <textarea id="appeal-note" className="input" rows={2} maxLength={1000} value={note} onChange={(e) => setNote(e.target.value)} /></Field>
+        <div className="row">
+          <button className="btn btn-primary btn-sm" disabled={note.trim().length < 10} onClick={() => decide('OVERTURNED')}>Overturn: verify</button>
+          <button className="btn btn-secondary btn-sm" disabled={note.trim().length < 10} onClick={() => decide('UPHELD')}>Uphold the decision</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => setSelected(null)}>Close</button></div>
+      </div>}
+      {items.length === 0 ? <p className="muted small" style={{ margin: 0 }}>No open appeals.</p> : (
+        <table className="data"><thead><tr><th>Check</th><th>Subject</th><th>Filed</th><th>Evidence</th><th /></tr></thead>
+          <tbody>{items.map((a) => <tr key={a.id}><td><strong>{a.caseLabel}</strong><div className="muted small clamp">{a.statement}</div></td>
+            <td>{a.subjectName ?? '—'}</td><td className="small">{fmtDate(a.filedAt)}</td><td>{a.evidenceCount}</td>
+            <td style={{ textAlign: 'right' }}>{a.canDecide
+              ? <button className="btn btn-secondary btn-sm" onClick={() => verificationApi.get(a.caseId).then((c) => setSelected({ appeal: a, c })).catch(setError)}>Review</button>
+              : <span className="muted small" title="You made the original decision">Another reviewer decides</span>}</td></tr>)}</tbody></table>
+      )}
+    </section>
+  )
+}
+
+/** Compliance officers: recently verified checks, so a mistaken or outdated verification can be revoked (with a reason
+    the professional sees; the trust tier updates). */
+function VerifiedPanel({ onRevoked }: { onRevoked: (msg: string) => void }) {
+  const [items, setItems] = useState<QueueItem[]>([])
+  const [open, setOpen] = useState(false)
+  const [target, setTarget] = useState<QueueItem | null>(null)
+  const [reason, setReason] = useState('')
+  const [error, setError] = useState<unknown>(null)
+  const { run, modal } = useStepUp(setError)
+  const load = useCallback(() => verificationApi.verified().then((p) => setItems(p.items)).catch(setError), [])
+  useEffect(() => { if (open) load() }, [open, load])
+  return (
+    <section className="card panel">
+      <div className="panel-head"><h2>Verified checks</h2>
+        <button className="btn btn-ghost btn-sm" onClick={() => setOpen(!open)}>{open ? 'Hide' : 'Show, to correct a mistake'}</button></div>
+      <ErrorAlert error={error} />
+      {modal}
+      {open && (items.length === 0 ? <p className="muted small" style={{ margin: 0 }}>No verified checks.</p> : <>
+        {target && <div className="evidence-form">
+          <strong>Revoke “{target.label}” for {target.subjectName}?</strong>
+          <p className="muted small">The check becomes “Revoked”, the professional sees your reason (and can appeal), and their trust tier updates.</p>
+          <input className="input" placeholder="Reason shown to the professional, e.g. Verified by mistake: this is an ID, not a licence" maxLength={500}
+            value={reason} onChange={(e) => setReason(e.target.value)} />
+          <div className="row" style={{ marginTop: 8 }}>
+            <button className="btn btn-primary btn-sm" disabled={reason.trim().length < 5} onClick={() => run(async () => {
+              await verificationApi.revoke(target.id, 'REVOKED_BY_REVIEWER', reason.trim())
+              onRevoked(`Revoked: ${target.label} for ${target.subjectName}.`); setTarget(null); setReason(''); await load()
+            })}>Revoke</button>
+            <button className="btn btn-ghost btn-sm" onClick={() => setTarget(null)}>Cancel</button></div>
+        </div>}
+        <table className="data"><thead><tr><th>Check</th><th>Subject</th><th>Verified</th><th /></tr></thead>
+          <tbody>{items.map((q) => <tr key={q.id}><td><strong>{q.label}</strong></td><td>{q.subjectName ?? '—'}</td>
+            <td><CaseStatusBadge status={q.status} /></td>
+            <td style={{ textAlign: 'right' }}><button className="btn btn-ghost btn-sm" onClick={() => { setTarget(q); setReason('') }}>Revoke…</button></td></tr>)}</tbody></table>
+      </>)}
+    </section>
   )
 }
 
@@ -138,7 +260,20 @@ function ChecksPanel({ subjectType, subjectId, allowed, onChanged }: {
   const [jurisdiction, setJurisdiction] = useState('US')
   const [error, setError] = useState<unknown>(null)
   const load = useCallback(() => verificationApi.forSubject(subjectType, subjectId).then(setCases).catch(setError), [subjectType, subjectId])
-  useEffect(() => { load() }, [load])
+  const [params, setParams] = useSearchParams()
+  const returnedFrom = params.get('verification')  // the identity partner sends the person back here with ?verification=<case id>
+  const [hostedOn, setHostedOn] = useState(false)
+  useEffect(() => { verificationApi.configuration().then((cfg) => setHostedOn(cfg.hostedIdentity && cfg.configured)).catch(() => {}) }, [])
+  const changed = useRef(onChanged)
+  useEffect(() => { changed.current = onChanged })
+  useEffect(() => {
+    if (!returnedFrom) {
+      load()
+      return
+    }
+    setParams({}, { replace: true })
+    verificationApi.hostedRefresh(returnedFrom).catch(setError).finally(() => { load(); changed.current?.() })
+  }, [load, returnedFrom, setParams])
 
   async function start(type: SelfServiceType) {
     setError(null)
@@ -175,14 +310,15 @@ function ChecksPanel({ subjectType, subjectId, allowed, onChanged }: {
           ))}
         </ul>
         <p className="muted small" style={{ margin: '12px 0 0' }}>
-          Secure document storage is not connected yet: for each file we record only its name, size and SHA-256 fingerprint.
+          Documents are stored securely: only you and the compliance reviewer can open them, and every opening is recorded.
           Credential checks start automatically when you add a credential to your profile.
         </p>
       </section>
       <section className="card panel">
         <h2>Your checks</h2>
         {cases.length === 0 ? <p className="muted" style={{ margin: 0 }}>No checks yet.</p>
-          : cases.map((c) => <CaseCard key={c.id} c={c} onChange={() => { load(); onChanged?.() }} />)}
+          : [...cases].sort((a, b) => Number(b.verificationType === 'IDENTITY') - Number(a.verificationType === 'IDENTITY'))
+            .map((c) => <CaseCard key={c.id} c={c} hostedOn={hostedOn} onChange={() => { load(); onChanged?.() }} />)}
       </section>
     </>
   )
@@ -307,7 +443,13 @@ export function ReviewQueuePage() {
             <CaseStatusBadge status={selected.status} />
           </div>
           <h3>Evidence</h3>
-          {selected.evidence.length === 0 ? <p className="muted small">No documents submitted. Registry and screening checks may not need any.</p> : (
+          {selected.hostedStatus && selected.evidence.length === 0 ? (
+            <div className="alert alert-info" style={{ marginBottom: 16 }}>
+              Checked by {PARTNER_NAME[selected.hostedProvider ?? ''] ?? 'the identity partner'}: {HOSTED_NOTE[selected.hostedStatus] ?? selected.hostedStatus}
+              {selected.hostedReason && ` (${selected.hostedReason})`}.
+              The ID photos and selfie are kept by the partner: open this case in the partner's dashboard (Veriff Station or the Persona dashboard) to review them.
+            </div>
+          ) : selected.evidence.length === 0 ? <p className="muted small">No documents submitted. Registry and screening checks may not need any.</p> : (
             <table className="data" style={{ marginBottom: 16 }}>
               <thead><tr><th>File</th><th>Type</th><th>SHA-256</th><th>Received</th></tr></thead>
               <tbody>{selected.evidence.map((e) => (
@@ -320,6 +462,8 @@ export function ReviewQueuePage() {
           <button className="btn btn-ghost btn-sm" onClick={() => setSelected(null)}>Close</button>
         </section>
       )}
+      <AppealsPanel onDecided={setNotice} />
+      <VerifiedPanel onRevoked={async (msg) => { setNotice(msg); await load() }} />
       <section className="card panel">
         {items.length === 0 ? <p className="muted" style={{ margin: 0 }}>Nothing waiting. All checks are decided.</p> : (
           <table className="data">
@@ -327,7 +471,9 @@ export function ReviewQueuePage() {
             <tbody>{items.map((q) => (
               <tr key={q.id}>
                 <td><strong>{q.label}</strong>{q.providerResult === 'REVIEW' && q.verificationType === 'RESTRICTIONS' &&
-                  <div className="muted small">Possible screening match</div>}</td>
+                  <div className="muted small">Possible screening match</div>}
+                  {q.hostedProvider && <div className="muted small">{PARTNER_NAME[q.hostedProvider] ?? q.hostedProvider}: {HOSTED_NOTE[q.hostedStatus ?? ''] ?? q.hostedStatus}
+                    {q.hostedReason && ` — ${q.hostedReason}`}</div>}</td>
                 <td>{q.subjectName ?? '—'} <span className="muted small">({q.subjectType === 'FIRM' ? 'Firm' : 'Professional'})</span></td>
                 <td><CaseStatusBadge status={q.status} /></td>
                 <td>{q.evidenceCount}</td>
