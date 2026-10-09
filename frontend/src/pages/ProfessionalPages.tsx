@@ -15,6 +15,7 @@ import { useAuth } from '../auth/AuthContext'
 import { ActionList, Avatar, greeting, Icon, Kpi, type Action } from '../components/dashboard'
 import { ErrorAlert, Field } from '../components/ui'
 import { AccountAlerts } from './Dashboards'
+import { formatCurrencies } from '../lib/money'
 import { COUNTRIES } from './Join'
 
 // eslint-disable-next-line react-refresh/only-export-components
@@ -169,9 +170,8 @@ export function ProfessionalDashboard() {
     startingPrice: o.startingPrice, typicalDuration: o.typicalDuration ?? undefined,
   }))
 
-  const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime()
-  const monthPaid = (earnings?.payouts ?? []).filter((p) => p.status === 'SETTLED' && p.settledAt && new Date(p.settledAt).getTime() >= monthStart)
-    .reduce((s, p) => s + p.net.amountMinor, 0)
+  const monthPaid = earnings ? formatCurrencies(earnings.monthlySettledByCurrency) : '—'
+  const earningsTotal = (key: 'pending' | 'settled') => earnings ? formatCurrencies(Object.values(earnings.totalsByCurrency).map(t => t[key])) : '—'
   const soon = Date.now() + 30 * 86400_000
   const soon14 = Date.now() + 14 * 86400_000
   const expiring = cases.filter((c) => c.status === 'VERIFIED' && c.expiresAt && new Date(c.expiresAt).getTime() < soon)
@@ -246,7 +246,7 @@ export function ProfessionalDashboard() {
               .flatMap((k) => k.milestones).filter((m) => ['IN_PROGRESS', 'REVISION_REQUESTED'].includes(m.status)
                 && (!m.dueDate || new Date(`${m.dueDate}T00:00:00`).getTime() <= soon14)).length}
               note="Open, due in the next 14 days" /></Link>
-            <Link to="/app/professional/earnings"><Kpi icon="check" tone="green" label="Earnings This Month" value={earnings ? formatMoney({ amountMinor: monthPaid, currency: earnings.totals.settled.currency }) : '—'} note="Paid out, after fees" /></Link>
+            <Link to="/app/professional/earnings"><Kpi icon="check" tone="green" label="Earnings This Month (UTC)" value={monthPaid} note="Paid out, after fees" /></Link>
             <a href="#verification"><Kpi icon="shield" tone={trust?.tier === 'C' ? 'amber' : 'green'} label="Verification Status"
               value={trust ? `Tier ${trust.tier}` : '—'} note={trust?.tierLabel ?? 'Loading…'} /></a>
           </div>
@@ -326,9 +326,9 @@ export function ProfessionalDashboard() {
               <section className="card panel" id="earnings">
                 <div className="panel-head"><h2>Earnings &amp; Payouts</h2></div>
                 <ul className="checklist">
-                  <li><span>Paid out this month</span><strong>{earnings ? formatMoney({ amountMinor: monthPaid, currency: earnings.totals.settled.currency }) : '—'}</strong></li>
-                  <li><span>Waiting for payout</span><strong>{earnings ? formatMoney(earnings.totals.pending) : '—'}</strong></li>
-                  <li><span>Lifetime paid out</span><strong>{earnings ? formatMoney(earnings.totals.settled) : '—'}</strong></li>
+                  <li><span>Paid out this month (UTC)</span><strong>{monthPaid}</strong></li>
+                  <li><span>Waiting for payout</span><strong>{earningsTotal('pending')}</strong></li>
+                  <li><span>Lifetime paid out</span><strong>{earningsTotal('settled')}</strong></li>
                 </ul>
                 <p className="muted small" style={{ margin: '8px 0 0' }}>{earnings && !earnings.payoutAccount
                   ? <>Add a <Link to="/app/professional/earnings">payout account</Link> so released money can be paid to you.</>

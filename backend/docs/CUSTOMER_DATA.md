@@ -5,8 +5,7 @@ business and enterprise organizations, and their team members. Sources are the p
 [`docs/product/`](../../docs/product/README.md); the live column list is in [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md).
 
 Short answer: the core customer data the documents require is stored today (account, organization, team roles
-and spend limits, business units, cost centers, consents, audit). Engagement and payment data arrive with the
-proposal, contract, escrow and payments steps. A few identity/buyer items are still missing (listed in §3).
+and spend limits, business units, cost centers, consents, audit). Engagement, payment, policy and safety records are also stored by their owning domains. Remaining identity/buyer gaps are listed in §3; see [current implementation status](CURRENT_STATUS.md) for validation limits.
 
 ## 1. Stored today
 
@@ -22,41 +21,42 @@ proposal, contract, escrow and payments steps. A few identity/buyer items are st
 | Shortlist | Saved professionals | `marketplace.saved_professionals` |
 | Audit | Every action: actor, action, object, time, policy version, evidence hash; hash-chained and append-only | `audit.audit_records`, `audit.export_jobs` |
 
-## 2. Arrives with later steps (documents specify it; tables not built yet)
+## 2. Commercial data now stored
 
-| Data | Document | Step |
+| Data | Document | Owning domain |
 |---|---|---|
 | Proposal requests: service, engagement type, objective, details, start date, duration, budget, delivery mode, NDA, up to 3 attachments | Request Proposal & Engagement Flow §6 | Proposals |
 | Proposal decisions (accept, decline with reason, revision requests) | same §9 | Proposals |
 | Contracts, parties, signatures (terms hash, receipts), milestones, change orders | same §10, §14 | Contracts |
 | Escrow funding, holds, releases with approver, refunds, ledger | Payments & Escrow §7, §13, §21 | Escrow |
 | Payment method (provider **token only**), invoices (sequential number, gross/fee/net, tax) | Payments & Escrow; Architecture (Payments) | Payments |
-| Approvals, policy profiles, exceptions, retention settings | Enterprise Policy Profiles | Policy |
+| Approvals, policy profiles, exceptions and policy retention configuration (not a completed retention executor) | Enterprise Policy Profiles | Policy |
 | Disputes and evidence | Dispute Resolution | Disputes |
 
-## 3. Missing in already-built domains (proposed)
+Encrypted phone storage (`identity.identities.phone_enc`), billing contacts (`buyer.billing_contacts`), privacy-request intake (`identity.data_requests`) and duplicate-account suspicion records (`identity.duplicate_suspicions`) also exist. Intake/status fields alone do not establish completed privacy handling.
+
+## 3. Remaining work (proposed)
 
 | Proposed | Why | Document |
 |---|---|---|
-| `identity.identities.phone_e164` (encrypted) | Phone number value object | Architecture (Identity) |
+
 | `identity.consent_records.withdrawn_at` (+ optional IP / user agent) | Consents can be withdrawn; evidence of consent | Architecture (Identity); Ethics §10 |
-| `identity.data_subject_requests` (ACCESS / ERASURE / EXPORT, status, dates) | GDPR / CCPA access rights and their log | Regulator Assurance §9; Ethics §10 |
+| Privacy-request fulfilment and export/erasure execution | `identity.data_requests` already records ACCESS/ERASURE intake; completed handling and legal retention enforcement remain gaps | Regulator Assurance §9; Ethics §10 |
 | `identity.mfa_devices` / passkeys; `identity.identity_providers` (SSO, SCIM) | Passkey-first, enterprise SSO and provisioning | Architecture §11.2 (planned for a later wave) |
 | `buyer.organizations.organization_tier` | OrganizationTier value object | Architecture (Buyer) |
 | `buyer.member_delegations` (delegator, delegate, roles, limit, starts/ends, revoked) | Time-bound delegation of authority, logged | Homepage §4.2 |
 | `buyer.business_units.status`, `merged_into_id` | Handling merged business units | Enterprise Policy §18 |
 | `buyer.cost_center_spend` (projection: period, committed, released) | Enforce "cannot exceed quarterly allocation" | Architecture §13.2 |
-| `marketplace.saved_searches` (query, alerts) | Saved searches with alerts | Buyer Dashboard §13 |
+| Saved-search alert delivery | `marketplace.saved_searches` already stores queries and supports new-result counts; scheduled alert delivery remains unverified | Buyer Dashboard §13 |
 
 **Product decision, not required by the documents:** buyer legal name, registration number, tax/VAT ID and
-billing address. The documents only imply them (contract "parties", invoices and tax). They are likely needed
-for invoices; decide before the payments step.
+billing address. The documents only imply them (contract "parties", invoices and tax). Billing contact storage exists, but required legal identifiers and jurisdiction-specific tax/invoice rules still need product confirmation.
 
 ## 4. Rules for sensitive data (from the documents)
 
 - **Card data is never stored**: payment methods are provider tokens only. Payment data lives in an isolated store
   with its own keys; operators cannot write to it.
-- **Personal data**: field-level encryption for sensitive attributes (today: the MFA secret; next: phone, tax IDs),
+- **Personal data**: field-level encryption for sensitive attributes (including the MFA secret and stored phone; tax identifiers require an agreed schema),
   encryption in transit and at rest, data minimisation and purpose limitation.
 - **Retention**: configured per evidence type, jurisdiction and enterprise policy; audit logs are immutable.
 - **Access**: role- and attribute-based (organization, contract party, authority level, sensitivity). Exports are

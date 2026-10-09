@@ -40,7 +40,7 @@ def mint_access_token(
         "typ": "access",
         "sid": str(session_id),
         "email": identity.email,
-        "roles": sorted(identity.platform_roles or []),
+        "roles": sorted(identity.platform_roles or []) if identity.status == "ACTIVE" else [],
         "personas": sorted(identity.personas or []),
         "orgs": orgs,
         "firms": firms,

@@ -44,7 +44,25 @@ async def refunds(organizationId: uuid.UUID, actor: CurrentActor, session: DbSes
 async def provider_webhook(provider: str, request: Request, session: DbSession,
                            webhook_signature: str | None = Header(default=None)):
     """Called by the payment provider, not by users. Signed (HMAC-SHA256, timestamped) and stored once per event id."""
-    return await webhooks.handle(session, provider, webhook_signature, await request.body())
+    return await webhooks.handle(session, provider, webhook_signature or request.headers.get("stripe-signature"), await request.body())
+
+
+@router.get("/v1/payments/configuration")
+async def configuration(actor: CurrentActor):
+    from zoikorum.domains.payments.integration import configuration
+    return configuration()
+
+
+@router.get("/v1/payments/fundings/{funding_id}/checkout")
+async def checkout(funding_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    from zoikorum.domains.payments.integration import checkout
+    return await checkout(session, actor, funding_id)
+
+
+@router.post("/v1/payout-accounts/me/onboarding")
+async def onboarding(actor: CurrentActor, session: DbSession):
+    from zoikorum.domains.payments.integration import onboarding
+    return await onboarding(session, actor)
 
 
 @router.get("/v1/payments/reconciliations", response_model=list[ReconciliationOut])

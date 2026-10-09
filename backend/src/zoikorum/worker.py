@@ -30,6 +30,8 @@ async def _bootstrap_timers() -> None:
 
 async def run(poll_seconds: float = 0.5) -> None:
     load_domains()
+    from zoikorum.shared.schema_guard import ensure_schema_current
+    await ensure_schema_current()
     await _bootstrap_timers()
     sf = session_factory()
     log.info("worker started")

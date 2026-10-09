@@ -56,13 +56,19 @@ async def on_firm_member_removed(session: AsyncSession, event: EventEnvelope) ->
 async def on_enforcement(session: AsyncSession, event: EventEnvelope) -> None:
     p = event.payload
     if p.get("subjectType") == "IDENTITY" and p.get("action") in ("SUSPEND_ACCOUNT", "OFFBOARD"):
+        from zoikorum.domains.admin import facade as admin
+        if p.get("action") not in await admin.active_restrictions(session, "IDENTITY", _uuid(p["subjectId"])):
+            return
         await service.set_status(session, _uuid(p["subjectId"]), "SUSPENDED", p.get("reasonCode", "ENFORCEMENT"))
 
 
 @subscribe(E.ENFORCEMENT_ACTION_REVERSED, consumer="identity.reverse_enforcement")
 async def on_enforcement_reversed(session: AsyncSession, event: EventEnvelope) -> None:
     p = event.payload
-    if p.get("subjectType") == "IDENTITY" and p.get("action") == "SUSPEND_ACCOUNT":
+    if p.get("subjectType") == "IDENTITY" and p.get("action") in ("SUSPEND_ACCOUNT", "OFFBOARD"):
+        from zoikorum.domains.admin import facade as admin
+        if set(await admin.active_restrictions(session, "IDENTITY", _uuid(p["subjectId"]))).intersection({"SUSPEND_ACCOUNT", "OFFBOARD"}):
+            return
         await service.set_status(session, _uuid(p["subjectId"]), "ACTIVE", "ENFORCEMENT_REVERSED")
 
 

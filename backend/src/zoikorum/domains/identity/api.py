@@ -44,7 +44,7 @@ def _ua(request: Request) -> str | None:
 
 
 def _expose_dev_tokens() -> bool:
-    # No email provider yet: outside production, return one-time tokens so dev/test can complete flows.
+    # Development-only tokens support local flows; production delivers them through the email adapter.
     return get_settings().env != "production"
 
 

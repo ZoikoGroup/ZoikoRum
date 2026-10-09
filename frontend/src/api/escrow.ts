@@ -35,7 +35,9 @@ export interface Payout { id: string; contractId: string; milestoneId: string | 
 export interface Earnings {
   payoutAccount: { holderName: string; country: string; currency: string; label: string; status: string; createdAt: string } | null
   payouts: Payout[]
-  totals: { settled: Money; pending: Money; failed: Money; fees: Money }
+  totals: Partial<{ settled: Money; pending: Money; failed: Money; fees: Money }>
+  totalsByCurrency: Record<string, { settled: Money; pending: Money; failed: Money; fees: Money }>
+  monthlySettledByCurrency: Money[]
 }
 export interface Invoice { id: string; number: string; contractId: string; milestoneId: string | null; lines: { description: string; amountMinor: number }[]; tax: Money; total: Money; issuedAt: string }
 export interface Charge { id: string; contractId: string; amount: Money; status: 'CREATED' | 'CAPTURED' | 'FAILED' | 'CHARGED_BACK'; methodLabel: string; failureMessage: string | null; createdAt: string
@@ -53,6 +55,9 @@ export const escrowApi = {
 }
 
 export const paymentsApi = {
+  configuration: () => api<{ provider: string; configured: boolean; testMode: boolean; hostedCheckout: boolean; hostedOnboarding: boolean }>('/v1/payments/configuration'),
+  checkout: (fundingId: string) => api<{ status: string; url: string | null }>(`/v1/payments/fundings/${fundingId}/checkout`),
+  onboarding: () => api<{ url: string; status: string }>('/v1/payout-accounts/me/onboarding', { method: 'POST', headers: idem() }),
   earnings: () => api<Earnings>('/v1/payments/earnings/me'),
   setPayoutAccount: (body: { holderName: string; country: string; currency: string; accountNumber: string }) =>
     api<Earnings['payoutAccount']>('/v1/payout-accounts/me', { method: 'PUT', body }),

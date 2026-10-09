@@ -210,6 +210,9 @@ async def _current_actor(request: Request) -> Actor:
     if not token:
         raise Unauthenticated()
     actor = decode_access_token(token)
+    validator = getattr(request.app.state, "actor_validator", None)
+    if validator:
+        actor = await validator(actor, request.url.path, request.method)
     context.bind_actor(str(actor.identity_id), "operator" if actor.is_operator else "user", None, actor.auth_strength)
     request.state.actor = actor
     return actor

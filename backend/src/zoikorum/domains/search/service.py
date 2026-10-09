@@ -6,6 +6,7 @@ paid-placement input.
 """
 
 from __future__ import annotations
+from zoikorum.domains.admin import facade as admin_facade
 
 import uuid
 from datetime import datetime
@@ -15,13 +16,15 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.domains.marketplace import facade as marketplace_facade
+from zoikorum.domains.buyer import facade as buyer_facade
+from zoikorum.domains.policy import facade as policy_facade
 from zoikorum.domains.professional import facade as professional_facade
 from zoikorum.domains.search.models import ProfessionalDocument as Doc
 from zoikorum.domains.search.schemas import FacetValue, ResultItem, SearchOut, SearchParams, SpecRef
 from zoikorum.domains.trust import facade as trust_facade
 from zoikorum.domains.verification import facade as verification_facade
 from zoikorum.shared.auth import Actor, PlatformRole
-from zoikorum.shared.errors import ValidationFailed
+from zoikorum.shared.errors import Forbidden, ValidationFailed
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_event
 from zoikorum.shared.money import MoneyDTO
@@ -31,8 +34,8 @@ CANDIDATE_CAP = 500  # ranked in the application; ample for the current catalogu
 TIER_LABEL = {"A": "Fully Verified Professional", "B": "Verified Identity", "C": "Unverified (Discovery Only)"}
 TIER_RANK = {"A": 3, "B": 2, "C": 1}
 # Dimension values that count as "verified" for the `verified=` filter and policy eligibility.
-GOOD = {"identity": ("VERIFIED",), "credentials": ("VALIDATED",), "jurisdiction": ("ELIGIBLE",),
-        "insurance": ("VERIFIED",), "restrictions": ("CLEAR",)}
+GOOD = {"identity": ("VERIFIED",), "credentials": ("VALIDATED", "NOT_APPLICABLE"), "jurisdiction": ("ELIGIBLE",),
+        "insurance": ("VERIFIED", "NOT_REQUIRED"), "restrictions": ("CLEAR",)}
 AVAILABILITY_POINTS = {"NOW": 10, "TWO_WEEKS": 7, "ONE_MONTH": 4, "NOT_SPECIFIED": 2, "AT_CAPACITY": 0}
 AVAILABILITY_TEXT = {"NOW": "Available now", "TWO_WEEKS": "Can start within 2 weeks", "ONE_MONTH": "Can start within a month"}
 EXPERIENCE_RANK = {"16+": 5, "11-15": 4, "6-10": 3, "3-5": 2, "0-2": 1}
@@ -74,7 +77,8 @@ async def rebuild(session: AsyncSession, professional_id: uuid.UUID, occurred_at
     text_c = " ".join(filter(None, [pro.bio, *(o.title for o in offerings), *(d for o in offerings for d in o.deliverables),
                                     *verified_credentials]))
     values = dict(
-        professional_id=pro.id, visible=pro.status == "PUBLISHED", visibility_reduced=pro.visibility_reduced,
+        professional_id=pro.id, visible=pro.status == "PUBLISHED" and not set(await admin_facade.active_restrictions(session, "IDENTITY", pro.identity_id)).intersection({"SUSPEND_ACCOUNT", "OFFBOARD"}),
+        visibility_reduced=pro.visibility_reduced or "VISIBILITY_REDUCTION" in await admin_facade.active_restrictions(session, "PROFESSIONAL", pro.id),
         display_name=pro.display_name, headline=pro.headline, country=pro.country, city=pro.city,
         years_experience_band=pro.years_experience_band, languages=list(pro.languages),
         categories=sorted({i.category_slug for i in specs.values()}), primary_specialization=pro.primary_specialization,
@@ -250,6 +254,22 @@ async def search(session: AsyncSession, actor: Actor | None, p: SearchParams) ->
     p = p.model_copy(update={"q": q})
     tsquery = func.websearch_to_tsquery(EN, q) if q else None
     conds = _conditions(p, tsquery)
+    org_id = p.organizationId
+    if org_id:
+        if actor is None or not await buyer_facade.get_member_roles(session, org_id, actor.identity_id):
+            raise Forbidden("This organization search requires active membership")
+    elif actor:
+        organizations = await buyer_facade.list_identity_organizations(session, actor.identity_id)
+        if len(organizations) == 1:
+            org_id = organizations[0]
+    if org_id:
+        eligibility = await policy_facade.search_eligibility(session, org_id)
+        conds.append(Doc.tier.in_([t for t in TIER_RANK if TIER_RANK[t] >= TIER_RANK[eligibility['minTier']]]))
+        dimension_values = {**GOOD, "credentials": ("VALIDATED", "NOT_APPLICABLE"), "insurance": ("VERIFIED", "NOT_REQUIRED")}
+        for dim in eligibility['requiredDimensions']:
+            conds.append(Doc.dimensions[dim].astext.in_(dimension_values[dim]))
+        if eligibility.get('jurisdictions'):
+            conds.append(Doc.served_jurisdictions.overlap(eligibility['jurisdictions']))
     total = await session.scalar(select(func.count()).select_from(Doc).where(*conds)) or 0
 
     # The candidate cap keeps the strongest matches: most relevant first, then most trusted.

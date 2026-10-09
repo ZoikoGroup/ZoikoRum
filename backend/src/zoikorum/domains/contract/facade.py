@@ -23,6 +23,7 @@ class MilestoneSummary:
     status: str  # PENDING_FUNDING|IN_PROGRESS|SUBMITTED|REVISION_REQUESTED|ACCEPTANCE_PENDING_APPROVAL|ACCEPTED|DISPUTED|CANCELLED
     due_date: date | None
     accepted_at: datetime | None
+    accepted_release_minor: int | None = None
 
 
 @dataclass(frozen=True)
@@ -44,7 +45,7 @@ class ContractSummary:
 
 
 def _milestone(m: Milestone) -> MilestoneSummary:
-    return MilestoneSummary(m.id, m.contract_id, m.sequence, m.title, m.amount_minor, m.currency, m.status, m.due_date, m.accepted_at)
+    return MilestoneSummary(m.id, m.contract_id, m.sequence, m.title, m.amount_minor, m.currency, m.status, m.due_date, m.accepted_at, m.accepted_release_minor)
 
 
 async def _summary(session: AsyncSession, c: Contract | None) -> ContractSummary | None:
@@ -52,12 +53,16 @@ async def _summary(session: AsyncSession, c: Contract | None) -> ContractSummary
         return None
     ms = (await session.scalars(select(Milestone).where(Milestone.contract_id == c.id).order_by(Milestone.sequence))).all()
     return ContractSummary(c.id, c.proposal_id, c.request_id, c.organization_id, c.buyer_identity_id, c.professional_id, c.status,
-                           c.currency, c.total_minor, c.terms_hash, c.contract_version, None, tuple(_milestone(m) for m in ms),
+                           c.currency, c.total_minor, c.terms_hash, c.contract_version, c.policy_version_id, tuple(_milestone(m) for m in ms),
                            c.reference)
 
 
 async def get_contract(session: AsyncSession, contract_id: uuid.UUID) -> ContractSummary | None:
     return await _summary(session, await session.get(Contract, contract_id))
+
+
+async def get_contract_by_request(session: AsyncSession, request_id: uuid.UUID) -> ContractSummary | None:
+    return await _summary(session, await session.scalar(select(Contract).where(Contract.request_id == request_id)))
 
 
 async def get_contract_by_proposal(session: AsyncSession, proposal_id: uuid.UUID) -> ContractSummary | None:
@@ -69,13 +74,38 @@ async def get_milestone(session: AsyncSession, milestone_id: uuid.UUID) -> Miles
     return _milestone(m) if m else None
 
 
+async def milestone_acceptor(session: AsyncSession, milestone_id: uuid.UUID) -> uuid.UUID | None:
+    milestone = await session.get(Milestone, milestone_id)
+    return milestone.accepted_by if milestone else None
+
+
+async def policy_controls(session: AsyncSession, contract_id: uuid.UUID) -> dict:
+    contract = await session.get(Contract, contract_id)
+    return dict(contract.terms.get("policySettings", {})) if contract else {}
+
+
+async def assistance_terms(session: AsyncSession, contract_id: uuid.UUID) -> dict | None:
+    c = await session.get(Contract, contract_id)
+    return {"reference": c.reference, "terms": c.terms, "documentHash": c.terms_hash, "version": c.contract_version} if c else None
+
+
+async def active_contract_ids(session: AsyncSession, professional_id: uuid.UUID) -> list[uuid.UUID]:
+    return list((await session.scalars(select(Contract.id).where(Contract.professional_id == professional_id,
+        Contract.status.in_(("ACTIVE", "DISPUTED"))))).all())
+
+
 async def delivery_stats(session: AsyncSession, professional_id: uuid.UUID) -> dict[str, int]:
     """Platform history for a professional's public profile: completed engagements and on-time milestone delivery."""
     from sqlalchemy import func
 
-    completed = await session.scalar(select(func.count()).select_from(Contract).where(
-        Contract.professional_id == professional_id, Contract.status == "COMPLETED")) or 0
+    from zoikorum.shared import clock
+    from zoikorum.config import get_settings
+    completed_dates = (await session.scalars(select(Contract.completed_at).where(
+        Contract.professional_id == professional_id, Contract.status == "COMPLETED"))).all()
+    completed = len(completed_dates)
+    weighted_completed = sum(0.5 ** (max(0, (clock.now() - d).total_seconds()) / 86400 / get_settings().trust_completion_half_life_days) for d in completed_dates if d)
+    engagements = await session.scalar(select(func.count()).select_from(Contract).where(Contract.professional_id == professional_id, Contract.activated_at.is_not(None))) or 0
     rows = (await session.execute(select(Milestone.submitted_at, Milestone.due_date).join(Contract, Contract.id == Milestone.contract_id).where(
         Contract.professional_id == professional_id, Milestone.status == "ACCEPTED", Milestone.due_date.is_not(None)))).all()
     on_time = sum(1 for submitted, due in rows if submitted is not None and submitted.date() <= due)
-    return {"completed": int(completed), "milestonesWithDueDate": len(rows), "onTime": on_time}
+    return {"completed": completed, "weightedCompleted": weighted_completed, "engagements": engagements, "milestonesWithDueDate": len(rows), "onTime": on_time}

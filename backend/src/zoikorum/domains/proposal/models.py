@@ -32,6 +32,7 @@ class ProposalRequest(Base, UUIDPk, Timestamps, Versioned):
     )
 
     organization_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    cost_center_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
     buyer_identity_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     professional_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     offering_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
@@ -79,6 +80,7 @@ class Proposal(Base, UUIDPk, Timestamps, Versioned):
     organization_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     buyer_identity_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     professional_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    policy_version_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="DRAFT")
     summary: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     scope_alignment: Mapped[str] = mapped_column(String(20), nullable=False, default="CONFIRMED")  # CONFIRMED | ADJUSTED

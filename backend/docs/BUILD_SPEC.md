@@ -225,6 +225,12 @@ Milestone: PENDING_FUNDING → IN_PROGRESS → SUBMITTED → (REVISION_REQUESTED
   `POST /v1/change-orders/{id}/approve|reject` by the other party (+ policy CHANGE_ORDER_APPROVE). Approved material change
   (pricing/scope) → contract_version+1, new termsHash, re-signature required (status PENDING_SIGNATURE) then CONTRACT_AMENDED;
   non-material (timeline) → CONTRACT_AMENDED directly.
+  Delta contracts: ADD_DELIVERABLE `{milestoneId, deliverable:{key,title,description?,acceptanceCriteria}}`;
+  MODIFY_DELIVERABLE `{key, changes:{title?,description?,acceptanceCriteria?}}`;
+  EXTEND_TIMELINE `{endDate, milestoneDueDates?:[{milestoneId,dueDate}]}`;
+  PRICING_CHANGE `{totalDeltaMinor, milestoneAmounts:[{milestoneId,amountMinor}]}` where the amount deltas sum exactly
+  to `totalDeltaMinor`. Only milestones still unfunded and not started may receive scope/price changes; escrow applies
+  amended amounts only to UNFUNDED allocations and rejects any schedule that does not reconcile with its account total.
 - Consume DISPUTE_INITIATED → milestones DISPUTED, contract DISPUTED (CONTRACT_DISPUTED). Consume DISPUTE_RESOLVED →
   milestoneOutcome ACCEPT → ACCEPTED, CANCEL → CANCELLED, REWORK/EXTEND → IN_PROGRESS; contract back to ACTIVE when no
   open disputes (CONTRACT_DISPUTE_CLEARED). Disputed contracts cannot be terminated unilaterally.

@@ -8,7 +8,9 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 from zoikorum.domains.contract import service
-from zoikorum.domains.contract.schemas import ContractOut, ContractSummaryOut, PartialOfferIn, RevisionIn, SignIn, SubmitIn
+from zoikorum.domains.contract.schemas import (
+    PartialOfferIn, ChangeOrderDecisionIn, ChangeOrderIn, ContractOut, ContractSummaryOut, RevisionIn, SignIn, SubmitIn,
+)
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
 from zoikorum.shared.http import Page
@@ -42,6 +44,10 @@ async def document(contract_id: uuid.UUID, actor: CurrentActor, session: DbSessi
     return PlainTextResponse(text, headers={"X-Document-SHA256": sha})
 
 
+@router.get("/v1/contracts/{contract_id}/versions/{version}/document", response_class=PlainTextResponse)
+async def version_document(contract_id: uuid.UUID, version: int, actor: CurrentActor, session: DbSession):
+    text, sha = await service.get_document(session, actor, contract_id, version)
+    return PlainTextResponse(text, headers={"X-Document-SHA256": sha})
 @router.get("/v1/contracts/{contract_id}/files/{sha256}")
 async def delivered_file(contract_id: uuid.UUID, sha256: str, actor: CurrentActor, session: DbSession) -> Response:
     """Opens a file the professional delivered with a milestone. Audited."""
@@ -53,6 +59,29 @@ async def sign(contract_id: uuid.UUID, body: SignIn, request: Request, actor: Cu
     """Buyer signs first, then the professional countersigns. Needs a fresh two-step confirmation."""
     ip = request.client.host if request.client else None
     return await idem.run(session, actor, lambda: service.sign(session, actor, contract_id, body, ip))
+
+
+@router.post("/v1/contracts/{contract_id}/change-orders", response_model=ContractOut)
+async def propose_change_order(
+    contract_id: uuid.UUID, body: ChangeOrderIn, actor: CurrentActor, session: DbSession, idem: IdempotencyKey
+):
+    return await idem.run(session, actor, lambda: service.propose_change_order(session, actor, contract_id, body))
+
+
+@router.post("/v1/change-orders/{change_order_id}/approve", response_model=ContractOut)
+async def approve_change_order(
+    change_order_id: uuid.UUID, actor: CurrentActor, session: DbSession, idem: IdempotencyKey
+):
+    return await idem.run(session, actor, lambda: service.decide_change_order(session, actor, change_order_id, True, None))
+
+
+@router.post("/v1/change-orders/{change_order_id}/reject", response_model=ContractOut)
+async def reject_change_order(
+    change_order_id: uuid.UUID, body: ChangeOrderDecisionIn, actor: CurrentActor, session: DbSession, idem: IdempotencyKey
+):
+    return await idem.run(
+        session, actor, lambda: service.decide_change_order(session, actor, change_order_id, False, body.reason)
+    )
 
 
 @router.post("/v1/milestones/{milestone_id}/submit", response_model=ContractOut)

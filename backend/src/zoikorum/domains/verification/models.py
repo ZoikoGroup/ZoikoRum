@@ -15,6 +15,22 @@ from zoikorum.shared.db import Base, CreatedAt, Timestamps, UUIDPk, Versioned
 SCHEMA = "verification"
 
 
+class ProviderSession(Base, UUIDPk, Timestamps):
+    __tablename__ = "provider_sessions"
+    __table_args__ = {"schema": SCHEMA}
+    case_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.cases.id"), nullable=False, unique=True)
+    provider_ref: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending")
+
+
+class ProviderEvent(Base, UUIDPk, CreatedAt):
+    __tablename__ = "provider_events"
+    __table_args__ = {"schema": SCHEMA}
+    event_id: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
+    event_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    payload_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
 class VerificationCase(Base, UUIDPk, Timestamps, Versioned):
     """One check of one subject. PENDING -> IN_REVIEW -> NEEDS_INFO -> VERIFIED | FAILED;
     VERIFIED -> EXPIRED | REVOKED. Verified only on a positive provider result or an approved human review."""
@@ -57,6 +73,7 @@ class EvidenceItem(Base, UUIDPk, CreatedAt):
     file_name: Mapped[str] = mapped_column(String(255), nullable=False)
     sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    storage_version: Mapped[str | None] = mapped_column(String(200))
     storage_key: Mapped[str | None] = mapped_column(String(500))  # blob storage key (the file itself)
     content_type: Mapped[str | None] = mapped_column(String(100))
     uploaded_by: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)

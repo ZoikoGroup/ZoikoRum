@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { Contract } from '../api/contracts'
-import { ALLOCATION_STATE, escrowApi, TEST_CARDS, type Escrow, type LedgerLine } from '../api/escrow'
+import { ALLOCATION_STATE, escrowApi, paymentsApi, TEST_CARDS, type Escrow, type LedgerLine } from '../api/escrow'
 import { formatMoney } from '../api/orgs'
 import { Icon } from './dashboard'
 import { StatCard } from './portal'
@@ -21,6 +21,8 @@ export function FundDialog({ escrow, preselect, onClose, onFunded }: {
   const [token, setToken] = useState(TEST_CARDS[0][0])
   const [error, setError] = useState<unknown>(null)
   const [busy, setBusy] = useState(false)
+  const [configuration, setConfiguration] = useState<Awaited<ReturnType<typeof paymentsApi.configuration>> | null>(null)
+  useEffect(() => { paymentsApi.configuration().then(setConfiguration).catch(setError) }, [])
   const amount = open.filter((x) => picked.includes(x.milestoneId)).reduce((s, x) => s + x.amount.amountMinor, 0)
   const money = (m: number) => formatMoney({ amountMinor: m, currency: escrow.currency })
   const fee = Math.floor((amount * escrow.feeBps + 5000) / 10000)
@@ -43,17 +45,19 @@ export function FundDialog({ escrow, preselect, onClose, onFunded }: {
           <dt>Professional receives</dt><dd>{money(amount - fee)} after the {feeText(escrow.feeBps)} platform fee</dd>
           <dt>Taxes</dt><dd>None added</dd>
         </dl>
-        <label className="filter-box" style={{ marginTop: 14 }}><span>Payment method (test mode: no real money moves)</span>
-          <select value={token} onChange={(e) => setToken(e.target.value)}>{TEST_CARDS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>
+        {configuration?.hostedCheckout ? <p>You will enter payment details on the partner’s secure checkout page. Funding is confirmed after payment completes.</p> :
+          configuration?.configured ? <label className="filter-box" style={{ marginTop: 14 }}><span>Payment method (test mode: no real money moves)</span>
+          <select value={token} onChange={(e) => setToken(e.target.value)}>{TEST_CARDS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label> :
+          <p role="status">Payment integration is unavailable. No payment will be requested.</p>}
         <div className="protect-note" style={{ marginTop: 14 }}><Icon name="lock" /><div><strong>Funds will be held securely until acceptance.</strong>
           <div className="small">Neither side can withdraw them. If there is a dispute, they stay frozen until it is resolved.</div></div></div>
         <div className="row" style={{ marginTop: 16, justifyContent: 'flex-end' }}>
           <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" disabled={busy || amount === 0} onClick={async () => {
+          <button className="btn btn-primary" disabled={busy || amount === 0 || !configuration?.configured} onClick={async () => {
             setBusy(true)
             setError(null)
-            try { onFunded(await escrowApi.fund(escrow.id, { milestoneIds: picked, paymentMethodToken: token })) } catch (err) { setError(err) } finally { setBusy(false) }
-          }}>{busy ? 'Processing…' : `Pay ${money(amount)} into escrow`}</button>
+            try { onFunded(await escrowApi.fund(escrow.id, { milestoneIds: picked, paymentMethodToken: configuration?.hostedCheckout ? 'hosted_checkout' : token })) } catch (err) { setError(err) } finally { setBusy(false) }
+          }}>{busy ? 'Processing…' : configuration?.hostedCheckout ? 'Prepare secure checkout' : `Pay ${money(amount)} into escrow`}</button>
         </div>
       </div>
     </div>
@@ -62,6 +66,9 @@ export function FundDialog({ escrow, preselect, onClose, onFunded }: {
 
 export function PaymentsPanel({ c, escrow, side, onFund }: { c: Contract; escrow: Escrow | null; side: 'buyer' | 'professional'; onFund: (ids: string[]) => void }) {
   const [ledger, setLedger] = useState<LedgerLine[] | null>(null)
+  const [paymentError, setPaymentError] = useState<unknown>(null)
+  const [hosted, setHosted] = useState(false)
+  useEffect(() => { paymentsApi.configuration().then(config => setHosted(config.hostedCheckout)).catch(setPaymentError) }, [])
   if (c.status === 'PENDING_SIGNATURE' || !escrow) {
     return <section className="card panel"><div className="panel-head"><h2>Payments &amp; protection</h2></div>
       <p className="muted" style={{ margin: 0 }}>The escrow account opens when both parties have signed the contract.</p></section>
@@ -92,13 +99,16 @@ export function PaymentsPanel({ c, escrow, side, onFund }: { c: Contract; escrow
         {side === 'professional' && <p className="muted small" style={{ marginBottom: 0 }}>Released money is paid out to your bank account. See <Link to="/app/professional/earnings">Earnings</Link>.</p>}
       </section>
       {escrow.fundings.length > 0 && <section className="card panel">
-        <div className="panel-head"><h2>Payments</h2></div>
+        <div className="panel-head"><h2>Payments</h2></div><ErrorAlert error={paymentError} />
         <table className="data"><thead><tr><th>Date</th><th>Amount</th><th>Milestones</th><th>Status</th></tr></thead>
           <tbody>{escrow.fundings.map((f) => (
             <tr key={f.id}><td className="small">{new Date(f.createdAt).toLocaleString()}</td><td>{formatMoney(f.amount)}</td>
               <td className="small">{f.milestoneIds.map((mid) => `M${seq(mid)}`).join(', ')}</td>
               <td><span className={`badge ${f.status === 'CAPTURED' ? 'green' : f.status === 'FAILED' ? '' : 'warn'}`}>
-                {f.status === 'CAPTURED' ? 'Captured' : f.status === 'FAILED' ? `Failed: ${f.failureMessage}` : 'Processing'}</span></td></tr>))}</tbody></table>
+                {f.status === 'CAPTURED' ? 'Captured' : f.status === 'FAILED' ? `Failed: ${f.failureMessage}` : 'Processing'}</span>
+                {side === 'buyer' && hosted && f.status === 'REQUESTED' && <button className="btn btn-secondary btn-sm" onClick={async () => {
+                  try { const result = await paymentsApi.checkout(f.id); if (result.url) window.location.assign(result.url); else setPaymentError(new Error('Checkout is being prepared. Try again shortly.')) } catch (err) { setPaymentError(err) }
+                }}>Continue payment</button>}</td></tr>))}</tbody></table>
       </section>}
       <section className="card panel">
         <div className="panel-head"><h2>Ledger</h2>

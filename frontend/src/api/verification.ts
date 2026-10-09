@@ -67,6 +67,8 @@ export interface TrustHistory {
 
 const V = '/v1/verification'
 export const verificationApi = {
+  configuration: () => api<{ provider: string; hostedIdentity: boolean; configured: boolean }>(`${V}/configuration`),
+  hosted: (id: string) => api<{ url: string; status: string }>(`${V}/cases/${id}/hosted-session`, { method: 'POST' }),
   start: (body: { verificationType: SelfServiceType; subjectType: SubjectType; subjectId: string; jurisdiction?: string }) =>
     api<VerificationCase>(`${V}/cases`, { method: 'POST', body }),
   get: (id: string) => api<VerificationCase>(`${V}/cases/${id}`),

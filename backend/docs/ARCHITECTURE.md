@@ -8,6 +8,12 @@ Companion documents: [BUILD_SPEC.md](BUILD_SPEC.md) (per-domain contracts), [DAT
 (generated table list), [CUSTOMER_DATA.md](CUSTOMER_DATA.md) (customer data vs. the documents) and the source docs in
 [`docs/product/`](../../docs/product/README.md).
 
+## Current checkout (2026-10-09)
+
+See [CURRENT_STATUS.md](CURRENT_STATUS.md) for the merged implementation, migration head `f1360ce42a96` and test limitations. Messaging, change orders and Steps 12–18 have implementations; they are no longer deferred solely because they are absent from the original Steps 0–9 status table. Hosted Stripe/Persona and optional S3 adapter code also exists, but live integrations are unverified.
+
+The dated audit tables below preserve earlier observations. In particular, the 2026-10-08 audit lists frontend work that did not arrive with the backend-only dev merge: quick view, shareable comparison, weekly hours, verification appeals, partial acceptance, taxonomy suggestions and retainer controls must be checked against the actual frontend before claiming completion.
+
 ## 1. What the documents ask for
 
 | Source document | Backend obligations it creates |
@@ -82,7 +88,7 @@ Companion documents: [BUILD_SPEC.md](BUILD_SPEC.md) (per-domain contracts), [DAT
 | ADR-005 OpenSearch + vector | Hybrid BM25 + dense vectors | **Postgres full-text** projection with the documented ranking weights and explanations; vector retrieval behind an interface | Meets Wave 1–2 needs. OpenSearch can rebuild from events at any time. |
 | ADR-008 Passkey-first | Passkeys, SSO, SCIM | Email+password (argon2), TOTP MFA, step-up, rotating refresh tokens with reuse detection | Passkeys, SAML/OIDC and SCIM are Wave 5 items. `AuthStrength.PASSKEY` already exists for step-up. |
 | JWT signing | KMS-backed keys | HS256 shared secret | Switch to RS256/ES256 with KMS and a JWKS endpoint before any service is extracted. |
-| Payments provider | Regulated third party | `PaymentProvider` interface + deterministic fake | Choose the partner (e.g. Stripe Connect or Adyen for Platforms). See open question Q1. |
+| Payments provider | Regulated third party | `PaymentProvider` interface, development fake and configurable Stripe adapter (live flow unverified) | Confirm the partner (e.g. Stripe Connect or Adyen for Platforms). See open question Q1. |
 
 ## 5. Gaps and contradictions found in the documents (need owners)
 
@@ -151,7 +157,7 @@ The other domain folders contain only their `facade.py` interface contracts; the
 | Total price | Always the sum of milestone amounts (a `total` sent by the client must match) |
 | Contract defaults | Signature deadline 7 days and buyer review window 5 days (`ZK_SIGNATURE_DEADLINE_DAYS`, `ZK_ACCEPTANCE_WINDOW_DAYS`) until enterprise policy profiles set them. Governing law follows the Terms of Service unless a policy profile sets it |
 | Platform fee | 10% (`ZK_PLATFORM_FEE_BPS=1000`, set in the original config). The product documents require a visible fee breakdown but do not state the rate: **management to confirm** |
-| Payment provider | Test mode only (FakeProvider: `tok_fail` declines, account numbers ending 0000 fail payouts). A regulated PSP replaces it behind the same adapter; card and bank details are collected by the provider, never by Zoikorum |
+| Payment provider | Development test mode (FakeProvider: `tok_fail` declines, account numbers ending 0000 fail payouts). A regulated PSP replaces it behind the same adapter; card and bank details are collected by the provider, never by Zoikorum |
 | Dispute windows | Evidence window 3 days (`ZK_DISPUTE_EVIDENCE_DAYS`, **not stated in the documents: management to confirm**); direct resolution 5 business days (Dispute doc s.10). Accepted milestones cannot be disputed yet: the policy-defined challenge window is 0 until management sets one |
 | Signing needs two-step verification | Both parties confirm with a fresh code (Architecture 11.4). Accounts without two-step verification are asked to turn it on before signing |
 | Professional ↔ firm link | `PUT /v1/professionals/me/firm` links a profile to a firm the professional actively belongs to, or `null` for independent. Joining a firm (`FIRM_MEMBER_JOINED`) links an unlinked profile automatically; removal (`FIRM_MEMBER_REMOVED`) unlinks it. The public profile shows the firm's trading or registered name (hidden while the firm is suspended) |
@@ -175,7 +181,7 @@ Each product document was checked again against the code. Gaps that belong to St
 | Professional Dashboard s.12, P&E s.14: expected settlement date | Payouts carry `expectedAt` (start + `ZK_PAYOUT_SETTLEMENT_BUSINESS_DAYS`, 2) and a plain-language `delayReason` (waiting for payout account, bank returned it, or later than expected); Earnings shows "Expected" and "Delayed" |
 | Engineering Handbook 15.4: daily reconciliation | `payments.reconciliation_batches`: per UTC day and currency, escrow ledger (`escrow.facade.ledger_movements`) vs payments records vs the provider's report (when it has one): charges = BUYER_CLEARING debits, payouts = PRO_PAYABLE credits, refunds = BUYER_REFUND_PAYABLE credits, chargebacks = CHARGEBACK_REVERSAL credits. Runs at 01:00 UTC for the previous day (durable timer, re-arms itself), on demand for Financial Ops (`GET/POST /v1/payments/reconciliations`, Ops → Reconciliation) and via `python -m zoikorum.cli reconcile --day`. A mismatch emits `RECONCILIATION_MISMATCH` and an audit record (P0) |
 | Engineering Handbook 21.4: circuit breakers | `shared/circuit.py`: after `ZK_PROVIDER_BREAKER_FAILURES` (5) consecutive technical errors the payment provider circuit opens for `ZK_PROVIDER_BREAKER_RESET_SECONDS` (30) and calls fail fast with 503 `PROVIDER_UNAVAILABLE`; event consumers are retried by the worker (the decision tree's "queue retry"). A declined card is a normal answer and never trips it |
-| Payments & Escrow s.10 "start acceptance timer" | Submitting work arms two durable timers per submission: a reminder one day before the review window closes (`MILESTONE_ACCEPTANCE_REMINDER`) and the deadline (`MILESTONE_ACCEPTANCE_OVERDUE`). Timers are ignored once the buyer accepts, asks for a revision, a dispute pauses the milestone, or the work is resubmitted. Overdue work is flagged (`reviewOverdue`, next action) for both sides. **No auto-release**: the money stays in escrow, because auto-release is an enterprise policy rule (s.17) left for the policy engine. Notification delivery of these events arrives with notifications (Step 10+) |
+| Payments & Escrow s.10 "start acceptance timer" | Submitting work arms two durable timers per submission: a reminder one day before the review window closes (`MILESTONE_ACCEPTANCE_REMINDER`) and the deadline (`MILESTONE_ACCEPTANCE_OVERDUE`). Timers are ignored once the buyer accepts, asks for a revision, a dispute pauses the milestone, or the work is resubmitted. Overdue work is flagged (`reviewOverdue`, next action) for both sides. Manual acceptance remains the default. The implemented policy engine can enable pinned, guarded auto-acceptance; asynchronous release still enforces policy and dispute holds. Notifications now consume reminder events. |
 
 ### Second re-audit (2026-10-08)
 
@@ -200,9 +206,7 @@ Each product document was checked again against the code. Gaps that belong to St
 | "Can't find yours?" | `POST /v1/taxonomy/suggest` maps the professional's own words to up to 5 existing specializations and, if nothing fits, drafts a new one. Claude (`ZK_AI_PROVIDER=anthropic`, `ZK_ANTHROPIC_API_KEY`, `ZK_AI_MODEL`, default `claude-opus-5-5`; needs `pip install anthropic`) with structured output; any failure or no key falls back to keyword matching (`domains/ai/specializations.py`). Drafts are never live: `POST /v1/taxonomy/suggestions` stores a PENDING suggestion (max 3 per person), shown on the profile as "Custom (under review)" |
 | Admin review | `GET /v1/admin/taxonomy/suggestions`, `POST …/{id}/decision` (Platform Admin): APPROVE creates the specialization (versioned taxonomy change), MERGE maps it to an existing one, REJECT needs a note. Approved/merged specializations are added to the professional's profile (`TAXONOMY_SUGGESTION_RESOLVED`). Frontend: Administration → Taxonomy |
 
-Deferred to Step 10+ (Maruthi) or production: messaging and "Contact professional", notifications, change orders, policy engine and enterprise approvals,
-enforcement and dispute-decision appeals, retainer auto-funding, messages in global search, saved buyers, analytics funnel, server-generated PDF exports, and real providers
-(KYC, PSP, email, S3, OpenSearch).
+Current gaps include authorised retainer auto-funding, messages in global search, saved buyers, enterprise federation/provisioning, privacy fulfilment, and production deployment/provider verification. Messaging, notifications, change orders, policies/approvals, enforcement, dispute appeals and scoped report exports now have implementations. See [current status](CURRENT_STATUS.md) for the limits of those implementations.
 
 ## 7. Running it
 

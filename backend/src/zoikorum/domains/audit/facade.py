@@ -32,3 +32,14 @@ async def timeline_for_objects(session: AsyncSession, object_ids: list[str], lim
         )
     ).all()
     return [TimelineEntry(r.occurred_at, r.action, r.actor_id, r.object_type, r.object_id, r.hash) for r in rows]
+
+
+async def replay_events(session: AsyncSession, after_seq: int, limit: int = 500) -> list:
+    from zoikorum.shared.event_catalog import ALL_EVENTS
+    from zoikorum.shared.events import EventEnvelope, EventMetadata
+    rows = (await session.scalars(select(AuditRecord).where(AuditRecord.seq > after_seq).order_by(AuditRecord.seq).limit(limit))).all()
+    return [(r.seq, EventEnvelope(eventId=r.source_event_id, eventType=r.action if r.action in ALL_EVENTS else "zoikorum.audit.entry.requested.v1",
+        occurredAt=r.occurred_at, producedBy="audit-replay", correlationId=r.correlation_id,
+        aggregateType=r.object_type, aggregateId=r.object_id, tenantId=r.tenant_id,
+        metadata=EventMetadata(actorId=r.actor_id, actorType=r.actor_type, authStrength=r.auth_strength, policyVersion=r.policy_version),
+        payload=r.details)) for r in rows]

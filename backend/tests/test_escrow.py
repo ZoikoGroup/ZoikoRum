@@ -126,12 +126,21 @@ async def test_funding_rules_and_access(client, make_user, drain, sf):
     # Releasing twice is impossible, and the ledger can never be edited.
     from zoikorum.domains.escrow import service
     async with sf() as s, s.begin():
-        await service.milestone_accepted(s, {"milestoneId": m1})  # not accepted yet in contract terms, but allocation is HELD
+        await service.milestone_accepted(s, {"milestoneId": m1})  # a forged event cannot release unaccepted work
     async with sf() as s, s.begin():
         await service.milestone_accepted(s, {"milestoneId": m1})
     async with sf() as s:
         releases = await s.scalar(text("SELECT count(*) FROM escrow.releases"))
-    assert releases == 1
+    assert releases == 0
+    response = await client.post(f"/v1/milestones/{m1}/submit", headers=pro_user.idem(), json={"note": "Master file delivered", "files": []})
+    assert response.status_code == 200, response.text
+    response = await client.post(f"/v1/milestones/{m1}/accept", headers=buyer.idem())
+    assert response.status_code == 200, response.text
+    await drain()
+    async with sf() as s, s.begin():
+        await service.milestone_accepted(s, {"milestoneId": m1})
+    async with sf() as s:
+        assert await s.scalar(text("SELECT count(*) FROM escrow.releases")) == 1
     await balanced(sf)
     with pytest.raises(Exception, match="append-only"):
         async with sf() as s, s.begin():

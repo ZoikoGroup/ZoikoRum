@@ -51,8 +51,12 @@ def load_domains() -> list[str]:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    yield
-    await dispose_engine()
+    from zoikorum.shared.schema_guard import ensure_schema_current
+    try:
+        await ensure_schema_current()
+        yield
+    finally:
+        await dispose_engine()
 
 
 def create_app() -> FastAPI:
@@ -64,6 +68,19 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     http.install(app)
+    async def validate_actor(actor, path, method):
+        from zoikorum.domains.identity import facade as identity
+        from zoikorum.domains.admin import facade as admin
+        from zoikorum.shared.db import session_factory
+        from zoikorum.shared.errors import Forbidden
+        allow_restricted = path.startswith("/v1/enforcement-cases") or (path == "/v1/me" and method == "GET") or (path == "/v1/auth/logout" and method == "POST")
+        async with session_factory()() as session:
+            actor = await identity.validate_session_actor(session, actor, allow_restricted=allow_restricted)
+            restrictions = await admin.active_restrictions(session, "IDENTITY", actor.identity_id)
+            if set(restrictions).intersection({"SUSPEND_ACCOUNT", "OFFBOARD"}) and not allow_restricted:
+                raise Forbidden("This account is restricted", code="ACCOUNT_NOT_ACTIVE")
+            return actor
+    app.state.actor_validator = validate_actor
     for d in load_domains():
         api = _maybe_import(f"zoikorum.domains.{d}.api")
         if api is not None and hasattr(api, "router"):

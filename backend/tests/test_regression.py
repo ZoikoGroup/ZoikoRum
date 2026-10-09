@@ -128,6 +128,19 @@ async def test_disagreement_is_resolved_through_a_dispute_with_money_frozen(clie
     assert (await escrow_of(client, buyer, c))["allocations"][0]["state"] == "ON_HOLD"
     assert (await client.post(f"/v1/milestones/{m1}/accept", headers=buyer.idem())).status_code == 409
 
+    # Messaging must pause in both the request and engagement, while evidence remains readable.
+    threads = (await client.get("/v1/threads", headers=buyer.h)).json()["items"]
+    engagement_thread = next(t for t in threads if t["contextType"] == "CONTRACT")
+    request_thread = next(t for t in threads if t["contextType"] == "PROPOSAL_REQUEST")
+    assert engagement_thread["locked"] and request_thread["locked"]
+    for thread in (engagement_thread, request_thread):
+        response = await client.post(f"/v1/threads/{thread['id']}/messages", headers=buyer.idem(), json={"body": "Paused"})
+        assert response.status_code == 409 and response.json()["code"] == "THREAD_READ_ONLY"
+        assert (await client.get(f"/v1/threads/{thread['id']}/messages", headers=pro_user.h)).status_code == 200
+    assert (await client.post(f"{C}/{c['id']}/change-orders", headers=buyer.idem(), json={
+        "type": "EXTEND_TIMELINE", "delta": {"endDate": "2030-01-01"}, "impact": "Later delivery",
+    })).status_code == 409
+
     # Evidence with stored files that both sides can open, then a structured 60/40 settlement.
     notes = upload("review-notes.pdf", b"structure gaps")
     await client.post(f"{D}/{d['id']}/evidence", headers=buyer.h,
@@ -140,6 +153,9 @@ async def test_disagreement_is_resolved_through_a_dispute_with_money_frozen(clie
         "outcome": "PARTIAL_REFUND", "allocations": [{"milestoneId": m1, "releaseMinor": 600_000, "refundMinor": 400_000}]})).json()
     await client.post(f"/v1/resolution-proposals/{d['proposals'][0]['id']}/accept", headers=buyer.idem())
     await drain()
+
+    threads = (await client.get("/v1/threads", headers=buyer.h)).json()["items"]
+    assert all(not t["locked"] for t in threads if t["contextType"] in {"CONTRACT", "PROPOSAL_REQUEST"})
 
     # Enforced exactly through escrow: 600k released (minus fee), 400k refunded, case closed, books balanced.
     assert (await client.get(f"{D}/{d['id']}", headers=buyer.h)).json()["status"] == "CLOSED"

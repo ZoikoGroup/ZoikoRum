@@ -16,11 +16,12 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm.exc import StaleDataError
+from sqlalchemy.exc import ProgrammingError
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from zoikorum.config import get_settings
 from zoikorum.shared import context
-from zoikorum.shared.errors import DomainError, RateLimited, ValidationFailed, VersionConflict
+from zoikorum.shared.errors import DomainError, RateLimited, ValidationFailed, VersionConflict, ServiceUnavailable
 
 log = logging.getLogger("zoikorum.http")
 
@@ -97,6 +98,16 @@ def install(app: FastAPI) -> None:
     @app.exception_handler(DomainError)
     async def _domain(_: Request, exc: DomainError):
         return problem(exc)
+
+    @app.exception_handler(ProgrammingError)
+    async def _database_schema(_: Request, exc: ProgrammingError):
+        if getattr(exc.orig, "sqlstate", None) not in {"42P01", "42703"}:
+            raise exc
+        log.error("Database schema mismatch; correlationId=%s; sqlstate=%s",
+                  context.current().correlation_id, getattr(exc.orig, "sqlstate", None))
+        return problem(ServiceUnavailable(
+            "Zoikorum is temporarily unavailable while a database update is required. Please contact support.",
+            code="DATABASE_SCHEMA_OUTDATED"))
 
     @app.exception_handler(StaleDataError)
     async def _stale(_: Request, __: StaleDataError):

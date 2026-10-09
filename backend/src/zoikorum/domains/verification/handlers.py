@@ -26,3 +26,8 @@ async def on_expiry_reminder(session: AsyncSession, key: str, payload: dict) -> 
 @on_timer(service.TIMER_EXPIRY)
 async def on_expiry(session: AsyncSession, key: str, payload: dict) -> None:
     await service.expire(session, payload)
+@subscribe(E.ENFORCEMENT_ACTION_APPLIED, consumer="verification.enforcement")
+async def enforcement_reset(session: AsyncSession, event: EventEnvelope) -> None:
+    p = event.payload
+    if p.get("subjectType") == "PROFESSIONAL" and p.get("action") in ("CREDENTIAL_ENFORCEMENT", "VERIFICATION_RESET"):
+        await service.enforcement_reset(session, p)

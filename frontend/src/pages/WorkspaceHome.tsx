@@ -10,6 +10,7 @@ import { useAuth } from '../auth/AuthContext'
 import { ActionList, Avatar, greeting, Icon, type Action } from '../components/dashboard'
 import { EmptyTable, PortalHeader, StatCard, Tabs } from '../components/portal'
 import { AccountAlerts } from './Dashboards'
+import { formatCurrencies } from '../lib/money'
 
 /* Customer dashboard: management design + Buyer Dashboard & Engagement wireframe (5 summary cards,
    attention strip, engagements, assurance, requests & proposals, saved professionals). Real data only;
@@ -124,8 +125,7 @@ export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
         <StatCard icon="briefcase" tone="green" label="Active Engagements" value={contracts.filter((c) => c.status === 'ACTIVE').length}
           sub={toSign.length ? `${toSign.length} awaiting your signature` : 'In progress'} to="/app/engagements" />
         <StatCard icon="lock" tone="teal" label="Protected Funds" to="/app/payments" sub="In escrow, until you accept"
-          value={(() => { const held = contracts.flatMap((c) => c.milestones.filter((m) => ['IN_PROGRESS', 'SUBMITTED', 'REVISION_REQUESTED'].includes(m.status)))
-            return held.length ? formatMoney({ amountMinor: held.reduce((s, m) => s + m.amount.amountMinor, 0), currency: held[0].amount.currency }) : formatMoney({ amountMinor: 0, currency: contracts[0]?.total.currency ?? 'USD' }) })()} />
+          value={formatCurrencies(contracts.flatMap(c => c.milestones.filter(m => ['IN_PROGRESS', 'SUBMITTED', 'REVISION_REQUESTED', 'ACCEPTANCE_PENDING_APPROVAL', 'DISPUTED'].includes(m.status)).map(m => m.amount)))} />
       </div>
 
       {urgent.length > 0 && !hideBanner && (

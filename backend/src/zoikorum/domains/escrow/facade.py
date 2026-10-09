@@ -48,6 +48,22 @@ async def get_by_contract(session: AsyncSession, contract_id: uuid.UUID) -> Escr
                          tuple(AllocationSummary(x.milestone_id, x.amount_minor, x.state, x.released_minor, x.refunded_minor) for x in allocs))
 
 
+async def get_allocation_states_for_amendment(
+    session: AsyncSession, contract_id: uuid.UUID, milestone_ids: set[uuid.UUID]
+) -> dict[uuid.UUID, str] | None:
+    """Lock the account and selected allocations while a contract amendment is validated."""
+    account = await session.scalar(
+        select(EscrowAccount).where(EscrowAccount.contract_id == contract_id).with_for_update()
+    )
+    if account is None:
+        return None
+    allocations = (await session.scalars(
+        select(Allocation)
+        .where(Allocation.account_id == account.id, Allocation.milestone_id.in_(milestone_ids))
+        .order_by(Allocation.milestone_id)
+        .with_for_update()
+    )).all()
+    return {allocation.milestone_id: allocation.state for allocation in allocations}
 async def ledger_movements(session: AsyncSession, since: datetime, until: datetime) -> dict[tuple[str, str], tuple[int, int]]:
     """Daily reconciliation input: (ledger account, currency) -> (debits, credits) posted in [since, until).
     Accounts: BUYER_CLEARING, ESCROW_HELD, PRO_PAYABLE, PLATFORM_REVENUE, BUYER_REFUND_PAYABLE, CHARGEBACK_REVERSAL, ..."""

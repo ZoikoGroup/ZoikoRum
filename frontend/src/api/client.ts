@@ -50,12 +50,14 @@ const UNREACHABLE = 'We can’t reach the Zoikorum server right now. Please try 
 
 async function toError(res: Response): Promise<ApiError> {
   // 502/503/504 come from the proxy/gateway when the API itself is down.
-  if ([502, 503, 504].includes(res.status)) return new ApiError(res.status, 'SERVER_UNREACHABLE', UNREACHABLE)
   let body: Record<string, unknown> = {}
   try {
     body = await res.json()
   } catch {
     /* non-JSON error */
+  }
+  if ([502, 503, 504].includes(res.status) && !body.code) {
+    return new ApiError(res.status, 'SERVER_UNREACHABLE', UNREACHABLE)
   }
   const detail = (body.detail as string) || res.statusText || 'Something went wrong'
   return new ApiError(res.status, (body.code as string) || 'HTTP_' + res.status, detail,
@@ -92,7 +94,7 @@ interface RequestOptions {
   query?: Record<string, string>
   headers?: Record<string, string>
   text?: boolean  // return the body as text (file downloads) instead of JSON
-  blob?: boolean  // return the body as a Blob (binary files such as PDFs)
+  blob?: boolean  // return a binary response (authenticated file downloads)
 }
 
 export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T> {

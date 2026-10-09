@@ -247,9 +247,9 @@ async def add_evidence(session: AsyncSession, actor: Actor, case_id: uuid.UUID, 
     stored = [(f, _checked_file(f)) for f in body.items]  # validate every file before storing any
     for f, data in stored:
         key = f"verification/{case.id}/{f.sha256}"
-        get_storage().put(key, data)
+        storage_version = get_storage().put(key, data)
         session.add(EvidenceItem(case_id=case.id, evidence_type=body.evidenceType, file_name=f.name, sha256=f.sha256,
-                                 size_bytes=len(data), storage_key=key, content_type=f.contentType, uploaded_by=actor.identity_id))
+                                 size_bytes=len(data), storage_key=key, storage_version=storage_version, content_type=f.contentType, uploaded_by=actor.identity_id))
     if case.status in ("PENDING", "NEEDS_INFO"):
         CASE_STATES.assert_can(case.status, "IN_REVIEW")
         case.status = "IN_REVIEW"
@@ -383,7 +383,7 @@ async def evidence_file(session: AsyncSession, actor: Actor, evidence_id: uuid.U
         raise NotFound("Document not found")
     case = await _case(session, item.case_id)
     await _require_view(session, actor, case.subject_type, case.subject_id)
-    data = get_storage().get(item.storage_key) if item.storage_key else None
+    data = get_storage().get(item.storage_key, item.storage_version) if item.storage_key else None
     if data is None:
         raise NotFound("This document was recorded before file uploads were stored. Ask for it to be uploaded again.",
                        code="FILE_NOT_STORED")
@@ -426,6 +426,22 @@ async def review_queue(session: AsyncSession, actor: Actor, cursor: str | None, 
         verificationType=c.verification_type, status=c.status, label=c.label, jurisdiction=c.jurisdiction,
         providerResult=c.provider_result, evidenceCount=counts.get(c.id, 0), estimatedCompletion=c.estimated_completion,
         overdue=bool(c.estimated_completion and c.estimated_completion < now), createdAt=c.created_at))
+async def enforcement_reset(session, payload):
+    from zoikorum.domains.admin import facade as admin
+    subject_id = uuid.UUID(str(payload["subjectId"]))
+    if payload["action"] not in await admin.active_restrictions(session, "PROFESSIONAL", subject_id):
+        return
+    rows = (await session.scalars(select(VerificationCase).where(VerificationCase.subject_type == "PROFESSIONAL",
+        VerificationCase.subject_id == subject_id, VerificationCase.status == "VERIFIED").with_for_update())).all()
+    for case in rows:
+        if payload["action"] == "CREDENTIAL_ENFORCEMENT" and case.verification_type != "CREDENTIAL":
+            continue
+        case.status, case.reason_code = "REVOKED", "ENFORCEMENT_REVIEW_REQUIRED"
+        case.public_reason = "This check requires a new compliance review following a notified enforcement action."
+        await _cancel_expiry_timers(session, case)
+        _evt(session, E.VERIFICATION_REVOKED, case, reasonCode=case.reason_code, publicReason=case.public_reason)
+
+
 
 
 # ---- Appeals (Governance playbook s.11: independent reviewer, evidence-based, time-bounded, one final decision) ----

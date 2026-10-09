@@ -214,6 +214,7 @@ export function RequestDetailPage() {
       <PortalHeader eyebrow={<Link to="/app/requests">← Requests</Link>} title={req.service}
         subtitle={<><span className={`badge ${state.tone}`}>{state.label}</span> · Sent to {group.members.length} professional{group.members.length > 1 ? 's' : ''}{req.sentAt ? ` on ${fmtDate(req.sentAt)}` : ''}</>}
         actions={<>
+          {!isDraft && <Link className="btn btn-secondary" to={`/app/messages?contextType=PROPOSAL_REQUEST&contextId=${req.id}`}><Icon name="message" /> Messages</Link>}
           {isDraft && <button className="btn btn-primary" disabled={busy} onClick={() => act(() => proposalApi.send(req.id), 'Request sent.')}>Send request</button>}
           {openOnes.length > 0 && !accepted && <button className="btn btn-secondary" disabled={busy} onClick={() => {
             if (confirm('Cancel this request? Professionals will be told it is no longer needed.')) act(() => Promise.all(openOnes.map((m) => proposalApi.cancel(m.id))), 'Request cancelled.')

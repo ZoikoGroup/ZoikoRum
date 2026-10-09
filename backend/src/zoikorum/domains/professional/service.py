@@ -664,6 +664,9 @@ async def public_profile(session: AsyncSession, actor: Actor | None, professiona
     own = bool(actor and pro and pro.identity_id == actor.identity_id)
     if pro is None or (pro.status != "PUBLISHED" and not own and not (actor and actor.is_operator)):
         raise NotFound("Professional not found")
+    from zoikorum.domains.admin import facade as admin
+    if not own and not (actor and actor.is_operator) and set(await admin.active_restrictions(session, "IDENTITY", pro.identity_id)).intersection({"SUSPEND_ACCOUNT", "OFFBOARD"}):
+        raise NotFound("Professional not found")
     claims = (await session.scalars(select(CredentialClaim).where(
         CredentialClaim.professional_id == pro.id, CredentialClaim.status.in_(_PUBLIC_CLAIM_STATES))
         .order_by(CredentialClaim.created_at))).all()

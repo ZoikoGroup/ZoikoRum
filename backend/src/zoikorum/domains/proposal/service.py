@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.domains.buyer import facade as buyer_facade
 from zoikorum.domains.identity import facade as identity_facade
+from zoikorum.domains.policy import facade as policy_facade
 from zoikorum.domains.professional import facade as professional_facade
 from zoikorum.domains.proposal.models import Proposal, ProposalRequest
 from zoikorum.domains.proposal.schemas import (
@@ -210,7 +211,7 @@ async def _requests_out(session: AsyncSession, actor: Actor, rows: list[Proposal
         if p and role == "BUYER" and p.status == "DRAFT":
             p = None  # buyers never see a professional's unsent draft
         out.append(RequestOut(
-            id=r.id, groupId=r.group_id, organizationId=r.organization_id,
+            id=r.id, groupId=r.group_id, organizationId=r.organization_id, costCenterId=r.cost_center_id,
             organizationName=orgs[r.organization_id].name if orgs.get(r.organization_id) else None,
             buyerIdentityId=r.buyer_identity_id, buyerName=buyers[r.buyer_identity_id].display_name if r.buyer_identity_id in buyers else None,
             professional=briefs[r.professional_id], offeringId=r.offering_id, service=r.service, specialization=r.specialization,
@@ -303,6 +304,10 @@ async def _end_proposal(session: AsyncSession, p: Proposal, status: str, reason:
 async def create_requests(session: AsyncSession, actor: Actor, body: RequestIn) -> list[RequestOut]:
     await _require_buyer(session, actor, body.organizationId, OrgRole.REQUESTER)
     org = await buyer_facade.get_organization(session, body.organizationId)
+    if body.costCenterId:
+        center = await buyer_facade.get_cost_center(session, body.costCenterId)
+        if center is None or center.organization_id != body.organizationId:
+            raise NotFound("Cost center not found in this organization")
     if org is None or org.status != "ACTIVE":
         raise Forbidden("This organisation cannot send requests", code="ORGANIZATION_INACTIVE")
     if not body.draft and not body.acknowledged:
@@ -331,6 +336,7 @@ async def create_requests(session: AsyncSession, actor: Actor, body: RequestIn) 
     for pid in body.professionalIds:
         r = ProposalRequest(
             organization_id=body.organizationId, buyer_identity_id=actor.identity_id, professional_id=pid,
+            cost_center_id=body.costCenterId,
             offering_id=body.offeringId, group_id=group, service=body.service.strip(), specialization=body.specialization,
             engagement_type=body.engagementType, business_context=body.businessContext or org.business_context,
             objective=body.objective.strip(), details=body.details.strip(), desired_start_date=body.desiredStartDate,
@@ -349,6 +355,7 @@ async def create_requests(session: AsyncSession, actor: Actor, body: RequestIn) 
     await session.flush()
     if not body.draft:
         for r in rows:
+            await _request_policy(session, actor, r)
             _req_evt(session, E.PROPOSAL_REQUESTED, r, offeringId=r.offering_id, engagementType=r.engagement_type,
                      ndaRequired=r.nda_required)
     return await _requests_out(session, actor, rows, viewer="BUYER")
@@ -375,6 +382,7 @@ async def send_drafts(session: AsyncSession, actor: Actor, request_id: uuid.UUID
         _check_requestable(pros[r.professional_id], trusts[r.professional_id])
     now = clock.now()
     for r in rows:
+        await _request_policy(session, actor, r)
         REQUEST_STATES.assert_can(r.status, "OPEN")
         r.status, r.sent_at = "OPEN", now
         _req_evt(session, E.PROPOSAL_REQUESTED, r, offeringId=r.offering_id, engagementType=r.engagement_type,
@@ -398,6 +406,20 @@ async def cancel_request(session: AsyncSession, actor: Actor, request_id: uuid.U
         _req_evt(session, E.PROPOSAL_REQUEST_CANCELLED, r, reasonCode=body.reasonCode)
     await session.flush()
     return (await _requests_out(session, actor, [r], viewer="BUYER"))[0]
+
+
+async def _request_policy(session, actor, request):
+    await policy_facade.require_allowed(session, await policy_facade.commercial_context(session,
+        org_id=request.organization_id, professional_id=request.professional_id,
+        action=policy_facade.PolicyAction.ENGAGEMENT_ELIGIBILITY, subject_type="Professional",
+        subject_id=request.professional_id, actor_identity_id=actor.identity_id,
+        amount=request.budget_max_minor or 0, currency=request.budget_currency,
+        engagement_type=request.engagement_type, specialization=request.specialization,
+        cost_center_id=request.cost_center_id,
+        extra={"request.briefDigest": hashlib.sha256(json.dumps({"service": request.service,
+            "objective": request.objective, "details": request.details,
+            "deliverables": request.deliverables, "desiredStartDate": request.desired_start_date},
+            sort_keys=True, default=str).encode()).hexdigest()}))
 
 
 # ---- Shared reads ----------------------------------------------------------------------
@@ -562,6 +584,12 @@ async def submit_proposal(session: AsyncSession, actor: Actor, proposal_id: uuid
     if missing:
         raise ValidationFailed("Before sending, add " + "; ".join(missing), code="PROPOSAL_INCOMPLETE", extra={"missing": missing})
     _check_tier(await trust_facade.get_trust(session, p.professional_id), "You")
+    await policy_facade.require_allowed(session, await policy_facade.commercial_context(session,
+        org_id=p.organization_id, professional_id=p.professional_id, action=policy_facade.PolicyAction.PROPOSAL_SUBMIT,
+        subject_type="Proposal", subject_id=p.id, actor_identity_id=actor.identity_id,
+        amount=p.total_minor, currency=p.currency, engagement_type=r.engagement_type, specialization=r.specialization,
+        cost_center_id=r.cost_center_id,
+        extra={"proposal.termsDigest": hashlib.sha256(json.dumps(_terms(r, p), sort_keys=True, default=str).encode()).hexdigest()}))
     revised = p.status == "REVISION_REQUESTED"
     PROPOSAL_STATES.assert_can(p.status, "SUBMITTED")
     p.status, p.submitted_at = "SUBMITTED", clock.now()
@@ -684,13 +712,37 @@ async def accept_proposal(session: AsyncSession, actor: Actor, proposal_id: uuid
 
     r = await _request(session, p.request_id, lock=True)
     terms = _terms(r, p)
+    decision = await policy_facade.require_allowed(session, await policy_facade.commercial_context(session,
+        org_id=p.organization_id, professional_id=p.professional_id, action=policy_facade.PolicyAction.PROPOSAL_ACCEPT,
+        subject_type="Proposal", subject_id=p.id, actor_identity_id=actor.identity_id,
+        amount=p.total_minor, currency=p.currency, engagement_type=r.engagement_type, specialization=r.specialization,
+        cost_center_id=r.cost_center_id,
+        extra={"proposal.termsDigest": hashlib.sha256(json.dumps(terms, sort_keys=True, default=str).encode()).hexdigest()}))
+    p.policy_version_id = decision.policy_version_id
+    if decision.policy_version_id:
+        terms.update(await policy_facade.contract_terms(session, p.organization_id, decision.policy_version_id))
+        settings = await policy_facade.get_settings_for_org(session, p.organization_id, decision.policy_version_id)
+        terms["clauses"] = list(settings.required_clauses)
+        terms["policySettings"] = {"acceptanceWindowDays": settings.acceptance_window_days,
+            "autoAcceptAfterDays": settings.auto_accept_after_days, "signatureDeadlineDays": settings.signature_deadline_days,
+            "disputeEvidenceDays": settings.dispute_evidence_days, "directResolutionBusinessDays": settings.direct_resolution_business_days,
+            "challengeWindowDays": settings.challenge_window_days, "partialReleaseAllowed": settings.partial_release_allowed,
+            "autoDisputeMissedDeadline": settings.auto_dispute_missed_deadline,
+            "autoDisputeRejectionCount": settings.auto_dispute_rejection_count,
+            "autoDisputeComplianceFlag": settings.auto_dispute_compliance_flag}
+    else:
+        settings = await policy_facade.get_settings_for_org(session, None)
+        terms["policySettings"] = {"acceptanceWindowDays": settings.acceptance_window_days,
+            "signatureDeadlineDays": settings.signature_deadline_days, "disputeEvidenceDays": settings.dispute_evidence_days,
+            "directResolutionBusinessDays": settings.direct_resolution_business_days,
+            "challengeWindowDays": settings.challenge_window_days, "partialReleaseAllowed": settings.partial_release_allowed}
     p.terms_hash = hashlib.sha256(json.dumps(terms, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
     PROPOSAL_STATES.assert_can(p.status, "ACCEPTED")
     p.status, p.decided_at, p.decided_by = "ACCEPTED", clock.now(), actor.identity_id
     await cancel_timer(session, TIMER_EXPIRY, str(p.id))
     _close_request(r, "CLOSED", "PROPOSAL_ACCEPTED")
     _prop_evt(session, E.PROPOSAL_ACCEPTED, p, buyerIdentityId=p.buyer_identity_id, engagementType=r.engagement_type,
-              currency=p.currency, totalMinor=p.total_minor, policyVersionId=None, policyVersionLabel=POLICY_LABEL,
+              currency=p.currency, totalMinor=p.total_minor, policyVersionId=p.policy_version_id, policyVersionLabel=decision.policy_version_label,
               termsHash=p.terms_hash, terms=terms, service=r.service, ndaRequired=r.nda_required,
               pricingModel=p.pricing_model, summary=p.summary)
 

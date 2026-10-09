@@ -8,6 +8,7 @@ import { Avatar } from '../components/dashboard'
 import { ErrorAlert, SiteFooter, SiteHeader } from '../components/ui'
 import { countryName, priceText } from './ProfessionalPages'
 import { SaveButton, useSavedIds } from './SavedPage'
+import { PublicReviews } from '../components/PublicReviews'
 
 const TIER_LABEL = { A: 'Fully Verified Professional', B: 'Verified Identity', C: 'Unverified (Discovery Only)' }
 const AVAILABILITY_CLASS: Record<string, string> = { NOW: 'green', TWO_WEEKS: 'green', ONE_MONTH: 'green', AT_CAPACITY: 'warn' }
@@ -166,6 +167,7 @@ export default function PublicProfilePage() {
                 </section>
               </aside>
             </div>
+            {!p.isOwnProfile && <PublicReviews professionalId={p.id} />}
             {!p.isOwnProfile && <section className="card panel conversion-zone">
               <div><h2 style={{ margin: 0 }}>Ready to engage {p.displayName}?</h2>
                 <p className="muted small" style={{ margin: '4px 0 0' }}>Send a structured request. No payment until you accept a proposal and sign the contract.</p></div>

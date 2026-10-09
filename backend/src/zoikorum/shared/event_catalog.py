@@ -85,6 +85,7 @@ class E:
     TAXONOMY_SUGGESTION_RESOLVED = _t("marketplace", "taxonomy_suggestion", "resolved")  # APPROVED | MERGED | REJECTED
     LISTING_VIEWED = _t("marketplace", "listing", "viewed")
     PROFESSIONAL_SAVED = _t("marketplace", "listing", "bookmarked")
+    PROFESSIONAL_UNSAVED = _t("marketplace", "listing", "unbookmarked")
     SEARCH_SAVED = _t("marketplace", "saved_search", "created")
     MATCH_REQUESTED = _t("marketplace", "match", "requested")
     COLLECTION_UPDATED = _t("marketplace", "collection", "updated")
@@ -117,6 +118,7 @@ class E:
     CONTRACT_DISPUTE_CLEARED = _t("contract", "contract", "dispute_cleared")
     SIGNATURE_DEADLINE_ESCALATED = _t("contract", "contract", "signature_deadline_escalated")
     CHANGE_ORDER_REQUESTED = _t("contract", "change_order", "requested")
+    CHANGE_ORDER_APPROVED = _t("contract", "change_order", "approved")
     CHANGE_ORDER_REJECTED = _t("contract", "change_order", "rejected")
     CONTRACT_AMENDED = _t("contract", "contract", "amended")
     MILESTONE_CREATED = _t("contract", "milestone", "created")
@@ -157,8 +159,6 @@ class E:
     REFUND_SETTLED = _t("payments", "refund", "settled")
     INVOICE_ISSUED = _t("payments", "invoice", "issued")
     PAYMENT_CHARGED_BACK = _t("payments", "payment_intent", "charged_back")  # card issuer reversed a captured payment
-    RECONCILIATION_COMPLETED = _t("payments", "reconciliation", "completed")
-    RECONCILIATION_MISMATCH = _t("payments", "reconciliation", "mismatch")  # P0 financial incident (Handbook 15.4)
     CHARGEBACK_RECEIVED = _t("payments", "payment_intent", "chargeback_received")
     RECONCILIATION_COMPLETED = _t("payments", "reconciliation", "completed")
     RECONCILIATION_MISMATCH = _t("payments", "reconciliation", "mismatch_detected")
@@ -185,6 +185,8 @@ class E:
 
     # ---- Policy --------------------------------------------------------------
     POLICY_CREATED = _t("policy", "profile", "created")
+    POLICY_DRAFT_UPDATED = _t("policy", "profile", "draft_updated")
+    APPROVAL_EXPIRED = _t("policy", "approval", "expired")
     POLICY_VERSION_ACTIVATED = _t("policy", "profile", "version_activated")
     POLICY_EVALUATED = _t("policy", "evaluation", "completed")
     POLICY_VIOLATION_DETECTED = _t("policy", "evaluation", "violation_detected")
@@ -209,6 +211,8 @@ class E:
     DISPUTE_ENFORCED = _t("dispute", "case", "enforced")
     DISPUTE_CLOSED = _t("dispute", "case", "closed")
     DISPUTE_APPEALED = _t("dispute", "case", "appealed")
+    DISPUTE_APPEAL_DECIDED = _t("dispute", "case", "appeal_decided")
+    REVIEW_CREATED = _t("review", "review", "created")
 
     # ---- Audit ---------------------------------------------------------------
     AUDIT_ENTRY_REQUESTED = _t("audit", "entry", "requested")  # explicit audit-only entries
@@ -222,6 +226,7 @@ class E:
     MESSAGE_SENT = _t("messaging", "message", "sent")
     MESSAGE_FLAGGED = _t("messaging", "message", "flagged")
     THREAD_LOCKED = _t("messaging", "thread", "locked")
+    THREAD_UNLOCKED = _t("messaging", "thread", "unlocked")
 
     # ---- Notification --------------------------------------------------------
     NOTIFICATION_QUEUED = _t("notification", "notification", "queued")

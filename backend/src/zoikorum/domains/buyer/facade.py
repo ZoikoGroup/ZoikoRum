@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from zoikorum.domains.buyer.models import CostCenter, OrgMember, Organization
+from zoikorum.domains.buyer.models import BusinessUnit, CostCenter, OrgMember, Organization
 from zoikorum.shared.money import Money
 
 
@@ -79,3 +79,14 @@ async def get_cost_center(session: AsyncSession, cost_center_id: uuid.UUID) -> C
         return None
     budget = Money(c.quarterly_budget_minor, c.currency) if c.quarterly_budget_minor is not None and c.currency else None
     return CostCenterSummary(c.id, c.organization_id, c.business_unit_id, c.name, budget)
+
+
+async def list_identity_organizations(session: AsyncSession, identity_id: uuid.UUID) -> list[uuid.UUID]:
+    """Live memberships, including invitations accepted since the token was issued."""
+    return list((await session.scalars(select(OrgMember.organization_id).where(
+        OrgMember.identity_id == identity_id, OrgMember.status == "ACTIVE"))).all())
+
+
+async def list_business_unit_ids(session: AsyncSession, org_id: uuid.UUID) -> list[uuid.UUID]:
+    return list((await session.scalars(select(BusinessUnit.id).where(
+        BusinessUnit.organization_id == org_id))).all())

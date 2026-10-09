@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from zoikorum.shared.money import MoneyDTO
 from zoikorum.shared.uploads import StoredFileOut, UploadIn
@@ -33,6 +33,70 @@ class PartialOfferOut(BaseModel):
 
 class RevisionIn(BaseModel):
     reason: str = Field(min_length=5, max_length=1000)
+
+
+class ChangeOrderIn(BaseModel):
+    type: Literal["ADD_DELIVERABLE", "MODIFY_DELIVERABLE", "EXTEND_TIMELINE", "PRICING_CHANGE"]
+    delta: dict[str, Any]
+    impact: str = Field(min_length=5, max_length=1000)
+
+    @field_validator("impact")
+    @classmethod
+    def normalize_impact(cls, value: str) -> str:
+        value = value.strip()
+        if len(value) < 5:
+            raise ValueError("impact must contain at least 5 non-whitespace characters")
+        return value
+
+
+class ChangeOrderDecisionIn(BaseModel):
+    reason: str | None = Field(default=None, min_length=5, max_length=1000)
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_reason(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if len(value) < 5:
+            raise ValueError("reason must contain at least 5 non-whitespace characters")
+        return value
+
+
+class ChangeOrderOut(BaseModel):
+    id: uuid.UUID
+    contractId: uuid.UUID
+    proposedByIdentityId: uuid.UUID
+    proposerParty: Literal["BUYER", "PROFESSIONAL"]
+    type: str
+    delta: dict[str, Any]
+    impact: str
+    baseContractVersion: int
+    status: Literal["PROPOSED", "APPROVED", "REJECTED"]
+    decidedByIdentityId: uuid.UUID | None
+    decisionReason: str | None
+    decidedAt: datetime | None
+    appliedVersion: int | None
+    createdAt: datetime
+    preview: list[ChangePreviewOut] = Field(default_factory=list)
+
+
+class ChangePreviewOut(BaseModel):
+    label: str
+    before: str
+    after: str
+
+
+class ContractRevisionOut(BaseModel):
+    contractVersion: int
+    changeOrderId: uuid.UUID | None
+    currency: str
+    total: MoneyDTO
+    terms: dict
+    milestones: list[dict]
+    termsHash: str
+    documentSha256: str
+    createdAt: datetime
 
 
 class PartyOut(BaseModel):
@@ -89,6 +153,7 @@ class ContractOut(BaseModel):
     engagementType: str
     pricingModel: str | None
     status: str
+    pendingChangeOrderId: uuid.UUID | None
     total: MoneyDTO
     termsHash: str
     contractVersion: int
@@ -101,6 +166,8 @@ class ContractOut(BaseModel):
     activatedAt: datetime | None
     completedAt: datetime | None
     signatures: list[SignatureOut]
+    changeOrders: list[ChangeOrderOut]
+    revisions: list[ContractRevisionOut]
     milestones: list[MilestoneOut]
     viewerRole: Literal["BUYER", "PROFESSIONAL", "OPERATOR"]
     nextAction: str  # plain language, from the viewer's side

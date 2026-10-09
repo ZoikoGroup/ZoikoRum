@@ -6,7 +6,7 @@ from typing import Literal
 from fastapi import APIRouter, Response, status
 
 from zoikorum.domains.dispute import service
-from zoikorum.domains.dispute.schemas import AssignIn, DisputeIn, DisputeOut, EvidenceIn, RecommendationIn, ResolutionIn
+from zoikorum.domains.dispute.schemas import AppealIn, AppealDecisionIn, AssignIn, DisputeIn, DisputeOut, EvidenceIn, RecommendationIn, ResolutionIn
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
 from zoikorum.shared.idempotency import IdempotencyKey
@@ -14,6 +14,26 @@ from zoikorum.shared.uploads import file_response
 
 router = APIRouter(tags=["disputes"])
 D = "/v1/disputes"
+
+
+@router.get(f"{D}/{{case_id}}/appeal")
+async def get_appeal(case_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    return await service.get_appeal(session, actor, case_id)
+
+
+@router.post(f"{D}/{{case_id}}/appeal", status_code=201)
+async def file_appeal(case_id: uuid.UUID, body: AppealIn, actor: CurrentActor, session: DbSession, idem: IdempotencyKey):
+    return await idem.run(session, actor, lambda: service.file_appeal(session, actor, case_id, body), status_code=201)
+
+
+@router.post(f"{D}/{{case_id}}/appeal/decision")
+async def decide_appeal(case_id: uuid.UUID, body: AppealDecisionIn, actor: CurrentActor, session: DbSession, idem: IdempotencyKey):
+    return await idem.run(session, actor, lambda: service.decide_appeal(session, actor, case_id, body))
+
+
+@router.get(f"{D}/{{case_id}}/appeal/files/{{sha256}}")
+async def appeal_file(case_id: uuid.UUID, sha256: str, actor: CurrentActor, session: DbSession):
+    return file_response(*await service.appeal_file(session, actor, case_id, sha256))
 
 
 @router.post(D, response_model=DisputeOut, status_code=status.HTTP_201_CREATED)

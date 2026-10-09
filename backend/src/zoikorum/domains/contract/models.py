@@ -46,10 +46,66 @@ class Contract(Base, UUIDPk, Timestamps, Versioned):
     nda_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     document: Mapped[str] = mapped_column(Text, nullable=False)  # rendered agreement (blob storage in production)
     document_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
-    policy_version_label: Mapped[str] = mapped_column(String(80), nullable=False)
+    policy_version_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    policy_version_label: Mapped[str] = mapped_column(String(120), nullable=False)
     signature_deadline: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    pending_change_order_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey(f"{SCHEMA}.change_orders.id", use_alter=True, name="fk_contracts_pending_change_order_id_change_orders"),
+    )
+
+
+class ChangeOrder(Base, UUIDPk, Timestamps, Versioned):
+    """Append-only decision history; proposal status advances only from PROPOSED to APPROVED or REJECTED."""
+
+    __tablename__ = "change_orders"
+    __table_args__ = (
+        Index("ix_change_orders_contract", "contract_id", "created_at"),
+        {"schema": SCHEMA},
+    )
+
+    contract_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.contracts.id"), nullable=False
+    )
+    proposed_by_identity_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    proposer_party: Mapped[str] = mapped_column(String(20), nullable=False)
+    change_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    delta: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    impact: Mapped[str] = mapped_column(String(1000), nullable=False)
+    base_contract_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="PROPOSED")
+    decided_by_identity_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    decision_reason: Mapped[str | None] = mapped_column(String(1000))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    applied_version: Mapped[int | None] = mapped_column(Integer)
+
+
+class ContractRevision(Base, UUIDPk, CreatedAt):
+    """Immutable terms and rendered-document snapshot for one contract version."""
+
+    __tablename__ = "contract_revisions"
+    __table_args__ = (
+        UniqueConstraint("contract_id", "contract_version"),
+        UniqueConstraint("change_order_id"),
+        {"schema": SCHEMA},
+    )
+
+    contract_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.contracts.id"), nullable=False, index=True
+    )
+    contract_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    change_order_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.change_orders.id")
+    )
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    total_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    terms: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    milestones: Mapped[list] = mapped_column(JSONB, nullable=False)
+    terms_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    document: Mapped[str] = mapped_column(Text, nullable=False)
+    document_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
 
 
 class Milestone(Base, UUIDPk, Timestamps, Versioned):

@@ -89,7 +89,7 @@ def to_out(identity: Identity, links: list[IdentityLink]) -> IdentityOut:
         mfaRequired=mfa_required(identity), mfaBypass=get_settings().mfa_bypass,
         personas=sorted(identity.personas or []),
         primaryPersona=identity.primary_persona,
-        platformRoles=sorted(identity.platform_roles or []),
+        platformRoles=sorted(identity.platform_roles or []) if identity.status == "ACTIVE" else [],
         organizationName=identity.signup_organization_name,
         defaultDashboard=default_dashboard(identity),
         links=[LinkOut(type=l.link_type, targetId=l.target_id, roles=sorted(l.roles), kind=l.target_kind) for l in links],
@@ -179,7 +179,7 @@ async def login(
         raise Unauthenticated("Email or password is incorrect")
     if identity.locked_until and identity.locked_until > now:
         raise Unauthenticated("Account temporarily locked after repeated failures", code="ACCOUNT_LOCKED")
-    if identity.status != "ACTIVE":
+    if identity.status not in ("ACTIVE", "SUSPENDED"):
         raise Forbidden("This account is not active", code="ACCOUNT_NOT_ACTIVE")
     try:
         _hasher.verify(identity.password_hash or "", password)
@@ -188,7 +188,7 @@ async def login(
         if identity.failed_login_count >= MAX_FAILED_LOGINS:
             identity.locked_until = now + LOCKOUT
             identity.failed_login_count = 0
-        _evt(session, E.AUTHENTICATION_FAILED, identity, reason="BAD_PASSWORD")
+        _evt(session, E.AUTHENTICATION_FAILED, identity, reason="BAD_PASSWORD", lockedUntil=identity.locked_until)
         # Returned, not raised: the failure counter and event must still commit.
         return LoginFailure("Email or password is incorrect")
 
@@ -227,7 +227,7 @@ async def refresh(session: AsyncSession, refresh_token: str, user_agent: str | N
     if sess.expires_at <= now:
         raise Unauthenticated("Session expired")
     identity = await session.get(Identity, sess.identity_id)
-    if identity is None or identity.status != "ACTIVE":
+    if identity is None or identity.status not in ("ACTIVE", "SUSPENDED"):
         raise Forbidden("This account is not active")
     sess.rotated_at = now
     # Rotation keeps the original auth strength/time; step-up freshness still decays.
@@ -419,7 +419,7 @@ def _password_fingerprint(identity: Identity) -> str:
 async def request_password_reset(session: AsyncSession, email: str) -> str | None:
     """Returns the reset token (to be emailed). Unknown emails return None silently."""
     identity = await session.scalar(select(Identity).where(Identity.email == email.lower()))
-    if identity is None or identity.status != "ACTIVE":
+    if identity is None or identity.status not in ("ACTIVE", "SUSPENDED"):
         return None
     _evt(session, E.PASSWORD_RESET_REQUESTED, identity)
     return tokens.mint_purpose_token(

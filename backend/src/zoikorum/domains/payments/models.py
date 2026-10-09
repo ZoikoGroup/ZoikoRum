@@ -75,6 +75,8 @@ class Payout(Base, UUIDPk, Timestamps):
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="QUEUED")
     provider_ref: Mapped[str | None] = mapped_column(String(100))
+    transfer_ref: Mapped[str | None] = mapped_column(String(100))
+    provider_attempt: Mapped[int] = mapped_column(nullable=False, default=0)
     failure_message: Mapped[str | None] = mapped_column(String(300))
     expected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # when the bank should receive it
     settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

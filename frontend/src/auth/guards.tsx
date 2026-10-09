@@ -9,7 +9,8 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   const location = useLocation()
   if (loading) return <div className="page-loading" aria-busy="true">Loading…</div>
   if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />
-  if (user.mfaRequired && location.pathname !== '/app/security') {
+  if (user.status === 'SUSPENDED' && location.pathname !== '/app/safety') return <Navigate to="/app/safety" replace />
+  if (user.status !== 'SUSPENDED' && user.mfaRequired && location.pathname !== '/app/security') {
     return <Navigate to="/app/security" replace state={{ required: true }} />
   }
   return <>{children}</>
@@ -39,7 +40,7 @@ export function GuestOnly({ children }: { children: ReactNode }) {
   const [params] = useSearchParams()
   if (loading) return null
   if (user) {
-    const dest = user.mfaRequired ? '/app/security' : safeNextPath(params.get('next')) ?? `/app/${user.defaultDashboard}`
+    const dest = user.status === 'SUSPENDED' ? '/app/safety' : user.mfaRequired ? '/app/security' : safeNextPath(params.get('next')) ?? `/app/${user.defaultDashboard}`
     return <Navigate to={dest} replace />
   }
   return <>{children}</>

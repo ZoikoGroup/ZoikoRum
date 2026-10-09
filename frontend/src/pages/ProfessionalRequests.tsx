@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import { AIAssistance } from '../components/AIAssistance'
 import { ApiError } from '../api/client'
 import { formatMoney } from '../api/orgs'
 import { CURRENCIES, LABEL, proApi, toMinor, type Offering } from '../api/professional'
@@ -185,11 +186,15 @@ export function ProfessionalRequestDetail() {
     <>
       <PortalHeader eyebrow={<Link to="/app/professional/requests">← Incoming requests</Link>} title={req.service}
         subtitle={<>From <strong>{req.organizationName ?? req.buyerName}</strong> · <span className={`badge ${requestStatus(req).tone}`}>{requestStatus(req).label}</span></>}
-        actions={req.status === 'OPEN' && (!proposal || proposal.status === 'DRAFT')
-          ? <button className="btn btn-secondary" onClick={() => setDeclining(true)}>Decline request</button> : undefined} />
+        actions={<>
+          {(!req.ndaRequired || req.ndaAccepted) && <Link className="btn btn-secondary" to={`/app/messages?contextType=PROPOSAL_REQUEST&contextId=${req.id}`}><Icon name="message" /> Messages</Link>}
+          {req.status === 'OPEN' && (!proposal || proposal.status === 'DRAFT')
+            && <button className="btn btn-secondary" onClick={() => setDeclining(true)}>Decline request</button>}
+        </>} />
       {notice && <div className="alert alert-success" role="status">{notice}</div>}
       <ErrorAlert error={error} />
 
+      {(!req.ndaRequired || req.ndaAccepted) && <AIAssistance purpose="proposal-draft" subjectId={req.id} />}
       {declining && <DeclineForm busy={busy} onCancel={() => setDeclining(false)}
         onDecline={(reason, note) => run(() => proposalApi.decline(req.id, reason, note), 'Request declined. The buyer has been told, with your reason.').then(() => setDeclining(false))} />}
 

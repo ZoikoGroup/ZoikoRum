@@ -3,8 +3,8 @@
 Neutral, structured, evidence-first: funds freeze on submission (escrow consumes DISPUTE_INITIATED), both parties add
 fingerprinted evidence, then structured proposals (release / refund per milestone). Unresolved cases go to a mediator,
 whose recommendation binds only if both parties accept; otherwise a platform decision needs the mediator AND a second
-approver with the Legal role (no single role initiates and finalises). AI never decides. Appeals and automated
-platform triggers arrive later.
+approver with the Legal role (no single role initiates and finalises). AI never decides. Independent appeals
+preserve the original settlement; policy-pinned automatic intake freezes eligible funded work.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from zoikorum.config import get_settings
 from zoikorum.domains.buyer import facade as buyer_facade
 from zoikorum.domains.contract import facade as contract_facade
-from zoikorum.domains.dispute.models import DisputeCase, EvidenceItem, ResolutionProposal, TimelineEntry
+from zoikorum.domains.dispute.models import DisputeAppeal, DisputeCase, EvidenceItem, ResolutionProposal, TimelineEntry
 from zoikorum.domains.dispute.schemas import (
     AllocationIn, AllocationOut, AssignIn, DisputeIn, DisputeOut, EvidenceIn, EvidenceOut, MilestoneRef, ProposalOut,
     RecommendationIn, ResolutionIn, TimelineOut,
@@ -237,6 +237,8 @@ async def list_disputes(session: AsyncSession, actor: Actor, role: str, contract
 # ---- Intake ------------------------------------------------------------------------------------------------
 
 async def open_dispute(session: AsyncSession, actor: Actor, body: DisputeIn) -> DisputeOut:
+    from sqlalchemy import text
+    await session.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": f"dispute:{body.contractId}"})
     k = await _contract(session, body.contractId)
     party = await _party_of(session, actor, k.organization_id, k.professional_id)
     if party is None:
@@ -261,7 +263,8 @@ async def open_dispute(session: AsyncSession, actor: Actor, body: DisputeIn) -> 
                     category=body.category, summary=body.summary.strip(), desired_outcome=body.desiredOutcome, context=body.context.strip(),
                     initiated_by=actor.identity_id, initiator_party=party, status="EVIDENCE_COLLECTION", currency=k.currency,
                     disputed_minor=sum(ms[i].amount_minor for i in wanted),
-                    evidence_deadline=now + timedelta(days=get_settings().dispute_evidence_days), evidence_complete=[])
+                    evidence_deadline=now + timedelta(days=(await contract_facade.policy_controls(session, k.id)).get(
+                        "disputeEvidenceDays", get_settings().dispute_evidence_days)), evidence_complete=[])
     session.add(c)
     await session.flush()
     label = await _actor_label(session, actor, party)
@@ -324,7 +327,8 @@ async def _after_evidence(session: AsyncSession, c: DisputeCase) -> None:
         return
     CASE_STATES.assert_can(c.status, "DIRECT_RESOLUTION")
     c.status = "DIRECT_RESOLUTION"
-    c.direct_deadline = add_business_days(clock.now(), get_settings().dispute_direct_resolution_business_days)
+    controls = await contract_facade.policy_controls(session, c.contract_id)
+    c.direct_deadline = add_business_days(clock.now(), controls.get("directResolutionBusinessDays", get_settings().dispute_direct_resolution_business_days))
     _log(session, c, "DIRECT", "System", f"Direct resolution window open until {c.direct_deadline:%d %b %Y}. Use structured proposals.")
     await schedule_timer(session, TIMER_DIRECT, str(c.id), c.direct_deadline, {"disputeId": str(c.id)})
 
@@ -513,7 +517,8 @@ async def _resolve(session: AsyncSession, c: DisputeCase, outcome: str, allocati
     c.decision = {"plainSummary": plain, "outcome": outcome, "allocations": allocations, "decisionPath": path,
                   "decidedBy": str(decided_by) if decided_by else None, "evidenceReferences": [str(e) for e in evidence],
                   "policyCitations": citations or ["Zoikorum Dispute Resolution process", "Engagement agreement clauses 7-10"],
-                  "appealEligible": False, "appealNote": "Appeals are not available yet on this platform version."}
+                  "appealEligible": path == "PLATFORM", "appealNote": "Platform decisions may be appealed within 14 days for new material evidence or procedural error.",
+                  "originalReviewers": [str(x) for x in (c.mediator_identity_id, decided_by) if x]}
     await cancel_timer(session, TIMER_EVIDENCE, str(c.id))
     await cancel_timer(session, TIMER_DIRECT, str(c.id))
     outcomes = {a["milestoneOutcome"] for a in allocations}
@@ -541,3 +546,146 @@ async def resolution_executed(session: AsyncSession, payload: dict) -> None:
 
 async def open_for_contract(session: AsyncSession, contract_id: uuid.UUID) -> list[DisputeCase]:
     return list((await session.scalars(select(DisputeCase).where(DisputeCase.contract_id == contract_id, DisputeCase.status.in_(OPEN)))).all())
+
+
+def appeal_out(a: DisputeAppeal) -> dict:
+    return {"id": str(a.id), "caseId": str(a.case_id), "grounds": a.grounds, "explanation": a.explanation,
+            "evidence": [file_out(f).model_dump(mode="json") for f in a.evidence], "status": a.status,
+            "reason": a.decision_reason, "remediation": a.remediation, "createdAt": a.created_at,
+            "decidedAt": a.decided_at}
+
+
+async def get_appeal(session: AsyncSession, actor: Actor, case_id: uuid.UUID) -> dict | None:
+    c = await _case(session, case_id)
+    await _viewer(session, actor, c)
+    a = await session.scalar(select(DisputeAppeal).where(DisputeAppeal.case_id == case_id))
+    return appeal_out(a) if a else None
+
+
+async def file_appeal(session: AsyncSession, actor: Actor, case_id: uuid.UUID, body) -> dict:
+    c = await _case(session, case_id, lock=True)
+    await _require_party(session, actor, c)
+    if not c.decision or c.decision.get("decisionPath") != "PLATFORM" or not c.decided_at:
+        raise Conflict("Only a platform decision can be appealed", code="APPEAL_INELIGIBLE")
+    if clock.now() > c.decided_at + timedelta(days=14):
+        raise Conflict("The appeal window has ended", code="APPEAL_WINDOW_ENDED")
+    if await session.scalar(select(DisputeAppeal.id).where(DisputeAppeal.case_id == c.id)):
+        raise Conflict("An appeal already exists for this decision", code="APPEAL_EXISTS")
+    if body.grounds == "NEW_MATERIAL_EVIDENCE" and not body.evidence:
+        raise ValidationFailed("Attach the new material evidence")
+    evidence = store_uploads(f"dispute/{c.id}/appeal", body.evidence)
+    a = DisputeAppeal(case_id=c.id, submitted_by=actor.identity_id, grounds=body.grounds,
+                      explanation=body.explanation.strip(), evidence=evidence, created_at=clock.now())
+    session.add(a)
+    await session.flush()
+    _evt(session, E.DISPUTE_APPEALED, c, appealId=a.id, grounds=a.grounds)
+    _log(session, c, "APPEAL_FILED", "Party", "An independent review was requested. The original decision remains recorded.")
+    return appeal_out(a)
+
+
+async def decide_appeal(session: AsyncSession, actor: Actor, case_id: uuid.UUID, body) -> dict:
+    actor.require_platform_role(PlatformRole.LEGAL)
+    actor.require_step_up()
+    c = await _case(session, case_id, lock=True)
+    if await _party_of(session, actor, c.organization_id, c.professional_id):
+        raise Forbidden("A party cannot review the appeal", code="CONFLICT_OF_INTEREST")
+    reviewers = set((c.decision or {}).get("originalReviewers", []))
+    if c.mediator_identity_id:
+        reviewers.add(str(c.mediator_identity_id))
+    if (c.decision or {}).get("decidedBy"):
+        reviewers.add(c.decision["decidedBy"])
+    if str(actor.identity_id) in reviewers:
+        raise Forbidden("The appeal requires a reviewer independent of the original decision", code="FOUR_EYES")
+    a = await session.scalar(select(DisputeAppeal).where(DisputeAppeal.case_id == c.id).with_for_update())
+    if a is None:
+        raise NotFound("Appeal not found")
+    if a.status != "PENDING":
+        raise Conflict("This appeal has already been decided", code="APPEAL_DECIDED")
+    if body.outcome == "UPHELD" and not body.remediation.strip():
+        raise ValidationFailed("Explain the follow-up remedy for an upheld appeal")
+    a.status, a.reviewed_by, a.decided_at = body.outcome, actor.identity_id, clock.now()
+    a.decision_reason, a.remediation = body.reason.strip(), body.remediation.strip() or None
+    _evt(session, E.DISPUTE_APPEAL_DECIDED, c, appealId=a.id, appealOutcome=a.status)
+    record_audit(session, "dispute.appeal.decided", object_type="DisputeAppeal", object_id=a.id,
+                 tenant_id=c.organization_id, details={"outcome": a.status, "reason": a.decision_reason, "remediation": a.remediation})
+    _log(session, c, "APPEAL_DECIDED", "Independent reviewer", f"Appeal {a.status.lower()}: {a.decision_reason}")
+    return appeal_out(a)
+
+
+async def appeal_file(session: AsyncSession, actor: Actor, case_id: uuid.UUID, sha256: str):
+    c = await _case(session, case_id)
+    await _viewer(session, actor, c)
+    a = await session.scalar(select(DisputeAppeal).where(DisputeAppeal.case_id == c.id))
+    if a is None:
+        raise NotFound("Appeal not found")
+    record_audit(session, "dispute.appeal.evidence.read", object_type="DisputeAppeal", object_id=a.id,
+                 tenant_id=c.organization_id, details={"sha256": sha256})
+    rec = find_file(a.evidence, sha256)
+    return read_file(rec), rec.get("contentType"), rec["name"]
+
+
+TIMER_MISSED_DEADLINE = "dispute.milestone_deadline"
+
+
+async def automatic_case(session, contract_id, milestone_ids, category, trigger):
+    from sqlalchemy import text
+    await session.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": f"dispute:{contract_id}"})
+    k = await contract_facade.get_contract(session, contract_id)
+    if not k or k.status not in ("ACTIVE", "DISPUTED"):
+        return
+    occupied = {m for case in await open_for_contract(session, k.id) for m in case.milestone_ids}
+    eligible = [m for m in k.milestones if m.id in milestone_ids and str(m.id) not in occupied and m.status in DISPUTABLE]
+    if not eligible:
+        return
+    controls = await contract_facade.policy_controls(session, k.id)
+    c = DisputeCase(reference=f"ZK-DSP-{uuid.uuid4().hex[:8].upper()}", contract_id=k.id, contract_reference=k.reference,
+                    organization_id=k.organization_id, professional_id=k.professional_id, milestone_ids=[str(m.id) for m in eligible],
+                    category=category, summary=f"Policy-triggered review: {trigger}", desired_outcome="REWORK", context="Automatic intake only; evidence and human review determine the outcome.",
+                    initiated_by=None, initiator_party="PLATFORM", currency=k.currency, disputed_minor=sum(m.amount_minor for m in eligible),
+                    evidence_deadline=clock.now() + timedelta(days=controls.get("disputeEvidenceDays", get_settings().dispute_evidence_days)), evidence_complete=[])
+    session.add(c); await session.flush()
+    _log(session, c, "OPENED", "Platform policy", c.summary)
+    _evt(session, E.DISPUTE_INITIATED, c, milestoneIds=c.milestone_ids, category=category, desiredOutcome="REWORK", initiatedBy=None, trigger=trigger)
+    _evt(session, E.DISPUTE_EVIDENCE_WINDOW_OPENED, c, deadline=c.evidence_deadline)
+    await schedule_timer(session, TIMER_EVIDENCE, str(c.id), c.evidence_deadline, {"disputeId": str(c.id)})
+
+
+async def schedule_deadlines(session, payload):
+    from datetime import datetime, time, timezone
+    k = await contract_facade.get_contract(session, uuid.UUID(str(payload["contractId"])))
+    if not k or not (await contract_facade.policy_controls(session, k.id)).get("autoDisputeMissedDeadline"):
+        return
+    for m in k.milestones:
+        if m.due_date and m.status not in ("ACCEPTED", "CANCELLED"):
+            due = datetime.combine(m.due_date + timedelta(days=1), time.min, timezone.utc)
+            await schedule_timer(session, TIMER_MISSED_DEADLINE, f"{m.id}:{k.contract_version}:{payload.get('fundingId', 'activation')}", due,
+                                 {"contractId": str(k.id), "milestoneId": str(m.id), "dueDate": str(m.due_date)})
+
+
+async def missed_deadline(session, payload):
+    k = await contract_facade.get_contract(session, uuid.UUID(payload["contractId"]))
+    if not k or not (await contract_facade.policy_controls(session, k.id)).get("autoDisputeMissedDeadline"):
+        return
+    m = next((m for m in k.milestones if str(m.id) == payload["milestoneId"]), None)
+    if not m or str(m.due_date) != payload["dueDate"] or not m.due_date or m.due_date >= clock.now().date() or m.status not in ("IN_PROGRESS", "REVISION_REQUESTED"):
+        return
+    await automatic_case(session, k.id, {m.id}, "TIMELINE_DELAY", "missed delivery deadline")
+
+
+async def repeated_rejection(session, payload):
+    cid = uuid.UUID(str(payload["contractId"]))
+    threshold = (await contract_facade.policy_controls(session, cid)).get("autoDisputeRejectionCount")
+    if threshold and int(payload.get("revisionCount", 0)) >= threshold:
+        await automatic_case(session, cid, {uuid.UUID(str(payload["milestoneId"]))}, "QUALITY_ACCEPTANCE", "repeated deliverable rejection")
+
+
+async def compliance_trigger(session, payload):
+    if payload.get("subjectType") != "PROFESSIONAL":
+        return
+    if payload.get("action") and payload["action"] not in ("CREDENTIAL_ENFORCEMENT", "VERIFICATION_RESET", "ENGAGEMENT_SUSPENSION"):
+        return
+    pid = uuid.UUID(str(payload["subjectId"]))
+    for cid in await contract_facade.active_contract_ids(session, pid):
+        if (await contract_facade.policy_controls(session, cid)).get("autoDisputeComplianceFlag"):
+            c = await contract_facade.get_contract(session, cid)
+            await automatic_case(session, cid, {m.id for m in c.milestones}, "COMPLIANCE_BREACH", "confirmed compliance restriction")
