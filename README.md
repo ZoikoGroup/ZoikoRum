@@ -34,9 +34,9 @@ Then open http://localhost:5173. Create the first Platform Admin with
 ## Testing
 
 ```powershell
-.un-tests.ps1                    # everything (needs the Docker database)
-.un-tests.ps1 -Kind unit         # fast: backend business rules + frontend helpers, no database
-.un-tests.ps1 -Kind regression   # end-to-end journeys across Steps 1-9
+.\run-tests.ps1                    # everything (needs the Docker database)
+.\run-tests.ps1 -Kind unit         # fast: backend business rules + frontend helpers, no database
+.\run-tests.ps1 -Kind regression   # end-to-end journeys across Steps 1-9
 ```
 
 | Kind | What it checks | Where |
@@ -50,7 +50,7 @@ Run the regression suite before every merge; CI runs all three on every push.
 ## Build status
 
 Built in small, reviewed steps. See [ARCHITECTURE.md §6](backend/docs/ARCHITECTURE.md) for the current status:
-Steps 0-9 are built: foundation, role-based login, organizations & firms, professional profiles, verification & trust tiers, search & discovery, requests & proposals, contracts, escrow & payments, and disputes. Step 10 onward is next.
+Steps 0–9 form the core marketplace. Steps 10–18 now have backend and frontend implementations for messaging, change orders, enterprise policies, notifications, dispute extras, reviews, AI assistance, reports and safety tools. This is implementation status, not a claim of production readiness. See [current merge status and validation limits](backend/docs/CURRENT_STATUS.md) and [Steps 12–18](backend/docs/STEPS_12_18_IMPLEMENTATION.md) for remaining work.
 
 ## Rules of the road
 

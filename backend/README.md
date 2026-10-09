@@ -1,6 +1,8 @@
 # Zoikorum Backend
 
 FastAPI + PostgreSQL modular monolith for the Zoikorum governed professional-services marketplace.
+Current status and merge validation: [docs/CURRENT_STATUS.md](docs/CURRENT_STATUS.md).
+
 Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · Domain contracts: [docs/BUILD_SPEC.md](docs/BUILD_SPEC.md)
 
 ## Prerequisites
@@ -28,7 +30,7 @@ python -m zoikorum.worker                          # outbox relay, consumer retr
 ```
 The worker must run, or events (and therefore the audit ledger and every later domain) will not progress.
 On Windows, clicking inside the worker's console window can pause it (QuickEdit mode); press Enter or Esc in that window to resume.
-Uploaded files (profile photos) go to `ZK_STORAGE_DIR` (default `backend/var/storage`, git-ignored).
+Local uploads use `ZK_STORAGE_DIR` (default `var/storage` relative to the backend working directory, git-ignored). Optional S3 storage and hosted payment/verification configuration are described in [current status](docs/CURRENT_STATUS.md#integrations-and-remaining-production-work).
 
 Create the first Platform Admin (only possible from the CLI; the password is prompted, or read from `ZK_ADMIN_PASSWORD`):
 ```bash
@@ -65,7 +67,7 @@ src/zoikorum/
   domains/<d>/   models, schemas, service, api (router), handlers (events/timers), facade (public)
   main.py        app factory (auto-mounts every domain)
   worker.py      background worker
-alembic/         single migration chain for all schemas
+alembic/         revisions for all schemas; branch histories join at a single merge head
 tests/           per-domain tests, architecture fitness tests, end-to-end platform spine
 ```
 
@@ -73,3 +75,13 @@ tests/           per-domain tests, architecture fitness tests, end-to-end platfo
 Read BUILD_SPEC §0 before writing code. The short version: one domain owns each table; other domains
 go through `facade.py` or events; every commercial mutation is idempotent, policy-checked and audited;
 money is integer minor units; AI never decides.
+
+## Schema reference
+
+Regenerate the model-derived table reference without connecting to a database:
+
+```bash
+python -m zoikorum.cli schema-doc
+```
+
+After the dev merge, the migration head is `f1360ce42a96`. A single head does not prove database migration success; run upgrade and `alembic check` against the intended database.

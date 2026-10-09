@@ -93,8 +93,16 @@ Rules the UI follows:
 - Staff, Firm Admins and Enterprise Admins are sent to `/app/security` until two-step verification is on.
 - Pages are gated by role (`RequireRole`). The API applies the same check to every call.
 - Sensitive actions that get `STEP_UP_REQUIRED` open the "Confirm it's you" code dialog and retry.
-- In development (no email provider yet) the API returns the email-confirmation and password-reset
+- In development the API returns the email-confirmation and password-reset
   tokens, and the UI shows them as "Development mode" links.
+
+## Messaging, commercial workflows and operations
+
+Current routes include `/app/messages`, `/app/policies`, `/app/notifications`, `/app/webhooks`, `/app/reports`, `/app/safety`, and staff AI, analytics, safety, dead-letter and audit pages. Engagement workspaces include change orders, payments and dispute workflows; completed engagements support reviews. Backend authorization remains authoritative.
+
+Hosted Stripe payments/onboarding and Persona identity controls read backend configuration and require configured external services. Credentials stay on the backend. The latest dev merge brought backend additions rather than matching frontend files: partial acceptance, verification appeals, duplicate-account handling, taxonomy suggestions, proposal attachments and retainer controls still need dedicated UI wiring or verification. See [current status](../backend/docs/CURRENT_STATUS.md).
+
+Latest merge validation (2026-10-09): 23 frontend tests and the production build passed; the build retains a large-bundle warning. This does not establish end-to-end database/provider success.
 
 ## Layout
 ```

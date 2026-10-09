@@ -14,7 +14,7 @@ The implementation follows the existing modular monolith: each domain owns its s
 
 ## Configuration and operation
 
-Apply the checked-in migrations with `alembic upgrade head` from `backend/` using the project virtual environment and the intended database configuration. The new revisions are `b739e68210ad` and `c8427d916a30`. The application/event relay must be running for asynchronous delivery, projections, reminders and timers.
+Apply the checked-in migrations with `alembic upgrade head` from `backend/` using the project virtual environment and the intended database configuration. Steps 12–18 introduced `b739e68210ad` and `c8427d916a30`; later integration revisions and dev migrations now join at `f1360ce42a96`. See [current merge status](CURRENT_STATUS.md) for the migration graph and latest validation limits. The application/event relay must be running for asynchronous delivery, projections, reminders and timers.
 
 Email defaults to local delivery status rather than claiming that a message reached an external mailbox. Configure the SMTP settings in `zoikorum/config.py` for real email delivery. Tokens are minted when an account email is delivered; plaintext tokens and webhook secrets are excluded from audit/event payloads. Webhook secrets are shown once, stored encrypted and used to sign the raw JSON body. Deliveries retry for 24 hours; immutable attempt records are retained indefinitely, satisfying the minimum 90-day retention requirement.
 
@@ -34,6 +34,8 @@ Suspended accounts can authenticate to read safety notices and file appeals. The
 - Contract summaries preserve the source terms and hash. Missing legal/IP clauses are not invented by AI or by the implementation.
 
 ## Verification
+
+Latest merge checks (2026-10-09): 103 backend unit tests and 23 frontend tests passed; compilation and frontend build passed. PostgreSQL was unavailable, so this merge has not passed database integration or migration execution checks. Offline migration SQL generation also hit an existing taxonomy seed rendering limitation. Earlier feature-level checks below describe test coverage, not a new full-suite pass.
 
 Currency-summary follow-up: earnings totals now aggregate the entire payout history per currency, independently of the latest-200 payout detail window. Monthly settled earnings use the current UTC month. `totalsByCurrency` is the authoritative summary; legacy `totals` remains available for a single currency and is empty for multiple currencies. Buyer payments, engagement values, protected funds and dispute totals display currencies separately without an implied exchange rate.
 
