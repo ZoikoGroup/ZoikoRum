@@ -473,6 +473,7 @@ async def withdraw_credential(session: AsyncSession, actor: Actor, claim_id: uui
     previous, c.status = c.status, "WITHDRAWN"
     record_audit(session, "CREDENTIAL_WITHDRAWN", object_type="CredentialClaim", object_id=c.id, tenant_id=pro.id,
                  details={"professionalId": str(pro.id), "previousStatus": previous})
+    _evt(session, E.CREDENTIAL_WITHDRAWN, pro, credentialClaimId=c.id)
 
 
 async def set_claim_status(session: AsyncSession, claim_id: uuid.UUID, status: str) -> None:
@@ -667,6 +668,9 @@ async def public_profile(session: AsyncSession, actor: Actor | None, professiona
     from zoikorum.domains.admin import facade as admin
     if not own and not (actor and actor.is_operator) and set(await admin.active_restrictions(session, "IDENTITY", pro.identity_id)).intersection({"SUSPEND_ACCOUNT", "OFFBOARD"}):
         raise NotFound("Professional not found")
+    account = await identity_facade.get_identity(session, pro.identity_id)
+    if not own and not (actor and actor.is_operator) and (account is None or account.status != "ACTIVE"):
+        raise NotFound("Professional not found")  # suspended or closed (e.g. a confirmed duplicate account)
     claims = (await session.scalars(select(CredentialClaim).where(
         CredentialClaim.professional_id == pro.id, CredentialClaim.status.in_(_PUBLIC_CLAIM_STATES))
         .order_by(CredentialClaim.created_at))).all()

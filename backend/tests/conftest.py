@@ -184,7 +184,8 @@ class User:
         assert r.status_code == 200, r.text
         self.totp_secret = r.json()["secret"]
         r = await self.client.post("/v1/auth/mfa/verify", headers=self.h, json={"totpCode": self.totp()})
-        assert r.status_code == 204, r.text
+        assert r.status_code == 200, r.text
+        self.recovery_codes: list[str] = r.json()["recoveryCodes"]
 
     def totp(self) -> str:
         assert self.totp_secret

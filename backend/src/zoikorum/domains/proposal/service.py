@@ -705,7 +705,7 @@ async def accept_proposal(session: AsyncSession, actor: Actor, proposal_id: uuid
         raise PolicyBlocked(f"{pro.display_name} does not serve {org.country}; the engagement cannot be agreed. "
                             "Choose a professional who serves your country.", code="JURISDICTION_CONFLICT")
     limit = await buyer_facade.get_member_spend_limit(session, p.organization_id, actor.identity_id)
-    if limit is not None and limit.currency == p.currency and p.total_minor > limit.minor:
+    if limit is not None and (limit.currency != p.currency or p.total_minor > limit.minor):
         raise PolicyBlocked(f"{_money(p.total_minor, p.currency)} is above your approval limit of "
                             f"{_money(limit.minor, limit.currency)}; ask a colleague with a higher limit to accept",
                             code="SPEND_LIMIT_EXCEEDED")

@@ -28,7 +28,7 @@ Eraser = Callable[[AsyncSession, uuid.UUID], Awaitable[dict]]
 Blockers = Callable[[AsyncSession, uuid.UUID], Awaitable[list[str]]]
 
 # Columns never exported, whatever table they are in.
-SECRET_COLUMNS = frozenset({"password_hash", "mfa_secret_enc", "refresh_token_hash", "phone_enc", "secret_enc",
+SECRET_COLUMNS = frozenset({"password_hash", "mfa_secret_enc", "mfa_recovery_hashes", "refresh_token_hash", "phone_enc", "secret_enc",
                             "signing_secret_enc", "token_hash", "storage_key", "photo_key"})
 
 

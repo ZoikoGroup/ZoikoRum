@@ -174,8 +174,9 @@ export async function staffMember(name: string, roles: string[]): Promise<Accoun
 }
 
 /** Signs in through the login page. */
-export async function signIn(page: Page, email: string) {
-  await page.goto('/login')
+/** Customers and professionals use /login; staff use /staff/login (the server keeps each account to its own page). */
+export async function signIn(page: Page, email: string, { staff = false } = {}) {
+  await page.goto(staff ? '/staff/login' : '/login')
   await page.getByLabel('Work email').fill(email)
   await page.getByLabel('Password', { exact: true }).fill(PASSWORD)
   await page.getByRole('button', { name: 'Sign in' }).click()

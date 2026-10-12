@@ -15,7 +15,7 @@ _EVENTS = (
     E.PROFILE_REINSTATED, E.SERVICE_OFFERING_CREATED, E.SERVICE_OFFERING_UPDATED, E.SERVICE_OFFERING_STATUS_CHANGED,
     E.AVAILABILITY_UPDATED, E.CAPACITY_CHANGED, E.JURISDICTIONS_UPDATED, E.TRUST_SCORE_RECOMPUTED, E.TRUST_TIER_CHANGED,
     E.VERIFICATION_COMPLETED, E.VERIFICATION_FAILED, E.VERIFICATION_EXPIRED, E.VERIFICATION_REVOKED,
-    E.ENFORCEMENT_ACTION_APPLIED, E.ENFORCEMENT_ACTION_REVERSED,
+    E.ENFORCEMENT_ACTION_APPLIED, E.ENFORCEMENT_ACTION_REVERSED, E.IDENTITY_SUSPENDED, E.IDENTITY_REINSTATED,
     # Track record: delivered work, finished engagements, reviews, and answers to requests.
     E.MILESTONE_ACCEPTED, E.CONTRACT_COMPLETED, E.REVIEW_CREATED, E.PROPOSAL_SUBMITTED, E.PROPOSAL_REQUEST_DECLINED,
 )
@@ -31,9 +31,10 @@ def _professional_id(payload: dict) -> uuid.UUID | None:
 
 async def on_professional_fact(session: AsyncSession, event: EventEnvelope) -> None:
     pid = _professional_id(event.payload)
-    if not pid and event.payload.get("subjectType") == "IDENTITY":
+    identity = event.payload.get("subjectId") if event.payload.get("subjectType") == "IDENTITY" else event.payload.get("identityId")
+    if not pid and identity:
         from zoikorum.domains.professional import facade as professional
-        pro = await professional.get_professional_by_identity(session, uuid.UUID(str(event.payload["subjectId"])))
+        pro = await professional.get_professional_by_identity(session, uuid.UUID(str(identity)))
         pid = pro.id if pro else None
     if pid:
         await service.rebuild(session, pid, event.occurredAt)

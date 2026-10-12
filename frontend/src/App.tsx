@@ -80,6 +80,7 @@ export default function App() {
           <Route path="/" element={<Navigate to="/login" replace />} />
           <Route path="/legal/:page" element={<Legal />} />
           <Route path="/login" element={<GuestOnly><SignIn /></GuestOnly>} />
+          <Route path="/staff/login" element={<GuestOnly><SignIn staff key="staff" /></GuestOnly>} />
           <Route path="/join" element={<GuestOnly><Join /></GuestOnly>} />
           <Route path="/enterprise" element={<GuestOnly><EnterpriseAccess /></GuestOnly>} />
           <Route path="/forgot-password" element={<ForgotPassword />} />

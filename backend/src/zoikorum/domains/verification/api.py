@@ -17,6 +17,15 @@ from zoikorum.shared.http import Page
 router = APIRouter(prefix="/v1/verification", tags=["verification"])
 
 
+@router.get("/decision-reasons")
+async def decision_reasons(actor: CurrentActor, verificationType: str | None = None) -> list[dict]:
+    """Standard reasons for review decisions (staff), each with the message pre-filled for the professional."""
+    from zoikorum.domains.verification.reasons import reasons_for
+
+    actor.require_platform_role(*service.REVIEWERS)
+    return reasons_for(verificationType)
+
+
 @router.get("/configuration")
 async def provider_configuration(actor: CurrentActor):
     from zoikorum.domains.verification.integration import configuration

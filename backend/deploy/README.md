@@ -13,8 +13,8 @@ docker compose -f docker-compose.prod.yml run --rm migrate      # = alembic upgr
 
 ## Alternative: `zoikorum_fresh_install.sql`
 
-This is a snapshot of a freshly migrated, empty database (PostgreSQL 16, migration `15081f5c2ac6`). It contains
-89 tables in 22 schemas, the triggers that keep audit and ledger records append-only, the 133 starter
+This is a snapshot of a freshly migrated, empty database (PostgreSQL 16, migration `632f70603204`). It contains
+90 tables in 22 schemas, the triggers that keep audit and ledger records append-only, the 133 starter
 specializations, and the migration marker.
 
 1. Create an empty database and the user the app connects as.

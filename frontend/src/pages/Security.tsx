@@ -3,7 +3,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { authApi } from '../api/auth'
 import { useAuth } from '../auth/AuthContext'
-import { ErrorAlert, Field } from '../components/ui'
+import { ErrorAlert, Field, useStepUp } from '../components/ui'
 
 /** QR code for the authenticator app, drawn in the browser: the secret never leaves this page. */
 function SetupQr({ uri }: { uri: string }) {
@@ -25,7 +25,14 @@ export default function Security() {
   const [code, setCode] = useState('')
   const [error, setError] = useState<unknown>(null)
   const [busy, setBusy] = useState(false)
+  const [codes, setCodes] = useState<string[] | null>(null)  // shown once, right after they are made
+  const confirm = useStepUp(setError)  // asks for the authenticator code when the server wants a fresh confirmation
   if (!user) return null
+
+  function replaceCodes() {
+    setError(null)
+    confirm.run(async () => setCodes((await authApi.newRecoveryCodes()).recoveryCodes))
+  }
 
   async function start() {
     setError(null)
@@ -41,12 +48,12 @@ export default function Security() {
     setBusy(true)
     setError(null)
     try {
-      await authApi.verifyMfa(code)
+      const { recoveryCodes } = await authApi.verifyMfa(code)
       await stepUp(code) // upgrade this session to MFA strength right away
-      const me = await reloadUser()
+      await reloadUser()
       setSetup(null)
       setCode('')
-      if (required && me) navigate(`/app/${me.defaultDashboard}`, { replace: true })
+      setCodes(recoveryCodes)  // the user continues after saving them
     } catch (err) {
       setError(err)
     } finally {
@@ -64,11 +71,28 @@ export default function Security() {
         </div>
       )}
       <ErrorAlert error={error} />
+      {confirm.modal}
       <section className="card panel" style={{ maxWidth: 640 }}>
         <h2>Two-step verification</h2>
-        {user.mfaEnabled ? (
-          <p><span className="badge green">On</span> Signing in and sensitive actions (signing contracts, releasing funds,
-            changing roles) ask for a code from your authenticator app.</p>
+        {codes ? (
+          <div>
+            <div className="alert alert-warn" role="status"><strong>Save these recovery codes now.</strong> If you lose your phone,
+              each code signs you in once instead of the authenticator. They will not be shown again.</div>
+            <ul className="recovery-codes" aria-label="Recovery codes" style={{ columns: 2, fontFamily: 'monospace', fontSize: 16, padding: 0, listStyle: 'none' }}>
+              {codes.map((c) => <li key={c}>{c}</li>)}</ul>
+            <div className="row">
+              <button type="button" className="btn btn-secondary" onClick={() => navigator.clipboard?.writeText(codes.join('\n')).catch(() => {})}>Copy</button>
+              <button type="button" className="btn btn-primary" onClick={() => { setCodes(null); if (required) navigate(`/app/${user.defaultDashboard}`, { replace: true }) }}>
+                I have saved them</button>
+            </div>
+          </div>
+        ) : user.mfaEnabled ? (
+          <>
+            <p><span className="badge green">On</span> Signing in and sensitive actions (signing contracts, releasing funds,
+              changing roles) ask for a code from your authenticator app.</p>
+            <p className="muted small">Lost your recovery codes? Make new ones; the old ones stop working.</p>
+            <button type="button" className="btn btn-secondary btn-sm" onClick={replaceCodes}>Make new recovery codes</button>
+          </>
         ) : !setup ? (
           <>
             <p className="muted">Use an authenticator app such as Google Authenticator, Microsoft Authenticator or 1Password.</p>

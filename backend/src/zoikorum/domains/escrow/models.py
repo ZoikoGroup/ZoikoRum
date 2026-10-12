@@ -37,6 +37,8 @@ class EscrowAccount(Base, UUIDPk, Timestamps, Versioned):
     released_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     refunded_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     fees_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    # Platform fee fixed when the contract activates, so a later fee change never alters a signed engagement.
+    fee_bps: Mapped[int | None] = mapped_column(Integer)
 
 
 class Allocation(Base, UUIDPk, Timestamps, Versioned):

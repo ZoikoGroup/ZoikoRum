@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { authApi, ROLE_LABEL, type UserRoleFilter, type UserRow } from '../api/auth'
+import { useAuth } from '../auth/AuthContext'
 import { ErrorAlert, useStepUp } from '../components/ui'
 
 const ROLE_FILTERS: { value: UserRoleFilter; label: string }[] = [
@@ -23,6 +24,20 @@ export default function UsersAdmin() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const { run, modal } = useStepUp(setError)
+  const { user: me } = useAuth()
+  const isAdmin = !!me?.platformRoles.includes('PLATFORM_ADMIN')
+  const [notice, setNotice] = useState<string | null>(null)
+  /** Only after confirming who the person is some other way (e.g. a video call with their ID). */
+  function resetTwoStep(u: UserRow) {
+    const reason = window.prompt(`Reset two-step verification for ${u.displayName}? They set it up again at their next sign-in.\n\n`
+      + 'How did you confirm it is really them? (recorded in the audit log)')
+    if (!reason || reason.trim().length < 10) return
+    run(async () => {
+      await authApi.resetMfa(u.id, reason.trim())
+      setRows((list) => list.map((x) => (x.id === u.id ? { ...x, mfaEnabled: false } : x)))
+      setNotice(`Two-step verification was reset for ${u.displayName}. They have been signed out everywhere.`)
+    })
+  }
   // useStepUp's run changes every render; keep the latest in a ref so loading does not loop.
   const runRef = useRef(run)
   useEffect(() => { runRef.current = run })
@@ -49,6 +64,7 @@ export default function UsersAdmin() {
       <div className="page-head"><div><h1>Users</h1>
         <p className="muted" style={{ margin: 0 }}>Every account on the platform. Opening this list is recorded in the audit log.</p></div></div>
       <ErrorAlert error={error} />
+      {notice && <div className="alert alert-success" role="status">{notice}</div>}
       <section className="card panel">
         <div className="row" style={{ marginBottom: 14 }}>
           <input className="input" style={{ flex: 2, minWidth: 220 }} type="search" placeholder="Search name or email" aria-label="Search users"
@@ -78,6 +94,8 @@ export default function UsersAdmin() {
                   <td style={{ textAlign: 'right' }}>
                     {u.platformRoles.length === 0 && u.status === 'ACTIVE' &&
                       <Link className="btn btn-ghost btn-sm" to={`/app/ops/safety?subjectType=IDENTITY&subjectId=${u.id}`}>Open safety case</Link>}
+                    {isAdmin && u.mfaEnabled && u.id !== me?.id &&
+                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => resetTwoStep(u)}>Reset two-step</button>}
                   </td>
                 </tr>))}</tbody>
             </table>

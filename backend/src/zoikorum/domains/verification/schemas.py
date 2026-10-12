@@ -51,6 +51,15 @@ class RevokeIn(BaseModel):
     publicReason: str = Field(min_length=5, max_length=500)
 
 
+class EvidenceCheckOut(BaseModel):
+    """Automatic first look at the file (staff only): a hint, never a decision."""
+    verdict: str  # MATCHES | UNRELATED | UNREADABLE | UNSURE | NOT_CHECKED
+    seen: str | None
+    note: str
+    source: str
+    checkedAt: datetime
+
+
 class EvidenceOut(BaseModel):
     id: uuid.UUID
     evidenceType: str
@@ -60,6 +69,7 @@ class EvidenceOut(BaseModel):
     contentType: str | None
     hasFile: bool
     uploadedAt: datetime
+    automaticCheck: EvidenceCheckOut | None = None  # staff view only
 
 
 class CaseOut(BaseModel):
@@ -86,6 +96,9 @@ class CaseOut(BaseModel):
     hostedProvider: str | None = None  # identity checks in a partner's hosted flow: persona | veriff | simulated
     hostedStatus: str | None = None  # pending | submitted | approved | declined | needs_review | resubmission_requested | ...
     hostedReason: str | None = None  # the partner's reason, shown to the reviewer
+    # Staff view only: what to compare the documents against.
+    details: dict | None = None  # e.g. issuing body, registration number, dates entered for a credential
+    subjectLegalName: str | None = None  # name as on ID (professionals); never shown publicly
 
 
 class QueueItemOut(BaseModel):
@@ -102,6 +115,7 @@ class QueueItemOut(BaseModel):
     hostedStatus: str | None = None
     hostedReason: str | None = None
     evidenceCount: int
+    flaggedEvidence: int = 0  # files the automatic check found unrelated or unreadable
     estimatedCompletion: datetime | None
     overdue: bool
     createdAt: datetime

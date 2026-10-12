@@ -7,6 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from zoikorum.domains.escrow import service
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import EventEnvelope, subscribe
+from zoikorum.shared.relay import on_timer
+
+
+@on_timer(service.TIMER_FUNDING_CHECK)
+async def on_funding_check(session: AsyncSession, key: str, payload: dict) -> None:
+    await service.funding_check(session, payload)
 
 
 @subscribe(E.CONTRACT_ACTIVATED, consumer="escrow.open_account")
@@ -32,6 +38,21 @@ async def on_payment_failed(session: AsyncSession, event: EventEnvelope) -> None
 @subscribe(E.MILESTONE_CANCELLED, consumer="escrow.cancel_allocation")
 async def on_milestone_cancelled(session: AsyncSession, event: EventEnvelope) -> None:
     await service.milestone_cancelled(session, event.payload)
+    await service.release_accepted_siblings(session, event.payload["contractId"])
+
+
+# "Release only when every milestone is accepted": the last milestone can also close by a dispute decision or by
+# cancelling the remaining cycles, not only by acceptance. Whatever closes it, the accepted ones are then paid.
+@subscribe(E.CONTRACT_COMPLETED, consumer="escrow.release_on_completion")
+async def on_contract_completed(session: AsyncSession, event: EventEnvelope) -> None:
+    await service.release_accepted_siblings(session, event.payload["contractId"])
+
+
+@subscribe(E.APPROVAL_DENIED, consumer="escrow.release_denied")
+@subscribe(E.APPROVAL_EXPIRED, consumer="escrow.release_denied")
+async def on_release_not_approved(session: AsyncSession, event: EventEnvelope) -> None:
+    if event.payload.get("action") == "ESCROW_RELEASE" and event.payload.get("subjectType") == "Milestone":
+        await service.release_not_approved(session, event.payload, event.eventType)
 
 
 @subscribe(E.PAYMENT_CHARGED_BACK, consumer="escrow.chargeback")
@@ -60,6 +81,7 @@ async def on_dispute_initiated(session: AsyncSession, event: EventEnvelope) -> N
 @subscribe(E.DISPUTE_RESOLVED, consumer="escrow.execute_dispute_decision")
 async def on_dispute_resolved(session: AsyncSession, event: EventEnvelope) -> None:
     await service.dispute_resolved(session, event.payload)
+    await service.release_accepted_siblings(session, event.payload["contractId"])
 
 
 @subscribe(E.CONTRACT_TERMINATED, consumer="escrow.refund_on_termination")

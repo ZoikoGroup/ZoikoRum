@@ -74,13 +74,13 @@ test('a compliance officer approves a credential in the review queue', async ({ 
   const officer = await staffMember('Cora Compliance', ['COMPLIANCE_OFFICER'])
   const { account: pro, pro: profile, caseId } = await credentialInReview('Venky Licensed')
 
-  await signIn(page, officer.email)
+  await signIn(page, officer.email, { staff: true })
   await page.goto('/app/ops/verification')
   await page.getByRole('row').filter({ hasText: 'Venky Licensed' }).getByRole('button', { name: 'Review' }).click()
   await expect(page.getByRole('heading', { name: 'CPA (US)' })).toBeVisible()
   await expect(page.getByText('cpa-licence.pdf')).toBeVisible()
   await page.getByLabel('Decision').selectOption('VERIFIED')
-  await page.getByLabel('Reason code').fill('REGISTRY_MATCH')
+  await page.getByLabel('Reason').selectOption('REGISTRY_MATCH')  // standard reasons (verification/reasons.py)
   await page.getByRole('button', { name: 'Record decision' }).click()
 
   await expect(page.getByText('Decision recorded for CPA (US).')).toBeVisible()

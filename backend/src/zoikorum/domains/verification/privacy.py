@@ -7,7 +7,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from zoikorum.domains.verification.models import EvidenceItem, VerificationCase
+from zoikorum.domains.verification.models import EvidenceCheck, EvidenceItem, VerificationCase
 from zoikorum.shared import privacy
 
 
@@ -15,7 +15,9 @@ async def export(session: AsyncSession, identity_id: uuid.UUID) -> dict:
     ids = (await session.scalars(select(VerificationCase.id).where(VerificationCase.owner_identity_id == identity_id))).all()
     return {"checks": await privacy.rows(session, VerificationCase, VerificationCase.owner_identity_id == identity_id),
             # Documents are listed by name and fingerprint; the files themselves are sent on request by support.
-            "documents": await privacy.rows(session, EvidenceItem, EvidenceItem.case_id.in_(ids))}
+            "documents": await privacy.rows(session, EvidenceItem, EvidenceItem.case_id.in_(ids)),
+            # What the automatic first look said about each document (a hint to staff, never a decision).
+            "documentChecks": await privacy.rows(session, EvidenceCheck, EvidenceCheck.case_id.in_(ids))}
 
 
 privacy.register("verification", export=export,

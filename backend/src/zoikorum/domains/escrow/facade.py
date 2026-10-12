@@ -64,6 +64,14 @@ async def get_allocation_states_for_amendment(
         .with_for_update()
     )).all()
     return {allocation.milestone_id: allocation.state for allocation in allocations}
+async def funding_open(session: AsyncSession, funding_id: uuid.UUID) -> bool:
+    """Payments charges a funding only while the buyer's request is still open."""
+    from zoikorum.domains.escrow.models import Funding
+
+    f = await session.get(Funding, funding_id)
+    return f is not None and f.status == "REQUESTED"
+
+
 async def ledger_movements(session: AsyncSession, since: datetime, until: datetime) -> dict[tuple[str, str], tuple[int, int]]:
     """Daily reconciliation input: (ledger account, currency) -> (debits, credits) posted in [since, until).
     Accounts: BUYER_CLEARING, ESCROW_HELD, PRO_PAYABLE, PLATFORM_REVENUE, BUYER_REFUND_PAYABLE, CHARGEBACK_REVERSAL, ..."""

@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict hcba8Nnm6fCWzNP6ve4RoX3CXWh9IMxomlgK3gW6EUNTgbcqEk5hf12wKRLCegT
+\restrict NhABbKmlu7wQMwYIUcrwzNQUArmUvOyOKWmJE0nMF2kKwtvEwqp4DWob1JNHb9n
 
 -- Dumped from database version 16.13
 -- Dumped by pg_dump version 16.13
@@ -878,7 +878,8 @@ CREATE TABLE escrow.accounts (
     id uuid NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    version bigint NOT NULL
+    version bigint NOT NULL,
+    fee_bps integer
 );
 
 
@@ -1101,7 +1102,8 @@ CREATE TABLE identity.identities (
     phone_enc character varying(500),
     language character varying(10) DEFAULT 'en'::character varying NOT NULL,
     time_zone character varying(64),
-    confirmation_requested_at timestamp with time zone
+    confirmation_requested_at timestamp with time zone,
+    mfa_recovery_hashes jsonb
 );
 
 
@@ -2178,6 +2180,22 @@ CREATE TABLE verification.cases (
 
 
 --
+-- Name: evidence_checks; Type: TABLE; Schema: verification; Owner: -
+--
+
+CREATE TABLE verification.evidence_checks (
+    evidence_id uuid NOT NULL,
+    case_id uuid NOT NULL,
+    verdict character varying(20) NOT NULL,
+    seen character varying(120),
+    note character varying(300) NOT NULL,
+    source character varying(100) NOT NULL,
+    id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: evidence_items; Type: TABLE; Schema: verification; Owner: -
 --
 
@@ -2422,7 +2440,7 @@ COPY dispute.timeline (case_id, kind, actor, text, id, created_at) FROM stdin;
 -- Data for Name: accounts; Type: TABLE DATA; Schema: escrow; Owner: -
 --
 
-COPY escrow.accounts (contract_id, organization_id, professional_id, currency, total_minor, status, funded_minor, held_minor, on_hold_minor, released_minor, refunded_minor, fees_minor, id, updated_at, created_at, version) FROM stdin;
+COPY escrow.accounts (contract_id, organization_id, professional_id, currency, total_minor, status, funded_minor, held_minor, on_hold_minor, released_minor, refunded_minor, fees_minor, id, updated_at, created_at, version, fee_bps) FROM stdin;
 \.
 
 
@@ -2510,7 +2528,7 @@ COPY identity.duplicate_suspicions (identity_id, other_identity_id, signal, stat
 -- Data for Name: identities; Type: TABLE DATA; Schema: identity; Owner: -
 --
 
-COPY identity.identities (email, email_confirmed_at, password_hash, display_name, country, status, platform_roles, personas, primary_persona, signup_organization_name, mfa_secret_enc, mfa_enabled_at, failed_login_count, locked_until, enterprise_federated, id, updated_at, created_at, version, phone_enc, language, time_zone, confirmation_requested_at) FROM stdin;
+COPY identity.identities (email, email_confirmed_at, password_hash, display_name, country, status, platform_roles, personas, primary_persona, signup_organization_name, mfa_secret_enc, mfa_enabled_at, failed_login_count, locked_until, enterprise_federated, id, updated_at, created_at, version, phone_enc, language, time_zone, confirmation_requested_at, mfa_recovery_hashes) FROM stdin;
 \.
 
 
@@ -2852,7 +2870,7 @@ COPY payments.webhook_events (provider, event_id, event_type, payload, outcome, 
 --
 
 COPY platform.alembic_version (version_num) FROM stdin;
-15081f5c2ac6
+632f70603204
 \.
 
 
@@ -3037,6 +3055,14 @@ COPY verification.appeals (case_id, filed_by, statement, case_status_at_filing, 
 --
 
 COPY verification.cases (subject_type, subject_id, owner_identity_id, verification_type, status, label, jurisdiction, credential_claim_id, specialization, details, provider_result, estimated_completion, reviewer_id, decided_at, verified_at, expires_at, reason_code, public_reason, id, updated_at, created_at, version) FROM stdin;
+\.
+
+
+--
+-- Data for Name: evidence_checks; Type: TABLE DATA; Schema: verification; Owner: -
+--
+
+COPY verification.evidence_checks (evidence_id, case_id, verdict, seen, note, source, id, created_at) FROM stdin;
 \.
 
 
@@ -4308,6 +4334,14 @@ ALTER TABLE ONLY verification.cases
 
 
 --
+-- Name: evidence_checks pk_evidence_checks; Type: CONSTRAINT; Schema: verification; Owner: -
+--
+
+ALTER TABLE ONLY verification.evidence_checks
+    ADD CONSTRAINT pk_evidence_checks PRIMARY KEY (id);
+
+
+--
 -- Name: evidence_items pk_evidence_items; Type: CONSTRAINT; Schema: verification; Owner: -
 --
 
@@ -4345,6 +4379,14 @@ ALTER TABLE ONLY verification.appeals
 
 ALTER TABLE ONLY verification.cases
     ADD CONSTRAINT uq_cases_credential_claim_id UNIQUE (credential_claim_id);
+
+
+--
+-- Name: evidence_checks uq_evidence_checks_evidence_id; Type: CONSTRAINT; Schema: verification; Owner: -
+--
+
+ALTER TABLE ONLY verification.evidence_checks
+    ADD CONSTRAINT uq_evidence_checks_evidence_id UNIQUE (evidence_id);
 
 
 --
@@ -5002,6 +5044,13 @@ CREATE INDEX ix_cases_subject ON verification.cases USING btree (subject_type, s
 
 
 --
+-- Name: ix_verification_evidence_checks_case_id; Type: INDEX; Schema: verification; Owner: -
+--
+
+CREATE INDEX ix_verification_evidence_checks_case_id ON verification.evidence_checks USING btree (case_id);
+
+
+--
 -- Name: ix_verification_evidence_items_case_id; Type: INDEX; Schema: verification; Owner: -
 --
 
@@ -5478,6 +5527,22 @@ ALTER TABLE ONLY verification.appeals
 
 
 --
+-- Name: evidence_checks fk_evidence_checks_case_id_cases; Type: FK CONSTRAINT; Schema: verification; Owner: -
+--
+
+ALTER TABLE ONLY verification.evidence_checks
+    ADD CONSTRAINT fk_evidence_checks_case_id_cases FOREIGN KEY (case_id) REFERENCES verification.cases(id);
+
+
+--
+-- Name: evidence_checks fk_evidence_checks_evidence_id_evidence_items; Type: FK CONSTRAINT; Schema: verification; Owner: -
+--
+
+ALTER TABLE ONLY verification.evidence_checks
+    ADD CONSTRAINT fk_evidence_checks_evidence_id_evidence_items FOREIGN KEY (evidence_id) REFERENCES verification.evidence_items(id);
+
+
+--
 -- Name: evidence_items fk_evidence_items_case_id_cases; Type: FK CONSTRAINT; Schema: verification; Owner: -
 --
 
@@ -5497,5 +5562,5 @@ ALTER TABLE ONLY verification.provider_sessions
 -- PostgreSQL database dump complete
 --
 
-\unrestrict hcba8Nnm6fCWzNP6ve4RoX3CXWh9IMxomlgK3gW6EUNTgbcqEk5hf12wKRLCegT
+\unrestrict NhABbKmlu7wQMwYIUcrwzNQUArmUvOyOKWmJE0nMF2kKwtvEwqp4DWob1JNHb9n
 

@@ -1,7 +1,8 @@
 """Demo data for manual testing: one staff account, Venky (professional) and Lennox (customer) with every operation.
 
     .\\start-dev.ps1                                   # API on :8000 and the worker must be running
-    .venv\\Scripts\\python.exe backend\\scripts\\seed_demo.py
+    .venv\\Scripts\\python.exe backend\\scripts\\seed_demo.py                   # accounts and every operation
+    .venv\\Scripts\\python.exe backend\\scripts\\seed_demo.py --accounts-only   # just the four sign-ins, nothing else
 
 Everything goes through the API (the same calls the app makes), so the data is what real use would create:
   Staff   zoikostaff@rum.com     all staff roles (Platform Admin, Compliance, Mediator, Financial Ops, T&S, Legal)
@@ -10,6 +11,9 @@ Everything goes through the API (the same calls the app makes), so the data is w
   Asha    asha.demo@example.com       a second professional (published, not verified) so search has variety
 Between Venky and Lennox: an open request, a proposal awaiting decision, an engagement awaiting acceptance, one
 completed and reviewed (invoices, payouts), one in dispute, and messages. Password for all: ZoikoDemo@123.
+
+--accounts-only: the same four sign-ins (email confirmed, staff with every role) and nothing else, for testing from
+scratch: Venky and Asha start without a profile, Lennox with the organisation every buyer gets at sign-up.
 
 Development only: refuses to run unless the local settings say ZK_ENV=local/development; stops if the demo
 accounts already exist. Uses the development two-step bypass (ZK_DEV_SKIP_MFA=true) for signing and staff tools.
@@ -197,10 +201,28 @@ def fund_and_submit(buyer: User, pro_user: User, c: dict, milestones: list[dict]
         pro_user.call("POST", f"/v1/milestones/{m['id']}/submit", {"note": note, "files": [pdf(f"{m['title']}.pdf", note.encode())]})
 
 
+def accounts_only(http) -> None:
+    staff_account(http)
+    sign_up(http, "venky.demo@example.com", "Venky Bongu", "PROFESSIONAL", "IN")
+    sign_up(http, "asha.demo@example.com", "Asha Menon", "PROFESSIONAL", "GB")
+    lennox = sign_up(http, "lennox.demo@example.com", "Lennox Shaw", "BUYER", "GB")
+    eventually(lambda: (lennox.relogin(), lennox.call("GET", "/v1/organizations/mine"))[1], "Lennox's organisation")
+
+
 def main() -> None:
     http = httpx.Client(base_url=API, timeout=30)
     preflight(http)
     print("Creating staff ...")
+    if "--accounts-only" in sys.argv[1:]:
+        accounts_only(http)
+        print(f"""
+Accounts ready, nothing else (password for every account: {PASSWORD})
+  Staff   {STAFF[0]}    every staff role
+  Venky   venky.demo@example.com     Professional, no profile yet
+  Asha    asha.demo@example.com      Professional, no profile yet
+  Lennox  lennox.demo@example.com    Customer, with an organisation
+Open http://localhost:5173/login""")
+        return
     staff = staff_account(http)
 
     print("Creating Venky (professional) ...")

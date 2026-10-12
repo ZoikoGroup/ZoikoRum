@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from zoikorum.domains.marketplace import facade as marketplace_facade
 from zoikorum.domains.buyer import facade as buyer_facade
 from zoikorum.domains.contract import facade as contract_facade
+from zoikorum.domains.identity import facade as identity_facade
 from zoikorum.domains.policy import facade as policy_facade
 from zoikorum.domains.professional import facade as professional_facade
 from zoikorum.domains.proposal import facade as proposal_facade
@@ -60,6 +61,12 @@ def _weighted(text: str, weight: str):
     return func.setweight(func.to_tsvector(EN, text), literal_column(f"'{weight}'::\"char\""))
 
 
+async def _account_active(session: AsyncSession, identity_id: uuid.UUID) -> bool:
+    """A suspended or closed account (e.g. confirmed as a duplicate) is not listed."""
+    who = await identity_facade.get_identity(session, identity_id)
+    return who is not None and who.status == "ACTIVE"
+
+
 async def rebuild(session: AsyncSession, professional_id: uuid.UUID, occurred_at: datetime | None = None) -> None:
     """Rebuild one professional's document from the owning domains. Idempotent."""
     pro = await professional_facade.get_professional(session, professional_id)
@@ -85,7 +92,8 @@ async def rebuild(session: AsyncSession, professional_id: uuid.UUID, occurred_at
     text_c = " ".join(filter(None, [pro.bio, *(o.title for o in offerings), *(d for o in offerings for d in o.deliverables),
                                     *verified_credentials]))
     values = dict(
-        professional_id=pro.id, visible=pro.status == "PUBLISHED" and not set(await admin_facade.active_restrictions(session, "IDENTITY", pro.identity_id)).intersection({"SUSPEND_ACCOUNT", "OFFBOARD"}),
+        professional_id=pro.id, visible=pro.status == "PUBLISHED" and await _account_active(session, pro.identity_id)
+        and not set(await admin_facade.active_restrictions(session, "IDENTITY", pro.identity_id)).intersection({"SUSPEND_ACCOUNT", "OFFBOARD"}),
         visibility_reduced=pro.visibility_reduced or "VISIBILITY_REDUCTION" in await admin_facade.active_restrictions(session, "PROFESSIONAL", pro.id),
         display_name=pro.display_name, headline=pro.headline, country=pro.country, city=pro.city,
         years_experience_band=pro.years_experience_band, languages=list(pro.languages),

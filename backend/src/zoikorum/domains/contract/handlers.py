@@ -48,6 +48,11 @@ async def on_signature_deadline(session: AsyncSession, key: str, payload: dict) 
     await service.signature_deadline_passed(session, payload)
 
 
+@on_timer(service.TIMER_SIGNATURE_EXPIRY)
+async def on_signature_expiry(session: AsyncSession, key: str, payload: dict) -> None:
+    await service.signature_expired(session, payload)
+
+
 @on_timer(service.TIMER_FUNDING_REMINDER)
 async def on_funding_reminder(session: AsyncSession, key: str, payload: dict) -> None:
     await service.funding_reminder(session, payload)
