@@ -13,6 +13,23 @@ browser ──HTTPS──> load balancer (TLS) ──> web :8080 ──/v1──
                                                                worker ────┘     S3 (files), SMTP, partners
 ```
 
+## Configuration
+
+Every setting is an environment variable starting with `ZK_`. Two templates list all of them, grouped and explained:
+
+| File | For |
+|---|---|
+| `backend/.env.example` | Local development: copy to `backend/.env`. Nothing real is called (emails print, test card, simulated identity checks) |
+| `backend/.env.production.example` | Staging and production: copy to `backend/.env.production` (git-ignored) for `docker-compose.prod.yml`, or enter each line in the host's secret manager. Replace every `<...>` value |
+
+A blank setting means "use the default". Then check it (prints OK / WARN / MISSING per service, never a value; exit code 1
+if anything required is missing, so a pipeline can stop):
+
+```
+docker compose -f docker-compose.prod.yml run --rm api python -m zoikorum.cli check-config            # settings only
+docker compose -f docker-compose.prod.yml run --rm api python -m zoikorum.cli check-config --connect  # also tries DB, Redis, S3, SMTP
+```
+
 ## Services needed
 
 | Service | Setting(s) | Notes |
@@ -35,11 +52,12 @@ Development-only switches are refused outside local development: `ZK_DEV_SKIP_MF
 
 1. Build both images with the release tag: `ZK_RELEASE=2026.10.1 docker compose -f docker-compose.prod.yml build`
    (or the same `docker build` commands in CI, pushed to the container registry).
-2. Run migrations once: `docker compose -f docker-compose.prod.yml run --rm migrate`. The API and the worker refuse to
+2. Check the configuration: `docker compose -f docker-compose.prod.yml run --rm api python -m zoikorum.cli check-config --connect`.
+3. Run migrations once: `docker compose -f docker-compose.prod.yml run --rm migrate`. The API and the worker refuse to
    start against a database whose migrations are not current, so a forgotten step fails safely.
-3. Start or roll the services: `docker compose -f docker-compose.prod.yml up -d api worker web`.
-4. Check: `GET /ready` returns `{"status": "ready"}` (database reachable and migrated); `GET /health` is liveness only.
-5. When the release adds search fields (as `15081f5c2ac6`, track record, does), rebuild the search index once:
+4. Start or roll the services: `docker compose -f docker-compose.prod.yml up -d api worker web`.
+5. Check: `GET /ready` returns `{"status": "ready"}` (database reachable and migrated); `GET /health` is liveness only.
+6. When the release adds search fields (as `15081f5c2ac6`, track record, does), rebuild the search index once:
    `docker compose -f docker-compose.prod.yml run --rm api python -m zoikorum.cli reindex-search`. Until then those
    fields fill in as each professional's next event arrives.
 
@@ -86,5 +104,5 @@ headers (`--proxy-headers`).
 ## Single-host setup
 
 `docker-compose.prod.yml` runs everything on one machine for staging or a small production. Put the configuration in
-`backend/.env.production` (git-ignored; start from `backend/.env.example`) and a TLS load balancer or reverse proxy in
+`backend/.env.production` (git-ignored; start from `backend/.env.production.example`) and a TLS load balancer or reverse proxy in
 front of port 8080.

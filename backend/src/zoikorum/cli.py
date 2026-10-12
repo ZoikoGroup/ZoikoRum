@@ -4,6 +4,7 @@
     python -m zoikorum.cli reindex-search      # rebuild the search projection from the owning domains
     python -m zoikorum.cli schema-doc          # regenerate docs/DATABASE_SCHEMA.md from the models
     python -m zoikorum.cli reconcile --day 2026-10-06   # payments reconciliation for one UTC day (default: yesterday)
+    python -m zoikorum.cli check-config [--connect]   # is this environment's configuration complete? (no values printed)
 
 The first Platform Admin can only be created here (never over HTTP). The password
 is read from a prompt or ZK_ADMIN_PASSWORD - never pass it as an argument.
@@ -16,9 +17,15 @@ import asyncio
 import getpass
 import os
 
-from zoikorum.main import load_domains
 from zoikorum.shared import context
 from zoikorum.shared.db import dispose_engine, session_factory
+
+
+def load_domains() -> None:
+    # Imported when a command needs the app, so check-config can report bad settings instead of failing on import.
+    from zoikorum.main import load_domains as load
+
+    load()
 
 
 async def _create_admin(email: str, name: str, country: str, password: str) -> None:
@@ -77,7 +84,13 @@ def main() -> None:
     sd.add_argument("--out", default="docs/DATABASE_SCHEMA.md")
     rc = sub.add_parser("reconcile", help="reconcile escrow ledger, payments and provider for one day")
     rc.add_argument("--day", help="YYYY-MM-DD (UTC); default yesterday")
+    cc = sub.add_parser("check-config", help="report missing or unreachable services for this environment")
+    cc.add_argument("--connect", action="store_true", help="also try the database, Redis, S3 and the email server")
     args = parser.parse_args()
+    if args.cmd == "check-config":
+        from zoikorum.config_check import run
+
+        raise SystemExit(run(args.connect))
     if args.cmd == "reconcile":
         asyncio.run(_reconcile(args.day))
     if args.cmd == "reindex-search":

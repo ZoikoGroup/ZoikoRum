@@ -10,7 +10,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     # hide_input_in_errors: a configuration error must never print configuration values (passwords, keys).
-    model_config = SettingsConfigDict(env_prefix="ZK_", env_file=".env", extra="ignore", hide_input_in_errors=True)
+    # env_ignore_empty: a blank line in an env file (ZK_SMTP_HOST=) means "use the default", as the templates show.
+    model_config = SettingsConfigDict(env_prefix="ZK_", env_file=".env", extra="ignore", hide_input_in_errors=True,
+                                      env_ignore_empty=True)
 
     env: str = "local"
     service_name: str = "zoikorum-api"
