@@ -158,3 +158,78 @@ async def test_reindex_and_policy_impact_count(client, make_user, drain, sf):
         assert await facade.count_eligible(s, {"minTier": "B"}) == 1
         assert await facade.count_eligible(s, {"requiredDimensions": ["identity"], "jurisdictions": ["US"]}) == 1
         assert await facade.count_eligible(s, {"jurisdictions": ["GB"], "categories": ["finance-and-accounting"]}) == 1
+
+
+async def test_company_policy_limits_results_and_says_so(client, make_user, drain):
+    """An organisation's policy (here: Tier B and a verified identity) narrows search for its members, and the results say
+    which rules applied and how many professionals they left out."""
+    verified, verified_pro = await publish(client, make_user, drain, "quokka-verified", headline="Quokkaledger close lead", primary="transfer-pricing")
+    await verify_identity(client, make_user, drain, verified, verified_pro)
+    await publish(client, make_user, drain, "quokka-new", headline="Quokkaledger close helper", primary="transfer-pricing")
+
+    owner = await make_user("policy-buyer")
+    await drain()
+    await owner.refresh()
+    org = (await client.get("/v1/organizations/mine", headers=owner.h)).json()[0]
+    before = (await client.get(URL, headers=owner.h, params={"q": "Quokkaledger"})).json()
+    assert before["total"] == 2 and before["policy"] is None  # no policy yet: nothing hidden, nothing to explain
+
+    profile = (await client.post("/v1/policy/profiles", headers=owner.h,
+                                 json={"orgId": org["id"], "name": "Enterprise standard", "template": "ENTERPRISE_STANDARD"})).json()
+    await owner.step_up()
+    assert (await client.post(f"/v1/policy/profiles/{profile['id']}/activate", headers=owner.h)).status_code == 200
+    after = (await client.get(URL, headers=owner.h, params={"q": "Quokkaledger"})).json()
+    assert [i["displayName"] for i in after["items"]] == ["Quokka-Verified"]
+    assert after["policy"]["hidden"] == 1 and after["policy"]["minTier"] in ("A", "B")
+    assert "identity" in after["policy"]["requiredDimensions"] and after["policy"]["organizationName"]
+
+    anonymous = (await client.get(URL, params={"q": "Quokkaledger"})).json()
+    assert anonymous["total"] == 2 and anonymous["policy"] is None  # the public directory is not filtered by any one company
+    outsider = await make_user("policy-outsider-search")
+    r = await client.get(URL, headers=outsider.h, params={"q": "Quokkaledger", "organizationId": org["id"]})
+    assert r.status_code == 403  # another organisation's policy view needs membership
+
+
+def test_track_record_scoring():
+    """Contract success (15), reviews (10), response (5): new professionals score 0, never a penalty; one 5-star review
+    does not outrank many 4.8-star ones."""
+    from types import SimpleNamespace
+
+    from zoikorum.domains.search.service import track_record
+
+    def doc(**kw):
+        base = dict(completed_engagements=0, milestones_due=0, milestones_on_time=0, review_count=0, review_average=None,
+                    response_median_hours=None)
+        return SimpleNamespace(**{**base, **kw})
+
+    new_score, new_why = track_record(doc())
+    assert new_score == 0 and new_why == []
+    one_five, _ = track_record(doc(review_count=1, review_average=5.0))
+    many_good, why = track_record(doc(review_count=12, review_average=4.8))
+    assert many_good > one_five and "4.8★ from 12 verified reviews" in why
+    proven, why = track_record(doc(completed_engagements=12, milestones_due=20, milestones_on_time=19, response_median_hours=6))
+    assert proven == 10 + 5 * 19 / 20 + 5
+    assert "12 completed engagements, 95% of milestones on time" in why and "Usually replies within a day" in why
+
+
+async def test_proven_professionals_rank_above_newcomers(client, make_user, drain, sf):
+    from test_contract import C, fund, signed_contract
+    from test_proposal import tier_b
+
+    pro_user, pro, buyer, c = await signed_contract(client, make_user, drain)
+    newcomer_user, newcomer = await tier_b(client, make_user, drain, "newcomer-nell")
+    await fund(sf, drain, c, [m["id"] for m in c["milestones"]])
+    for m in c["milestones"]:
+        await client.post(f"/v1/milestones/{m['id']}/submit", headers=pro_user.h, json={"note": "Delivered"})
+        await client.post(f"/v1/milestones/{m['id']}/accept", headers=buyer.idem())
+    await drain()
+    assert (await client.get(f"{C}/{c['id']}", headers=buyer.h)).json()["status"] == "COMPLETED"
+    review = await client.post(f"{C}/{c['id']}/review", headers=buyer.idem(), json={"rating": 5, "comment": "Delivered exactly as agreed."})
+    assert review.status_code == 201, review.text
+    await drain()
+
+    items = (await client.get(URL, params={"q": "Tax adviser", "limit": 50})).json()["items"]
+    order = [i["professionalId"] for i in items if i["professionalId"] in (pro["id"], newcomer["id"])]
+    assert order == [pro["id"], newcomer["id"]]  # same headline and tier: the track record decides
+    why = next(i for i in items if i["professionalId"] == pro["id"])["whyThisResult"]
+    assert any("1 completed engagement" in w for w in why) and any("5.0★ from 1 verified review" in w for w in why)

@@ -198,7 +198,7 @@ export function CustomerPaymentsPage() {
         {tab === 'invoices' && (invoices.length === 0 ? (
           <EmptyTable columns={['Invoice', 'Engagement', 'Description', 'Amount', 'Issued']}><strong>No invoices yet.</strong> An invoice is issued each time you accept a milestone.</EmptyTable>
         ) : (
-          <table className="data"><thead><tr><th>Invoice</th><th>Engagement</th><th>Description</th><th>Amount</th><th>Issued</th><th /></tr></thead>
+          <table className="data"><thead><tr><th>Invoice</th><th>Engagement</th><th>Description</th><th>Amount</th><th>Issued</th><th><span className="sr-only">Actions</span></th></tr></thead>
             <tbody>{invoices.map((i) => <tr key={i.id}><td><code>{i.number}</code></td><td className="small">{title(i.contractId)}</td>
               <td className="small">{i.lines.map((l) => l.description).join(', ')}</td><td>{formatMoney(i.total)}</td>
               <td className="small">{new Date(i.issuedAt).toLocaleDateString()}</td>

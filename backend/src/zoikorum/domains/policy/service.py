@@ -5,12 +5,10 @@ from zoikorum.domains.admin import facade as admin_facade
 
 
 import uuid
-from dataclasses import asdict
 from datetime import timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.config import get_settings
 from zoikorum.domains.buyer import facade as buyer
@@ -19,7 +17,7 @@ from zoikorum.domains.marketplace import facade as marketplace
 from zoikorum.domains.professional import facade as professional
 from zoikorum.domains.trust import facade as trust
 from zoikorum.domains.policy.facade import (
-    Attr, Decision, PolicyAction, PolicyContext, PolicyDecision, PolicyReason, ProfileSettings, TIER_RANK,
+    Attr, Decision, PolicyAction, PolicyDecision, PolicyReason, ProfileSettings, TIER_RANK,
 )
 from zoikorum.domains.policy.models import (
     ApprovalRequest, ApprovalVote, ExceptionRequest, PolicyEvaluation, PolicyProfile, PolicyVersion,
@@ -27,14 +25,14 @@ from zoikorum.domains.policy.models import (
 from zoikorum.domains.policy.rules import DIMENSION_OK, matches, template
 from zoikorum.domains.policy.schemas import DraftIn, ProfileIn, RuleIn, SettingsIn
 from zoikorum.shared import clock
-from zoikorum.shared.auth import Actor, OrgRole
+from zoikorum.shared.auth import OrgRole
 from zoikorum.shared.crypto import canonical_json, sha256_hex
-from zoikorum.shared.errors import Conflict, Forbidden, NotFound, PolicyBlocked, ValidationFailed, VersionConflict
+from zoikorum.shared.errors import Conflict, Forbidden, NotFound, ValidationFailed, VersionConflict
 from zoikorum.shared.events import record_event
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.http import page_of, paginate
 from zoikorum.shared.relay import cancel_timer, schedule_timer
-from zoikorum.shared.uploads import file_out, find_file, read_file, store_uploads
+from zoikorum.shared.uploads import file_out, store_uploads
 
 APPROVAL_TIMER = "policy.approval_deadline"
 EXCEPTION_TIMER = "policy.exception_expiry"

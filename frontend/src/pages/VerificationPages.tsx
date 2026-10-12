@@ -199,7 +199,7 @@ function AppealsPanel({ onDecided }: { onDecided: (msg: string) => void }) {
           <button className="btn btn-ghost btn-sm" onClick={() => setSelected(null)}>Close</button></div>
       </div>}
       {items.length === 0 ? <p className="muted small" style={{ margin: 0 }}>No open appeals.</p> : (
-        <table className="data"><thead><tr><th>Check</th><th>Subject</th><th>Filed</th><th>Evidence</th><th /></tr></thead>
+        <table className="data"><thead><tr><th>Check</th><th>Subject</th><th>Filed</th><th>Evidence</th><th><span className="sr-only">Actions</span></th></tr></thead>
           <tbody>{items.map((a) => <tr key={a.id}><td><strong>{a.caseLabel}</strong><div className="muted small clamp">{a.statement}</div></td>
             <td>{a.subjectName ?? '—'}</td><td className="small">{fmtDate(a.filedAt)}</td><td>{a.evidenceCount}</td>
             <td style={{ textAlign: 'right' }}>{a.canDecide
@@ -240,7 +240,7 @@ function VerifiedPanel({ onRevoked }: { onRevoked: (msg: string) => void }) {
             })}>Revoke</button>
             <button className="btn btn-ghost btn-sm" onClick={() => setTarget(null)}>Cancel</button></div>
         </div>}
-        <table className="data"><thead><tr><th>Check</th><th>Subject</th><th>Verified</th><th /></tr></thead>
+        <table className="data"><thead><tr><th>Check</th><th>Subject</th><th>Verified</th><th><span className="sr-only">Actions</span></th></tr></thead>
           <tbody>{items.map((q) => <tr key={q.id}><td><strong>{q.label}</strong></td><td>{q.subjectName ?? '—'}</td>
             <td><CaseStatusBadge status={q.status} /></td>
             <td style={{ textAlign: 'right' }}><button className="btn btn-ghost btn-sm" onClick={() => { setTarget(q); setReason('') }}>Revoke…</button></td></tr>)}</tbody></table>
@@ -467,7 +467,7 @@ export function ReviewQueuePage() {
       <section className="card panel">
         {items.length === 0 ? <p className="muted" style={{ margin: 0 }}>Nothing waiting. All checks are decided.</p> : (
           <table className="data">
-            <thead><tr><th>Check</th><th>Subject</th><th>Status</th><th>Evidence</th><th>Due</th><th /></tr></thead>
+            <thead><tr><th>Check</th><th>Subject</th><th>Status</th><th>Evidence</th><th>Due</th><th><span className="sr-only">Actions</span></th></tr></thead>
             <tbody>{items.map((q) => (
               <tr key={q.id}>
                 <td><strong>{q.label}</strong>{q.providerResult === 'REVIEW' && q.verificationType === 'RESTRICTIONS' &&

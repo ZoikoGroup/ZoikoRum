@@ -64,7 +64,7 @@ export default function UsersAdmin() {
         {rows.length === 0 ? <p className="muted" style={{ margin: 0 }}>{loading ? 'Loading…' : 'No accounts match.'}</p> : (
           <div className="table-scroll">
             <table className="data">
-              <thead><tr><th>Name</th><th>Roles</th><th>Country</th><th>Status</th><th>Email</th><th>Two-step</th><th>Joined</th><th>Last sign-in</th><th /></tr></thead>
+              <thead><tr><th>Name</th><th>Roles</th><th>Country</th><th>Status</th><th>Email</th><th>Two-step</th><th>Joined</th><th>Last sign-in</th><th><span className="sr-only">Actions</span></th></tr></thead>
               <tbody>{rows.map((u) => (
                 <tr key={u.id}>
                   <td><strong>{u.displayName}</strong><div className="muted small">{u.email}</div></td>

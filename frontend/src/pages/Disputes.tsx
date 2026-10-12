@@ -11,7 +11,7 @@ import { FileLinks } from '../components/FileLink'
 import { useAuth } from '../auth/AuthContext'
 import { Icon } from '../components/dashboard'
 import { EmptyTable, PortalHeader, SidePanel, StatCard } from '../components/portal'
-import { ErrorAlert, useStepUp } from '../components/ui'
+import { ErrorAlert, useDialog, useStepUp } from '../components/ui'
 import { DisputeAppealPanel } from '../components/DisputeAppeal'
 import { AIAssistance } from '../components/AIAssistance'
 import { formatCurrencies } from '../lib/money'
@@ -37,6 +37,7 @@ export function disputableMilestones(c: Contract) {
 
 /** Dispute intake (doc s.7): category, milestones, 300-character summary, desired outcome, confirmation. */
 export function RaiseDisputeDialog({ contract, onClose }: { contract: Contract; onClose: () => void }) {
+  const dialog = useDialog(onClose)
   const navigate = useNavigate()
   const options = disputableMilestones(contract)
   const [category, setCategory] = useState<DisputeCategory>('QUALITY_ACCEPTANCE')
@@ -48,7 +49,7 @@ export function RaiseDisputeDialog({ contract, onClose }: { contract: Contract; 
   const [error, setError] = useState<unknown>(null)
   const [busy, setBusy] = useState(false)
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="dispute-title" onClick={onClose}>
+    <div ref={dialog} className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="dispute-title" onClick={onClose}>
       <div className="card modal fund-modal" onClick={(e) => e.stopPropagation()}>
         <h2 id="dispute-title">Raise a dispute</h2>
         <p className="muted small">Use this when you cannot agree through revisions. Keep it factual: what was agreed, what happened, what you want.</p>

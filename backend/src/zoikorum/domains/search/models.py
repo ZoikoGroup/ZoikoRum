@@ -9,7 +9,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Index, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TSVECTOR
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -65,4 +65,11 @@ class ProfessionalDocument(Base, UUIDPk, Timestamps):
 
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_event_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # staleness indicator
+    # Track record (Architecture 9.4: contract success, reviews, response), from the contract, review and proposal facades.
+    completed_engagements: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    milestones_due: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")  # accepted, with a due date
+    milestones_on_time: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    review_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    review_average: Mapped[float | None] = mapped_column(Float)
+    response_median_hours: Mapped[float | None] = mapped_column(Float)  # time to a proposal or a decline
     document: Mapped[str] = mapped_column(TSVECTOR, nullable=False)

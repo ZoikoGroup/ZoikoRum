@@ -146,7 +146,7 @@ export function ProposalsPage() {
           </EmptyTable>
         ) : (
           <div className="compare-scroll"><table className="data">
-            <thead><tr><th>Professional</th><th>Request</th><th>Price</th><th>Status</th><th>Received</th><th>Valid until</th><th /></tr></thead>
+            <thead><tr><th>Professional</th><th>Request</th><th>Price</th><th>Status</th><th>Received</th><th>Valid until</th><th><span className="sr-only">Actions</span></th></tr></thead>
             <tbody>{shown.map((r) => {
               const st = PROPOSAL_STATUS[r.proposal!.status]
               return (
@@ -302,7 +302,7 @@ function CompareProposals({ proposals }: { proposals: Proposal[] }) {
     <section className="card panel">
       <div className="panel-head"><h2>Compare proposals</h2></div>
       <div className="compare-scroll"><table className="data compare-table">
-        <thead><tr><th />{live.map((p) => <th key={p.id}>{p.professional.displayName}</th>)}</tr></thead>
+        <thead><tr><th><span className="sr-only">Detail</span></th>{live.map((p) => <th key={p.id}>{p.professional.displayName}</th>)}</tr></thead>
         <tbody>{rows.map(([label, render]) => <tr key={label}><th scope="row">{label}</th>{live.map((p) => <td key={p.id}>{render(p)}</td>)}</tr>)}</tbody>
       </table></div>
     </section>

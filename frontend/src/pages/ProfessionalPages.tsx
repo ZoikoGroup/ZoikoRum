@@ -826,7 +826,7 @@ function CredentialsStep({ profile, next }: StepProps) {
       </p>
       {items.length > 0 && (
         <table className="data" style={{ marginBottom: 24 }}>
-          <thead><tr><th>Credential</th><th>Issued by</th><th>Expires</th><th>Status</th><th /></tr></thead>
+          <thead><tr><th>Credential</th><th>Issued by</th><th>Expires</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr></thead>
           <tbody>
             {items.map((c) => (
               <tr key={c.id}>

@@ -553,8 +553,8 @@ export function WebhooksPage() {
             </p>
 
             <div className="field">
-              <label>Endpoint Destination URL</label>
-              <input
+              <label htmlFor="notifications-url">Endpoint Destination URL</label>
+              <input id="notifications-url"
                 className="input"
                 name="url"
                 type="url"

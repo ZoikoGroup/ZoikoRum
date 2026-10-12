@@ -69,3 +69,15 @@ After the authentication-test and schema-drift fixes:
 - Existing non-blocking warnings remain: 35 frontend lint warnings and the large-bundle build warning.
 
 These local checks supersede the earlier incomplete merge-time verification above. They do not claim that GitHub's hosted checks have already rerun; the pushed commit must pass that environment too. Live payment, verification, email and cloud-provider behaviour still needs its separate operational verification.
+
+## Completion work (2026-10-12)
+
+- **Track-record ranking:** search stores and ranks by contract success, reviews and response time, with reasons in "why this result" (migration `15081f5c2ac6`; run `python -m zoikorum.cli reindex-search` once after upgrading).
+- **"Describe what you need" search:** `POST /v1/search/intent` turns a buyer's own words into ordinary, editable filters with reasons. Claude when configured, keyword rules otherwise (`domains/ai/intent.py`).
+- **Browser journeys:** 8 Playwright journeys (sign-up, find, accept and invoice, describe-a-need search, proposal writing, dispute, compliance review, dialog keyboard use).
+- **Accessibility:** labels linked to every form field, keyboard-safe dialogs (`useDialog` in `components/ui.tsx`), named table action columns, and accessibility lint rules turned on in `.oxlintrc.json`.
+- **Fix:** the proposal form no longer loses what a professional typed when a page load finishes late.
+- **Load test:** `backend/scripts/load_test.py` for staging, with a PASS/FAIL verdict ([DEPLOYMENT.md](DEPLOYMENT.md)).
+- **Launch checklist:** [LAUNCH_CHECKLIST.md](LAUNCH_CHECKLIST.md) lists the accounts, decisions and checks owned outside the code.
+
+Verification: backend suite **332 passed**; frontend 28 tests, type check and lint clean (no accessibility findings); browser suite 8/8 on two consecutive runs.

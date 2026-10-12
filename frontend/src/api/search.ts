@@ -26,15 +26,28 @@ export interface SearchResult {
 }
 
 export interface Facet { value: string; label: string; count: number }
-export interface SearchResponse { total: number; items: SearchResult[]; facets: Record<string, Facet[]> }
+/** The buyer organisation's policy applied to the results, and how many professionals it left out. */
+export interface PolicyFilter {
+  organizationId: string; organizationName: string; minTier: string; requiredDimensions: string[]
+  jurisdictions: string[] | null; hidden: number
+}
+export interface SearchResponse { total: number; items: SearchResult[]; facets: Record<string, Facet[]>; policy?: PolicyFilter | null }
 
 export type SearchQuery = Partial<Record<
   'q' | 'category' | 'spec' | 'specMatch' | 'tier' | 'verified' | 'engagementType' | 'delivery' | 'availability' |
   'pricingModel' | 'credential' | 'jurisdiction' | 'experience' | 'publishedAfter' | 'sort' | 'limit' | 'offset', string>>
+
+/** Filters suggested from the buyer's own words ("Describe what you need"), with one reason per filter. */
+export interface IntentFilters {
+  q: string | null; spec: string[]; engagementType: string | null; delivery: string | null; availability: string | null
+  jurisdiction: string | null; verified: string[]
+}
+export interface IntentResponse { filters: IntentFilters; reasons: string[]; source: string }
 
 export const searchApi = {
   professionals: (query: SearchQuery) => {
     const clean = Object.fromEntries(Object.entries(query).filter(([, v]) => v)) as Record<string, string>
     return api<SearchResponse>('/v1/search/professionals', { query: clean })
   },
+  intent: (text: string) => api<IntentResponse>('/v1/search/intent', { method: 'POST', body: { text } }),
 }

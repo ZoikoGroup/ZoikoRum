@@ -7,6 +7,7 @@ paid-placement input.
 
 from __future__ import annotations
 from zoikorum.domains.admin import facade as admin_facade
+from zoikorum.domains.ai import facade as ai_facade
 
 import uuid
 from datetime import datetime
@@ -17,10 +18,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.domains.marketplace import facade as marketplace_facade
 from zoikorum.domains.buyer import facade as buyer_facade
+from zoikorum.domains.contract import facade as contract_facade
 from zoikorum.domains.policy import facade as policy_facade
 from zoikorum.domains.professional import facade as professional_facade
+from zoikorum.domains.proposal import facade as proposal_facade
+from zoikorum.domains.review import facade as review_facade
 from zoikorum.domains.search.models import ProfessionalDocument as Doc
-from zoikorum.domains.search.schemas import FacetValue, ResultItem, SearchOut, SearchParams, SpecRef
+from zoikorum.domains.search.schemas import (FacetValue, IntentFilters, IntentIn, IntentOut, PolicyFilterOut, ResultItem, SearchOut,
+                                            SearchParams, SpecRef)
 from zoikorum.domains.trust import facade as trust_facade
 from zoikorum.domains.verification import facade as verification_facade
 from zoikorum.shared.auth import Actor, PlatformRole
@@ -71,6 +76,9 @@ async def rebuild(session: AsyncSession, professional_id: uuid.UUID, occurred_at
                                      and c.verification_type in ("JURISDICTION", "CREDENTIAL")})
     priced = [o for o in offerings if o.starting_price_minor is not None]
     cheapest = min(priced, key=lambda o: o.starting_price_minor, default=None)
+    delivery = await contract_facade.delivery_stats(session, pro.id)
+    reviews = await review_facade.rating_stats(session, pro.id)
+    response = await proposal_facade.response_stats(session, pro.id)
 
     text_a = " ".join(filter(None, [pro.display_name, pro.headline]))
     text_b = " ".join(names.values())
@@ -91,6 +99,9 @@ async def rebuild(session: AsyncSession, professional_id: uuid.UUID, occurred_at
         offering_titles=[o.title for o in offerings], starting_price_minor=cheapest.starting_price_minor if cheapest else None,
         price_currency=cheapest.currency if cheapest else None, bio_excerpt=(pro.bio or "")[:300] or None, photo_url=pro.photo_url,
         published_at=pro.published_at, last_event_at=occurred_at,
+        completed_engagements=delivery["completed"], milestones_due=delivery["milestonesWithDueDate"],
+        milestones_on_time=delivery["onTime"], review_count=reviews["reviewCount"], review_average=reviews["averageRating"],
+        response_median_hours=response["medianHours"],
         document=_weighted(text_a, "A").op("||")(_weighted(text_b, "B")).op("||")(_weighted(text_c, "C")),
     )
     stmt = pg_insert(Doc).values(id=uuid.uuid4(), **values)
@@ -120,8 +131,8 @@ def _escape_like(text: str) -> str:
 
 
 def _conditions(p: SearchParams, tsquery) -> list:
-    # Safety: unpublished and suspended profiles never appear. Buyer-organization policy filters
-    # (minimum tier, jurisdictions) are applied here once the policy domain exists.
+    # Safety: unpublished and suspended profiles never appear. The buyer organisation's policy (minimum tier,
+    # required checks, jurisdictions) is applied in search() and reported back as `policy`.
     conds = [Doc.visible.is_(True),
              # Never surface professionals whose screening was flagged or whose jurisdiction is restricted (Arch 9.3).
              func.coalesce(Doc.dimensions["restrictions"].astext, "") != "FLAGGED",
@@ -158,8 +169,9 @@ def _conditions(p: SearchParams, tsquery) -> list:
 
 def _rank_and_explain(doc: Doc, rank: float, max_rank: float, p: SearchParams) -> tuple[float, list[str]]:
     """Architecture 9.4 weights: relevance 30, trust 20, contract success 15, reviews 10, availability 10,
-    response 5, pricing fit 5, policy fit 5. Contract, review, response and policy signals are 0 until
-    those domains exist, so today's order comes from relevance, trust and availability."""
+    response 5, pricing fit 5, policy fit 5. Track record (contract success, reviews, response) comes from the
+    projection; professionals new to the platform score 0 there and are not otherwise penalised. Policy fit is
+    a filter (search() applies the buyer organisation's policy), not a score."""
     why: list[str] = []
     relevance = 0.0
     if p.q:
@@ -190,10 +202,42 @@ def _rank_and_explain(doc: Doc, rank: float, max_rank: float, p: SearchParams) -
         else:
             why.append(f"Serves clients in {j}")
     pricing_fit = 5 if p.pricingModel else 0
-    score = relevance + trust + availability + pricing_fit
+    record, record_why = track_record(doc)
+    after_tier = next(i for i, w in enumerate(why) if w.startswith("Tier ")) + 1
+    why[after_tier:after_tier] = record_why  # shown right after the tier, so the 6-reason cap keeps them
+    score = relevance + trust + availability + pricing_fit + record
     if doc.visibility_reduced:
         score *= 0.5  # enforcement: visibility reduction (explained to the professional, not to buyers)
     return score, why[:6]
+
+
+# Reviews are averaged with a prior of 4.0 weighted as 3 reviews, so one 5-star review does not outrank many 4.8s.
+REVIEW_PRIOR, REVIEW_PRIOR_WEIGHT = 4.0, 3
+
+
+def track_record(doc: Doc) -> tuple[float, list[str]]:
+    """Contract success (15), reviews (10) and response time (5), with the plain-language reasons shown to buyers."""
+    why: list[str] = []
+    completed = doc.completed_engagements or 0
+    success = 10 * min(completed, 10) / 10
+    if doc.milestones_due:
+        on_time = doc.milestones_on_time / doc.milestones_due
+        success += 5 * on_time
+    if completed:
+        why.append(f"{completed} completed engagement{'s' if completed != 1 else ''}"
+                   + (f", {round(100 * doc.milestones_on_time / doc.milestones_due)}% of milestones on time" if doc.milestones_due else ""))
+    reviews = 0.0
+    if doc.review_count and doc.review_average is not None:
+        weighted = (doc.review_average * doc.review_count + REVIEW_PRIOR * REVIEW_PRIOR_WEIGHT) / (doc.review_count + REVIEW_PRIOR_WEIGHT)
+        reviews = 10 * (weighted / 5) * min(1.0, doc.review_count / REVIEW_PRIOR_WEIGHT)
+        why.append(f"{doc.review_average:.1f}★ from {doc.review_count} verified review{'s' if doc.review_count != 1 else ''}")
+    response = 0.0
+    hours = doc.response_median_hours
+    if hours is not None:
+        response = 5 if hours <= 24 else 3 if hours <= 72 else 1 if hours <= 168 else 0
+        if hours <= 72:
+            why.append("Usually replies within a day" if hours <= 24 else "Usually replies within 3 days")
+    return success + reviews + response, why
 
 
 def _sort_key(sort: str):
@@ -249,6 +293,15 @@ def _item(doc: Doc, why: list[str]) -> ResultItem:
     )
 
 
+async def intent(session: AsyncSession, body: IntentIn) -> IntentOut:
+    """Turn a buyer's own words into search filters (AI assists; the buyer reviews and changes them)."""
+    catalog = await marketplace_facade.specialization_catalog(session)
+    i = await ai_facade.extract_search_intent(body.text, catalog)
+    filters = IntentFilters(q=i.keywords, spec=list(i.specializations), engagementType=i.engagement_type, delivery=i.delivery,
+                            availability=i.availability, jurisdiction=i.jurisdiction, verified=list(i.verified))
+    return IntentOut(filters=filters, reasons=list(i.reasons), source=i.source)
+
+
 async def search(session: AsyncSession, actor: Actor | None, p: SearchParams) -> SearchOut:
     q = (p.q or "").strip() or None
     p = p.model_copy(update={"q": q})
@@ -262,8 +315,10 @@ async def search(session: AsyncSession, actor: Actor | None, p: SearchParams) ->
         organizations = await buyer_facade.list_identity_organizations(session, actor.identity_id)
         if len(organizations) == 1:
             org_id = organizations[0]
+    policy = None
     if org_id:
         eligibility = await policy_facade.search_eligibility(session, org_id)
+        before = await session.scalar(select(func.count()).select_from(Doc).where(*conds)) or 0
         conds.append(Doc.tier.in_([t for t in TIER_RANK if TIER_RANK[t] >= TIER_RANK[eligibility['minTier']]]))
         dimension_values = {**GOOD, "credentials": ("VALIDATED", "NOT_APPLICABLE"), "insurance": ("VERIFIED", "NOT_REQUIRED")}
         for dim in eligibility['requiredDimensions']:
@@ -271,6 +326,12 @@ async def search(session: AsyncSession, actor: Actor | None, p: SearchParams) ->
         if eligibility.get('jurisdictions'):
             conds.append(Doc.served_jurisdictions.overlap(eligibility['jurisdictions']))
     total = await session.scalar(select(func.count()).select_from(Doc).where(*conds)) or 0
+    if org_id and _restrictive(eligibility):
+        org = await buyer_facade.get_organization(session, org_id)
+        policy = PolicyFilterOut(organizationId=org_id, organizationName=org.name if org else "Your organisation",
+                                 minTier=eligibility["minTier"], requiredDimensions=list(eligibility["requiredDimensions"]),
+                                 jurisdictions=list(eligibility["jurisdictions"]) if eligibility.get("jurisdictions") else None,
+                                 hidden=max(0, before - total))
 
     # The candidate cap keeps the strongest matches: most relevant first, then most trusted.
     order = [Doc.trust_score.desc(), Doc.published_at.desc().nulls_last()]
@@ -299,7 +360,13 @@ async def search(session: AsyncSession, actor: Actor | None, p: SearchParams) ->
     if total == 0:
         record_event(session, E.SEARCH_ZERO_RESULT, aggregate_type="Search", aggregate_id=uuid.uuid4(),
                      payload={"query": q, "filters": filters})
-    return SearchOut(total=total, items=[_item(d, whys[d.professional_id]) for d, _ in page], facets=_facets([d for d, _ in rows]))
+    return SearchOut(total=total, items=[_item(d, whys[d.professional_id]) for d, _ in page], facets=_facets([d for d, _ in rows]),
+                     policy=policy)
+
+
+def _restrictive(eligibility: dict) -> bool:
+    """Whether the organisation's policy narrows results beyond what anyone may see (Tier C, no extra checks)."""
+    return eligibility["minTier"] != "C" or bool(eligibility["requiredDimensions"]) or bool(eligibility.get("jurisdictions"))
 
 
 async def count_eligible(session: AsyncSession, eligibility: dict) -> int:

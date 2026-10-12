@@ -36,4 +36,8 @@ from zoikorum.domains.ai.specializations import (  # noqa: E402  (contract re-ex
     match_specializations,
 )
 
-__all__ = ["CatalogEntry", "Draft", "MatchIntent", "SpecializationMatch", "extract_match_intent", "match_specializations"]
+# ---- "Describe what you need" search ------------------------------------------------------------------------------
+from zoikorum.domains.ai.intent import SearchIntent, extract_search_intent  # noqa: E402  (contract re-export)
+
+__all__ = ["CatalogEntry", "Draft", "MatchIntent", "SearchIntent", "SpecializationMatch", "extract_match_intent",
+           "extract_search_intent", "match_specializations"]

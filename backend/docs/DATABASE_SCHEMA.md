@@ -660,6 +660,12 @@ Base class used for declarative class definitions.  The :class:`_orm.Declarative
 | `photo_url` | varchar(200) | yes |  |
 | `published_at` | DATETIME | yes |  |
 | `last_event_at` | DATETIME | yes |  |
+| `completed_engagements` | INTEGER | no |  |
+| `milestones_due` | INTEGER | no |  |
+| `milestones_on_time` | INTEGER | no |  |
+| `review_count` | INTEGER | no |  |
+| `review_average` | FLOAT | yes |  |
+| `response_median_hours` | FLOAT | yes |  |
 | `document` | TSVECTOR | no |  |
 | `id` | UUID | no | PK |
 | `updated_at` | DATETIME | no |  |

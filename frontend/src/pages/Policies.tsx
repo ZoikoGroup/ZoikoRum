@@ -272,8 +272,8 @@ export default function PoliciesPage() {
                 </p>
                 <div className="row" style={{ marginBottom: 12 }}>
                   <div className="field" style={{ flex: 1 }}>
-                    <label>Profile Name</label>
-                    <input
+                    <label htmlFor="policies-name">Profile Name</label>
+                    <input id="policies-name"
                       className="input"
                       name="name"
                       placeholder="e.g. Enterprise Financial SOW Policy"
@@ -283,8 +283,8 @@ export default function PoliciesPage() {
                     />
                   </div>
                   <div className="field" style={{ flex: 1 }}>
-                    <label>Base Template</label>
-                    <select className="input" name="template">
+                    <label htmlFor="policies-template">Base Template</label>
+                    <select id="policies-template" className="input" name="template">
                       {['ENTERPRISE_STANDARD', 'REGULATED', 'CROSS_BORDER', 'GROWTH_ADVISORY'].map((t) => (
                         <option key={t} value={t}>
                           {t.replace(/_/g, ' ')}
@@ -295,8 +295,8 @@ export default function PoliciesPage() {
                 </div>
 
                 <div className="field">
-                  <label>Description</label>
-                  <input
+                  <label htmlFor="policies-description">Description</label>
+                  <input id="policies-description"
                     className="input"
                     name="description"
                     placeholder="Describe which departments or spend categories this policy governs"
@@ -305,8 +305,8 @@ export default function PoliciesPage() {
 
                 <div className="row" style={{ marginBottom: 12 }}>
                   <div className="field" style={{ flex: 1 }}>
-                    <label>Risk Level</label>
-                    <select className="input" name="riskLevel">
+                    <label htmlFor="policies-riskLevel">Risk Level</label>
+                    <select id="policies-riskLevel" className="input" name="riskLevel">
                       <option value="MEDIUM">Medium Risk</option>
                       <option value="LOW">Low Risk</option>
                       <option value="HIGH">High Risk</option>
@@ -314,8 +314,8 @@ export default function PoliciesPage() {
                   </div>
                   {!!units.length && (
                     <div className="field" style={{ flex: 1 }}>
-                      <label>Business Units (optional)</label>
-                      <select className="input" name="businessUnitIds" multiple style={{ height: 80 }}>
+                      <label htmlFor="policies-businessUnitIds">Business Units (optional)</label>
+                      <select id="policies-businessUnitIds" className="input" name="businessUnitIds" multiple style={{ height: 80 }}>
                         {units.map((u) => (
                           <option key={u.id} value={u.id}>
                             {u.name}
@@ -357,6 +357,10 @@ export default function PoliciesPage() {
                       marginBottom: 14,
                     }}
                     onClick={() => choose(p)}
+                    role="button"
+                    tabIndex={0}
+                    aria-pressed={isCurrent}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); choose(p) } }}
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
                       <div>
@@ -413,12 +417,12 @@ export default function PoliciesPage() {
                   Simulate commercial facts against this policy to test rules before activation. Dry-run evaluations record an audit simulation without creating approvals or moving money.
                 </p>
                 <div className="field">
-                  <label>Simulated Action</label>
-                  <input className="input" name="action" required defaultValue="PROPOSAL_ACCEPT" />
+                  <label htmlFor="policies-action">Simulated Action</label>
+                  <input id="policies-action" className="input" name="action" required defaultValue="PROPOSAL_ACCEPT" />
                 </div>
                 <div className="field">
-                  <label>Simulated Attributes (JSON)</label>
-                  <textarea
+                  <label htmlFor="policies-attributes">Simulated Attributes (JSON)</label>
+                  <textarea id="policies-attributes"
                     className="input"
                     name="attributes"
                     required
@@ -693,8 +697,8 @@ export default function PoliciesPage() {
                       <h3 style={{ margin: '0 0 10px', fontSize: 14 }}>Record Approval Decision</h3>
                       <div className="row" style={{ marginBottom: 10 }}>
                         <div className="field" style={{ flex: 1 }}>
-                          <label>Approval Step</label>
-                          <select className="input" name="stepId">
+                          <label htmlFor="policies-stepId">Approval Step</label>
+                          <select id="policies-stepId" className="input" name="stepId">
                             {a.workflows
                               .flatMap((w) => w.steps)
                               .map((s) => (
@@ -705,16 +709,16 @@ export default function PoliciesPage() {
                           </select>
                         </div>
                         <div className="field" style={{ flex: 1 }}>
-                          <label>Decision</label>
-                          <select className="input" name="decision">
+                          <label htmlFor="policies-decision">Decision</label>
+                          <select id="policies-decision" className="input" name="decision">
                             <option value="GRANT">Approve (Grant)</option>
                             <option value="DENY">Deny (Reject)</option>
                           </select>
                         </div>
                       </div>
                       <div className="field">
-                        <label>Justification / Reason</label>
-                        <textarea
+                        <label htmlFor="policies-reason">Justification / Reason</label>
+                        <textarea id="policies-reason"
                           className="input"
                           name="reason"
                           required
@@ -816,16 +820,16 @@ export default function PoliciesPage() {
                         <h4 style={{ margin: '0 0 8px', fontSize: 13.5 }}>Exception Authority Action</h4>
                         <div className="row" style={{ marginBottom: 8 }}>
                           <div className="field" style={{ flex: 1 }}>
-                            <label>Decision</label>
-                            <select className="input" name="decision">
+                            <label htmlFor="policies-decision-2">Decision</label>
+                            <select id="policies-decision-2" className="input" name="decision">
                               <option value="GRANT">Grant Exception</option>
                               <option value="DENY">Deny Exception</option>
                             </select>
                           </div>
                         </div>
                         <div className="field">
-                          <label>Authority Justification</label>
-                          <textarea
+                          <label htmlFor="policies-reason-2">Authority Justification</label>
+                          <textarea id="policies-reason-2"
                             className="input"
                             name="reason"
                             required
@@ -855,8 +859,8 @@ export default function PoliciesPage() {
               </p>
 
               <div className="field">
-                <label>Subject Type</label>
-                <input
+                <label htmlFor="policies-subjectType">Subject Type</label>
+                <input id="policies-subjectType"
                   className="input"
                   name="subjectType"
                   required
@@ -866,8 +870,8 @@ export default function PoliciesPage() {
               </div>
 
               <div className="field">
-                <label>Subject ID / Reference</label>
-                <input
+                <label htmlFor="policies-subjectId">Subject ID / Reference</label>
+                <input id="policies-subjectId"
                   className="input"
                   name="subjectId"
                   required
@@ -877,8 +881,8 @@ export default function PoliciesPage() {
               </div>
 
               <div className="field">
-                <label>Policy Action</label>
-                <input
+                <label htmlFor="policies-action-2">Policy Action</label>
+                <input id="policies-action-2"
                   className="input"
                   name="action"
                   required
@@ -888,8 +892,8 @@ export default function PoliciesPage() {
               </div>
 
               <div className="field">
-                <label>Business Justification</label>
-                <textarea
+                <label htmlFor="policies-justification">Business Justification</label>
+                <textarea id="policies-justification"
                   className="input"
                   name="justification"
                   required
@@ -901,8 +905,8 @@ export default function PoliciesPage() {
               </div>
 
               <div className="field">
-                <label>Supporting Documents</label>
-                <input
+                <label htmlFor="policies-documents">Supporting Documents</label>
+                <input id="policies-documents"
                   name="documents"
                   type="file"
                   multiple
@@ -912,8 +916,8 @@ export default function PoliciesPage() {
               </div>
 
               <div className="field">
-                <label>Exception Expiration Date</label>
-                <input
+                <label htmlFor="policies-expiresAt">Exception Expiration Date</label>
+                <input id="policies-expiresAt"
                   className="input"
                   name="expiresAt"
                   type="datetime-local"
