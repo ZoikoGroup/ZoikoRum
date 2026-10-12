@@ -151,7 +151,9 @@ async def test_disagreement_is_resolved_through_a_dispute_with_money_frozen(clie
     assert d["status"] == "DIRECT_RESOLUTION"
     d = (await client.post(f"{D}/{d['id']}/resolution-proposals", headers=pro_user.h, json={
         "outcome": "PARTIAL_REFUND", "allocations": [{"milestoneId": m1, "releaseMinor": 600_000, "refundMinor": 400_000}]})).json()
-    await client.post(f"/v1/resolution-proposals/{d['proposals'][0]['id']}/accept", headers=buyer.idem())
+    await buyer.step_up()  # settling money for the organisation needs a fresh two-step confirmation
+    accepted = await client.post(f"/v1/resolution-proposals/{d['proposals'][0]['id']}/accept", headers=buyer.idem())
+    assert accepted.status_code == 200, accepted.text
     await drain()
 
     threads = (await client.get("/v1/threads", headers=buyer.h)).json()["items"]
