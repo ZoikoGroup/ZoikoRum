@@ -15,7 +15,7 @@ from zoikorum.domains.policy.schemas import (
 from zoikorum.domains.search import facade as search
 from zoikorum.shared.auth import CurrentActor, OrgRole
 from zoikorum.shared.db import DbSession
-from zoikorum.shared.errors import NotFound
+from zoikorum.shared.errors import Conflict, NotFound
 from zoikorum.shared.http import page_of, paginate
 from zoikorum.shared.events import record_audit
 from zoikorum.shared.uploads import file_response, find_file, read_file
@@ -59,7 +59,10 @@ async def activate(profile_id: uuid.UUID, actor: CurrentActor, session: DbSessio
 async def impact(profile_id: uuid.UUID, actor: CurrentActor, session: DbSession):
     profile = await service.get_profile(session, actor, profile_id)
     from zoikorum.domains.policy.models import PolicyVersion
-    version = await session.get(PolicyVersion, profile.draft_version_id or profile.active_version_id)
+    version_id = profile.draft_version_id or profile.active_version_id
+    version = await session.get(PolicyVersion, version_id) if version_id else None
+    if version is None:
+        raise Conflict("This profile has no active or draft version to preview", code="NO_VERSION")
     filters = {"minTier": version.settings["minTrustTier"],
         "requiredDimensions": version.settings["requiredDimensions"],
         "jurisdictions": version.settings.get("allowedJurisdictions")}

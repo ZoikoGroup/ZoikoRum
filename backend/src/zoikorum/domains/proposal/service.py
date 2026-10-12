@@ -15,7 +15,7 @@ import json
 import uuid
 from datetime import date, datetime, time, timedelta, timezone
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.domains.buyer import facade as buyer_facade
@@ -451,7 +451,8 @@ def _status_filter(stmt, model, status: str | None):
 async def _scope(session: AsyncSession, actor: Actor, role: str):
     """WHERE clause for the caller's requests, or None when they have none."""
     if role == "buyer":
-        return or_(ProposalRequest.organization_id.in_(actor.org_ids), ProposalRequest.buyer_identity_id == actor.identity_id)
+        # Live memberships only (see contract._scope): removed members stop seeing the organisation's requests at once.
+        return ProposalRequest.organization_id.in_(await buyer_facade.list_identity_organizations(session, actor.identity_id))
     pid = await _my_professional_id(session, actor)
     if pid is None:
         return None

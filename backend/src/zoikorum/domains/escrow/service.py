@@ -108,7 +108,8 @@ def _status(a: EscrowAccount, allocs: list[Allocation]) -> str:
     if allocs and any(x.state == "RELEASED" for x in allocs) and all(x.state in ("RELEASED", "CANCELLED") for x in allocs):
         return "FULLY_RELEASED"
     settled = ("RELEASED", "PARTIALLY_RELEASED", "REFUNDED", "UNFUNDED", "CANCELLED")  # UNFUNDED also covers chargebacks
-    if allocs and a.refunded_minor > 0 and all(x.state in settled for x in allocs):
+    if allocs and a.refunded_minor > 0 and all(x.state in settled for x in allocs) and any(
+            x.state in ("REFUNDED", "PARTIALLY_RELEASED") for x in allocs):
         return "REFUNDED" if a.released_minor == 0 else "CLOSED"
     if a.released_minor > 0:
         return "PARTIALLY_RELEASED"
@@ -285,11 +286,24 @@ async def fund(session: AsyncSession, actor: Actor, account_id: uuid.UUID, body:
 async def payment_captured(session: AsyncSession, payload: dict) -> None:
     """Consumer of PAYMENT_CAPTURED: hold the money in escrow and start the funded milestones. Idempotent per funding."""
     f = await session.get(Funding, uuid.UUID(str(payload["fundingId"])), with_for_update=True)
-    if f is None or f.status != "REQUESTED":
+    if f is None or f.status not in ("REQUESTED", "FAILED"):
         return
     a = await _account(session, f.account_id, lock=True)
     if int(payload["amountMinor"]) != f.amount_minor or payload["currency"] != f.currency:
         raise ValueError(f"Captured amount does not match funding {f.id}")
+    if f.status == "FAILED":  # given up (e.g. the hourly check) but the buyer paid after all: hold it and give it back
+        _post(session, a, "FUNDING", f.id, [
+            ("BUYER_FUNDING", "BUYER_CLEARING", f.amount_minor, 0, "Payment captured after the funding was given up"),
+            ("ESCROW_HOLD", "ESCROW_HELD", 0, f.amount_minor, "Held only until it is returned")])
+        refund_id = uuid.uuid4()
+        _post(session, a, "REFUND", refund_id, [
+            ("REFUND", "ESCROW_HELD", f.amount_minor, 0, "Late payment returned to the buyer"),
+            ("REFUND", "BUYER_REFUND_PAYABLE", 0, f.amount_minor, "Refund payable to buyer")])
+        f.status, f.captured_at = "REFUNDED", clock.now()
+        a.refunded_minor += f.amount_minor
+        _evt(session, E.ESCROW_REFUNDED, a, milestoneId=None, amountMinor=f.amount_minor, currency=a.currency, refundId=refund_id,
+             fundingIds=[f.id])
+        return
     ids = {uuid.UUID(str(i)) for i in f.milestone_ids}
     allocs = [x for x in await _allocations(session, a.id, lock=True) if x.milestone_id in ids]
     now = clock.now()
@@ -322,7 +336,7 @@ async def funding_check(session: AsyncSession, payload: dict) -> None:
     forever. A charge that started (e.g. the buyer is still at checkout) is left to finish or fail on its own."""
     from zoikorum.domains.payments import facade as payments_facade
 
-    f = await session.get(Funding, uuid.UUID(payload["fundingId"]))
+    f = await session.get(Funding, uuid.UUID(payload["fundingId"]), with_for_update=True)
     if f is None or f.status != "REQUESTED" or await payments_facade.payment_started(session, f.id):
         return
     await payment_failed(session, {"fundingId": f.id, "failureMessage": "The payment could not be started. Please try again."})
@@ -463,8 +477,12 @@ async def release_accepted_siblings(session, contract_id):
     controls = await contract_facade.policy_controls(session, contract.id)
     if controls.get("partialReleaseAllowed", True):
         return
+    waiting = {x.milestone_id for x in (await session.scalars(select(Allocation).where(
+        Allocation.milestone_id.in_([m.id for m in contract.milestones]),
+        Allocation.state.in_(("HELD", "RELEASE_PENDING_APPROVAL"))))).all()}
     for milestone in contract.milestones:
-        await milestone_accepted(session, {"milestoneId": milestone.id})
+        if milestone.status == "ACCEPTED" and milestone.id in waiting:
+            await milestone_accepted(session, {"milestoneId": milestone.id})
 
 async def payment_charged_back(session: AsyncSession, payload: dict) -> None:
     """Consumer of PAYMENT_CHARGED_BACK. The card issuer took money back, so it can no longer be in escrow:

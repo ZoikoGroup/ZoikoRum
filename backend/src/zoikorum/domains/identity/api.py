@@ -40,7 +40,7 @@ from zoikorum.domains.identity.schemas import (
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession, session_factory
 from zoikorum.shared.errors import Unauthenticated
-from zoikorum.shared.http import Page
+from zoikorum.shared.http import Page, enforce_budget
 
 router = APIRouter(prefix="/v1", tags=["identity"])
 
@@ -72,6 +72,7 @@ async def confirm_email(body: ConfirmEmailIn, session: DbSession) -> IdentityOut
 
 @router.post("/auth/login", response_model=AuthOut)
 async def login(body: LoginIn, request: Request) -> AuthOut:
+    await enforce_budget("login-email", body.email.lower(), 10, 10, "Too many sign-in attempts for this account. Wait a minute and try again.")
     # Own transaction: a failed attempt must still commit its lockout counter.
     async with session_factory()() as session:
         async with session.begin():
@@ -100,6 +101,8 @@ async def logout(actor: CurrentActor, session: DbSession) -> None:
 
 @router.post("/auth/password/forgot", response_model=ForgotPasswordOut, status_code=status.HTTP_202_ACCEPTED)
 async def forgot_password(body: ForgotPasswordIn, session: DbSession) -> ForgotPasswordOut:
+    # A few reset emails an hour per address: nobody can flood someone's inbox from many addresses.
+    await enforce_budget("reset-email", str(body.email).lower(), 3, 3, "A reset email was sent recently. Check your inbox, or try again later.")
     token = await service.request_password_reset(session, body.email)
     # Same response whether or not the email exists (no account enumeration).
     return ForgotPasswordOut(resetToken=token if _expose_dev_tokens() else None)

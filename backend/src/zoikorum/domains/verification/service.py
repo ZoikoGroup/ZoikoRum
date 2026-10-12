@@ -407,8 +407,23 @@ def _default_expiry(case: VerificationCase) -> datetime | None:
         return None  # an unreadable date: the reviewer sets one
 
 
+async def _retire_renewed(session: AsyncSession, case: VerificationCase) -> None:
+    """A renewal replaces the earlier verified check for the same thing: that one stops quietly (no expiry reminders, no
+    "expired" notice that would undo the renewal)."""
+    older = (await session.scalars(select(VerificationCase).where(
+        VerificationCase.id != case.id, VerificationCase.status == "VERIFIED",
+        VerificationCase.subject_type == case.subject_type, VerificationCase.subject_id == case.subject_id,
+        VerificationCase.verification_type == case.verification_type,
+        VerificationCase.jurisdiction.is_not_distinct_from(case.jurisdiction),
+        VerificationCase.credential_claim_id.is_not_distinct_from(case.credential_claim_id)).with_for_update())).all()
+    for old in older:
+        await _cancel_expiry_timers(session, old)
+        old.status, old.reason_code = "EXPIRED", "RENEWED"
+
+
 async def _verify(session: AsyncSession, case: VerificationCase, *, reviewer_id: uuid.UUID | None, expires_at: datetime | None) -> None:
     CASE_STATES.assert_can(case.status, "VERIFIED")
+    await _retire_renewed(session, case)
     now = clock.now()
     case.status, case.verified_at, case.decided_at, case.reviewer_id = "VERIFIED", now, now, reviewer_id
     case.expires_at = expires_at or _default_expiry(case)

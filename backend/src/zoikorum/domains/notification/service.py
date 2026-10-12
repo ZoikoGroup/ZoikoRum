@@ -69,6 +69,8 @@ EVENT_TITLES = {
     E.ENFORCEMENT_ACTION_APPLIED: 'Account safety decision', E.ENFORCEMENT_ACTION_REVERSED: 'Restriction reversed',
     E.ENFORCEMENT_APPEAL_DECIDED: 'Safety appeal decided',
 }
+# Always shown in the app (email still follows the person's preferences): disputes and money that needs action.
+MUST_SEE = frozenset({E.PAYMENT_FAILED, E.MILESTONE_FUNDING_REVERSED, E.REFUND_FAILED, E.ESCROW_RELEASE_BLOCKED, E.PAYOUT_FAILED})
 WEBHOOK_EVENTS = frozenset(e for e in EVENT_TITLES if domain_of(e) in {'proposal', 'contract', 'escrow', 'policy', 'dispute', 'verification'})
 
 
@@ -138,6 +140,7 @@ async def queue_event(session, event):
         return
     found, org_id, pro_identity = await recipients(session, event)
     mandatory = domain_of(event.eventType) in {'identity', 'admin'}
+    must_see = mandatory or domain_of(event.eventType) == 'dispute' or event.eventType in MUST_SEE
     saved_buyer = (event.eventType == E.PROPOSAL_REQUESTED and org_id and _uuid(event.payload.get('professionalId'))
                    and await professional.saved_buyer_alerts(session, _uuid(event.payload['professionalId']), org_id))
     notice = event.payload.get('notice') if domain_of(event.eventType) == 'admin' else None
@@ -146,7 +149,7 @@ async def queue_event(session, event):
         prefs = await session.scalar(select(Preference).where(Preference.identity_id == recipient))
         priority = bool(saved_buyer and recipient == pro_identity)  # the professional asked to always hear from this buyer
         email_on = mandatory or priority or prefs is None or prefs.email
-        in_app = mandatory or priority or prefs is None or prefs.in_app
+        in_app = must_see or priority or prefs is None or prefs.in_app
         if not email_on and not in_app:
             continue
         nid = uuid.uuid4()

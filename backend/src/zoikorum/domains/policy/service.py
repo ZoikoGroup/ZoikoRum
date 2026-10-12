@@ -350,9 +350,13 @@ async def evaluate(session, ctx, *, dry_run=False, preview_profile_id=None):
         for dimension in settings.get("requiredDimensions", ["identity"]):
             if dimensions.get(dimension) not in DIMENSION_OK[dimension]:
                 fail(Decision.BLOCK, "POLICY_BLOCKED_TRUST_DIMENSION", f"The {dimension} requirement is not satisfied")
+        # Allowed jurisdictions limit who may be engaged (the same rule search applies): the professional must serve or be
+        # licensed in at least one of them. The buyer organisation's own country is not what the policy restricts.
         allowed = settings.get("allowedJurisdictions")
-        if allowed and attrs.get(Attr.BUYER_COUNTRY) not in allowed:
-            fail(Decision.BLOCK, "POLICY_BLOCKED_JURISDICTION", "The buyer country is outside the policy's allowed jurisdictions")
+        covered = set(attrs.get(Attr.PRO_JURISDICTIONS) or []) | set(attrs.get(Attr.PRO_LICENSED) or [])
+        if allowed and not covered & set(allowed):
+            fail(Decision.BLOCK, "POLICY_BLOCKED_JURISDICTION",
+                 "This professional does not serve any of the jurisdictions your organisation's policy allows")
         currencies = settings.get("allowedCurrencies")
         if currencies and attrs.get(Attr.ENGAGEMENT_CURRENCY) not in currencies:
             fail(Decision.BLOCK, "POLICY_BLOCKED_CURRENCY", "This currency is not permitted by the policy")

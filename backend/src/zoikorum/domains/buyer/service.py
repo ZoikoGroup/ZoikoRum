@@ -344,6 +344,9 @@ async def revoke_invitation(session: AsyncSession, actor: Actor, org_id: uuid.UU
 
 
 async def my_invitations(session: AsyncSession, actor: Actor) -> list[InvitationOut]:
+    who = await identity_facade.get_identity(session, actor.identity_id)
+    if who is None or not who.email_confirmed:
+        return []  # confirm your email first: an unconfirmed sign-up must not see invitations meant for that address
     rows = (
         await session.scalars(
             select(Invitation)

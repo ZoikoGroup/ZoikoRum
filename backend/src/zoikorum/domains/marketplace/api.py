@@ -13,6 +13,7 @@ from zoikorum.domains.marketplace.schemas import (
 )
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
+from zoikorum.shared.http import enforce_budget
 
 router = APIRouter(tags=["marketplace"])
 
@@ -25,6 +26,7 @@ async def taxonomy(session: DbSession) -> dict:
 
 @router.post("/v1/taxonomy/suggest", response_model=SuggestOut)
 async def suggest(body: SuggestIn, actor: CurrentActor, session: DbSession):
+    await enforce_budget("ai", str(actor.identity_id), 20, 20, "Too many AI requests. Please wait a minute.")
     """"Can't find yours?": match your own words to existing specializations (AI when configured, keywords otherwise)."""
     return await service.suggest(session, actor, body)
 

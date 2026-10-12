@@ -28,14 +28,14 @@ def load_domains() -> None:
     load()
 
 
-async def _create_admin(email: str, name: str, country: str, password: str) -> None:
+async def _create_admin(email: str, name: str, country: str, password: str, roles: tuple[str, ...] = ()) -> None:
     from zoikorum.domains.identity import service
 
     load_domains()
     ctx = context.ExecutionContext(correlation_id=context.new_correlation_id(), actor_id="cli", actor_type="operator")
     with context.use_context(ctx):
         async with session_factory()() as s, s.begin():
-            identity = await service.create_platform_admin(s, email, password, name, country)
+            identity = await service.create_platform_admin(s, email, password, name, country, roles)
     await dispose_engine()
     print(f"Platform Admin ready: {identity.email} ({identity.id}). Sign in and enable MFA to use staff tools.")
 
@@ -79,6 +79,7 @@ def main() -> None:
     ca.add_argument("--email", required=True)
     ca.add_argument("--name", default="Platform Admin")
     ca.add_argument("--country", default="US")
+    ca.add_argument("--roles", default="", help="extra staff roles, comma-separated (e.g. COMPLIANCE_OFFICER,MEDIATOR)")
     sub.add_parser("reindex-search", help="rebuild the search projection")
     sd = sub.add_parser("schema-doc", help="write the database schema as Markdown")
     sd.add_argument("--out", default="docs/DATABASE_SCHEMA.md")
@@ -112,7 +113,8 @@ def main() -> None:
         password = os.environ.get("ZK_ADMIN_PASSWORD") or getpass.getpass("Password (min 12 chars): ")
         if len(password) < 12:
             raise SystemExit("Password must be at least 12 characters")
-        asyncio.run(_create_admin(args.email, args.name, args.country, password))
+        roles = tuple(r.strip().upper() for r in args.roles.split(",") if r.strip())
+        asyncio.run(_create_admin(args.email, args.name, args.country, password, roles))
 
 
 if __name__ == "__main__":

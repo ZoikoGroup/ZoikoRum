@@ -50,7 +50,9 @@ async def test_invite_accept_and_roles_reach_the_token(client, make_user, drain)
     inv = r.json()
     assert inv["status"] == "PENDING" and inv["devInviteUrl"]
 
-    # The invitee sees it in their inbox and accepts with the emailed link.
+    # The invitee (once their email is confirmed) sees it in their inbox and accepts with the emailed link.
+    assert (await client.get("/v1/organizations/invitations/mine", headers=approver.h)).json() == []
+    await client.post("/v1/auth/confirm-email", json={"token": approver.confirm_token})
     mine = (await client.get("/v1/organizations/invitations/mine", headers=approver.h)).json()
     assert [i["id"] for i in mine] == [inv["id"]]
     r = await client.post("/v1/organizations/invitations/accept", headers=approver.h, json={"token": token_of(inv)})

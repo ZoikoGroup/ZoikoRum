@@ -68,7 +68,7 @@ async def funding_open(session: AsyncSession, funding_id: uuid.UUID) -> bool:
     """Payments charges a funding only while the buyer's request is still open."""
     from zoikorum.domains.escrow.models import Funding
 
-    f = await session.get(Funding, funding_id)
+    f = await session.get(Funding, funding_id, with_for_update=True)  # the hourly funding check waits for this charge
     return f is not None and f.status == "REQUESTED"
 
 

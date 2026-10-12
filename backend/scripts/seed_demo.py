@@ -110,15 +110,12 @@ def staff_account(http) -> User:
     env = {**os.environ, "ZK_ADMIN_PASSWORD": PASSWORD}
     if os.environ.get("ZK_SEED_DATABASE_URL"):  # the database behind ZK_SEED_API, when it is not the one in backend/.env
         env["ZK_DATABASE_URL"] = os.environ["ZK_SEED_DATABASE_URL"]
-    subprocess.run([sys.executable, "-m", "zoikorum.cli", "create-admin", "--email", STAFF[0], "--name", STAFF[1], "--country", "IN"],
+    roles = "COMPLIANCE_OFFICER,MEDIATOR,FINANCIAL_OPS,TS_ANALYST,LEGAL"  # granted at creation: nobody grants roles to themselves
+    subprocess.run([sys.executable, "-m", "zoikorum.cli", "create-admin", "--email", STAFF[0], "--name", STAFF[1], "--country", "IN",
+                    "--roles", roles],
                    cwd=BACKEND, env={**env, "PYTHONPATH": str(BACKEND / "src")}, check=True, stdout=subprocess.DEVNULL)
     r = http.post("/v1/auth/login", json={"email": STAFF[0], "password": PASSWORD})
-    staff = User(http, STAFF[0], r.json()["tokens"]["accessToken"])
-    me = staff.call("GET", "/v1/me")
-    for role in ("COMPLIANCE_OFFICER", "MEDIATOR", "FINANCIAL_OPS", "TS_ANALYST", "LEGAL"):
-        staff.call("POST", f"/v1/admin/identities/{me['id']}/platform-roles", {"role": role})
-    staff.relogin()
-    return staff
+    return User(http, STAFF[0], r.json()["tokens"]["accessToken"])
 
 
 def professional(http, email, name, country, *, headline, bio, primary, secondary, served, offerings) -> tuple[User, dict]:

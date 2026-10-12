@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import secrets
 import uuid
 from dataclasses import dataclass
@@ -202,14 +204,22 @@ def _count_failure(identity: Identity) -> None:
         identity.failed_login_count = 0
 
 
+def _recovery_hash(code: str) -> str:
+    """Keyed hash: a copy of the database alone is not enough to try codes offline."""
+    return hmac.new(get_settings().field_encryption_key.encode(), code.strip().lower().encode(), hashlib.sha256).hexdigest()
+
+
 def _new_recovery_codes(identity: Identity) -> list[str]:
-    codes = [f"{secrets.token_hex(2)}-{secrets.token_hex(2)}" for _ in range(RECOVERY_CODES)]
-    identity.mfa_recovery_hashes = [sha256_hex(c) for c in codes]
+    codes = []
+    for _ in range(RECOVERY_CODES):
+        raw = secrets.token_hex(10)  # 80 random bits
+        codes.append("-".join(raw[i:i + 5] for i in range(0, 20, 5)))
+    identity.mfa_recovery_hashes = [_recovery_hash(c) for c in codes]
     return codes
 
 
 def _use_recovery_code(identity: Identity, code: str) -> bool:
-    h = sha256_hex(code.strip().lower())
+    h = _recovery_hash(code)
     if h not in (identity.mfa_recovery_hashes or []):
         return False
     identity.mfa_recovery_hashes = [x for x in identity.mfa_recovery_hashes if x != h]  # one use only
@@ -390,6 +400,8 @@ async def grant_platform_role(session: AsyncSession, actor: Actor, identity_id: 
     actor.require_step_up()
     if role not in PlatformRole.ALL:
         raise ValidationFailed(f"Unknown platform role {role}")
+    if identity_id == actor.identity_id:
+        raise Forbidden("Another administrator must grant you a staff role", code="SELF_GRANT")
     identity = await _get_for_update(session, identity_id)
     if role not in identity.platform_roles:
         identity.platform_roles = sorted({*identity.platform_roles, role})
@@ -572,8 +584,14 @@ async def list_staff(session: AsyncSession, actor: Actor) -> list[StaffMemberOut
     ]
 
 
-async def create_platform_admin(session: AsyncSession, email: str, password: str, display_name: str, country: str) -> Identity:
-    """Bootstrap only (CLI). Creates the first Platform Admin or promotes an existing account."""
+async def create_platform_admin(session: AsyncSession, email: str, password: str, display_name: str, country: str,
+                                extra_roles: tuple[str, ...] = ()) -> Identity:
+    """Bootstrap only (CLI, run by whoever operates the servers). Creates the first Platform Admin or promotes an
+    existing account; ``extra_roles`` adds other staff roles at the same time (nobody can grant roles to themselves in
+    the app)."""
+    unknown = sorted(set(extra_roles) - set(PlatformRole.ALL))
+    if unknown:
+        raise ValidationFailed(f"Unknown platform role(s): {', '.join(unknown)}")
     identity = await session.scalar(select(Identity).where(Identity.email == email.lower()).with_for_update())
     if identity is None:
         identity = Identity(
@@ -586,6 +604,10 @@ async def create_platform_admin(session: AsyncSession, email: str, password: str
     elif PlatformRole.PLATFORM_ADMIN not in identity.platform_roles:
         identity.platform_roles = sorted({*identity.platform_roles, PlatformRole.PLATFORM_ADMIN})
     _evt(session, E.PLATFORM_ROLE_GRANTED, identity, role=PlatformRole.PLATFORM_ADMIN, grantedBy="bootstrap-cli")
+    for role in extra_roles:
+        if role not in identity.platform_roles:
+            identity.platform_roles = sorted({*identity.platform_roles, role})
+            _evt(session, E.PLATFORM_ROLE_GRANTED, identity, role=role, grantedBy="bootstrap-cli")
     return identity
 
 

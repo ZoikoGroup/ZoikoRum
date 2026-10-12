@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 
 from pydantic import Field, model_validator
@@ -104,6 +105,14 @@ class Settings(BaseSettings):
     @property
     def mfa_bypass(self) -> bool:
         return self.dev_skip_mfa and self.env in DEV_ENVS
+
+    @model_validator(mode="after")
+    def _environment_named(self):
+        """Blank settings use their defaults, except the environment: a blank ZK_ENV (e.g. a secret that failed to load)
+        would otherwise switch off every production safeguard by meaning "local"."""
+        if os.environ.get("ZK_ENV") is not None and not os.environ["ZK_ENV"].strip():
+            raise ValueError("ZK_ENV is set but blank; name the environment (local, staging or production)")
+        return self
 
     @model_validator(mode="after")
     def _no_mfa_bypass_outside_development(self):

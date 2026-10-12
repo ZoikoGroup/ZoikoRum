@@ -73,8 +73,8 @@ export default function SignIn({ staff = false }: { staff?: boolean }) {
           <>
             <div className="alert alert-info">Two-step verification is on for this account.</div>
             {useRecovery ? (
-              <Field label="Recovery code (looks like a1b2-c3d4)" id="recovery" hint="Each code works once. Set up your authenticator again after signing in.">
-                <input id="recovery" className="input code-input" autoComplete="off" maxLength={9} value={code}
+              <Field label="Recovery code (looks like 1a2b3-c4d5e-6f7a8-b9c0d)" id="recovery" hint="Each code works once. Set up your authenticator again after signing in.">
+                <input id="recovery" className="input code-input" autoComplete="off" maxLength={23} value={code}
                   onChange={(e) => setCode(e.target.value.replace(/[^0-9a-fA-F-]/g, ''))} autoFocus />
               </Field>
             ) : (
@@ -88,7 +88,7 @@ export default function SignIn({ staff = false }: { staff?: boolean }) {
               {useRecovery ? 'Use my authenticator app instead' : 'Lost your phone? Use a recovery code'}</button>
           </>
         )}
-        <button className="btn btn-primary btn-block" disabled={busy || !email || !password || (needsCode && code.length !== (useRecovery ? 9 : 6))}>
+        <button className="btn btn-primary btn-block" disabled={busy || !email || !password || (needsCode && code.length !== (useRecovery ? 23 : 6))}>
           {busy ? 'Signing in…' : needsCode ? 'Verify and sign in' : 'Sign in'}
         </button>
         {needsCode && (

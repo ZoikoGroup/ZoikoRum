@@ -157,18 +157,15 @@ const PYTHON = process.env.ZK_E2E_PYTHON ?? (process.platform === 'win32' ? `${R
 const E2E_DATABASE_URL = process.env.ZK_E2E_DATABASE_URL ?? 'postgresql+asyncpg://zoikorum:zoikorum@localhost:5434/zk_e2e'
 
 /** A staff member. The first Platform Admin can only be made with the operator CLI (never over HTTP), here against the
-    browser-test database; the admin then grants itself the staff roles it needs. */
+    browser-test database, with the staff roles it needs (nobody can grant roles to themselves in the app). */
 export async function staffMember(name: string, roles: string[]): Promise<Account> {
   const email = unique(name)
-  execFileSync(PYTHON, ['-m', 'zoikorum.cli', 'create-admin', '--email', email, '--name', name, '--country', 'GB'], {
+  execFileSync(PYTHON, ['-m', 'zoikorum.cli', 'create-admin', '--email', email, '--name', name, '--country', 'GB', '--roles', roles.join(',')], {
     cwd: REPO,  // the repository root, so no developer backend/.env is read
     env: { ...process.env, PYTHONPATH: `${REPO}backend/src`, ZK_ENV: 'local', ZK_DATABASE_URL: E2E_DATABASE_URL, ZK_ADMIN_PASSWORD: PASSWORD },
     stdio: ['ignore', 'ignore', 'pipe'],
   })
   const a: Account = { email, name, token: '', confirmToken: null, api: await request.newContext({ baseURL: API_URL }) }
-  await refresh(a)
-  const me = await call(a, 'GET', '/v1/me')
-  for (const role of roles) await call(a, 'POST', `/v1/admin/identities/${me.id}/platform-roles`, { role })
   await refresh(a)
   return a
 }

@@ -43,6 +43,11 @@ async def on_evidence_window(session: AsyncSession, key: str, payload: dict) -> 
     await service.evidence_window_closed(session, payload)
 
 
+@on_timer(service.TIMER_RECOMMENDATION)
+async def on_recommendation_lapsed(session: AsyncSession, key: str, payload: dict) -> None:
+    await service.recommendation_lapsed(session, payload)
+
+
 @on_timer(service.TIMER_DIRECT)
 async def on_direct_window(session: AsyncSession, key: str, payload: dict) -> None:
     await service.direct_window_closed(session, payload)

@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import any_, func, literal, select
+from sqlalchemy import any_, func, literal, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from zoikorum.domains.buyer.models import OrgMember, Organization
+from zoikorum.domains.buyer.models import Invitation, OrgMember, Organization
 from zoikorum.shared import privacy
 from zoikorum.shared.auth import OrgRole
+from zoikorum.shared.ddl import ERASED_NAME
 
 
 async def export(session: AsyncSession, identity_id: uuid.UUID) -> dict:
@@ -31,4 +32,21 @@ async def blockers(session: AsyncSession, identity_id: uuid.UUID) -> list[str]:
     return reasons
 
 
-privacy.register("buyer", export=export, blockers=blockers)
+async def erase(session: AsyncSession, identity_id: uuid.UUID) -> dict:
+    """The person leaves every organisation: colleagues no longer see their name or email in team lists, they no longer
+    count as an administrator, and invitations still waiting for their email address are withdrawn."""
+    from zoikorum.domains.identity import facade as identity_facade
+
+    who = await identity_facade.get_identity(session, identity_id)  # identity is erased last, so it is still readable
+    removed = (await session.execute(update(OrgMember).where(OrgMember.identity_id == identity_id).values(
+        status="REMOVED", email="", display_name=ERASED_NAME))).rowcount
+    withdrawn = 0
+    if who is not None:
+        withdrawn = (await session.execute(update(Invitation).where(
+            func.lower(Invitation.email) == who.email.lower(), Invitation.status == "PENDING").values(status="REVOKED"))).rowcount
+    return {"membershipsEnded": removed, "invitationsWithdrawn": withdrawn}
+
+
+privacy.register("buyer", export=export, erase=erase, blockers=blockers,
+                 retained="Engagements and invoices of the organisation stay with the organisation; your name on them is "
+                          "replaced where the law allows.")

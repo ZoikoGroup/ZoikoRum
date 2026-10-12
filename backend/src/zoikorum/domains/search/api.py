@@ -13,6 +13,7 @@ from zoikorum.shared.auth import CurrentActor, OptionalActor
 from zoikorum.shared import ratelimit
 from zoikorum.shared.db import DbSession
 from zoikorum.shared.errors import RateLimited
+from zoikorum.shared.http import caller_key
 
 router = APIRouter(tags=["search"])
 
@@ -59,7 +60,7 @@ INTENT_LIMIT = (10, 10)  # requests per minute, burst
 async def search_intent(body: IntentIn, request: Request, session: DbSession, actor: OptionalActor):
     """"Describe what you need": suggested filters with the reason for each. Nothing is searched or saved here."""
     if get_settings().rate_limit_enabled:
-        caller = request.headers.get("Authorization") or (request.client.host if request.client else "unknown")
+        caller = ":".join(caller_key(request))
         if not await ratelimit.get_buckets().take(ratelimit.bucket_key("intent", caller), *INTENT_LIMIT):
             raise RateLimited("Too many requests to describe what you need. Please wait a minute, or use the filters.")
     return await service.intent(session, body)

@@ -49,6 +49,7 @@ export default function Security() {
     setError(null)
     try {
       const { recoveryCodes } = await authApi.verifyMfa(code)
+      setCodes(recoveryCodes)  // show them even if the step below fails: they are already active
       await stepUp(code) // upgrade this session to MFA strength right away
       await reloadUser()
       setSetup(null)

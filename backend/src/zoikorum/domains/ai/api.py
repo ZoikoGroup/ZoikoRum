@@ -12,6 +12,7 @@ from zoikorum.domains.contract import facade as contract
 from zoikorum.domains.dispute import facade as dispute
 from zoikorum.shared.auth import CurrentActor, PlatformRole
 from zoikorum.shared.db import DbSession
+from zoikorum.shared.http import enforce_budget
 from zoikorum.shared.errors import NotFound, Conflict
 from zoikorum.shared.idempotency import IdempotencyKey
 from zoikorum.shared.events import record_audit
@@ -45,6 +46,7 @@ class PromptIn(BaseModel):
 
 @router.post("/proposal-draft")
 async def proposal_draft(body: RequestIn, actor: CurrentActor, session: DbSession):
+    await enforce_budget("ai", str(actor.identity_id), 20, 20, "Too many AI requests. Please wait a minute.")
     r = await proposal.get_request(session, body.requestId)
     pro = await professional.get_professional(session, r.professional_id) if r else None
     if not pro or pro.identity_id != actor.identity_id:
@@ -58,6 +60,7 @@ async def proposal_draft(body: RequestIn, actor: CurrentActor, session: DbSessio
 
 @router.post("/contract-summary")
 async def contract_summary(body: ContractIn, actor: CurrentActor, session: DbSession):
+    await enforce_budget("ai", str(actor.identity_id), 20, 20, "Too many AI requests. Please wait a minute.")
     c = await contract.get_contract(session, body.contractId)
     pro = await professional.get_professional(session, c.professional_id) if c else None
     if not c or (not await buyer.get_member_roles(session, c.organization_id, actor.identity_id) and (not pro or pro.identity_id != actor.identity_id)):
@@ -69,6 +72,7 @@ async def contract_summary(body: ContractIn, actor: CurrentActor, session: DbSes
 
 @router.post("/dispute-summary")
 async def dispute_summary(body: DisputeIn, actor: CurrentActor, session: DbSession):
+    await enforce_budget("ai", str(actor.identity_id), 20, 20, "Too many AI requests. Please wait a minute.")
     actor.require_platform_role(PlatformRole.MEDIATOR)
     facts = await dispute.assistance_evidence(session, body.disputeId, actor.identity_id)
     if not facts:

@@ -31,7 +31,7 @@ class LoginIn(BaseModel):
     email: EmailStr
     password: str
     totpCode: str | None = Field(default=None, pattern=r"^\d{6}$")
-    recoveryCode: str | None = Field(default=None, pattern=r"^[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}$")  # lost authenticator
+    recoveryCode: str | None = Field(default=None, pattern=r"^[0-9A-Fa-f]{5}(-[0-9A-Fa-f]{5}){3}$")  # lost authenticator
     # Which sign-in page this came from: staff accounts sign in only on the staff page, everyone else only on the
     # customer page. Omitted by API clients and scripts, which are not tied to a page.
     portal: Literal["customer", "staff"] | None = None

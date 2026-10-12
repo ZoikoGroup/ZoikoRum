@@ -12,7 +12,7 @@ import json
 import uuid
 from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.config import get_settings
@@ -730,7 +730,9 @@ async def document_pdf(session: AsyncSession, actor: Actor, contract_id: uuid.UU
 
 async def _scope(session: AsyncSession, actor: Actor, role: str):
     if role == "buyer":
-        return or_(Contract.organization_id.in_(actor.org_ids), Contract.buyer_identity_id == actor.identity_id)
+        # Live memberships only: someone removed from the organisation stops seeing its contracts at once (their sign-in
+        # token may still list it for a few minutes, and having created a contract gives no lasting access).
+        return Contract.organization_id.in_(await buyer_facade.list_identity_organizations(session, actor.identity_id))
     pro = await professional_facade.get_professional_by_identity(session, actor.identity_id)
     return Contract.professional_id == pro.id if pro else None
 
@@ -1179,8 +1181,10 @@ async def policy_auto_accept(session, payload):
     auto_days = c.terms.get("policySettings", {}).get("autoAcceptAfterDays")
     if not auto_days or not m.submitted_at or m.submitted_at + timedelta(days=auto_days) > clock.now():
         return
-    if m.partial_offer_minor is not None:
-        return  # the buyer offered to accept part of it; that offer is answered, or the work is disputed, first
+    if m.partial_offer_minor is not None:  # the buyer offered to accept part of it: wait for that answer, then try again
+        await schedule_timer(session, TIMER_AUTO_ACCEPT, f"{payload['submissionId']}:{clock.now().date().isoformat()}",
+                             clock.now() + timedelta(days=1), payload)
+        return
     from zoikorum.domains.dispute import facade as dispute_facade
     if await dispute_facade.open_disputes_for_contract(session, c.id):
         return
