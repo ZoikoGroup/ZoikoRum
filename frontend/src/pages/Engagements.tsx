@@ -1,3 +1,4 @@
+import { RetainerManagement } from '../components/RetainerManagement'
 import { useCallback, useEffect, useState } from 'react'
 import { EngagementReview } from '../components/EngagementReview'
 import { AIAssistance } from '../components/AIAssistance'
@@ -267,10 +268,11 @@ export function EngagementDetail({ side }: { side: Side }) {
       {tab === 'milestones' && (
         <>
           {c.status === 'PENDING_SIGNATURE' && <p className="muted">Milestones start after both parties sign and each milestone is funded.</p>}
+          <RetainerManagement contract={c} onChange={setC} controlsOnly />
           {(c.engagementType === 'RETAINER' || c.pricingModel === 'RETAINER') && <RetainerCycles c={c} side={side} busy={busy}
             onCancel={(reason) => act(() => contractApi.cancelRemainingCycles(c.id, reason), 'Remaining unfunded cycles cancelled.').then(refreshSoon)} />}
           {c.milestones.map((m) => <MilestoneCard key={m.id} m={m} c={c} side={side} busy={busy}
-            canFund={!!escrow?.canFund && escrow.allocations.some((x) => x.milestoneId === m.id && x.state === 'UNFUNDED')}
+            canFund={!!escrow?.canFund && !c.retainerPaused && escrow.allocations.some((x) => x.milestoneId === m.id && x.state === 'UNFUNDED')}
             funding={escrow?.allocations.find((x) => x.milestoneId === m.id)?.state === 'FUNDING'}
             onFund={() => setFundFor([m.id])}
             onSubmit={(note, files) => act(() => contractApi.submit(m.id, note, files), 'Work submitted for review.')}

@@ -41,3 +41,10 @@ from zoikorum.domains.ai.intent import SearchIntent, extract_search_intent  # no
 
 __all__ = ["CatalogEntry", "Draft", "MatchIntent", "SearchIntent", "SpecializationMatch", "extract_match_intent",
            "extract_search_intent", "match_specializations"]
+
+async def privacy_export(session, identity_id):
+    from zoikorum.shared.privacy_exports import export_rows
+    from zoikorum.domains.ai.models import InferenceLog
+    return {
+        'inference_logs': await export_rows(session, InferenceLog, InferenceLog.requested_by == identity_id, ['prompt_id', 'prompt_version', 'model', 'input_sha256', 'purpose', 'subject_id', 'requested_by', 'latency_ms', 'fallback_used', 'id', 'created_at']),
+    }

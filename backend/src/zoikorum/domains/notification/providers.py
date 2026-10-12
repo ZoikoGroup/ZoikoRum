@@ -41,13 +41,37 @@ class SMTPEmailProvider:
                 if refused:
                     raise RuntimeError("Mail server refused recipient")
         await asyncio.to_thread(transmit)
-        return "DELIVERED"
+        return "ACCEPTED"
+
+
+class SendGridEmailProvider:
+    async def send(self, recipient, subject, body, message_id):
+        import httpx
+        from zoikorum.shared.errors import ServiceUnavailable
+        settings = get_settings()
+        if not settings.sendgrid_api_key or not settings.sendgrid_webhook_public_key:
+            raise ServiceUnavailable("Configure SendGrid and its signed event webhook", code="INTEGRATION_NOT_CONFIGURED")
+        async with httpx.AsyncClient(timeout=20) as http:
+            response = await http.post("https://api.sendgrid.com/v3/mail/send",
+                headers={"Authorization": "Bearer " + settings.sendgrid_api_key},
+                json={"personalizations": [{"to": [{"email": recipient}], "custom_args": {"zoikorum_notification_id": message_id}}],
+                      "from": {"email": settings.email_from}, "subject": subject,
+                      "content": [{"type": "text/plain", "value": body}]})
+            response.raise_for_status()
+            if response.status_code != 202:
+                raise ServiceUnavailable("Email provider did not accept the message")
+        return "ACCEPTED"
 
 
 def email_provider():
     settings = get_settings()
-    if settings.env == 'test' or settings.email_provider == 'console':
+    if settings.env == 'test' or (settings.email_provider == 'console' and settings.env in ('local', 'development')):
         return ConsoleEmailProvider()
+    if settings.email_provider == 'console':
+        from zoikorum.shared.errors import ServiceUnavailable
+        raise ServiceUnavailable('Configure transactional email delivery', code='INTEGRATION_NOT_CONFIGURED')
+    if settings.email_provider == 'sendgrid':
+        return SendGridEmailProvider()
     if settings.email_provider == 'smtp':
         return SMTPEmailProvider()
     raise RuntimeError("Unknown email provider")

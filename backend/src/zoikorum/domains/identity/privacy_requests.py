@@ -37,6 +37,8 @@ def out(r: DataRequest) -> DataRequestOut:
     return DataRequestOut(
         id=r.id, requestType=r.request_type, status=r.status, createdAt=r.created_at, completedAt=r.completed_at,
         scheduledFor=r.scheduled_for, expiresAt=r.expires_at,
+        exportReady=bool(r.export_payload_enc and r.export_expires_at and r.export_expires_at > now),
+        exportExpiresAt=r.export_expires_at, reviewNote=r.review_note,
         downloadable=bool(r.request_type == "ACCESS" and r.status == "COMPLETED" and r.export_key and r.expires_at and r.expires_at > now),
         reasons=list((r.detail or {}).get("reasons", [])),
         retained=privacy.retention_notes() if r.request_type == "ERASURE" else {})

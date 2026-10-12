@@ -42,10 +42,16 @@ class FakeProvider:
 def get_provider() -> VerificationProvider:
     settings = get_settings()
     if settings.verification_provider in ("fake", "simulated") and settings.env in ("local", "test", "development"):
-        return FakeProvider()
-    if settings.verification_provider in ("manual", "persona", "veriff"):
-        return ManualProvider()
-    raise ServiceUnavailable("Choose a verification integration or explicit manual review", code="INTEGRATION_NOT_CONFIGURED")
+        base = FakeProvider()
+    elif settings.verification_provider in ("manual", "persona", "veriff"):
+        base = ManualProvider()
+    else:
+        raise ServiceUnavailable("Choose a verification integration or explicit manual review", code="INTEGRATION_NOT_CONFIGURED")
+    if settings.screening_provider == 'complyadvantage':
+        return ScreeningProvider(base, ComplyAdvantageProvider(settings))
+    if settings.screening_provider != 'inherit':
+        raise ServiceUnavailable('Unknown screening provider', code='INTEGRATION_NOT_CONFIGURED')
+    return base
 
 
 class ManualProvider:
@@ -166,3 +172,49 @@ class SimulatedProvider:
 def _veriff_breaker() -> CircuitBreaker:
     settings = get_settings()
     return CircuitBreaker("identity partner", settings.provider_breaker_failures, settings.provider_breaker_reset_seconds)
+
+
+class ScreeningProvider:
+    def __init__(self, base, screening):
+        self.base, self.screening = base, screening
+
+    async def check(self, verification_type, details):
+        if verification_type == 'RESTRICTIONS':
+            return await self.screening.check(verification_type, details)
+        return await self.base.check(verification_type, details)
+
+
+class ComplyAdvantageProvider:
+    """Actual sanctions/PEP searches; a person validates name provenance and matches."""
+    def __init__(self, settings, transport=None):
+        self.settings, self.transport = settings, transport
+        if not settings.complyadvantage_api_key:
+            raise ServiceUnavailable('Configure the screening partner API key', code='INTEGRATION_NOT_CONFIGURED')
+
+    async def check(self, verification_type, details):
+        from zoikorum.shared import clock
+        if verification_type != 'RESTRICTIONS' or not str(details.get('name', '')).strip():
+            return 'REVIEW'
+        payload = {'search_term': str(details['name']).strip(), 'fuzziness': 0.6,
+                   'filters': {'types': ['sanction', 'warning', 'pep']}, 'share_url': 0}
+        if self.settings.complyadvantage_search_profile:
+            payload['search_profile'] = self.settings.complyadvantage_search_profile
+        try:
+            async with httpx.AsyncClient(timeout=20, transport=self.transport) as client:
+                response = await client.post('https://api.complyadvantage.com/searches', json=payload,
+                    headers={'Authorization': 'Token ' + self.settings.complyadvantage_api_key})
+                response.raise_for_status()
+                body = response.json()
+                result = body['content']['data']
+                if body.get('status') != 'success' or type(result['total_hits']) is not int or result['total_hits'] < 0:
+                    raise ValueError('Invalid screening result')
+                if not isinstance(result['ref'], str) or not 1 <= len(result['ref']) <= 200:
+                    raise ValueError('Invalid screening reference')
+        except (httpx.HTTPError, ValueError, KeyError, TypeError) as error:
+            raise ServiceUnavailable('Screening partner could not complete a valid check', code='PROVIDER_UNAVAILABLE') from error
+        details.update({'_providerScreening': 'COMPLYADVANTAGE', '_providerReference': result['ref'],
+                        '_providerHits': result['total_hits'], '_providerCheckedAt': clock.now().isoformat(),
+                        '_providerNameProvenance': 'Profile name; compliance must confirm against verified identity'})
+        # No match on an unverified display name cannot establish that a person is clear.
+        # Potential sanctions/PEP matches are evidence for an independent human decision.
+        return 'REVIEW'

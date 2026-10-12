@@ -69,3 +69,25 @@ async def search_intent(body: IntentIn, request: Request, session: DbSession, ac
 async def reindex(actor: CurrentActor, session: DbSession) -> dict:
     """Platform Admin: rebuild the whole search projection from the owning domains."""
     return await service.reindex(session, actor)
+
+
+@router.post("/v1/admin/search/bootstrap")
+async def bootstrap_search(actor: CurrentActor, session: DbSession):
+    from zoikorum.shared.auth import PlatformRole
+    from zoikorum.shared.events import record_audit
+    from zoikorum.domains.search import opensearch
+    actor.require_platform_role(PlatformRole.PLATFORM_ADMIN)
+    actor.require_step_up()
+    result = await opensearch.bootstrap()
+    record_audit(session, 'search.index.configured', object_type='SearchIndex', object_id=result['index'])
+    return result
+
+
+@router.get("/v1/admin/search/configuration")
+async def search_configuration(actor: CurrentActor):
+    from zoikorum.config import get_settings
+    from zoikorum.shared.auth import PlatformRole
+    actor.require_platform_role(PlatformRole.PLATFORM_ADMIN)
+    settings = get_settings()
+    return {'provider': settings.search_provider, 'modelConfigured': bool(settings.opensearch_model_id),
+            'pipelineConfigured': bool(settings.opensearch_ingest_pipeline), 'index': settings.opensearch_index}

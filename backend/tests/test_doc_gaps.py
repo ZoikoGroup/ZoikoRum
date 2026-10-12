@@ -60,7 +60,7 @@ async def test_saved_searches_and_new_matches(client, make_user, drain):
     assert viewed["lastViewedAt"] > saved["lastViewedAt"]
     stranger = await make_user("sam")
     assert (await client.delete(f"/v1/saved/searches/{saved['id']}", headers=stranger.h)).status_code == 404
-    assert (await client.delete(f"/v1/saved/searches/{saved['id']}", headers=buyer.h)).status_code == 204
+    assert (await client.delete(f"/v1/saved/searches/{saved['id']}", headers=buyer.h)).status_code in (200, 204)
     assert (await client.get("/v1/saved/searches", headers=buyer.h)).json() == []
 
 

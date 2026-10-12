@@ -66,7 +66,7 @@ def mfa_required(identity: Identity) -> bool:
     if get_settings().mfa_bypass:
         return False  # development only (ZK_DEV_SKIP_MFA)
     needs = bool(identity.platform_roles) or bool(_MFA_PERSONAS.intersection(identity.personas or []))
-    return needs and identity.mfa_enabled_at is None
+    return needs and identity.mfa_enabled_at is None and not identity.passkey_enabled
 
 
 def _evt(session: AsyncSession, event_type: str, identity: Identity, **payload) -> None:
@@ -212,6 +212,9 @@ async def login(
         _evt(session, E.AUTHENTICATION_FAILED, identity, reason="BAD_PASSWORD", lockedUntil=identity.locked_until)
         # Returned, not raised: the failure counter and event must still commit.
         return LoginFailure("Email or password is incorrect")
+
+    if identity.passkey_enabled and identity.mfa_enabled_at is None and not get_settings().mfa_bypass:
+        raise Unauthenticated("Use your passkey to sign in", code="PASSKEY_REQUIRED")
 
     strength = AuthStrength.PASSWORD
     if identity.mfa_enabled_at is not None and not (get_settings().mfa_bypass and not totp):
@@ -606,5 +609,12 @@ async def revoke_session(session: AsyncSession, actor: Actor, session_id: uuid.U
         s.revoked_at = clock.now()
         record_event(session, E.SESSION_REVOKED, aggregate_type="Session", aggregate_id=s.id,
                      payload={"identityId": actor.identity_id, "sessionId": s.id, "reason": "USER_SIGNED_OUT_DEVICE"})
+
+
+def _dr_out(r: DataRequest) -> DataRequestOut:
+    from zoikorum.domains.identity.schemas import DataRequestOut
+    return DataRequestOut(id=r.id, requestType=r.request_type, status=r.status, createdAt=r.created_at, completedAt=r.completed_at,
+        exportReady=bool(r.export_payload_enc and r.export_expires_at and r.export_expires_at > clock.now()),
+        exportExpiresAt=r.export_expires_at, reviewNote=r.review_note)
 
 

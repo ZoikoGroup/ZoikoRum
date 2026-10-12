@@ -33,6 +33,24 @@ class Settings(BaseSettings):
     # developer's .env has it on); the app refuses to start if it is set in any other environment (staging, production).
     dev_skip_mfa: bool = False
 
+    privacy_export_ttl_days: int = Field(default=7, ge=1, le=30)
+
+    public_api_url: str = "http://localhost:8000"
+    saml_sp_entity_id: str | None = None
+    saml_idp_sso_url: str | None = None
+    saml_idp_certificate: str | None = None
+    saml_sp_certificate: str | None = None
+    saml_sp_private_key: str | None = None
+
+    entra_tenant_id: str | None = None
+    entra_client_id: str | None = None
+    entra_client_secret: str | None = None
+    enterprise_organization_id: str | None = None
+    scim_bearer_token: str | None = None
+
+    passkey_rp_id: str = "localhost"
+    passkey_origin: str = "http://localhost:5173"
+
     event_bus: str = "inprocess"  # inprocess | kafka
     kafka_bootstrap: str = "localhost:9092"
     outbox_batch_size: int = 100
@@ -47,6 +65,11 @@ class Settings(BaseSettings):
     # fake | simulated | manual | persona | veriff. persona and veriff run the identity check in the partner's hosted flow;
     # simulated (development only) does the same with a page where you pick the partner's answer.
     verification_provider: str = "fake"
+
+    screening_provider: str = "inherit"  # inherit | complyadvantage
+    complyadvantage_api_key: str | None = None
+    complyadvantage_search_profile: str | None = None
+
     persona_api_key: str | None = None
     persona_template_id: str | None = None
     persona_webhook_secret: str | None = None
@@ -60,12 +83,24 @@ class Settings(BaseSettings):
     provider_breaker_failures: int = 5  # consecutive provider errors before the circuit opens
     provider_breaker_reset_seconds: int = 30  # how long an open circuit waits before a trial call
 
+    search_provider: str = "postgres"  # postgres | opensearch
+    opensearch_url: str | None = None
+    opensearch_username: str | None = None
+    opensearch_password: str | None = None
+    opensearch_index: str = "zoikorum-professionals"
+    opensearch_model_id: str | None = None
+    opensearch_ingest_pipeline: str | None = None
+    opensearch_embedding_dimension: int = Field(default=384, ge=1, le=8192)
+    opensearch_timeout_seconds: int = Field(default=20, ge=1, le=120)
+
     ai_provider: str = "offline"  # offline | anthropic
     trust_completion_half_life_days: int = Field(default=365, ge=1)
     trust_completion_full_credit: int = Field(default=10, ge=1)
     ai_model: str = "claude-opus-5-5"
     anthropic_api_key: str | None = None
-    email_provider: str = "console"  # console | smtp
+    email_provider: str = "console"  # console | smtp | sendgrid
+    sendgrid_api_key: str | None = None
+    sendgrid_webhook_public_key: str | None = None
     smtp_host: str | None = None
     smtp_port: int = 587
     smtp_username: str | None = None
@@ -105,6 +140,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _no_mfa_bypass_outside_development(self):
+        if self.search_provider not in ('postgres', 'opensearch'):
+            raise ValueError('ZK_SEARCH_PROVIDER must be postgres or opensearch')
         if self.dev_skip_mfa and self.env not in (*DEV_ENVS, "test"):
             raise ValueError(f"ZK_DEV_SKIP_MFA is only allowed in development (env is {self.env!r}); remove it")
         if self.verification_provider == "simulated" and self.env not in (*DEV_ENVS, "test"):

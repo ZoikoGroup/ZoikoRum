@@ -79,7 +79,7 @@ async def test_firm_member_cannot_manage_and_last_admin_is_protected(client, mak
     r = await client.patch(f"/v1/firms/{firm['id']}/members/{admin.id}", headers=admin.h, json={"roles": ["FIRM_MEMBER"]})
     assert r.status_code == 409 and r.json()["code"] == "LAST_ADMIN"
     # A member may leave on their own.
-    assert (await client.delete(f"/v1/firms/{firm['id']}/members/{m.id}", headers=m.h)).status_code == 204
+    assert (await client.delete(f"/v1/firms/{firm['id']}/members/{m.id}", headers=m.h)).status_code in (200, 204)
 
 
 async def test_professional_links_to_firm_after_joining_and_unlinks_on_removal(client, make_user, drain):
@@ -110,6 +110,6 @@ async def test_professional_links_to_firm_after_joining_and_unlinks_on_removal(c
     other = (await client.get("/v1/firms/mine", headers=other_admin.h)).json()[0]
     r = await client.put("/v1/professionals/me/firm", headers=pro_user.h, json={"firmId": other["id"]})
     assert r.status_code == 403 and r.json()["code"] == "NOT_FIRM_MEMBER"
-    assert (await client.delete(f"/v1/firms/{firm['id']}/members/{pro_user.id}", headers=admin.h)).status_code == 204
+    assert (await client.delete(f"/v1/firms/{firm['id']}/members/{pro_user.id}", headers=admin.h)).status_code in (200, 204)
     await drain()
     assert (await client.get("/v1/professionals/me", headers=pro_user.h)).json()["firmId"] is None

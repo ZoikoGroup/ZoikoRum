@@ -23,11 +23,11 @@ export interface ContractMilestone {
   acceptanceDueAt: string | null
   reviewOverdue: boolean
   acceptedAt: string | null
+  partialOffer: { amount: Money; refund: Money; reason: string; offeredAt: string } | null
+  acceptedRelease: Money | null
   revisionCount: number
   lastRevisionReason: string | null
   submissions: { id: string; note: string; files: StoredFile[]; submittedAt: string }[]
-  partialOffer: { amount: Money; refund: Money; reason: string; offeredAt: string } | null
-  acceptedRelease: Money | null
 }
 
 export interface ContractTerms {
@@ -72,6 +72,7 @@ export interface ContractRevision {
 }
 
 export interface Contract {
+  retainerPaused: boolean
   id: string
   reference: string
   proposalId: string
@@ -139,6 +140,8 @@ export const contractApi = {
     api<Contract>(`/v1/milestones/${milestoneId}/partial-acceptance`, { method: 'POST', body: { amountMinor, reason } }),
   answerPartial: (milestoneId: string, agree: boolean) =>
     api<Contract>(`/v1/milestones/${milestoneId}/partial-acceptance/${agree ? 'agree' : 'decline'}`, { method: 'POST', headers: idem() }),
+  setRetainerPause: (id: string, paused: boolean, reason: string) =>
+    api<Contract>(`${C}/${id}/retainer/${paused ? 'pause' : 'resume'}`, { method: 'POST', body: { reason }, headers: idem() }),
   cancelRemainingCycles: (id: string, reason: string) =>
     api<Contract>(`${C}/${id}/cancel-remaining-cycles`, { method: 'POST', body: { reason }, headers: idem() }),
   requestRevision: (milestoneId: string, reason: string) =>

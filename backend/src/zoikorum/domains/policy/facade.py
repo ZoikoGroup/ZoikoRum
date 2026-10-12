@@ -233,3 +233,13 @@ async def continuation_actor(session, payload):
     if not account or account.status != "ACTIVE" or set(await admin.active_restrictions(session, "IDENTITY", iid)).intersection({"SUSPEND_ACCOUNT", "OFFBOARD"}):
         return None
     return Actor(identity_id=iid, session_id=None, email=account.email)
+
+
+async def privacy_export(session, identity_id):
+    from zoikorum.shared.privacy_exports import export_rows
+    from zoikorum.domains.policy.models import ApprovalRequest, ExceptionRequest, ApprovalVote
+    return {
+        'approval_requests': await export_rows(session, ApprovalRequest, ApprovalRequest.requester_identity_id == identity_id, ['organization_id', 'policy_version_id', 'subject_type', 'subject_id', 'action', 'requester_identity_id', 'context_hash', 'request_key', 'attributes', 'workflows', 'reasons', 'status', 'deadline', 'escalation_role', 'escalation_count', 'step_up_required', 'id', 'updated_at', 'created_at', 'version']),
+        'exception_requests': await export_rows(session, ExceptionRequest, ExceptionRequest.requester_identity_id == identity_id, ['organization_id', 'policy_version_id', 'subject_type', 'subject_id', 'action', 'context_hash', 'requester_identity_id', 'justification', 'documents', 'status', 'expires_at', 'decided_by', 'decision_reason', 'decided_at', 'id', 'updated_at', 'created_at', 'version']),
+        'approval_votes': await export_rows(session, ApprovalVote, ApprovalVote.identity_id == identity_id, ['request_id', 'step_id', 'identity_id', 'authority_role', 'decision', 'reason', 'id', 'created_at']),
+    }

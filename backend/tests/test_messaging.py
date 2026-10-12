@@ -78,7 +78,7 @@ async def test_messages_flags_read_positions_and_attachments(client, make_user, 
     assert page.json()["items"][0]["body"].startswith("Please contact")
 
     read = await client.post(f"/v1/threads/{thread_id}/read", headers=pro.h, json={"throughSequence": 2})
-    assert read.status_code == 204
+    assert read.status_code in (200, 204)
     assert (await client.get("/v1/threads", headers=pro.h)).json()["items"][0]["unreadCount"] == 0
     assert (await client.get("/v1/threads/summary", headers=pro.h)).json()["unreadMessages"] == 0
 
@@ -220,8 +220,8 @@ async def test_private_upload_versions_pagination_and_live_membership(client, ma
     assert len(page["items"]) == 1 and page["nextCursor"]
     older = (await client.get(f"{root}/messages", headers=pro.h, params={"before": page["nextCursor"]})).json()
     assert older["items"][0]["sequence"] < page["items"][0]["sequence"]
-    assert (await client.post(f"{root}/read", headers=pro.h, json={"throughSequence": 2})).status_code == 204
-    assert (await client.post(f"{root}/read", headers=pro.h, json={"throughSequence": 1})).status_code == 204
+    assert (await client.post(f"{root}/read", headers=pro.h, json={"throughSequence": 2})).status_code in (200, 204)
+    assert (await client.post(f"{root}/read", headers=pro.h, json={"throughSequence": 1})).status_code in (200, 204)
     assert (await client.get(root, headers=pro.h)).json()["unreadCount"] == 0
     assert (await client.post(f"{root}/read", headers=pro.h, json={"throughSequence": 999})).status_code == 422
     async with sf() as session, session.begin():

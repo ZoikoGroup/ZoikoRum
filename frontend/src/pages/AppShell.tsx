@@ -115,6 +115,7 @@ export default function AppShell() {
           <Item to="/app/professional/requests" icon="proposal" count={n('/app/professional/requests')}>Requests</Item>
           <Item to="/app/professional/engagements" icon="briefcase" count={n('/app/professional/engagements')}>Engagements</Item>
           <Item to="/app/messages" icon="message" count={unreadMessages}>Messages</Item>
+          <Item to="/app/professional/relationships" icon="bookmark">Relationship alerts</Item>
           <Item to="/app/professional/buyers" icon="bookmark">Saved Buyers</Item>
           <Item to="/app/professional/earnings" count={n('/app/professional/earnings')} icon="wallet">Earnings</Item>
           <Item to="/app/professional/disputes" count={n('/app/professional/disputes')} icon="shield">Disputes</Item>

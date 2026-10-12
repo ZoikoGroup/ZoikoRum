@@ -28,6 +28,9 @@ const BrowseProfessionals = lazy(() => import('./pages/BrowseProfessionals'))
 const FirmVerificationPage = lazy(() => import('./pages/VerificationPages').then((m) => ({ default: m.FirmVerificationPage })))
 const ProfessionalVerificationPage = lazy(() => import('./pages/VerificationPages').then((m) => ({ default: m.ProfessionalVerificationPage })))
 const ReviewQueuePage = lazy(() => import('./pages/VerificationPages').then((m) => ({ default: m.ReviewQueuePage })))
+const EnterpriseSignInCallback = lazy(() => import('./pages/EnterpriseSignInCallback'))
+const PrivacyAdministration = lazy(() => import('./components/PrivacyAdministration'))
+const SavedRelationships = lazy(() => import('./components/SavedBuyers').then(m => ({ default: m.SavedBuyers })))
 const Security = lazy(() => import('./pages/Security'))
 const ComparePage = lazy(() => import('./pages/customer/ComparePage'))
 const DuplicateAccountsPage = lazy(() => import('./pages/DuplicateAccounts'))
@@ -76,6 +79,8 @@ export default function App() {
       <BrowserRouter>
         <Suspense fallback={<p className="muted page-loading">Loading…</p>}>
         <Routes>
+          <Route path="/sso/callback" element={<EnterpriseSignInCallback />} />
+          <Route path="/sso/saml-callback" element={<EnterpriseSignInCallback />} />
           {/* Entry point is sign-in; signed-in users are sent straight to their role's dashboard. */}
           <Route path="/" element={<Navigate to="/login" replace />} />
           <Route path="/legal/:page" element={<Legal />} />
@@ -133,6 +138,8 @@ export default function App() {
             <Route path="help" element={<HelpPage />} />
             <Route path="invitations" element={<InvitationsPage />} />
             <Route path="ops" element={<RequireRole any={[...PLATFORM_ROLES]}><StaffHome /></RequireRole>} />
+            <Route path="professional/relationships" element={<RequireRole any={['PROFESSIONAL']}><SavedRelationships /></RequireRole>} />
+            <Route path="ops/privacy" element={<RequireRole any={['LEGAL', 'COMPLIANCE_OFFICER', 'PLATFORM_ADMIN']}><PrivacyAdministration /></RequireRole>} />
             <Route path="ops/staff" element={<RequireRole any={['PLATFORM_ADMIN']}><StaffAdmin /></RequireRole>} />
             <Route path="ops/users" element={<RequireRole any={['PLATFORM_ADMIN', 'TS_ANALYST']}><UsersAdmin /></RequireRole>} />
             <Route path="ops/reconciliation" element={<RequireRole any={['FINANCIAL_OPS', 'PLATFORM_ADMIN']}><ReconciliationPage /></RequireRole>} />

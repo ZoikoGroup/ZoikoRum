@@ -125,3 +125,13 @@ async def last_active(session: AsyncSession, ids: list[uuid.UUID]) -> dict[uuid.
     rows = await session.execute(select(Session.identity_id, func.max(Session.created_at))
                                  .where(Session.identity_id.in_(ids)).group_by(Session.identity_id))
     return dict(rows.all())
+
+
+async def federated_membership(session: AsyncSession, identity_id: uuid.UUID, organization_id: uuid.UUID) -> dict | None:
+    from zoikorum.domains.identity.models import FederationAccount
+    row = await session.scalar(select(FederationAccount).where(FederationAccount.identity_id == identity_id,
+        FederationAccount.organization_id == organization_id))
+    identity = await session.get(Identity, identity_id)
+    if not row or not identity:
+        return None
+    return {"active": row.active and identity.status == "ACTIVE", "email": identity.email, "displayName": identity.display_name}

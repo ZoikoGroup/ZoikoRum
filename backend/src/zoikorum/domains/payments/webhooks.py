@@ -104,6 +104,13 @@ async def _apply(session: AsyncSession, event_type: str, data: dict) -> str:
         if p is None and data.get("releaseReference"):
             p = await session.scalar(select(Payout).where(Payout.release_id == uuid.UUID(data["releaseReference"])).with_for_update())
             if p:
+                attempt = data.get('payoutAttemptKey')
+                if attempt and attempt != f'{p.release_id}:{p.provider_attempt}':
+                    return 'stale payout attempt ignored'
+                if p.provider_ref and p.provider_ref.startswith('po_') and p.provider_ref != ref:
+                    return 'stale payout reference ignored'
+                if not attempt and p.provider_attempt > 1:
+                    return 'unbound payout attempt ignored'
                 p.provider_ref = ref
         if p is None:
             return "unknown payout reference"

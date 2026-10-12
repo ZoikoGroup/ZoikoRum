@@ -227,7 +227,14 @@ async def fund(session: AsyncSession, actor: Actor, account_id: uuid.UUID, body:
     if limit is not None and limit.currency == a.currency and amount > limit.minor:
         raise PolicyBlocked("This funding is above your spend limit; ask a colleague with a higher limit", code="SPEND_LIMIT_EXCEEDED")
 
-    contract = await contract_facade.get_contract(session, a.contract_id)
+    contract = await contract_facade.get_contract(session, a.contract_id, lock=True)
+    if contract is None or contract.status != "ACTIVE":
+        raise Conflict("Only active contracts can be funded", code="CONTRACT_NOT_ACTIVE")
+    if contract.retainer_paused:
+        raise Conflict("Resume the retainer before funding a new cycle", code="RETAINER_PAUSED")
+    allowed = {m.id for m in contract.milestones if m.status == "PENDING_FUNDING"}
+    if any(x.milestone_id not in allowed for x in wanted):
+        raise Conflict("One or more cycles are no longer available for funding", code="MILESTONE_NOT_FUNDABLE")
     await policy_facade.require_allowed(session, await policy_facade.commercial_context(session,
         org_id=a.organization_id, professional_id=a.professional_id, action=policy_facade.PolicyAction.ESCROW_FUND,
         subject_type="EscrowAccount", subject_id=a.id, actor_identity_id=actor.identity_id,

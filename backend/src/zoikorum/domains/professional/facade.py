@@ -130,3 +130,19 @@ async def saved_buyer_alerts(session: AsyncSession, professional_id: uuid.UUID, 
     """Whether the professional saved this buyer organisation with alerts on (notification domain)."""
     return bool(await session.scalar(select(SavedBuyer.id).where(
         SavedBuyer.professional_id == professional_id, SavedBuyer.organization_id == organization_id, SavedBuyer.alerts.is_(True))))
+
+async def relationship_alert_channels(session, identity_id, buyer_id, organization_id):
+    from zoikorum.domains.professional.relationships import alert_channels
+    return await alert_channels(session, identity_id, buyer_id, organization_id)
+
+
+async def privacy_export(session, identity_id):
+    from zoikorum.shared.privacy_exports import export_rows
+    from zoikorum.domains.professional.models import Professional, CredentialClaim, Offering, BuyerRelationship
+    pro_id = await session.scalar(select(Professional.id).where(Professional.identity_id == identity_id))
+    return {
+        'professionals': await export_rows(session, Professional, Professional.identity_id == identity_id, ['identity_id', 'firm_id', 'status', 'display_name', 'legal_name', 'headline', 'years_experience_band', 'bio', 'languages', 'country', 'city', 'website', 'primary_category', 'primary_specialization', 'secondary_specializations', 'engagement_types', 'delivery_modes', 'pricing_models', 'rate_minor', 'rate_currency', 'rate_unit', 'availability', 'max_concurrent_engagements', 'temporarily_unavailable', 'weekly_hours', 'active_engagements', 'served_jurisdictions', 'licensed_jurisdictions', 'cross_border_acknowledged_at', 'accuracy_attested_at', 'published_at', 'visibility_reduced', 'photo_content_type', 'photo_sha256', 'id', 'updated_at', 'created_at', 'version']),
+        'credential_claims': await export_rows(session, CredentialClaim, CredentialClaim.professional_id == pro_id, ['professional_id', 'credential_type', 'name', 'issuing_body', 'registration_number', 'jurisdiction', 'issued_on', 'expires_on', 'specialization', 'status', 'id', 'updated_at', 'created_at']) if pro_id else [],
+        'offerings': await export_rows(session, Offering, Offering.professional_id == pro_id, ['professional_id', 'title', 'specialization', 'summary', 'deliverables', 'engagement_types', 'pricing_model', 'starting_price_minor', 'currency', 'typical_duration', 'status', 'id', 'updated_at', 'created_at', 'version']) if pro_id else [],
+        'buyer_relationships': await export_rows(session, BuyerRelationship, BuyerRelationship.professional_id == pro_id, ['professional_id', 'kind', 'target_id', 'email_alerts', 'in_app_alerts', 'id', 'updated_at', 'created_at']) if pro_id else [],
+    }

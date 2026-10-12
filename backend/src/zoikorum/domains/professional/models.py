@@ -125,3 +125,12 @@ class SavedBuyer(Base, UUIDPk, Timestamps):
     organization_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     note: Mapped[str | None] = mapped_column(String(500))  # private to the professional
     alerts: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)  # their requests always emailed, marked as from a saved buyer
+
+class BuyerRelationship(Base, UUIDPk, Timestamps):
+    __tablename__ = "buyer_relationships"
+    __table_args__ = (UniqueConstraint("professional_id", "kind", "target_id", name="uq_professional_relationship"), {"schema": SCHEMA})
+    professional_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("professional.professionals.id"), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    target_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    email_alerts: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    in_app_alerts: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")

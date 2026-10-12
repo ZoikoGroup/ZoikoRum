@@ -7,7 +7,7 @@ import uuid
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from zoikorum.domains.professional.models import CredentialClaim, Offering, Professional, SavedBuyer
+from zoikorum.domains.professional.models import CredentialClaim, Offering, Professional, SavedBuyer, BuyerRelationship
 from zoikorum.domains.professional.service import PROFILE_STATES, _evt, _offering_evt
 from zoikorum.shared import privacy
 from zoikorum.shared.event_catalog import E
@@ -44,6 +44,7 @@ async def erase(session: AsyncSession, identity_id: uuid.UUID) -> dict:
         o.status = "PAUSED"
         _offering_evt(session, E.SERVICE_OFFERING_STATUS_CHANGED, pro, o)
         paused += 1
+    await session.execute(delete(BuyerRelationship).where(BuyerRelationship.professional_id == pro.id))
     saved = (await session.execute(delete(SavedBuyer).where(SavedBuyer.professional_id == pro.id))).rowcount
     return {"profileCleared": True, "offeringsPaused": paused, "savedBuyersDeleted": saved}
 

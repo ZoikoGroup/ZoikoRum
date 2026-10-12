@@ -1,3 +1,4 @@
+import { ProposalAttachments } from '../../components/ProposalAttachments'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { contractApi } from '../../api/contracts'
@@ -326,6 +327,7 @@ function ProposalCard({ p, busy, canDecide, onAccept, onReject, onRevise }: {
         <span style={{ marginLeft: 'auto', textAlign: 'right' }}><strong className="big-price">{formatMoney(p.total)}</strong><br />
           <span className={`badge ${st.tone}`}>{st.label}</span></span></div>
       <p style={{ margin: '14px 0 10px' }}>{p.summary}</p>
+      <ProposalAttachments proposal={p} />
       <div className="delta-row">{p.deltas.map((d) => (
         <span key={d.field} className={`delta ${['MATCH', 'WITHIN'].includes(d.status) ? 'ok' : 'diff'}`} title={`You asked: ${d.requested}`}>
           {d.label}: <strong>{d.proposed}</strong></span>))}</div>

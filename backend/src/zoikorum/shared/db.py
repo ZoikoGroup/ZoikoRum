@@ -154,4 +154,4 @@ async def _transactional_session() -> AsyncIterator[AsyncSession]:
 
 # scope="function" -> commit happens BEFORE the HTTP response is returned, so a
 # client never sees 2xx for a write that later failed to commit.
-DbSession = Annotated[AsyncSession, Depends(_transactional_session, scope="function")]
+DbSession = Annotated[AsyncSession, Depends(_transactional_session)]

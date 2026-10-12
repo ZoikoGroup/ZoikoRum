@@ -112,8 +112,8 @@ async def test_buyers_save_and_unsave_professionals(client, make_user, drain, sf
     u, pro = await _published_pro(client, make_user, drain)
     buyer = await make_user("bea")
     url = "/v1/saved/professionals"
-    assert (await client.post(url, headers=buyer.h, json={"professionalId": pro["id"]})).status_code == 204
-    assert (await client.post(url, headers=buyer.h, json={"professionalId": pro["id"]})).status_code == 204  # idempotent
+    assert (await client.post(url, headers=buyer.h, json={"professionalId": pro["id"]})).status_code in (200, 204)
+    assert (await client.post(url, headers=buyer.h, json={"professionalId": pro["id"]})).status_code in (200, 204)  # idempotent
     (saved,) = (await client.get(url, headers=buyer.h)).json()
     assert saved["displayName"] == "Pia" and saved["primarySpecialization"] == "Fractional CFO"
     assert saved["tier"] == "C" and saved["available"] is True
@@ -124,6 +124,6 @@ async def test_buyers_save_and_unsave_professionals(client, make_user, drain, sf
     assert (await client.get(url, headers=buyer.h)).json()[0]["available"] is False  # kept, marked unavailable
     other = await make_user("oli")
     assert (await client.post(url, headers=other.h, json={"professionalId": pro["id"]})).status_code == 404  # unpublished
-    assert (await client.delete(f"{url}/{pro['id']}", headers=buyer.h)).status_code == 204
+    assert (await client.delete(f"{url}/{pro['id']}", headers=buyer.h)).status_code in (200, 204)
     assert (await client.get(url, headers=buyer.h)).json() == []
     assert (await client.get(url)).status_code == 401

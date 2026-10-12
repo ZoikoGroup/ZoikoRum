@@ -117,7 +117,7 @@ async def credentials(actor: CurrentActor, session: DbSession):
     return await service.list_credentials(session, actor)
 
 
-@router.delete("/me/credentials/{claim_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/me/credentials/{claim_id}", status_code=status.HTTP_200_OK)
 async def withdraw_credential(claim_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> None:
     await service.withdraw_credential(session, actor, claim_id)
 
@@ -151,6 +151,26 @@ async def activate_offering(offering_id: uuid.UUID, actor: CurrentActor, session
 @router.post("/me/offerings/{offering_id}/pause", response_model=OfferingOut)
 async def pause_offering(offering_id: uuid.UUID, actor: CurrentActor, session: DbSession):
     return await service.set_offering_status(session, actor, offering_id, "PAUSED")
+
+
+from zoikorum.domains.professional import relationships
+
+@router.get("/me/relationships")
+async def buyer_relationships(actor: CurrentActor, session: DbSession):
+    return await relationships.listing(session, actor)
+
+@router.post("/me/relationships", status_code=201)
+async def save_relationship(body: relationships.RelationshipIn, actor: CurrentActor, session: DbSession):
+    return await relationships.save(session, actor, body)
+
+@router.patch("/me/relationships/{relationship_id}")
+async def relationship_preferences(relationship_id: uuid.UUID, body: relationships.AlertIn, actor: CurrentActor, session: DbSession):
+    return await relationships.update(session, actor, relationship_id, body)
+
+@router.delete("/me/relationships/{relationship_id}", status_code=204)
+async def remove_relationship(relationship_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    await relationships.remove(session, actor, relationship_id)
+    return Response(status_code=204)
 
 
 @router.get("/{professional_id}", response_model=PublicProfileOut)

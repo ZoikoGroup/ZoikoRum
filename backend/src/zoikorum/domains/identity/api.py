@@ -90,7 +90,7 @@ async def refresh(body: RefreshIn, request: Request) -> TokenPair:
     return result
 
 
-@router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/auth/logout", status_code=status.HTTP_200_OK)
 async def logout(actor: CurrentActor, session: DbSession) -> None:
     await service.logout(session, actor)
 
@@ -102,7 +102,7 @@ async def forgot_password(body: ForgotPasswordIn, session: DbSession) -> ForgotP
     return ForgotPasswordOut(resetToken=token if _expose_dev_tokens() else None)
 
 
-@router.post("/auth/password/reset", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/auth/password/reset", status_code=status.HTTP_200_OK)
 async def reset_password(body: ResetPasswordIn, session: DbSession) -> None:
     await service.reset_password(session, body.token, body.newPassword)
 
@@ -113,7 +113,7 @@ async def mfa_enroll(actor: CurrentActor, session: DbSession) -> MfaEnrollOut:
     return MfaEnrollOut(secret=secret, otpauthUri=uri)
 
 
-@router.post("/auth/mfa/verify", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/auth/mfa/verify", status_code=status.HTTP_200_OK)
 async def mfa_verify(body: MfaVerifyIn, actor: CurrentActor, session: DbSession) -> None:
     await service.verify_mfa(session, actor, body.totpCode)
 
@@ -140,7 +140,7 @@ async def my_sessions(actor: CurrentActor, session: DbSession):
     return await service.list_sessions(session, actor)
 
 
-@router.delete("/me/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/me/sessions/{session_id}", status_code=status.HTTP_200_OK)
 async def sign_out_device(session_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> None:
     await service.revoke_session(session, actor, session_id)
 
@@ -238,3 +238,202 @@ async def duplicate_queue(actor: CurrentActor, session: DbSession):
 async def resolve_duplicate(suspicion_id: uuid.UUID, body: DuplicateResolveIn, actor: CurrentActor, session: DbSession):
     """Support decision (step-up): MERGED closes the duplicate and keeps the chosen account; NOT_DUPLICATE dismisses."""
     return await duplicates.resolve(session, actor, suspicion_id, body)
+
+
+# Browser WebAuthn ceremonies. Public authentication options contain no account hints.
+from pydantic import BaseModel, Field
+from zoikorum.domains.identity import passkeys
+
+class PasskeyResponseIn(BaseModel):
+    challengeId: uuid.UUID
+    credential: dict
+    label: str = Field(default="Passkey", min_length=1, max_length=100)
+
+@router.get("/me/passkeys")
+async def my_passkeys(actor: CurrentActor, session: DbSession):
+    return await passkeys.listing(session, actor)
+
+@router.post("/me/passkeys/options")
+async def registration_options(actor: CurrentActor, session: DbSession):
+    return await passkeys.begin(session, actor=actor, registration=True)
+
+@router.post("/me/passkeys", status_code=201)
+async def register_passkey(body: PasskeyResponseIn, actor: CurrentActor, session: DbSession):
+    await passkeys.register(session, actor, body.challengeId, body.credential, body.label)
+    return {"registered": True}
+
+@router.delete("/me/passkeys/{key_id}", status_code=204)
+async def delete_passkey(key_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    await passkeys.remove(session, actor, key_id)
+
+@router.post("/auth/passkeys/options")
+async def authentication_options(session: DbSession):
+    return await passkeys.begin(session)
+
+@router.post("/auth/passkeys/verify", response_model=AuthOut)
+async def authenticate_passkey(body: PasskeyResponseIn, request: Request, session: DbSession):
+    return await passkeys.authenticate(session, body.challengeId, body.credential, _ua(request))
+
+@router.post("/auth/passkeys/step-up/options")
+async def passkey_step_up_options(actor: CurrentActor, session: DbSession):
+    return await passkeys.begin(session, actor=actor)
+
+@router.post("/auth/passkeys/step-up", response_model=AuthOut)
+async def passkey_step_up(body: PasskeyResponseIn, request: Request, actor: CurrentActor, session: DbSession):
+    return await passkeys.authenticate(session, body.challengeId, body.credential, _ua(request), actor)
+
+
+from zoikorum.domains.identity import enterprise
+
+class EnterpriseCallbackIn(BaseModel):
+    state: uuid.UUID
+    browserToken: str = Field(min_length=32, max_length=200)
+    code: str = Field(min_length=1, max_length=8192)
+
+@router.post("/auth/enterprise/start")
+async def enterprise_start(session: DbSession):
+    return await enterprise.begin(session)
+
+@router.post("/auth/enterprise/complete", response_model=AuthOut)
+async def enterprise_complete(body: EnterpriseCallbackIn, request: Request, session: DbSession):
+    return await enterprise.complete(session, body.state, body.browserToken, body.code, _ua(request))
+
+@router.post("/scim/v2/Users", status_code=201)
+async def scim_create(body: enterprise.ScimUserIn, request: Request, session: DbSession):
+    org = await enterprise.authorize_scim(session, request.headers.get("Authorization"))
+    return await enterprise.provision(session, org, body)
+
+@router.get("/scim/v2/Users/{account_id}")
+async def scim_get(account_id: uuid.UUID, request: Request, session: DbSession):
+    org = await enterprise.authorize_scim(session, request.headers.get("Authorization"))
+    return await enterprise.scim_out(session, await enterprise.get_scim_account(session, org, account_id))
+
+@router.get("/scim/v2/Users")
+async def scim_list(request: Request, session: DbSession, filter: str | None = None, startIndex: int = 1, count: int = 100):
+    import re
+    from sqlalchemy import select
+    from zoikorum.domains.identity.models import FederationAccount, Identity
+    from zoikorum.shared.errors import ValidationFailed
+    org = await enterprise.authorize_scim(session, request.headers.get("Authorization"))
+    statement = select(FederationAccount).join(Identity).where(FederationAccount.organization_id == org.id)
+    if filter:
+        match = re.fullmatch(r'userName eq "([^"\\]+)"', filter)
+        if not match:
+            raise ValidationFailed("Only userName equality filtering is supported")
+        statement = statement.where(Identity.email == match[1].lower())
+    rows = list((await session.scalars(statement.order_by(FederationAccount.id))).all())
+    if startIndex < 1 or count < 0 or count > 200:
+        raise ValidationFailed("Invalid provisioning pagination")
+    selected = rows[startIndex-1:startIndex-1+count]
+    return {"schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"], "totalResults": len(rows),
+        "startIndex": startIndex, "itemsPerPage": len(selected),
+        "Resources": [await enterprise.scim_out(session, r) for r in selected]}
+
+@router.put("/scim/v2/Users/{account_id}")
+async def scim_replace(account_id: uuid.UUID, body: enterprise.ScimUserIn, request: Request, session: DbSession):
+    org = await enterprise.authorize_scim(session, request.headers.get("Authorization"))
+    account = await enterprise.get_scim_account(session, org, account_id)
+    current = await enterprise.scim_out(session, account)
+    from zoikorum.shared.errors import ValidationFailed
+    if str(body.externalId) != account.subject or str(body.userName).lower() != current["userName"]:
+        raise ValidationFailed("Changing the federation subject or email requires verified account linking")
+    return await enterprise.change_active(session, org, account_id, body.active, body.displayName)
+
+@router.patch("/scim/v2/Users/{account_id}")
+async def scim_patch(account_id: uuid.UUID, body: dict, request: Request, session: DbSession):
+    org = await enterprise.authorize_scim(session, request.headers.get("Authorization"))
+    from zoikorum.shared.errors import ValidationFailed
+    current = await enterprise.scim_out(session, await enterprise.get_scim_account(session, org, account_id))
+    active, display_name = current["active"], current["displayName"]
+    operations = body.get("Operations")
+    if not isinstance(operations, list) or not operations:
+        raise ValidationFailed("Provisioning operations are required")
+    for operation in operations:
+        if not isinstance(operation, dict) or str(operation.get("op", "")).lower() not in ("replace", "add"):
+            raise ValidationFailed("Unsupported provisioning operation")
+        path, value = operation.get("path"), operation.get("value")
+        updates = value if path is None and isinstance(value, dict) else {path: value}
+        for attribute, value in updates.items():
+            if attribute == "active" and isinstance(value, bool):
+                active = value
+            elif attribute == "displayName" and isinstance(value, str) and 1 <= len(value) <= 200:
+                display_name = value
+            else:
+                raise ValidationFailed("Only active and displayName may be patched")
+    return await enterprise.change_active(session, org, account_id, active, display_name)
+
+@router.delete("/scim/v2/Users/{account_id}", status_code=204)
+async def scim_delete(account_id: uuid.UUID, request: Request, session: DbSession):
+    org = await enterprise.authorize_scim(session, request.headers.get("Authorization"))
+    await enterprise.change_active(session, org, account_id, False)
+
+
+from fastapi.responses import RedirectResponse
+from zoikorum.domains.identity import saml
+
+class SamlHandoffIn(BaseModel):
+    state: uuid.UUID
+    browserToken: str = Field(min_length=32, max_length=200)
+    handoff: str = Field(min_length=32, max_length=200)
+
+@router.post("/auth/saml/start")
+async def saml_start(session: DbSession):
+    return await saml.begin(session)
+
+@router.post("/auth/saml/acs")
+async def saml_acs(request: Request, session: DbSession):
+    from urllib.parse import parse_qs
+    from zoikorum.shared.errors import ValidationFailed
+    raw = await request.body()
+    if len(raw) > 1024 * 1024 or request.headers.get('content-type', '').split(';')[0] != 'application/x-www-form-urlencoded':
+        raise ValidationFailed("A bounded SAML form response is required")
+    try:
+        fields = parse_qs(raw.decode('utf-8'), max_num_fields=5)
+        response, state = fields['SAMLResponse'], fields['RelayState']
+        if len(response) != 1 or len(state) != 1:
+            raise ValueError()
+        state = uuid.UUID(state[0])
+    except (ValueError, KeyError, UnicodeError) as error:
+        raise ValidationFailed("Invalid SAML response form") from error
+    redirect = await saml.receive(session, response[0], state)
+    return RedirectResponse(redirect, status_code=303, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
+
+@router.post("/auth/saml/complete", response_model=AuthOut)
+async def saml_complete(body: SamlHandoffIn, request: Request, session: DbSession):
+    return await saml.complete(session, body.state, body.browserToken, body.handoff, _ua(request))
+
+
+@router.get("/auth/saml/metadata")
+async def saml_metadata():
+    from fastapi.responses import Response
+    auth = saml.toolkit()
+    return Response(auth.get_settings().get_sp_metadata(), media_type="application/samlmetadata+xml")
+
+@router.get("/scim/v2/ServiceProviderConfig")
+async def scim_configuration(request: Request, session: DbSession):
+    await enterprise.authorize_scim(session, request.headers.get("Authorization"))
+    return {"schemas": ["urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"],
+        "patch": {"supported": True}, "bulk": {"supported": False, "maxOperations": 0, "maxPayloadSize": 0},
+        "filter": {"supported": True, "maxResults": 200}, "changePassword": {"supported": False},
+        "sort": {"supported": False}, "etag": {"supported": False},
+        "authenticationSchemes": [{"type": "oauthbearertoken", "name": "Bearer token", "description": "Organisation-scoped provisioning token", "primary": True}]}
+
+
+from zoikorum.domains.identity import privacy_access as privacy
+
+class PrivacyReviewIn(BaseModel):
+    note: str = Field(min_length=20, max_length=2000)
+
+@router.get('/admin/privacy-requests')
+async def privacy_queue(actor: CurrentActor, session: DbSession):
+    return await privacy.queue(session, actor)
+
+@router.post('/admin/privacy-requests/{request_id}/access')
+async def privacy_access(request_id: uuid.UUID, body: PrivacyReviewIn, actor: CurrentActor, session: DbSession):
+    return await privacy.fulfil_access(session, actor, request_id, body.note)
+
+@router.get('/me/data-requests/{request_id}/reviewed-copy')
+async def privacy_download(request_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    from fastapi.responses import JSONResponse
+    return JSONResponse(await privacy.download(session, actor, request_id), headers={'Cache-Control': 'no-store',
+        'Content-Disposition': 'attachment; filename="zoikorum-personal-data.json"'})

@@ -160,6 +160,8 @@ async def _open(session: AsyncSession, *, subject_type: str, subject_id: uuid.UU
     await session.flush()
     _evt(session, E.VERIFICATION_STARTED, case)
     case.provider_result = await get_provider().check(verification_type, case.details)
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(case, "details")
     if case.provider_result == "PASS":
         await _verify(session, case, reviewer_id=None, expires_at=None)
     elif case.provider_result == "FAIL":
@@ -443,7 +445,7 @@ async def review_queue(session: AsyncSession, actor: Actor, cursor: str | None, 
     return page_of(list(rows), lim, lambda c: QueueItemOut(**_hosted_fields(hosted.get(c.id)),
         id=c.id, subjectType=c.subject_type, subjectId=c.subject_id, subjectName=names.get(c.subject_id),
         verificationType=c.verification_type, status=c.status, label=c.label, jurisdiction=c.jurisdiction,
-        providerResult=c.provider_result, evidenceCount=counts.get(c.id, 0), estimatedCompletion=c.estimated_completion,
+        providerResult=c.provider_result, screeningEvidence={k.removeprefix("_provider"): v for k, v in (c.details or {}).items() if k.startswith("_provider")}, evidenceCount=counts.get(c.id, 0), estimatedCompletion=c.estimated_completion,
         overdue=bool(c.estimated_completion and c.estimated_completion < now), createdAt=c.created_at))
 async def enforcement_reset(session, payload):
     from zoikorum.domains.admin import facade as admin

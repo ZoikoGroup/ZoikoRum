@@ -74,13 +74,28 @@ class StripeProvider:
     def payout(self, account_ref, amount_minor, currency, *, idempotency_key=None):
         if not idempotency_key:
             raise ValidationFailed("A durable payout reference is required")
+        matches = list(self.pages('transfers', {'transfer_group': idempotency_key, 'destination': account_ref}))
+        if matches:
+            if len(matches) != 1 or matches[0]['amount'] != amount_minor or matches[0]['currency'].upper() != currency.upper():
+                raise ValidationFailed('Existing partner transfer does not match this release')
+            return PayoutResult(True, provider_ref=matches[0]['id'], pending=True)
         result = self.request("POST", "transfers", {"destination": account_ref, "amount": str(amount_minor),
-            "currency": currency.lower(), "metadata[payoutReference]": idempotency_key}, key="transfer:" + idempotency_key)
+            "currency": currency.lower(), "transfer_group": idempotency_key, "metadata[payoutReference]": idempotency_key}, key="transfer:" + idempotency_key)
         return PayoutResult(True, provider_ref=result["id"], pending=True)
 
     def bank_payout(self, account_ref, amount_minor, currency, *, idempotency_key):
+        for existing in self.pages('payouts', account=account_ref):
+            metadata = existing.get('metadata', {})
+            if metadata.get('payoutAttemptKey') == idempotency_key:
+                if existing['amount'] != amount_minor or existing['currency'].upper() != currency.upper():
+                    raise ValidationFailed('Existing bank payout does not match this release')
+                if existing['status'] in ('failed', 'canceled'):
+                    return PayoutResult(False, provider_ref=existing['id'], failure_message='This bank payout attempt failed')
+                return PayoutResult(True, provider_ref=existing['id'], pending=existing['status'] != 'paid')
+            if metadata.get('payoutReference') == idempotency_key.split(':', 1)[0] and not metadata.get('payoutAttemptKey') and existing['status'] in ('pending', 'in_transit', 'paid'):
+                raise ValidationFailed('A legacy bank payout needs reconciliation before retrying')
         result = self.request("POST", "payouts", {"amount": str(amount_minor), "currency": currency.lower(),
-            "metadata[payoutReference]": idempotency_key.split(":", 1)[0]}, key="payout:" + idempotency_key, account=account_ref)
+            "metadata[payoutReference]": idempotency_key.split(":", 1)[0], "metadata[payoutAttemptKey]": idempotency_key}, key="payout:" + idempotency_key, account=account_ref)
         return PayoutResult(True, provider_ref=result["id"], pending=True)
 
     def refund(self, charge_ref, amount_minor, currency, *, idempotency_key=None):
@@ -89,6 +104,15 @@ class StripeProvider:
         payment_intent = self.request("GET", "checkout/sessions/" + charge_ref).get("payment_intent")
         if not payment_intent:
             raise ValidationFailed("The original checkout has not completed")
+        matches = [item for item in self.pages('refunds', {'payment_intent': payment_intent})
+                   if item.get('metadata', {}).get('refundReference') == idempotency_key]
+        if matches:
+            if len(matches) != 1 or matches[0]['amount'] != amount_minor or matches[0]['currency'].upper() != currency.upper():
+                raise ValidationFailed('Existing partner refund does not match this refund request')
+            existing = matches[0]
+            if existing.get('status') in ('failed', 'canceled'):
+                return PayoutResult(False, provider_ref=existing['id'], failure_message='This refund attempt failed and needs reconciliation')
+            return PayoutResult(True, provider_ref=existing['id'], pending=existing.get('status') != 'succeeded')
         result = self.request("POST", "refunds", {"payment_intent": payment_intent, "amount": str(amount_minor),
                               "metadata[refundReference]": idempotency_key},
                               key="refund:" + idempotency_key)
@@ -137,7 +161,7 @@ class StripeProvider:
             mapped = "charge.failed"
         elif kind in ("payout.paid", "payout.failed"):
             mapped = kind
-            data.update(message=obj.get("failure_message"), account=event.get("account"), releaseReference=obj.get("metadata", {}).get("payoutReference"))
+            data.update(message=obj.get("failure_message"), account=event.get("account"), releaseReference=obj.get("metadata", {}).get("payoutReference"), payoutAttemptKey=obj.get('metadata', {}).get('payoutAttemptKey'))
         elif kind == "transfer.created":
             mapped = "transfer.created"
             data.update(account=obj.get("destination"), releaseReference=obj.get("metadata", {}).get("payoutReference"))

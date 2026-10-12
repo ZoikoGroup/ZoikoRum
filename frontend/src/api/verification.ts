@@ -68,10 +68,16 @@ export interface QueueItem {
   hostedProvider?: string | null
   hostedStatus?: HostedStatus | null
   hostedReason?: string | null
+  screeningEvidence: Record<string, string | number>
   evidenceCount: number
   estimatedCompletion: string | null
   overdue: boolean
   createdAt: string
+}
+
+export interface AppealQueueItem {
+  id: string; caseId: string; caseLabel: string; subjectName: string | null; originalReason: string | null
+  statement: string; status: string; evidenceCount: number; canDecide: boolean; filedAt: string
 }
 
 export interface Trust {

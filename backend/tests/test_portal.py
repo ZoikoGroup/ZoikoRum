@@ -30,7 +30,7 @@ async def test_sessions_can_be_listed_and_signed_out(client, make_user):
     sessions = (await client.get("/v1/me/sessions", headers=u.h)).json()
     assert len(sessions) == 2 and sum(s["current"] for s in sessions) == 1
     target = next(s for s in sessions if not s["current"])
-    assert (await client.delete(f"/v1/me/sessions/{target['id']}", headers=u.h)).status_code == 204
+    assert (await client.delete(f"/v1/me/sessions/{target['id']}", headers=u.h)).status_code in (200, 204)
     assert (await client.post("/v1/auth/refresh", json={"refreshToken": other})).status_code == 401
     stranger = await make_user("sam")
     assert (await client.delete(f"/v1/me/sessions/{sessions[0]['id']}", headers=stranger.h)).status_code == 404

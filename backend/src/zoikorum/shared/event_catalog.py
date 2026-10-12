@@ -21,6 +21,10 @@ class E:
     IDENTITY_CREATED = _t("identity", "identity", "created")
     EMAIL_CONFIRMED = _t("identity", "identity", "email_confirmed")
     EMAIL_CONFIRMATION_REQUESTED = _t("identity", "identity", "email_confirmation_requested")  # "resend the link"
+
+    FEDERATION_PROVISIONED = _t("identity", "federation", "provisioned")
+    PASSKEY_REGISTERED = _t("identity", "passkey", "registered")
+    PASSKEY_REMOVED = _t("identity", "passkey", "removed")
     MFA_ENROLLED = _t("identity", "identity", "mfa_enrolled")
     AUTHENTICATION_SUCCEEDED = _t("identity", "session", "authentication_succeeded")
     AUTHENTICATION_FAILED = _t("identity", "session", "authentication_failed")
@@ -39,6 +43,7 @@ class E:
     PASSWORD_RESET_REQUESTED = _t("identity", "identity", "password_reset_requested")
     PASSWORD_CHANGED = _t("identity", "identity", "password_changed")
     IDENTITY_PROFILE_UPDATED = _t("identity", "identity", "profile_updated")
+    DATA_REQUEST_COMPLETED = _t("identity", "data_request", "completed")
     DATA_REQUEST_CREATED = _t("identity", "data_request", "created")
     DATA_REQUEST_COMPLETED = _t("identity", "data_request", "completed")  # export ready, or account erased
     DATA_REQUEST_BLOCKED = _t("identity", "data_request", "blocked")  # erasure waits for open engagements, money, ...

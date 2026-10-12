@@ -5,6 +5,7 @@ from datetime import datetime
 
 from sqlalchemy import ARRAY, DateTime, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import Text, LargeBinary
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -37,6 +38,7 @@ class Identity(Base, UUIDPk, Timestamps, Versioned):
     mfa_enabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     failed_login_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    passkey_enabled: Mapped[bool] = mapped_column(default=False, server_default="false", nullable=False)
     enterprise_federated: Mapped[bool] = mapped_column(default=False, nullable=False)
     # Profile details (Settings > Account). The phone number is personal data: encrypted at rest (Architecture 8.2).
     phone_enc: Mapped[str | None] = mapped_column(String(500))
@@ -108,6 +110,10 @@ class DataRequest(Base, UUIDPk, Timestamps):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # export download link
     export_key: Mapped[str | None] = mapped_column(String(300))  # blob storage key of the export file
     detail: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")  # reasons / summary
+    export_payload_enc: Mapped[str | None] = mapped_column(Text)
+    export_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    review_note: Mapped[str | None] = mapped_column(String(2000))
 
 
 class DuplicateSuspicion(Base, UUIDPk, Timestamps):
@@ -126,3 +132,33 @@ class DuplicateSuspicion(Base, UUIDPk, Timestamps):
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     resolution_note: Mapped[str | None] = mapped_column(String(500))
     kept_identity_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+
+
+class Passkey(Base, UUIDPk, CreatedAt):
+    __tablename__ = "passkeys"
+    __table_args__ = {"schema": SCHEMA}
+    identity_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("identity.identities.id"), nullable=False, index=True)
+    credential_id: Mapped[bytes] = mapped_column(LargeBinary, nullable=False, unique=True)
+    public_key: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    sign_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    label: Mapped[str] = mapped_column(String(100), nullable=False)
+
+
+class AuthChallenge(Base, UUIDPk, CreatedAt):
+    __tablename__ = "auth_challenges"
+    __table_args__ = {"schema": SCHEMA}
+    identity_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("identity.identities.id"))
+    session_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    purpose: Mapped[str] = mapped_column(String(20), nullable=False)
+    challenge: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class FederationAccount(Base, UUIDPk, Timestamps):
+    __tablename__ = "federation_accounts"
+    __table_args__ = (UniqueConstraint("organization_id", "subject", name="uq_federation_subject"), {"schema": SCHEMA})
+    identity_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("identity.identities.id"), nullable=False, unique=True)
+    organization_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    subject: Mapped[str] = mapped_column(String(200), nullable=False)
+    active: Mapped[bool] = mapped_column(default=True, nullable=False)

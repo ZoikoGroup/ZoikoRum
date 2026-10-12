@@ -76,3 +76,20 @@ class DeliveryAttempt(Base, UUIDPk, CreatedAt):
     response_status: Mapped[int | None] = mapped_column(Integer)
     error: Mapped[str | None] = mapped_column(String(300))
     attempt: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class EmailReceipt(Base, UUIDPk, CreatedAt):
+    __tablename__ = "email_receipts"
+    __table_args__ = {"schema": SCHEMA}
+    provider_event_id: Mapped[str] = mapped_column(String(200), nullable=False, unique=True)
+    notification_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("notification.notifications.id"), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    payload_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class EmailSuppression(Base, UUIDPk, CreatedAt):
+    __tablename__ = "email_suppressions"
+    __table_args__ = {"schema": SCHEMA}
+    address_sha256: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    reason: Mapped[str] = mapped_column(String(30), nullable=False)

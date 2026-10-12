@@ -97,7 +97,7 @@ interface RequestOptions {
   blob?: boolean  // return a binary response (authenticated file downloads)
 }
 
-export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T> {
+async function apiRequest<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const { method = 'GET', body, auth = true, query, headers: extra = {}, text = false, blob = false } = opts
   const url = query ? `${path}?${new URLSearchParams(query)}` : path
 
@@ -129,3 +129,21 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
   if (blob) return (await res.blob()) as T
   return res.json() as Promise<T>
 }
+
+export const api = Object.assign(apiRequest, {
+  get<T>(path: string, opts: Omit<RequestOptions, 'method' | 'body'> = {}): Promise<{ data: T }> {
+    return apiRequest<T>(path, { ...opts, method: 'GET' }).then((data) => ({ data }))
+  },
+  post<T>(path: string, body?: unknown, opts: Omit<RequestOptions, 'method' | 'body'> = {}): Promise<{ data: T }> {
+    return apiRequest<T>(path, { ...opts, method: 'POST', body }).then((data) => ({ data }))
+  },
+  put<T>(path: string, body?: unknown, opts: Omit<RequestOptions, 'method' | 'body'> = {}): Promise<{ data: T }> {
+    return apiRequest<T>(path, { ...opts, method: 'PUT', body }).then((data) => ({ data }))
+  },
+  patch<T>(path: string, body?: unknown, opts: Omit<RequestOptions, 'method' | 'body'> = {}): Promise<{ data: T }> {
+    return apiRequest<T>(path, { ...opts, method: 'PATCH', body }).then((data) => ({ data }))
+  },
+  delete<T>(path: string, opts: Omit<RequestOptions, 'method' | 'body'> = {}): Promise<{ data: T }> {
+    return apiRequest<T>(path, { ...opts, method: 'DELETE' }).then((data) => ({ data }))
+  },
+})

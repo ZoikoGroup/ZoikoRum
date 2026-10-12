@@ -90,3 +90,12 @@ async def list_identity_organizations(session: AsyncSession, identity_id: uuid.U
 async def list_business_unit_ids(session: AsyncSession, org_id: uuid.UUID) -> list[uuid.UUID]:
     return list((await session.scalars(select(BusinessUnit.id).where(
         BusinessUnit.organization_id == org_id))).all())
+
+
+async def privacy_export(session, identity_id):
+    from zoikorum.shared.privacy_exports import export_rows
+    from zoikorum.domains.buyer.models import OrgMember, BillingContact
+    return {
+        'members': await export_rows(session, OrgMember, OrgMember.identity_id == identity_id, ['organization_id', 'identity_id', 'email', 'display_name', 'roles', 'spend_limit_minor', 'spend_limit_currency', 'business_unit_id', 'status', 'id', 'updated_at', 'created_at']),
+        'billing_contacts': await export_rows(session, BillingContact, BillingContact.identity_id == identity_id, ['organization_id', 'identity_id', 'is_primary', 'id', 'updated_at', 'created_at']),
+    }

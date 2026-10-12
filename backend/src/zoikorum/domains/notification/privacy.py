@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from zoikorum.domains.notification.models import Notification, Preference
+from zoikorum.domains.notification.models import Notification, Preference, EmailReceipt
 from zoikorum.shared import privacy
 
 
@@ -17,6 +17,8 @@ async def export(session: AsyncSession, identity_id: uuid.UUID) -> dict:
 
 
 async def erase(session: AsyncSession, identity_id: uuid.UUID) -> dict:
+    await session.execute(delete(EmailReceipt).where(EmailReceipt.notification_id.in_(
+        select(Notification.id).where(Notification.identity_id == identity_id))))
     removed = (await session.execute(delete(Notification).where(Notification.identity_id == identity_id))).rowcount
     await session.execute(delete(Preference).where(Preference.identity_id == identity_id))
     return {"notificationsDeleted": removed}

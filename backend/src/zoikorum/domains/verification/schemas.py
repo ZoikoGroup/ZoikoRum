@@ -101,6 +101,8 @@ class QueueItemOut(BaseModel):
     hostedProvider: str | None = None
     hostedStatus: str | None = None
     hostedReason: str | None = None
+
+    screeningEvidence: dict = Field(default_factory=dict)
     evidenceCount: int
     estimatedCompletion: datetime | None
     overdue: bool

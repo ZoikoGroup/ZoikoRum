@@ -15,7 +15,7 @@ DISCLAIMER = "Advisory assistance only. Verify against the source documents. Thi
 PURPOSES = {"proposal-draft", "contract-summary", "dispute-summary", "match-intent"}
 
 
-async def infer(session, actor_id, purpose, subject_id, facts, fallback):
+async def infer(session, actor_id, purpose, subject_id, facts, fallback, validate_output=None):
     started = time.monotonic()
     settings = get_settings()
     model = settings.ai_model if settings.ai_provider == "anthropic" else "offline:v1"
@@ -25,6 +25,8 @@ async def infer(session, actor_id, purpose, subject_id, facts, fallback):
     if prompt and (settings.ai_provider == "offline" or (settings.ai_provider == "anthropic" and settings.anthropic_api_key)):
         try:
             output = await providers.provider().generate(prompt.instructions, canonical_json(facts).decode())
+            if validate_output is not None:
+                validate_output(output)
             if not output.strip():
                 raise ValueError("Empty provider output")
             fallback_used = False
@@ -92,3 +94,26 @@ async def approve_prompt(session, actor, prompt_id):
     record_event(session, E.PROMPT_VERSION_ACTIVATED, aggregate_type="PromptVersion", aggregate_id=p.id,
         payload={"promptKey": p.prompt_key, "version": p.version, "approvedBy": actor.identity_id, "targetModel": p.target_model})
     return prompt_out(p)
+
+
+async def matching_suggestions(session, actor_id, text):
+    import json
+    from zoikorum.domains.ai.facade import extract_match_intent
+    from zoikorum.domains.marketplace import facade as marketplace
+    catalog = await marketplace.specialization_names(session)
+    baseline = await extract_match_intent(session, text)
+    fallback = json.dumps({"specializations": list(baseline.specializations[:5])})
+    def validate(output):
+        parsed = json.loads(output)
+        if not isinstance(parsed, dict) or set(parsed) != {"specializations"}:
+            raise ValueError("Expected specialization suggestions only")
+        slugs = parsed["specializations"]
+        if not isinstance(slugs, list) or len(slugs) > 5 or any(not isinstance(slug, str) or slug not in catalog for slug in slugs):
+            raise ValueError("Suggestions must come from the authoritative taxonomy")
+        return list(dict.fromkeys(slugs))
+    result = await infer(session, actor_id, "match-intent", actor_id,
+        {"query": text, "allowedSpecializations": catalog,
+         "outputSchema": {"specializations": ["up to five approved taxonomy slugs"]}}, fallback,
+        validate_output=validate)
+    slugs = validate(result.pop("text"))
+    return {**result, "specializations": [{"slug": slug, "name": catalog[slug]} for slug in slugs]}

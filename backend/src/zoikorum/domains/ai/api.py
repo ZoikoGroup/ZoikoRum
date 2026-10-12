@@ -112,3 +112,12 @@ async def inferences(actor: CurrentActor, session: DbSession):
     # Outputs remain within the subject's access scope; governance sees metadata only.
     return [{"id": r.id, "purpose": r.purpose, "model": r.model, "promptVersion": r.prompt_version,
              "inputHash": r.input_sha256, "fallbackUsed": r.fallback_used, "latencyMs": r.latency_ms, "createdAt": r.created_at} for r in rows]
+
+
+class MatchIntentIn(BaseModel):
+    query: str = Field(min_length=3, max_length=200)
+
+
+@router.post("/match-intent")
+async def match_intent(body: MatchIntentIn, actor: CurrentActor, session: DbSession):
+    return await service.matching_suggestions(session, actor.identity_id, body.query)

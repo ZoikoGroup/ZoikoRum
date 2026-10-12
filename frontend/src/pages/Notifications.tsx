@@ -112,6 +112,7 @@ export function NotificationsPage() {
                       <h3 style={{ margin: 0 }}>{row.title}</h3>
                     </div>
                     <span className="small muted">{new Date(row.createdAt).toLocaleString()}</span>
+                    <p className="small muted" style={{ margin: "4px 0 0" }}>Email: {row.emailStatus.replace(/_/g, " ").toLowerCase()}</p>
                   </div>
                   <div className="row" style={{ gap: 8 }}>
                     <Link

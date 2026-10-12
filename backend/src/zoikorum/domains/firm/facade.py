@@ -40,3 +40,11 @@ async def member_roles(session: AsyncSession, firm_id: uuid.UUID, identity_id: u
     m = await session.scalar(select(FirmMember).where(
         FirmMember.firm_id == firm_id, FirmMember.identity_id == identity_id, FirmMember.status == "ACTIVE"))
     return frozenset(m.roles) if m else frozenset()
+
+
+async def privacy_export(session, identity_id):
+    from zoikorum.shared.privacy_exports import export_rows
+    from zoikorum.domains.firm.models import FirmMember
+    return {
+        'members': await export_rows(session, FirmMember, FirmMember.identity_id == identity_id, ['firm_id', 'identity_id', 'email', 'display_name', 'roles', 'status', 'id', 'updated_at', 'created_at']),
+    }

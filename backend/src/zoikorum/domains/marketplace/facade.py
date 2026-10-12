@@ -103,3 +103,14 @@ async def pending_specialization_names(session: AsyncSession, professional_id: u
     from zoikorum.domains.marketplace.service import pending_names
 
     return await pending_names(session, professional_id)
+
+
+async def privacy_export(session, identity_id):
+    from zoikorum.shared.privacy_exports import export_rows
+    from zoikorum.domains.marketplace.models import SavedProfessional, Collection, SavedSearch, SpecializationSuggestion
+    return {
+        'saved_professionals': await export_rows(session, SavedProfessional, SavedProfessional.identity_id == identity_id, ['identity_id', 'professional_id', 'id', 'created_at']),
+        'collections': await export_rows(session, Collection, Collection.identity_id == identity_id, ['identity_id', 'name', 'id', 'updated_at', 'created_at']),
+        'saved_searches': await export_rows(session, SavedSearch, SavedSearch.identity_id == identity_id, ['identity_id', 'name', 'params', 'last_viewed_at', 'id', 'updated_at', 'created_at']),
+        'specialization_suggestions': await export_rows(session, SpecializationSuggestion, SpecializationSuggestion.identity_id == identity_id, ['identity_id', 'professional_id', 'text', 'name', 'category_slug', 'group_slug', 'description', 'credential_likely', 'source', 'status', 'resolved_slug', 'resolved_by', 'resolved_at', 'resolution_note', 'id', 'updated_at', 'created_at']),
+    }

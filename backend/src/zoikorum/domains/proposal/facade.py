@@ -102,3 +102,11 @@ async def buyer_relationships(session: AsyncSession, professional_id: uuid.UUID)
                                   .where(ProposalRequest.professional_id == professional_id, ProposalRequest.sent_at.is_not(None))
                                   .group_by(ProposalRequest.organization_id))).all()
     return {org: {"requests": n, "lastRequestAt": last} for org, n, last in rows}
+
+async def privacy_export(session, identity_id):
+    from zoikorum.shared.privacy_exports import export_rows
+    from zoikorum.domains.proposal.models import ProposalRequest, Proposal
+    return {
+        'requests': await export_rows(session, ProposalRequest, ProposalRequest.buyer_identity_id == identity_id, ['organization_id', 'cost_center_id', 'buyer_identity_id', 'professional_id', 'offering_id', 'group_id', 'service', 'specialization', 'engagement_type', 'business_context', 'objective', 'details', 'desired_start_date', 'estimated_duration', 'budget_min_minor', 'budget_max_minor', 'budget_currency', 'delivery_mode', 'location', 'nda_required', 'nda_accepted_at', 'attachments', 'deliverables', 'dependencies', 'pricing_preferences', 'payment_cadence', 'status', 'sent_at', 'closed_at', 'reason_code', 'reason_note', 'id', 'updated_at', 'created_at', 'version']),
+        'proposals': await export_rows(session, Proposal, Proposal.buyer_identity_id == identity_id, ['request_id', 'organization_id', 'buyer_identity_id', 'professional_id', 'policy_version_id', 'status', 'summary', 'scope_alignment', 'scope_notes', 'deliverables', 'milestones', 'attachments', 'pricing_model', 'total_minor', 'currency', 'start_date', 'end_date', 'assumptions', 'exclusions', 'valid_until', 'revision_requests', 'revision_count', 'submitted_at', 'decided_at', 'decided_by', 'reason_code', 'reason_note', 'terms_hash', 'id', 'updated_at', 'created_at', 'version']),
+    }

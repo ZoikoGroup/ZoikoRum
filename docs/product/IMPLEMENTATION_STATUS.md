@@ -72,3 +72,10 @@ Customer and professional request-to-funded-work paths exist. Firm/enterprise or
 - Full backend regression is still running; this document does not claim its result in advance.
 
 Overall: substantial core marketplace implementation; messaging/change orders are under verification. Enterprise governance, dispute management and the remaining operating layers require substantial implementation. The product is not complete.
+
+
+## Current gap implementation — 9 October 2026
+
+See [remaining-work audit](REMAINING_WORK_AUDIT.md) for verified behaviour and the ten-item status. This supersedes assumptions that disconnected draft files establish feature completion.
+
+The current change set connects the dev frontend workflows and discovery quick view/comparison, persists retainer pause/resume through migration `b7309c12e541`, protects new funding while paused, preserves payment-in-flight cycles on cancellation, and splits frontend routes into lazy-loaded bundles. Authorised automatic funding, privacy fulfilment, enterprise authentication, relationship tools, complete OpenSearch retrieval and release browser/accessibility/load validation are still unfinished. The SSO and privacy draft safeguards are not implementations of those features.

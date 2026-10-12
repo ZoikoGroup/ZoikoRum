@@ -185,6 +185,9 @@ class DataRequestOut(BaseModel):
     downloadable: bool = False
     reasons: list[str] = []  # why an erasure is on hold
     retained: dict[str, str] = {}  # what is kept by law, per area
+    exportReady: bool = False
+    exportExpiresAt: datetime | None = None
+    reviewNote: str | None = None
 
 
 class DuplicateAnswerIn(BaseModel):

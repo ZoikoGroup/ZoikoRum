@@ -49,7 +49,7 @@ async def accept_by_id(invitation_id: uuid.UUID, actor: CurrentActor, session: D
     return await service.accept_invitation(session, actor, invitation_id=invitation_id)
 
 
-@router.post("/invitations/{invitation_id}/decline", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/invitations/{invitation_id}/decline", status_code=status.HTTP_200_OK)
 async def decline(invitation_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> None:
     await service.decline_invitation(session, actor, invitation_id)
 
@@ -86,7 +86,7 @@ async def update_member(org_id: uuid.UUID, identity_id: uuid.UUID, body: MemberP
                                        body.clearSpendLimit, body.businessUnitId)
 
 
-@router.delete("/{org_id}/members/{identity_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{org_id}/members/{identity_id}", status_code=status.HTTP_200_OK)
 async def remove_member(org_id: uuid.UUID, identity_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> None:
     await service.remove_member(session, actor, org_id, identity_id)
 
@@ -101,7 +101,7 @@ async def invitations(org_id: uuid.UUID, actor: CurrentActor, session: DbSession
     return await service.list_invitations(session, actor, org_id)
 
 
-@router.delete("/{org_id}/invitations/{invitation_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{org_id}/invitations/{invitation_id}", status_code=status.HTTP_200_OK)
 async def revoke_invitation(org_id: uuid.UUID, invitation_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> None:
     await service.revoke_invitation(session, actor, org_id, invitation_id)
 

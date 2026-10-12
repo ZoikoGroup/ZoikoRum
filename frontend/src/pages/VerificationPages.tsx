@@ -476,7 +476,7 @@ export function ReviewQueuePage() {
                     {q.hostedReason && ` — ${q.hostedReason}`}</div>}</td>
                 <td>{q.subjectName ?? '—'} <span className="muted small">({q.subjectType === 'FIRM' ? 'Firm' : 'Professional'})</span></td>
                 <td><CaseStatusBadge status={q.status} /></td>
-                <td>{q.evidenceCount}</td>
+                <td>{q.evidenceCount}{q.screeningEvidence?.Screening && <div className="muted small">{q.screeningEvidence.Screening}: {q.screeningEvidence.Hits} potential matches<br />Reference: {q.screeningEvidence.Reference}<br />{q.screeningEvidence.NameProvenance}</div>}</td>
                 <td>{fmtDate(q.estimatedCompletion)} {q.overdue && <span className="badge warn">Overdue</span>}</td>
                 <td style={{ textAlign: 'right' }}><button className="btn btn-secondary btn-sm" onClick={() => open(q.id)}>Review</button></td>
               </tr>

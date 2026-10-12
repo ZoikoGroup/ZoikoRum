@@ -91,3 +91,11 @@ async def on_duplicate_document(session: AsyncSession, event: EventEnvelope) -> 
 
     p = event.payload
     await duplicates.suspect(session, _uuid(p["identityId"]), _uuid(p["otherIdentityId"]), "SAME_ID_DOCUMENT")
+
+
+from zoikorum.shared.relay import on_timer
+
+@on_timer('identity.privacy_export_expiry')
+async def privacy_export_expired(session, key, payload):
+    from zoikorum.domains.identity import privacy_access as privacy
+    await privacy.expire_export(session, key)

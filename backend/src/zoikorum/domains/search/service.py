@@ -6,6 +6,9 @@ paid-placement input.
 """
 
 from __future__ import annotations
+
+from zoikorum.domains.search import opensearch
+from zoikorum.domains.identity import facade as identity_facade
 from zoikorum.domains.admin import facade as admin_facade
 from zoikorum.domains.ai import facade as ai_facade
 
@@ -64,6 +67,7 @@ async def rebuild(session: AsyncSession, professional_id: uuid.UUID, occurred_at
     """Rebuild one professional's document from the owning domains. Idempotent."""
     pro = await professional_facade.get_professional(session, professional_id)
     if pro is None:
+        await opensearch.index_professional_profile(professional_id, None)
         await session.execute(delete(Doc).where(Doc.professional_id == professional_id))
         return
     offerings = await professional_facade.list_offerings(session, pro.id, active_only=True)
@@ -80,6 +84,10 @@ async def rebuild(session: AsyncSession, professional_id: uuid.UUID, occurred_at
     reviews = await review_facade.rating_stats(session, pro.id)
     response = await proposal_facade.response_stats(session, pro.id)
 
+    await opensearch.index_professional_profile(pro.id, {
+        'visible': pro.status == 'PUBLISHED' and await identity_facade.account_is_active(session, pro.identity_id),
+        'text': ' '.join(filter(None, [pro.display_name, pro.headline, pro.bio, *names.values(), *(o.title for o in offerings)])),
+    })
     text_a = " ".join(filter(None, [pro.display_name, pro.headline]))
     text_b = " ".join(names.values())
     text_c = " ".join(filter(None, [pro.bio, *(o.title for o in offerings), *(d for o in offerings for d in o.deliverables),
@@ -185,6 +193,9 @@ def _rank_and_explain(doc: Doc, rank: float, max_rank: float, p: SearchParams) -
             why.append(f"“{p.q.strip()}” matches their profile or services")
     if p.spec:
         matched = [s for s in doc.specializations if s in p.spec]
+        missing = [s for s in p.spec if s not in doc.specializations]
+        if missing:
+            why.append("Partial specialisation match; not listed: " + ", ".join(missing))
         relevance = max(relevance, 30 if doc.primary_specialization in p.spec else 20)
         primary = doc.primary_specialization in matched
         why.append(f"Specializes in {', '.join(doc.specialization_names.get(s, s) for s in matched)}" + (" (primary)" if primary else ""))
@@ -306,7 +317,20 @@ async def search(session: AsyncSession, actor: Actor | None, p: SearchParams) ->
     q = (p.q or "").strip() or None
     p = p.model_copy(update={"q": q})
     tsquery = func.websearch_to_tsquery(EN, q) if q else None
-    conds = _conditions(p, tsquery)
+    hybrid_scores = None
+    if q and opensearch.configured():
+        ids, hybrid_scores = await opensearch.hybrid_search(q, CANDIDATE_CAP)
+        try:
+            candidate_ids = [uuid.UUID(i) for i in ids]
+        except (ValueError, TypeError) as error:
+            from zoikorum.shared.errors import ServiceUnavailable
+            raise ServiceUnavailable('Search provider returned an invalid profile identifier') from error
+        # Never trust search-index claims for publish, trust, jurisdiction or enterprise eligibility.
+        conds = _conditions(p.model_copy(update={'q': None}), None)
+        conds.append(Doc.professional_id.in_(candidate_ids))
+        tsquery = None
+    else:
+        conds = _conditions(p, tsquery)
     org_id = p.organizationId
     if org_id:
         if actor is None or not await buyer_facade.get_member_roles(session, org_id, actor.identity_id):
@@ -325,6 +349,8 @@ async def search(session: AsyncSession, actor: Actor | None, p: SearchParams) ->
             conds.append(Doc.dimensions[dim].astext.in_(dimension_values[dim]))
         if eligibility.get('jurisdictions'):
             conds.append(Doc.served_jurisdictions.overlap(eligibility['jurisdictions']))
+        if eligibility.get('categories'):
+            conds.append(Doc.categories.overlap(eligibility['categories']))
     total = await session.scalar(select(func.count()).select_from(Doc).where(*conds)) or 0
     if org_id and _restrictive(eligibility):
         org = await buyer_facade.get_organization(session, org_id)
@@ -343,14 +369,49 @@ async def search(session: AsyncSession, actor: Actor | None, p: SearchParams) ->
     rows = (await session.execute(
         select(Doc, rank_col.label("rank")).where(*conds).order_by(*order).limit(CANDIDATE_CAP)
     )).all()
+    if hybrid_scores is not None:
+        eligible_rows = []
+        for doc, rank in rows:
+            current = await professional_facade.get_professional(session, doc.professional_id)
+            if current is None or current.status != 'PUBLISHED' or not await identity_facade.account_is_active(session, current.identity_id):
+                continue
+            live_trust = await trust_facade.get_trust(session, current.id)
+            if live_trust.dimensions.get('restrictions') in ('FLAGGED', 'RESTRICTED') or live_trust.dimensions.get('jurisdiction') == 'RESTRICTED':
+                continue
+            if p.tier and live_trust.tier not in p.tier:
+                continue
+            if any(live_trust.dimensions.get(d) not in GOOD.get(d, ()) for d in p.verified):
+                continue
+            if p.jurisdiction and p.jurisdiction.upper() not in (*current.jurisdictions_served, *current.licensed_jurisdictions):
+                continue
+            if org_id:
+                if TIER_RANK[live_trust.tier] < TIER_RANK[eligibility['minTier']]:
+                    continue
+                if any(live_trust.dimensions.get(d) not in dimension_values[d] for d in eligibility['requiredDimensions']):
+                    continue
+                if eligibility.get('jurisdictions') and not set(current.jurisdictions_served).intersection(eligibility['jurisdictions']):
+                    continue
+                if eligibility.get('categories'):
+                    specializations = await marketplace_facade.get_specializations(session, list(current.specializations))
+                    categories = {current.primary_category, *(s.category_slug for s in specializations.values())}
+                    if not categories.intersection(eligibility['categories']):
+                        continue
+            eligible_rows.append((doc, rank))
+        rows = eligible_rows
+        total = len(rows)
     max_rank = max((float(r) for _, r in rows), default=0.0)
     ranked = []
     whys: dict[uuid.UUID, list[str]] = {}
     for doc, r in rows:
-        score, why = _rank_and_explain(doc, float(r), max_rank, p)
+        score, why = _rank_and_explain(doc, float(r), max_rank, p if hybrid_scores is None else p.model_copy(update={'q': None}))
+        if hybrid_scores is not None:
+            why.append('Lexical and semantic match; eligibility filters applied independently')
         ranked.append((doc, score))
         whys[doc.professional_id] = why
-    ranked.sort(key=_sort_key(p.sort))
+    if hybrid_scores is not None and p.sort == 'best':
+        ranked.sort(key=lambda pair: (-hybrid_scores.get(str(pair[0].professional_id), 0), -pair[1], str(pair[0].professional_id)))
+    else:
+        ranked.sort(key=_sort_key(p.sort))
     page = ranked[p.offset:p.offset + p.limit]
 
     filters = {k: v for k, v in p.model_dump(exclude={"limit", "offset", "sort", "specMatch"}).items() if v}

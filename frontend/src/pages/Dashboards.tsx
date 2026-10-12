@@ -1,3 +1,4 @@
+import { DuplicateAccountReview } from '../components/DuplicateAccountReview'
 import { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { authApi, ROLE_LABEL } from '../api/auth'
@@ -78,6 +79,7 @@ export function AccountPage() {
         </div>
         {canAdd.length > 0 && (
           <>
+        <DuplicateAccountReview />
             <p className="muted small">You can use the same account on both sides of the marketplace.</p>
             <div className="row">
               {canAdd.map((p) => (

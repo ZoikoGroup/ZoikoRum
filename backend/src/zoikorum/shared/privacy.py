@@ -32,6 +32,10 @@ SECRET_COLUMNS = frozenset({"password_hash", "mfa_secret_enc", "refresh_token_ha
                             "signing_secret_enc", "token_hash", "storage_key", "photo_key"})
 
 
+# Credentials and reviewed snapshots added by the enterprise/authentication integration.
+SECRET_COLUMNS = SECRET_COLUMNS | frozenset({'public_key', 'credential_id', 'challenge', 'export_payload_enc',
+                                            'storage_version', 'provider_ref', 'provider_account_ref', 'transfer_ref'})
+
 @dataclass(frozen=True)
 class PersonalData:
     domain: str

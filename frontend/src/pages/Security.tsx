@@ -1,9 +1,10 @@
 import QRCode from 'qrcode'
+import PasskeySettings from '../components/PasskeySettings'
 import { useEffect, useState, type FormEvent } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { authApi } from '../api/auth'
 import { useAuth } from '../auth/AuthContext'
-import { ErrorAlert, Field } from '../components/ui'
+import { ErrorAlert, Field, StepUpModal } from '../components/ui'
 
 /** QR code for the authenticator app, drawn in the browser: the secret never leaves this page. */
 function SetupQr({ uri }: { uri: string }) {
@@ -20,7 +21,9 @@ function SetupQr({ uri }: { uri: string }) {
 export default function Security() {
   const { user, reloadUser, stepUp } = useAuth()
   const navigate = useNavigate()
-  const required = (useLocation().state as { required?: boolean } | null)?.required || user?.mfaRequired
+  const entry = useLocation().state as { required?: boolean; verifySession?: boolean } | null
+  const required = entry?.required || user?.mfaRequired
+  const [verifySession, setVerifySession] = useState(!!entry?.verifySession)
   const [setup, setSetup] = useState<{ secret: string; otpauthUri: string } | null>(null)
   const [code, setCode] = useState('')
   const [error, setError] = useState<unknown>(null)
@@ -64,6 +67,8 @@ export default function Security() {
         </div>
       )}
       <ErrorAlert error={error} />
+      <PasskeySettings />
+      <StepUpModal open={verifySession} onCancel={() => setVerifySession(false)} onDone={() => { setVerifySession(false); navigate(`/app/${user.defaultDashboard}`, { replace: true }) }} />
       <section className="card panel" style={{ maxWidth: 640 }}>
         <h2>Two-step verification</h2>
         {user.mfaEnabled ? (

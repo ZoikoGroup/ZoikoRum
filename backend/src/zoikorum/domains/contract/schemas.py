@@ -143,6 +143,7 @@ class MilestoneOut(BaseModel):
 
 
 class ContractOut(BaseModel):
+    retainerPaused: bool = False
     id: uuid.UUID
     reference: str
     proposalId: uuid.UUID

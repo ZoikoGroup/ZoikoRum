@@ -1,3 +1,4 @@
+import { downloadFile } from '../../lib/exports'
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { accountApi, deviceName, type DataRequest, type DeviceSession, type NotificationPreferences, type ProfileDetails } from '../../api/account'
@@ -238,8 +239,9 @@ function PrivacyTab({ onNotice }: { onNotice: (m: string) => void }) {
                 <td><span className={`badge ${st.tone}`}>{st.label}</span></td>
                 <td className="small">{day(r.createdAt)}</td>
                 <td style={{ textAlign: 'right' }}>
+                  {r.exportReady && <button className="btn btn-ghost btn-sm" onClick={() => run(async () => downloadFile('zoikorum-reviewed-data.json', JSON.stringify(await accountApi.downloadReviewedData(r.id), null, 2), 'application/json'))}>Download reviewed copy</button>}
                   {r.downloadable && <button className="btn btn-ghost btn-sm" onClick={() => download(r)}>Download (until {day(r.expiresAt)})</button>}
-                  {r.requestType === 'ACCESS' && r.status === 'COMPLETED' && !r.downloadable && <span className="muted small">Expired</span>}
+                  {r.requestType === 'ACCESS' && r.status === 'COMPLETED' && !r.downloadable && !r.exportReady && <span className="muted small">Expired</span>}
                 </td>
               </tr>
             })}</tbody></table>

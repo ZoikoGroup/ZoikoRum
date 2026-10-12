@@ -50,3 +50,11 @@ async def open_case_counts(session: AsyncSession) -> dict[str, int]:
     overdue = await session.scalar(select(func.count()).select_from(VerificationCase).where(
         VerificationCase.status.in_(("PENDING", "IN_REVIEW")), VerificationCase.estimated_completion < clock.now())) or 0
     return {"open": total, "overdue": overdue}
+
+
+async def privacy_export(session, identity_id):
+    from zoikorum.shared.privacy_exports import export_rows
+    from zoikorum.domains.verification.models import VerificationCase
+    return {
+        'cases': await export_rows(session, VerificationCase, VerificationCase.owner_identity_id == identity_id, ['subject_type', 'subject_id', 'owner_identity_id', 'verification_type', 'status', 'label', 'jurisdiction', 'credential_claim_id', 'specialization', 'estimated_completion', 'decided_at', 'verified_at', 'expires_at', 'public_reason', 'id', 'updated_at', 'created_at', 'version']),
+    }

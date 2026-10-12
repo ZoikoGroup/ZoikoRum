@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -616,7 +616,7 @@ async def _out(session: AsyncSession, actor: Actor, c: Contract, viewer: str) ->
     return ContractOut(
         id=c.id, reference=c.reference, proposalId=c.proposal_id, requestId=c.request_id, organizationId=c.organization_id,
         professionalId=c.professional_id, title=c.title, engagementType=c.engagement_type, pricingModel=c.pricing_model,
-        status=c.status, pendingChangeOrderId=c.pending_change_order_id,
+        retainerPaused=c.retainer_paused, status=c.status, pendingChangeOrderId=c.pending_change_order_id,
         total=MoneyDTO(amountMinor=c.total_minor, currency=c.currency), termsHash=c.terms_hash,
         contractVersion=c.contract_version,
         parties=[PartyOut(role="BUYER", name=p["buyer"]["name"], detail=f"Signatory: {p['buyer']['signatory']}"),
@@ -936,7 +936,7 @@ async def funding_reminder(session: AsyncSession, payload: dict) -> None:
     if m is None or m.status != "PENDING_FUNDING":
         return  # already funded, cancelled or done
     c = await _contract(session, m.contract_id)
-    if c.status == "ACTIVE":
+    if c.status == "ACTIVE" and not c.retainer_paused:
         _evt(session, E.MILESTONE_FUNDING_REMINDER, c, milestoneId=m.id, dueDate=m.due_date, amountMinor=m.amount_minor, currency=m.currency)
 
 
@@ -952,7 +952,10 @@ async def cancel_remaining_cycles(session: AsyncSession, actor: Actor, contract_
     if c.status != "ACTIVE":
         raise Conflict("Only an active retainer can be changed", code="CONTRACT_NOT_ACTIVE")
     ms = await _milestones(session, c.id, lock=True)
-    future = [m for m in ms if m.status == "PENDING_FUNDING"]
+    escrow = await escrow_facade.get_by_contract(session, c.id)
+    allocation_states = {a.milestone_id: a.state for a in escrow.allocations} if escrow else {}
+    future = [m for m in ms if m.status == "PENDING_FUNDING"
+              and allocation_states.get(m.id, "UNFUNDED") == "UNFUNDED"]
     if not future:
         raise Conflict("There are no unfunded cycles left to cancel", code="NOTHING_TO_CANCEL")
     for m in future:
@@ -1258,5 +1261,31 @@ async def request_revision(session: AsyncSession, actor: Actor, milestone_id: uu
     m.partial_offer_minor = m.partial_offer_reason = m.partial_offered_at = None
     m.revision_count += 1
     _evt(session, E.MILESTONE_REVISION_REQUESTED, c, milestoneId=m.id, reason=m.last_revision_reason, revisionCount=m.revision_count)
+    await session.flush()
+    return await _out(session, actor, c, viewer)
+
+
+async def set_retainer_pause(session: AsyncSession, actor: Actor, contract_id: uuid.UUID, paused: bool, reason: str) -> ContractOut:
+    """Pause new cycle funding; funded work and signed terms remain valid."""
+    c = await _contract(session, contract_id, lock=True)
+    viewer = await _viewer(session, actor, c)
+    await _require_decider(session, actor, c, viewer)
+    if c.engagement_type != "RETAINER" and c.pricing_model != "RETAINER":
+        raise Conflict("Only retainers can be paused", code="NOT_A_RETAINER")
+    if c.status != "ACTIVE":
+        raise Conflict("Only an active retainer can be paused or resumed", code="CONTRACT_NOT_ACTIVE")
+    if c.retainer_paused == paused:
+        return await _out(session, actor, c, viewer)
+    c.retainer_paused = paused
+    for m in await _milestones(session, c.id, lock=True):
+        if m.status != "PENDING_FUNDING":
+            continue
+        if paused:
+            await cancel_timer(session, TIMER_FUNDING_REMINDER, str(m.id))
+        elif m.due_date:
+            fire = max(clock.now(), datetime.combine(m.due_date, time.min, tzinfo=timezone.utc) - timedelta(days=get_settings().funding_reminder_days))
+            await schedule_timer(session, TIMER_FUNDING_REMINDER, str(m.id), fire, {"milestoneId": str(m.id)})
+    record_audit(session, "contract.retainer.paused" if paused else "contract.retainer.resumed", object_type="Contract", object_id=c.id,
+                 details={"reason": reason.strip(), "actorId": str(actor.identity_id)}, tenant_id=c.organization_id)
     await session.flush()
     return await _out(session, actor, c, viewer)

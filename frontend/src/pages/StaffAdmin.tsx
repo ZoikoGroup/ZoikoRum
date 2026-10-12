@@ -1,3 +1,6 @@
+import { SearchAdministration } from '../components/SearchAdministration'
+import { TaxonomySuggestions } from '../components/TaxonomySuggestions'
+import { DuplicateAccountReview } from '../components/DuplicateAccountReview'
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { authApi, PLATFORM_ROLES, ROLE_LABEL, type PlatformRole, type StaffMember } from '../api/auth'
 import { useAuth } from '../auth/AuthContext'
@@ -48,6 +51,9 @@ export default function StaffAdmin() {
 
   return (
     <>
+      <DuplicateAccountReview staff />
+      <TaxonomySuggestions staff />
+      <SearchAdministration />
       <div className="page-head">
         <div>
           <h1>Staff &amp; roles</h1>

@@ -42,6 +42,7 @@ class ContractSummary:
     policy_version_id: uuid.UUID | None
     milestones: tuple[MilestoneSummary, ...]
     reference: str = ""  # human reference, e.g. ZK-ENG-1A2B3C4D
+    retainer_paused: bool = False
 
 
 def _milestone(m: Milestone) -> MilestoneSummary:
@@ -54,11 +55,11 @@ async def _summary(session: AsyncSession, c: Contract | None) -> ContractSummary
     ms = (await session.scalars(select(Milestone).where(Milestone.contract_id == c.id).order_by(Milestone.sequence))).all()
     return ContractSummary(c.id, c.proposal_id, c.request_id, c.organization_id, c.buyer_identity_id, c.professional_id, c.status,
                            c.currency, c.total_minor, c.terms_hash, c.contract_version, c.policy_version_id, tuple(_milestone(m) for m in ms),
-                           c.reference)
+                           retainer_paused=c.retainer_paused, reference=c.reference)
 
 
-async def get_contract(session: AsyncSession, contract_id: uuid.UUID) -> ContractSummary | None:
-    return await _summary(session, await session.get(Contract, contract_id))
+async def get_contract(session: AsyncSession, contract_id: uuid.UUID, *, lock: bool = False) -> ContractSummary | None:
+    return await _summary(session, await session.get(Contract, contract_id, with_for_update=lock))
 
 
 async def get_contract_by_request(session: AsyncSession, request_id: uuid.UUID) -> ContractSummary | None:
@@ -119,3 +120,19 @@ async def engagements_by_organization(session: AsyncSession, professional_id: uu
         Contract.organization_id, func.count(), func.count().filter(Contract.status == "COMPLETED"), func.max(Contract.updated_at))
         .where(Contract.professional_id == professional_id).group_by(Contract.organization_id))).all()
     return {org: {"engagements": n, "completed": done, "lastEngagementAt": last} for org, n, done, last in rows}
+
+async def privacy_export(session, identity_id):
+    from sqlalchemy import or_
+    from zoikorum.shared.privacy_exports import export_rows
+    from zoikorum.domains.professional import facade as professional
+    from zoikorum.domains.contract.models import Contract, Milestone, ChangeOrder, ContractRevision, Signature
+    pro = await professional.get_professional_by_identity(session, identity_id)
+    owned = or_(Contract.buyer_identity_id == identity_id, Contract.professional_id == pro.id) if pro else Contract.buyer_identity_id == identity_id
+    contract_ids = select(Contract.id).where(owned)
+    return {
+        'contracts': await export_rows(session, Contract, owned, ['reference', 'proposal_id', 'request_id', 'organization_id', 'buyer_identity_id', 'professional_id', 'firm_id', 'title', 'engagement_type', 'pricing_model', 'status', 'retainer_paused', 'currency', 'total_minor', 'terms', 'terms_hash', 'contract_version', 'parties', 'nda_required', 'document_sha256', 'policy_version_id', 'policy_version_label', 'signature_deadline', 'activated_at', 'completed_at', 'pending_change_order_id', 'id', 'updated_at', 'created_at', 'version']),
+        'milestones': await export_rows(session, Milestone, Milestone.contract_id.in_(contract_ids), ['contract_id', 'sequence', 'title', 'description', 'amount_minor', 'currency', 'due_date', 'deliverable_keys', 'status', 'started_at', 'submitted_at', 'acceptance_due_at', 'accepted_at', 'accepted_by', 'revision_count', 'last_revision_reason', 'partial_offer_minor', 'partial_offer_reason', 'partial_offered_at', 'accepted_release_minor', 'id', 'updated_at', 'created_at', 'version']),
+        'change_orders': await export_rows(session, ChangeOrder, ChangeOrder.contract_id.in_(contract_ids), ['contract_id', 'proposed_by_identity_id', 'proposer_party', 'change_type', 'delta', 'impact', 'base_contract_version', 'status', 'decided_by_identity_id', 'decision_reason', 'decided_at', 'applied_version', 'id', 'updated_at', 'created_at', 'version']),
+        'contract_revisions': await export_rows(session, ContractRevision, ContractRevision.contract_id.in_(contract_ids), ['contract_id', 'contract_version', 'change_order_id', 'currency', 'total_minor', 'terms', 'milestones', 'terms_hash', 'document_sha256', 'id', 'created_at']),
+        'signatures': await export_rows(session, Signature, Signature.contract_id.in_(contract_ids), ['contract_id', 'contract_version', 'party', 'signer_identity_id', 'signer_name', 'terms_hash', 'auth_strength', 'signed_at', 'id', 'created_at']),
+    }

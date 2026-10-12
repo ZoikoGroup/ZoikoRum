@@ -14,6 +14,7 @@ export const compareLink = (ids: string[]) => `${window.location.origin}/app/com
 /** The comparison table for up to 3 professionals (Category doc s.7.2 must-have rows). */
 export function CompareTable({ ids }: { ids: string[] }) {
   const [items, setItems] = useState<CompareItem[] | null>(null)
+  const [shared, setShared] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const [copied, setCopied] = useState(false)
   useEffect(() => { savedApi.compare(ids).then(setItems).catch(setError) }, [ids])
@@ -43,6 +44,11 @@ export function CompareTable({ ids }: { ids: string[] }) {
   return (
     <>
         <ErrorAlert error={error} />
+        <button className="btn btn-secondary" onClick={async () => {
+          try { const url = new URL('/app/find', window.location.origin); url.searchParams.set('compare', ids.join(',')); await navigator.clipboard.writeText(url.toString()); setShared(true) }
+          catch (err) { setError(err) }
+        }}>Copy comparison link</button>
+        {shared && <p role="status">Comparison link copied. Recipients see current accessible profiles.</p>}
         {!items ? <p className="muted">Loading…</p> : (
           <div className="compare-scroll">
             <table className="data compare-table">

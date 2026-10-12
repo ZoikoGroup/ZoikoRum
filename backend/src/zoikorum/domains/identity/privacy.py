@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from zoikorum.domains.identity.models import ConsentRecord, DataRequest, Identity, IdentityLink, Session
+from zoikorum.domains.identity.models import ConsentRecord, DataRequest, Identity, IdentityLink, Session, Passkey, AuthChallenge, FederationAccount
 from zoikorum.shared import clock, privacy
 from zoikorum.shared.crypto import decrypt_field
 
@@ -47,6 +47,11 @@ async def erase(session: AsyncSession, identity_id: uuid.UUID) -> dict:
     identity.signup_organization_name = None
     identity.time_zone = None
     identity.status = "DELETED"
+    identity.passkey_enabled = False
+    await session.execute(delete(Passkey).where(Passkey.identity_id == identity_id))
+    await session.execute(delete(AuthChallenge).where(AuthChallenge.identity_id == identity_id))
+    await session.execute(delete(FederationAccount).where(FederationAccount.identity_id == identity_id))
+    await session.execute(update(DataRequest).where(DataRequest.identity_id == identity_id).values(export_payload_enc=None, export_expires_at=None))
     revoked = (await session.execute(update(Session).where(Session.identity_id == identity_id, Session.revoked_at.is_(None))
                                      .values(revoked_at=now))).rowcount
     return {"anonymised": True, "sessionsEnded": revoked}

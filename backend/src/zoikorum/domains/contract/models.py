@@ -37,6 +37,7 @@ class Contract(Base, UUIDPk, Timestamps, Versioned):
     engagement_type: Mapped[str] = mapped_column(String(20), nullable=False)
     pricing_model: Mapped[str | None] = mapped_column(String(20))
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="PENDING_SIGNATURE")
+    retainer_paused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     total_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)
     terms: Mapped[dict] = mapped_column(JSONB, nullable=False)  # snapshot of the accepted terms

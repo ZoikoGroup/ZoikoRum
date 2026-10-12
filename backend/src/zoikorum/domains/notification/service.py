@@ -32,6 +32,8 @@ EVENT_TITLES = {
     E.PASSWORD_RESET_REQUESTED: 'Reset your password',
     E.DATA_REQUEST_CREATED: 'Privacy request received', E.DATA_REQUEST_COMPLETED: 'Your privacy request is complete',
     E.DATA_REQUEST_BLOCKED: 'Account deletion on hold', E.DATA_REQUEST_CANCELLED: 'Account deletion cancelled',
+    E.PASSKEY_REGISTERED: "A passkey was added to your account",
+    E.PASSKEY_REMOVED: "A passkey was removed from your account",
     E.MFA_ENROLLED: 'Two-step verification enabled', E.PASSWORD_CHANGED: 'Your password changed',
     E.AUTHENTICATION_FAILED: 'Account security alert', E.IDENTITY_SUSPENDED: 'Account restricted',
     E.IDENTITY_REINSTATED: 'Account restored',
@@ -142,6 +144,10 @@ async def queue_event(session, event):
         priority = bool(saved_buyer and recipient == pro_identity)  # the professional asked to always hear from this buyer
         email_on = mandatory or priority or prefs is None or prefs.email
         in_app = mandatory or priority or prefs is None or prefs.in_app
+        if recipient == pro_identity and event.eventType == E.PROPOSAL_REQUESTED:
+            rel_email, rel_in_app = await professional.relationship_alert_channels(session, recipient,
+                _uuid(event.payload.get('buyerIdentityId')), org_id)
+            email_on, in_app = email_on and rel_email, in_app and rel_in_app
         if not email_on and not in_app:
             continue
         nid = uuid.uuid4()
@@ -201,6 +207,11 @@ async def deliver_email(session, key):
     if not recipient or recipient.status == 'DELETED':
         row.email_status = 'CANCELLED'
         return
+    from zoikorum.domains.notification.models import EmailSuppression
+    from zoikorum.shared.crypto import sha256_hex
+    if await session.scalar(select(EmailSuppression.id).where(EmailSuppression.address_sha256 == sha256_hex(recipient.email.strip().lower()))):
+        row.email_status = 'SUPPRESSED'
+        return
     prefs = await session.scalar(select(Preference).where(Preference.identity_id == row.identity_id))
     if not row.mandatory and prefs and not prefs.email:
         row.email_status = 'DISABLED'
@@ -215,7 +226,8 @@ async def deliver_email(session, key):
     row.email_attempts += 1
     try:
         row.email_status = await providers.email_provider().send(recipient.email, row.title, row.body + '\n\n' + url, str(row.id))
-        row.delivered_at, row.last_error = clock.now(), None
+        row.delivered_at = clock.now() if row.email_status == 'DELIVERED' else None
+        row.last_error = None
         record_event(session, E.NOTIFICATION_DELIVERED, aggregate_type='Notification', aggregate_id=row.id,
             payload={'notificationId': row.id, 'identityId': row.identity_id, 'channel': 'EMAIL', 'status': row.email_status})
     except Exception:

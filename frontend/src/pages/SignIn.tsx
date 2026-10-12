@@ -1,7 +1,8 @@
 import { useState, type FormEvent } from 'react'
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+import { passkeyApi } from '../api/passkeys'
 import { authApi } from '../api/auth'
-import { ApiError } from '../api/client'
+import { api, ApiError } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { AuthLayout, ErrorAlert, Field, PasswordInput } from '../components/ui'
 
@@ -77,6 +78,27 @@ export default function SignIn() {
           </button>
         )}
       </form>
+      <button className="btn btn-secondary btn-block" disabled={busy} onClick={async () => {
+        setBusy(true); setError(null)
+        try { const result = await passkeyApi.authenticate(); accept(result); navigate(safeNext ?? `/app/${result.user.defaultDashboard}`, { replace: true }) }
+        catch (e) { setError(e) } finally { setBusy(false) }
+      }}>Sign in with a passkey</button>
+      <button className="btn btn-secondary btn-block" disabled={busy} onClick={async () => {
+        setBusy(true); setError(null)
+        try {
+          const result = await api<{ authorizationUrl: string; state: string; browserToken: string }>('/v1/auth/enterprise/start', { method: 'POST', auth: false })
+          sessionStorage.setItem(`zk-sso-${result.state}`, result.browserToken)
+          window.location.assign(result.authorizationUrl)
+        } catch (e) { setError(e); setBusy(false) }
+      }}>Sign in with Microsoft Entra ID</button>
+      <button className="btn btn-secondary btn-block" disabled={busy} onClick={async () => {
+        setBusy(true); setError(null)
+        try {
+          const result = await api<{ authorizationUrl: string; state: string; browserToken: string }>('/v1/auth/saml/start', { method: 'POST', auth: false })
+          sessionStorage.setItem(`zk-sso-${result.state}`, result.browserToken)
+          window.location.assign(result.authorizationUrl)
+        } catch (e) { setError(e); setBusy(false) }
+      }}>Enterprise SAML sign-in</button>
       <div className="divider">New to Zoikorum?</div>
       <div className="row">
         <Link className="btn btn-secondary" style={{ flex: 1 }} to="/join">Create an account</Link>

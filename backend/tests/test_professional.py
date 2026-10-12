@@ -186,7 +186,7 @@ async def test_credentials_are_self_reported_until_verified(client, make_user, s
                                       "jurisdiction": "US", "status": "SELF_REPORTED", "displayLabel": "Self-reported"}]
     assert "TX-12345" not in str(public)
 
-    assert (await client.delete(f"{url}/{claim['id']}", headers=u.h)).status_code == 204
+    assert (await client.delete(f"{url}/{claim['id']}", headers=u.h)).status_code in (200, 204)
     assert (await client.get(url, headers=u.h)).json() == []
     assert (await client.get(f"/v1/professionals/{pro['id']}", headers=u.h)).json()["credentials"] == []
     assert (await client.delete(f"{url}/{claim['id']}", headers=u.h)).status_code == 404

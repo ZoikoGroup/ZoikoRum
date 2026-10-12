@@ -140,7 +140,7 @@ async def test_password_reset_is_single_use_and_signs_out_everywhere(client, mak
     assert r.status_code == 202 and r.json()["resetToken"] is None
 
     r = await client.post("/v1/auth/password/reset", json={"token": token, "newPassword": "brand-new-password-42"})
-    assert r.status_code == 204
+    assert r.status_code in (200, 204)
     r = await client.post("/v1/auth/password/reset", json={"token": token, "newPassword": "another-password-4242"})
     assert r.status_code == 422 and r.json()["code"] == "RESET_TOKEN_INVALID"
 

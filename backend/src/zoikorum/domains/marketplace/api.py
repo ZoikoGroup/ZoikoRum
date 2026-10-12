@@ -83,12 +83,12 @@ async def saved(actor: CurrentActor, session: DbSession):
     return await service.saved_professionals(session, actor)
 
 
-@router.post("/v1/saved/professionals", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/v1/saved/professionals", status_code=status.HTTP_200_OK)
 async def save(body: SaveIn, actor: CurrentActor, session: DbSession) -> None:
     await service.save_professional(session, actor, body.professionalId)
 
 
-@router.delete("/v1/saved/professionals/{professional_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/v1/saved/professionals/{professional_id}", status_code=status.HTTP_200_OK)
 async def unsave(professional_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> None:
     await service.unsave_professional(session, actor, professional_id)
 
@@ -108,7 +108,7 @@ async def rename_collection(collection_id: uuid.UUID, body: CollectionIn, actor:
     return await service.rename_collection(session, actor, collection_id, body.name)
 
 
-@router.delete("/v1/saved/collections/{collection_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/v1/saved/collections/{collection_id}", status_code=status.HTTP_200_OK)
 async def delete_collection(collection_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> None:
     await service.delete_collection(session, actor, collection_id)
 
@@ -119,7 +119,7 @@ async def add_to_collection(collection_id: uuid.UUID, body: CollectionItemsIn, a
     return await service.add_to_collection(session, actor, collection_id, body.professionalIds)
 
 
-@router.delete("/v1/saved/collections/{collection_id}/items/{professional_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/v1/saved/collections/{collection_id}/items/{professional_id}", status_code=status.HTTP_200_OK)
 async def remove_from_collection(collection_id: uuid.UUID, professional_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> None:
     await service.remove_from_collection(session, actor, collection_id, professional_id)
 
@@ -152,6 +152,6 @@ async def search_viewed(search_id: uuid.UUID, actor: CurrentActor, session: DbSe
     return await service.mark_search_viewed(session, actor, search_id)
 
 
-@router.delete("/v1/saved/searches/{search_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/v1/saved/searches/{search_id}", status_code=status.HTTP_200_OK)
 async def delete_search(search_id: uuid.UUID, actor: CurrentActor, session: DbSession):
     await service.delete_search(session, actor, search_id)

@@ -75,3 +75,13 @@ async def export_thread(session: AsyncSession, context_type: str, context_id: uu
             )
         )
     return export
+
+
+async def privacy_export(session, identity_id):
+    from zoikorum.shared.privacy_exports import export_rows
+    from zoikorum.domains.messaging.models import Message, Attachment, ReadPosition
+    return {
+        'messages': await export_rows(session, Message, Message.sender_identity_id == identity_id, ['thread_id', 'sequence', 'sender_identity_id', 'sender_name', 'body', 'attachment_ids', 'content_hash', 'source_event_id', 'flags', 'id', 'created_at']),
+        'attachments': await export_rows(session, Attachment, Attachment.uploaded_by == identity_id, ['thread_id', 'uploaded_by', 'name', 'content_type', 'size_bytes', 'sha256', 'file_version', 'id', 'created_at']),
+        'read_positions': await export_rows(session, ReadPosition, ReadPosition.identity_id == identity_id, ['thread_id', 'identity_id', 'sequence', 'id', 'updated_at', 'created_at']),
+    }

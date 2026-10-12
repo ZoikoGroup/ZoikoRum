@@ -146,3 +146,23 @@ async def replay(delivery_id: uuid.UUID, actor: CurrentActor, session: DbSession
     record_audit(session, 'notification.webhook.replayed', object_type='WebhookDelivery', object_id=delivery.id,
         tenant_id=endpoint.organization_id, details={'endpointId': str(endpoint.id)})
     return delivery_out(delivery)
+
+
+from fastapi import Request
+from zoikorum.domains.notification import email_events
+
+@router.post('/v1/webhooks/sendgrid')
+async def sendgrid_receipts(request: Request, session: DbSession):
+    return await email_events.receive(session, await request.body(),
+        request.headers.get('X-Twilio-Email-Event-Webhook-Signature'),
+        request.headers.get('X-Twilio-Email-Event-Webhook-Timestamp'))
+
+@router.get('/v1/notifications/{notification_id}/email-status')
+async def notification_email_status(notification_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    from zoikorum.domains.notification.models import Notification, EmailReceipt
+    row = await session.scalar(select(Notification).where(Notification.id == notification_id, Notification.identity_id == actor.identity_id))
+    if not row:
+        raise NotFound('Notification not found')
+    receipts = (await session.scalars(select(EmailReceipt).where(EmailReceipt.notification_id == row.id).order_by(EmailReceipt.occurred_at))).all()
+    return {'status': row.email_status, 'deliveredAt': row.delivered_at,
+        'events': [{'event': r.event_type, 'occurredAt': r.occurred_at} for r in receipts]}

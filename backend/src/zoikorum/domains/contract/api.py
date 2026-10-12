@@ -135,3 +135,9 @@ async def answer_partial(milestone_id: uuid.UUID, answer: Literal["agree", "decl
 @router.post("/v1/milestones/{milestone_id}/request-revision", response_model=ContractOut)
 async def request_revision(milestone_id: uuid.UUID, body: RevisionIn, actor: CurrentActor, session: DbSession):
     return await service.request_revision(session, actor, milestone_id, body)
+
+
+@router.post("/v1/contracts/{contract_id}/retainer/{action}", response_model=ContractOut)
+async def retainer_pause(contract_id: uuid.UUID, action: Literal["pause", "resume"], body: CancelCyclesIn,
+                         actor: CurrentActor, session: DbSession, idem: IdempotencyKey):
+    return await idem.run(session, actor, lambda: service.set_retainer_pause(session, actor, contract_id, action == "pause", body.reason))

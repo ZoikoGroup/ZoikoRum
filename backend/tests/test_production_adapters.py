@@ -49,14 +49,16 @@ def test_transfer_and_bank_payout_are_separate_and_retryable():
     calls = []
     def handle(request):
         calls.append(request)
+        if request.method == 'GET':
+            return httpx.Response(200, json={'data': [], 'has_more': False})
         return httpx.Response(200, json={"id": "tr_fixture" if request.url.path.endswith("transfers") else "po_fixture"})
     provider = StripeProvider(stripe_settings(), transport=httpx.MockTransport(handle))
     result = provider.payout("acct_fixture", 900, "USD", idempotency_key="release-id")
-    assert result.pending and len(calls) == 1 and result.provider_ref == "tr_fixture"
+    assert result.pending and len(calls) == 2 and result.provider_ref == "tr_fixture"
     bank = provider.bank_payout("acct_fixture", 900, "USD", idempotency_key="release-id:1")
     assert bank.pending and bank.provider_ref == "po_fixture"
-    assert calls[1].headers["Stripe-Account"] == "acct_fixture"
-    assert calls[1].headers["Idempotency-Key"] == "payout:release-id:1"
+    assert calls[3].headers["Stripe-Account"] == "acct_fixture"
+    assert calls[3].headers["Idempotency-Key"] == "payout:release-id:1"
 
 
 def test_checkout_requires_paid_status_and_maps_currency():
@@ -190,3 +192,42 @@ async def test_persona_owner_scope_receipts_and_late_events(client, make_user, d
     assert snapshot.status_code == 200, snapshot.text
     assert snapshot.json()["tier"] == "B"
     assert snapshot.json()["dimensions"]["identity"] == "VERIFIED"
+
+
+def test_stripe_recovers_a_transfer_after_idempotency_retention_without_sending_more_money():
+    calls = []
+    def handle(request):
+        calls.append(request)
+        assert request.method == 'GET'
+        return httpx.Response(200, json={'data': [{'id': 'tr_existing', 'amount': 900, 'currency': 'usd'}], 'has_more': False})
+    provider = StripeProvider(stripe_settings(), transport=httpx.MockTransport(handle))
+    result = provider.payout('acct_fixture', 900, 'USD', idempotency_key='release-id')
+    assert result.provider_ref == 'tr_existing' and len(calls) == 1
+
+
+def test_stripe_recovers_the_exact_bank_attempt_without_repeating_it():
+    def handle(request):
+        assert request.method == 'GET'
+        return httpx.Response(200, json={'data': [{'id': 'po_existing', 'amount': 900, 'currency': 'usd',
+            'status': 'pending', 'metadata': {'payoutReference': 'release-id', 'payoutAttemptKey': 'release-id:2'}}], 'has_more': False})
+    provider = StripeProvider(stripe_settings(), transport=httpx.MockTransport(handle))
+    result = provider.bank_payout('acct_fixture', 900, 'USD', idempotency_key='release-id:2')
+    assert result.provider_ref == 'po_existing' and result.pending
+
+
+def test_refund_recovery_does_not_send_money_twice_after_idempotency_retention():
+    calls = []
+    def handle(request):
+        calls.append(request)
+        if request.method != 'GET':
+            raise AssertionError('A recovered refund must not be created again')
+        if '/checkout/sessions/' in request.url.path:
+            return httpx.Response(200, json={'payment_intent': 'pi_original'})
+        return httpx.Response(200, json={'data': [{'id': 're_original', 'amount': 200, 'currency': 'usd',
+            'status': 'succeeded', 'metadata': {'refundReference': 'durable-refund'}}], 'has_more': False})
+    provider = StripeProvider(stripe_settings(), transport=httpx.MockTransport(handle))
+    result = provider.refund('cs_original', 200, 'USD', idempotency_key='durable-refund')
+    assert result.ok and not result.pending and result.provider_ref == 're_original'
+    assert len(calls) == 2
+    with pytest.raises(ValidationFailed):
+        provider.refund('cs_original', 201, 'USD', idempotency_key='durable-refund')

@@ -19,6 +19,9 @@ dependencies = [
     "email-validator>=2.2",
     "fpdf2>=2.8",  # server-generated PDFs (contracts, invoices)
     "redis>=5,<7",  # shared rate limits across API processes (ZK_REDIS_URL)
+
+    "webauthn>=2.7,<3",
+    "python3-saml>=1.16,<2",
 ]
 
 [project.optional-dependencies]
