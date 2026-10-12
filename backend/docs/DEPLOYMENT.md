@@ -23,6 +23,7 @@ browser ──HTTPS──> load balancer (TLS) ──> web :8080 ──/v1──
 | Payments | `ZK_PAYMENT_PROVIDER=stripe` and the Stripe settings | Only after partner approval (`ZK_PAYMENT_FLOW_APPROVED`) |
 | Identity partner | `ZK_VERIFICATION_PROVIDER=veriff` + `ZK_VERIFF_API_KEY`, `ZK_VERIFF_SHARED_SECRET` (or the Persona settings) | Webhook URL in the partner dashboard: `https://<host>/v1/verification/webhooks/veriff` |
 | Error reporting | `ZK_SENTRY_DSN`, `ZK_RELEASE` | Optional |
+| AI (optional) | `ZK_AI_PROVIDER=anthropic`, `ZK_ANTHROPIC_API_KEY`, `ZK_AI_MODEL`; image needs `pip install .[ai]` | "Describe what you need" search and "Can't find yours?" specialization matching. Without it both use keyword rules, so nothing breaks |
 | Redis | `ZK_REDIS_URL` | Rate-limit counters shared by every API process and server. No business data; if it is down the API keeps serving with per-process limits |
 
 Required for every non-local environment: `ZK_ENV` (`staging` or `production`), `ZK_JWT_SECRET` and
@@ -38,11 +39,30 @@ Development-only switches are refused outside local development: `ZK_DEV_SKIP_MF
    start against a database whose migrations are not current, so a forgotten step fails safely.
 3. Start or roll the services: `docker compose -f docker-compose.prod.yml up -d api worker web`.
 4. Check: `GET /ready` returns `{"status": "ready"}` (database reachable and migrated); `GET /health` is liveness only.
+5. When the release adds search fields (as `15081f5c2ac6`, track record, does), rebuild the search index once:
+   `docker compose -f docker-compose.prod.yml run --rm api python -m zoikorum.cli reindex-search`. Until then those
+   fields fill in as each professional's next event arrives.
 
 Run **one worker per database** (it relays events and fires timers). The API can scale horizontally; set
 `WEB_CONCURRENCY` (default 2 processes per container). With `ZK_REDIS_URL` all processes and servers share one
 request budget per caller; without it each process counts on its own (the API logs a warning at start outside
 development).
+
+## Load test (staging, before launch and before big releases)
+
+`backend/scripts/load_test.py` runs many simulated visitors (search, profiles, taxonomy, a few "describe what you
+need") and, with a staging buyer account, signed-in buyers (profile, contracts, notifications) at once. It is
+read-only apart from signing in, refuses URLs that do not look like staging, and ends with PASS or FAIL against a p95
+latency and error-rate limit (exit code 1 on FAIL, so CI can use it):
+
+```
+python scripts/load_test.py --base-url https://staging-api.<domain> --users 100 --duration 300     --email loadtest-buyer@<domain> --password '…' --p95-ms 800 --max-error-rate 0.01
+```
+
+All simulated visitors come from one address, so the per-address limit (60 a minute) answers most of them with 429;
+the script counts those separately. To measure capacity, run it with `ZK_RATE_LIMIT_ENABLED=false` on staging for the
+duration (and turn it back on), or from several machines. Record the result (users, p95 per endpoint, requests per
+second, server sizes) in the launch checklist.
 
 ## Health checks for the platform
 

@@ -73,6 +73,24 @@ async def specialization_names(session: AsyncSession) -> dict[str, str]:
     return dict(rows)
 
 
+async def specialization_catalog(session: AsyncSession) -> list:
+    """Every active specialization with its group and category, for AI matching (ai.facade.CatalogEntry)."""
+    from zoikorum.domains.ai import facade as ai_facade
+
+    nodes = (await session.scalars(select(TaxonomyNode).where(TaxonomyNode.status == "ACTIVE"))).all()
+    by_id = {n.id: n for n in nodes}
+    out = []
+    for n in nodes:
+        if n.level != "SPECIALIZATION":
+            continue
+        group = by_id.get(n.parent_id)
+        cat = by_id.get(group.parent_id) if group else None
+        if group and cat:
+            out.append(ai_facade.CatalogEntry(slug=n.slug, name=n.name, category_slug=cat.slug, category_name=cat.name,
+                                              group_slug=group.slug, group_name=group.name))
+    return out
+
+
 async def saved_by(session: AsyncSession, professional_id: uuid.UUID) -> list[uuid.UUID]:
     """Identity ids that saved this professional (availability alerts)."""
     return list((await session.scalars(select(SavedProfessional.identity_id).where(

@@ -7,6 +7,7 @@ import { proposalApi, type ProposalRequest } from '../../api/proposals'
 import { useAuth } from '../../auth/AuthContext'
 import { Icon } from '../../components/dashboard'
 import { PortalHeader } from '../../components/portal'
+import { useDialog } from '../../components/ui'
 
 type Tab = 'All' | 'Engagements' | 'Requests' | 'Professionals' | 'System'
 type StartOption = { key: string; contextType: MessageContextType; contextId: string; title: string; counterpart: string }
@@ -108,6 +109,7 @@ export function MessagesPage() {
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
   const [showStart, setShowStart] = useState(false)
+  const startDialog = useDialog<HTMLElement>(() => setShowStart(false), showStart)
   const [startOptions, setStartOptions] = useState<StartOption[]>([])
   const [loadingOptions, setLoadingOptions] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
@@ -520,7 +522,7 @@ export function MessagesPage() {
       </section>
 
       {showStart && <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowStart(false) }}>
-        <section className="modal message-start-modal" role="dialog" aria-modal="true" aria-labelledby="message-start-title">
+        <section ref={startDialog} className="modal message-start-modal" role="dialog" aria-modal="true" aria-labelledby="message-start-title">
           <header className="modal-head"><div><h2 id="message-start-title">Start a conversation</h2><p className="muted small">Choose a request or engagement to keep messages in context.</p></div><button className="icon-btn" aria-label="Close" onClick={() => setShowStart(false)}>×</button></header>
           {loadingOptions ? <p className="muted">Loading your requests and engagements…</p> : startOptions.length ? <div className="message-start-list">
             {startOptions.map((option) => <button key={option.key} onClick={() => void openConversation(option)}>

@@ -3,7 +3,7 @@ import {
   formatMoney, ORG_ROLE_INFO, ORG_ROLES, orgApi,
   type BusinessUnit, type CostCenter, type Invitation, type Organization, type OrgMember, type OrgRole,
 } from '../api/orgs'
-import { ErrorAlert, Field, useStepUp } from '../components/ui'
+import { ErrorAlert, Field, useDialog, useStepUp } from '../components/ui'
 
 const CURRENCIES = ['USD', 'GBP', 'EUR', 'INR', 'CAD', 'AUD', 'SGD', 'AED']
 
@@ -41,10 +41,10 @@ export function RoleBadges({ roles }: { roles: string[] }) {
   )
 }
 
-function RolePicker({ value, onChange }: { value: OrgRole[]; onChange: (roles: OrgRole[]) => void }) {
+function RolePicker({ value, onChange, labelledBy }: { value: OrgRole[]; onChange: (roles: OrgRole[]) => void; labelledBy: string }) {
   const toggle = (r: OrgRole) => onChange(value.includes(r) ? value.filter((x) => x !== r) : [...value, r])
   return (
-    <div className="role-grid" role="group" aria-label="Roles">
+    <div className="role-grid" role="group" aria-labelledby={labelledBy}>
       {ORG_ROLES.map((r) => (
         <label key={r} className="role-option">
           <input type="checkbox" checked={value.includes(r)} onChange={() => toggle(r)} />
@@ -55,12 +55,12 @@ function RolePicker({ value, onChange }: { value: OrgRole[]; onChange: (roles: O
   )
 }
 
-function SpendLimitInput({ amount, currency, onAmount, onCurrency }: {
-  amount: string; currency: string; onAmount: (v: string) => void; onCurrency: (v: string) => void
+function SpendLimitInput({ id, amount, currency, onAmount, onCurrency }: {
+  id: string; amount: string; currency: string; onAmount: (v: string) => void; onCurrency: (v: string) => void
 }) {
   return (
     <div className="row" style={{ alignItems: 'stretch' }}>
-      <input className="input" style={{ flex: 1 }} inputMode="decimal" placeholder="e.g. 50000" aria-label="Spend limit amount"
+      <input id={id} className="input" style={{ flex: 1 }} inputMode="decimal" placeholder="e.g. 50000"
         value={amount} onChange={(e) => onAmount(e.target.value.replace(/[^\d.]/g, ''))} />
       <select className="input" style={{ width: 110 }} aria-label="Currency" value={currency} onChange={(e) => onCurrency(e.target.value)}>
         {CURRENCIES.map((c) => <option key={c}>{c}</option>)}
@@ -159,12 +159,12 @@ export function EnterpriseTeamPage() {
               <input id="inv-email" className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
             </Field>
             <div className="field">
-              <label>Roles</label>
-              <RolePicker value={roles} onChange={setRoles} />
+              <span className="field-title" id="invite-roles">Roles</span>
+              <RolePicker value={roles} onChange={setRoles} labelledBy="invite-roles" />
             </div>
             <div className="field" style={{ maxWidth: 360 }}>
-              <label>Approval spend limit (optional)</label>
-              <SpendLimitInput amount={amount} currency={currency} onAmount={setAmount} onCurrency={setCurrency} />
+              <label htmlFor="invite-spend-limit">Approval spend limit (optional)</label>
+              <SpendLimitInput id="invite-spend-limit" amount={amount} currency={currency} onAmount={setAmount} onCurrency={setCurrency} />
               <span className="hint">The most this person can approve per engagement or release. Leave empty for no approval authority.</span>
             </div>
             <button className="btn btn-primary" disabled={!email || roles.length === 0}>Send invitation</button>
@@ -228,6 +228,7 @@ function EditMemberModal({ orgId, member, onClose, onSaved, run, setError }: {
   orgId: string; member: OrgMember; onClose: () => void; onSaved: (name: string) => Promise<void>
   run: (action: () => Promise<void>) => Promise<void>; setError: (e: unknown) => void
 }) {
+  const dialog = useDialog(onClose)
   const [roles, setRoles] = useState<OrgRole[]>(member.roles)
   const [amount, setAmount] = useState(member.spendLimit ? String(member.spendLimit.amountMinor / 100) : '')
   const [currency, setCurrency] = useState(member.spendLimit?.currency ?? 'USD')
@@ -244,14 +245,14 @@ function EditMemberModal({ orgId, member, onClose, onSaved, run, setError }: {
   }
 
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="edit-title">
+    <div ref={dialog} className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="edit-title">
       <form className="card modal" style={{ maxWidth: 620 }} onSubmit={save}>
         <h2 id="edit-title">Edit {member.displayName}</h2>
         <p className="muted small">{member.email}</p>
-        <div className="field"><label>Roles</label><RolePicker value={roles} onChange={setRoles} /></div>
+        <div className="field"><span className="field-title" id="edit-roles">Roles</span><RolePicker value={roles} onChange={setRoles} labelledBy="edit-roles" /></div>
         <div className="field">
-          <label>Approval spend limit</label>
-          <SpendLimitInput amount={amount} currency={currency} onAmount={setAmount} onCurrency={setCurrency} />
+          <label htmlFor="edit-spend-limit">Approval spend limit</label>
+          <SpendLimitInput id="edit-spend-limit" amount={amount} currency={currency} onAmount={setAmount} onCurrency={setCurrency} />
           <span className="hint">Leave empty to remove approval authority (Org Admins are unlimited).</span>
         </div>
         <div className="row" style={{ justifyContent: 'flex-end' }}>
@@ -355,8 +356,8 @@ export function EnterpriseStructurePage() {
               </Field>
             </div>
             <div className="field" style={{ maxWidth: 360, marginTop: 12 }}>
-              <label>Quarterly budget (optional)</label>
-              <SpendLimitInput amount={cc.amount} currency={cc.currency} onAmount={(v) => setCc({ ...cc, amount: v })} onCurrency={(v) => setCc({ ...cc, currency: v })} />
+              <label htmlFor="cost-center-budget">Quarterly budget (optional)</label>
+              <SpendLimitInput id="cost-center-budget" amount={cc.amount} currency={cc.currency} onAmount={(v) => setCc({ ...cc, amount: v })} onCurrency={(v) => setCc({ ...cc, currency: v })} />
             </div>
             <button className="btn btn-primary" disabled={!cc.name.trim() || !cc.code.trim()}>Add cost center</button>
           </form>

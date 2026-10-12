@@ -90,27 +90,27 @@ export default function AuditExportsPage() {
 
         <div className="row" style={{ marginBottom: 12 }}>
           <div className="field" style={{ flex: 1, minWidth: 220 }}>
-            <label>Organisation Scope</label>
-            <input className="input" name="tenantId" placeholder="Optional organisation UUID" />
+            <label htmlFor="auditexports-tenantId">Organisation Scope</label>
+            <input id="auditexports-tenantId" className="input" name="tenantId" placeholder="Optional organisation UUID" />
           </div>
           <div className="field" style={{ flex: 1, minWidth: 220 }}>
-            <label>Subject / Record Scope</label>
-            <input className="input" name="objectId" placeholder="Optional engagement or dispute ID" />
+            <label htmlFor="auditexports-objectId">Subject / Record Scope</label>
+            <input id="auditexports-objectId" className="input" name="objectId" placeholder="Optional engagement or dispute ID" />
           </div>
         </div>
 
         <div className="row" style={{ marginBottom: 16 }}>
           <div className="field" style={{ flex: 1, minWidth: 180 }}>
-            <label>From Timestamp</label>
-            <input className="input" name="since" type="datetime-local" />
+            <label htmlFor="auditexports-since">From Timestamp</label>
+            <input id="auditexports-since" className="input" name="since" type="datetime-local" />
           </div>
           <div className="field" style={{ flex: 1, minWidth: 180 }}>
-            <label>To Timestamp</label>
-            <input className="input" name="until" type="datetime-local" />
+            <label htmlFor="auditexports-until">To Timestamp</label>
+            <input id="auditexports-until" className="input" name="until" type="datetime-local" />
           </div>
           <div className="field" style={{ width: 140 }}>
-            <label>Export Format</label>
-            <select className="input" name="format">
+            <label htmlFor="auditexports-format">Export Format</label>
+            <select id="auditexports-format" className="input" name="format">
               <option value="json">JSON</option>
               <option value="csv">CSV</option>
             </select>

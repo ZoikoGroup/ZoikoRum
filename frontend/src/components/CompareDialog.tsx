@@ -6,7 +6,7 @@ import { savedApi, type CompareItem } from '../api/saved'
 import { DIMENSION_VALUE, DIMENSIONS } from '../api/verification'
 import { Avatar } from './dashboard'
 import { TierBadge } from './portal'
-import { ErrorAlert } from './ui'
+import { ErrorAlert, useDialog } from './ui'
 
 /** Shareable link to the same comparison (Category doc s.7.2: "shareable comparison link (signed-in)"). */
 export const compareLink = (ids: string[]) => `${window.location.origin}/app/compare?ids=${ids.join(',')}`
@@ -46,7 +46,7 @@ export function CompareTable({ ids }: { ids: string[] }) {
         {!items ? <p className="muted">Loading…</p> : (
           <div className="compare-scroll">
             <table className="data compare-table">
-              <thead><tr><th />{items.map((c) => (
+              <thead><tr><th><span className="sr-only">Detail</span></th>{items.map((c) => (
                 <th key={c.professionalId}>
                   <div className="name-row"><Avatar name={c.displayName} photoUrl={c.photoUrl} size={40} />
                     <div><Link to={`/professionals/${c.professionalId}`}>{c.displayName}</Link>
@@ -72,8 +72,9 @@ export function CompareTable({ ids }: { ids: string[] }) {
 
 /** Side-by-side comparison of up to 3 professionals, as a dialog over search or the shortlist. */
 export function CompareDialog({ ids, onClose }: { ids: string[]; onClose: () => void }) {
+  const dialog = useDialog(onClose)
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="compare-title" onClick={onClose}>
+    <div ref={dialog} className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="compare-title" onClick={onClose}>
       <div className="card modal compare-modal" onClick={(e) => e.stopPropagation()}>
         <div className="panel-head"><h2 id="compare-title">Compare professionals</h2>
           <button className="icon-btn" aria-label="Close" onClick={onClose}>×</button></div>

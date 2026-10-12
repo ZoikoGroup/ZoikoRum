@@ -375,18 +375,9 @@ MAX_PENDING_SUGGESTIONS = 3
 
 
 async def _catalog(session: AsyncSession) -> list:
-    nodes = (await session.scalars(select(TaxonomyNode).where(TaxonomyNode.status == "ACTIVE"))).all()
-    by_id = {n.id: n for n in nodes}
-    out = []
-    for n in nodes:
-        if n.level != "SPECIALIZATION":
-            continue
-        group = by_id.get(n.parent_id)
-        cat = by_id.get(group.parent_id) if group else None
-        if group and cat:
-            out.append(ai_facade.CatalogEntry(slug=n.slug, name=n.name, category_slug=cat.slug, category_name=cat.name,
-                                              group_slug=group.slug, group_name=group.name))
-    return out
+    from zoikorum.domains.marketplace.facade import specialization_catalog
+
+    return await specialization_catalog(session)
 
 
 async def suggest(session: AsyncSession, actor: Actor, body: SuggestIn) -> SuggestOut:

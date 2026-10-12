@@ -1,8 +1,50 @@
-import { useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { PASSWORD_LABEL, passwordScore } from '../lib/password'
+
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+const openDialogs: HTMLElement[] = []  // innermost last: only it answers Escape and keeps Tab inside
+
+/** Keyboard behaviour every modal dialog needs (WCAG 2.1.2, 2.4.3): focus moves into the dialog when it opens (to the
+    field marked autoFocus, else the first form field, else the first control), Tab and Shift+Tab stay inside it,
+    Escape closes it when `onClose` is given, and focus returns to what was focused before. Attach the ref to the
+    element with role="dialog". */
+export function useDialog<T extends HTMLElement = HTMLDivElement>(onClose?: () => void, active = true) {
+  const ref = useRef<T>(null)
+  const close = useRef(onClose)
+  useEffect(() => { close.current = onClose })
+  useEffect(() => {
+    const node = ref.current
+    if (!active || !node) return
+    const before = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const controls = () => [...node.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.getClientRects().length > 0)
+    openDialogs.push(node)
+    if (!node.contains(document.activeElement)) {
+      if (!node.hasAttribute('tabindex')) node.setAttribute('tabindex', '-1')
+      const field = controls().find((el) => el.matches('input, select, textarea'))
+      ;(field ?? controls()[0] ?? node).focus()
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (openDialogs[openDialogs.length - 1] !== node) return
+      if (e.key === 'Escape' && close.current) { e.preventDefault(); close.current() }
+      if (e.key !== 'Tab') return
+      const list = controls()
+      if (list.length === 0) { e.preventDefault(); return }
+      const first = list[0], last = list[list.length - 1]
+      if (e.shiftKey && (document.activeElement === first || !node.contains(document.activeElement))) { e.preventDefault(); last.focus() }
+      else if (!e.shiftKey && (document.activeElement === last || !node.contains(document.activeElement))) { e.preventDefault(); first.focus() }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      openDialogs.splice(openDialogs.indexOf(node), 1)
+      if (before?.isConnected) before.focus()
+    }
+  }, [active])
+  return ref
+}
 
 /** Public header. Every link stays inside the Zoikorum app. */
 export function SiteHeader() {
@@ -167,6 +209,7 @@ export function PasswordInput(props: {
 /** Asks for the authenticator code before a sensitive action (step-up MFA). */
 export function StepUpModal({ open, onDone, onCancel }: { open: boolean; onDone: () => void; onCancel: () => void }) {
   const { stepUp } = useAuth()
+  const dialog = useDialog(onCancel, open)
   const [code, setCode] = useState('')
   const [error, setError] = useState<unknown>(null)
   const [busy, setBusy] = useState(false)
@@ -188,7 +231,7 @@ export function StepUpModal({ open, onDone, onCancel }: { open: boolean; onDone:
   }
 
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="stepup-title">
+    <div ref={dialog} className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="stepup-title">
       <form className="card modal" onSubmit={submit}>
         <h2 id="stepup-title">Confirm it's you</h2>
         <p className="muted">This action needs a fresh confirmation. Enter the 6-digit code from your authenticator app.</p>

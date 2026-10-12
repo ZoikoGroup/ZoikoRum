@@ -117,7 +117,7 @@ function SecurityTab({ me }: { me: ProfileDetails }) {
       <section className="card panel">
         <div className="panel-head"><h2>Signed-in devices</h2></div>
         {!sessions ? <p className="muted">Loading…</p> : (
-          <table className="data"><thead><tr><th>Device</th><th>Signed in</th><th>Strength</th><th /></tr></thead>
+          <table className="data"><thead><tr><th>Device</th><th>Signed in</th><th>Strength</th><th><span className="sr-only">Actions</span></th></tr></thead>
             <tbody>{sessions.map((s) => (
               <tr key={s.id}><td>{deviceName(s.device)} {s.current && <span className="badge green">This device</span>}</td>
                 <td className="small">{new Date(s.signedInAt).toLocaleString()}</td>
@@ -153,7 +153,7 @@ function NotificationsTab({ onSaved }: { onSaved: () => void }) {
         <ErrorAlert error={error} />
         <ul className="settings-list">{rows.map(([k, label, desc]) => (
           <li key={k}><span><strong>{label}</strong><br /><span className="muted small">{desc}</span></span>
-            <label className="switch"><input type="checkbox" checked={Boolean(prefs[k])} onChange={(e) => setPrefs({ ...prefs, [k]: e.target.checked })} /><span aria-hidden /></label></li>
+            <label className="switch"><input type="checkbox" aria-label={label} checked={Boolean(prefs[k])} onChange={(e) => setPrefs({ ...prefs, [k]: e.target.checked })} /><span aria-hidden /></label></li>
         ))}</ul>
         {prefs.mandatoryNotice && <p className="muted small">{prefs.mandatoryNotice}</p>}
         <button className="btn btn-primary">Save preferences</button>
@@ -228,7 +228,7 @@ function PrivacyTab({ onNotice }: { onNotice: (m: string) => void }) {
       </ul>
       {requests && requests.length > 0 && (
         <div className="table-scroll">
-          <table className="data"><thead><tr><th>Request</th><th>Status</th><th>Requested</th><th /></tr></thead>
+          <table className="data"><thead><tr><th>Request</th><th>Status</th><th>Requested</th><th><span className="sr-only">Actions</span></th></tr></thead>
             <tbody>{requests.map((r) => {
               const st = REQUEST_STATUS[r.status] ?? { label: r.status, tone: '' }
               return <tr key={r.id}>

@@ -54,7 +54,7 @@ export default function SavedBuyersPage() {
           </EmptyTable>
         ) : (
           <div className="table-scroll"><table className="data">
-            <thead><tr><th>Buyer</th><th>Requests</th><th>Engagements</th><th>Last activity</th><th>Private note</th><th>Alerts</th><th /></tr></thead>
+            <thead><tr><th>Buyer</th><th>Requests</th><th>Engagements</th><th>Last activity</th><th>Private note</th><th>Alerts</th><th><span className="sr-only">Actions</span></th></tr></thead>
             <tbody>{(saved ?? []).map((b) => (
               <tr key={b.id}>
                 <td><strong>{b.name}</strong>{b.country && <div className="muted small">{b.country}</div>}</td>

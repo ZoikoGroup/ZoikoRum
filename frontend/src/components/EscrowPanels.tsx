@@ -5,7 +5,7 @@ import { ALLOCATION_STATE, escrowApi, paymentsApi, TEST_CARDS, type Escrow, type
 import { formatMoney } from '../api/orgs'
 import { Icon } from './dashboard'
 import { StatCard } from './portal'
-import { ErrorAlert } from './ui'
+import { ErrorAlert, useDialog } from './ui'
 
 /* Escrow UI for an engagement (Payments & Escrow doc s.7-14): funding confirmation and the payments tab. */
 
@@ -16,6 +16,7 @@ const fmtDate = (d: string | null) => (d ? new Date(d).toLocaleDateString() : 'â
 export function FundDialog({ escrow, preselect, onClose, onFunded }: {
   escrow: Escrow; preselect: string[]; onClose: () => void; onFunded: (e: Escrow) => void
 }) {
+  const dialog = useDialog(onClose)
   const open = escrow.allocations.filter((x) => x.state === 'UNFUNDED')
   const [picked, setPicked] = useState<string[]>(preselect.length ? preselect : open.map((x) => x.milestoneId))
   const [token, setToken] = useState(TEST_CARDS[0][0])
@@ -28,7 +29,7 @@ export function FundDialog({ escrow, preselect, onClose, onFunded }: {
   const fee = Math.floor((amount * escrow.feeBps + 5000) / 10000)
 
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="fund-title" onClick={onClose}>
+    <div ref={dialog} className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="fund-title" onClick={onClose}>
       <div className="card modal fund-modal" onClick={(e) => e.stopPropagation()}>
         <h2 id="fund-title">Fund protected payment</h2>
         <ErrorAlert error={error} />

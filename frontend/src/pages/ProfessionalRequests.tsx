@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { AIAssistance } from '../components/AIAssistance'
 import { ApiError } from '../api/client'
@@ -91,7 +91,7 @@ export function ProfessionalRequestsPage() {
           </EmptyTable>
         ) : (
           <div className="compare-scroll"><table className="data">
-            <thead><tr><th>Buyer</th><th>Service</th><th>Type</th><th>Budget</th><th>Start</th><th>Status</th><th /></tr></thead>
+            <thead><tr><th>Buyer</th><th>Service</th><th>Type</th><th>Budget</th><th>Start</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr></thead>
             <tbody>{shown.map((r) => {
               const st = requestStatus(r)
               return (
@@ -142,12 +142,17 @@ export function ProfessionalRequestDetail() {
   const [offerings, setOfferings] = useState<Offering[]>([])
   useEffect(() => { proApi.offerings().then(setOfferings).catch(() => {}) }, [])
 
-  const load = useCallback(async () => {
+  // After the first fill, only an action (save, submit, withdraw) replaces the form: a page load that finishes late
+  // (or twice, as React's StrictMode does in development) must never wipe what the professional has typed.
+  const filled = useRef(false)
+  const load = useCallback(async (afterAction = false) => {
     try {
       const r = await proposalApi.get(id)
       const mine = (await proposalApi.proposals(id))[0] ?? null
       setReq(r)
       setProposal(mine)
+      if (filled.current && !afterAction) return
+      filled.current = true
       const f = mine ? fromProposal(mine) : EMPTY(r.budget?.currency ?? 'USD')
       setForm(f)
       setAmounts(f.milestones.map((m) => (m.amountMinor ? String(m.amountMinor / 100) : '')))
@@ -192,7 +197,7 @@ export function ProfessionalRequestDetail() {
     setBusy(true)
     setError(null)
     setNotice(null)
-    try { await fn(); setNotice(msg); await load() } catch (err) { setError(err) } finally { setBusy(false) }
+    try { await fn(); setNotice(msg); await load(true) } catch (err) { setError(err) } finally { setBusy(false) }
   }
   /** Saves the draft and remembers it, so a failed submit never leaves the page thinking no draft exists. */
   const save = async (): Promise<Proposal> => {

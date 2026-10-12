@@ -107,29 +107,29 @@ export function SafetyPage({ operator = false }: { operator?: boolean }) {
           </div>
           <div className="row" style={{ marginBottom: 12 }}>
             <div className="field" style={{ flex: 1 }}>
-              <label>Subject Type</label>
-              <select className="input" name="subjectType" defaultValue={params.get('subjectType') ?? 'IDENTITY'}>
+              <label htmlFor="operations-subjectType">Subject Type</label>
+              <select id="operations-subjectType" className="input" name="subjectType" defaultValue={params.get('subjectType') ?? 'IDENTITY'}>
                 <option value="IDENTITY">Identity</option>
                 <option value="PROFESSIONAL">Professional</option>
                 <option value="ORGANIZATION">Organization</option>
               </select>
             </div>
             <div className="field" style={{ flex: 1 }}>
-              <label>Subject UUID</label>
-              <input className="input" name="subjectId" required placeholder="Subject UUID" defaultValue={params.get('subjectId') ?? ''} />
+              <label htmlFor="operations-subjectId">Subject UUID</label>
+              <input id="operations-subjectId" className="input" name="subjectId" required placeholder="Subject UUID" defaultValue={params.get('subjectId') ?? ''} />
             </div>
             <div className="field" style={{ flex: 1 }}>
-              <label>Signal Source</label>
-              <input className="input" name="signalSource" required minLength={3} placeholder="Signal source" />
+              <label htmlFor="operations-signalSource">Signal Source</label>
+              <input id="operations-signalSource" className="input" name="signalSource" required minLength={3} placeholder="Signal source" />
             </div>
           </div>
           <div className="field">
-            <label>Case Summary</label>
-            <textarea className="input" name="summary" required minLength={10} maxLength={2000} placeholder="Case summary" rows={3} />
+            <label htmlFor="operations-summary">Case Summary</label>
+            <textarea id="operations-summary" className="input" name="summary" required minLength={10} maxLength={2000} placeholder="Case summary" rows={3} />
           </div>
           <div className="field">
-            <label>Evidence References (one per line)</label>
-            <textarea className="input" name="evidenceRefs" placeholder="e.g. SHA-256 hashes, dispute IDs, message IDs" rows={2} />
+            <label htmlFor="operations-evidenceRefs">Evidence References (one per line)</label>
+            <textarea id="operations-evidenceRefs" className="input" name="evidenceRefs" placeholder="e.g. SHA-256 hashes, dispute IDs, message IDs" rows={2} />
           </div>
           <button className="btn btn-primary" disabled={busy}>
             Open Safety Case
@@ -221,16 +221,16 @@ export function SafetyPage({ operator = false }: { operator?: boolean }) {
                 >
                   <div className="row">
                     <div className="field" style={{ flex: 1 }}>
-                      <label>Risk Level</label>
-                      <select className="input" name="level">
+                      <label htmlFor="operations-level">Risk Level</label>
+                      <select id="operations-level" className="input" name="level">
                         {[0, 1, 2, 3, 4].map((n) => (
                           <option key={n} value={n}>Level {n}</option>
                         ))}
                       </select>
                     </div>
                     <div className="field" style={{ flex: 2 }}>
-                      <label>Reason Code</label>
-                      <input className="input" name="reasonCode" required minLength={3} placeholder="Reason code" />
+                      <label htmlFor="operations-reasonCode">Reason Code</label>
+                      <input id="operations-reasonCode" className="input" name="reasonCode" required minLength={3} placeholder="Reason code" />
                     </div>
                   </div>
                   <button className="btn btn-secondary btn-sm" disabled={busy}>Record Assessment</button>
@@ -253,16 +253,16 @@ export function SafetyPage({ operator = false }: { operator?: boolean }) {
                   <h3 style={{ margin: '0 0 10px', fontSize: 14 }}>Propose Notified Enforcement Action</h3>
                   <div className="row" style={{ marginBottom: 10 }}>
                     <div className="field" style={{ flex: 1 }}>
-                      <label>Action</label>
-                      <select className="input" name="action">
+                      <label htmlFor="operations-action">Action</label>
+                      <select id="operations-action" className="input" name="action">
                         {actions[c.level]?.map((a) => (
                           <option key={a} value={a}>{a.replace(/_/g, ' ')}</option>
                         ))}
                       </select>
                     </div>
                     <div className="field" style={{ flex: 1 }}>
-                      <label>Duration in Days (if temporary)</label>
-                      <input className="input" name="durationDays" type="number" min={1} max={365} required={c.level === 2} placeholder="e.g. 14" />
+                      <label htmlFor="operations-durationDays">Duration in Days (if temporary)</label>
+                      <input id="operations-durationDays" className="input" name="durationDays" type="number" min={1} max={365} required={c.level === 2} placeholder="e.g. 14" />
                     </div>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 10 }}>
@@ -319,16 +319,16 @@ export function SafetyPage({ operator = false }: { operator?: boolean }) {
                     >
                       <div className="row" style={{ marginBottom: 8 }}>
                         <div className="field" style={{ flex: 1 }}>
-                          <label>Decision</label>
-                          <select className="input" name="upheld">
+                          <label htmlFor="operations-upheld">Decision</label>
+                          <select id="operations-upheld" className="input" name="upheld">
                             <option value="false">Reject appeal</option>
                             <option value="true">Uphold appeal and reverse action</option>
                           </select>
                         </div>
                       </div>
                       <div className="field">
-                        <label>Independent Review Justification</label>
-                        <textarea className="input" name="reason" required minLength={20} maxLength={4000} rows={2} placeholder="Legal review rationale" />
+                        <label htmlFor="operations-reason">Independent Review Justification</label>
+                        <textarea id="operations-reason" className="input" name="reason" required minLength={20} maxLength={4000} rows={2} placeholder="Legal review rationale" />
                       </div>
                       <button className="btn btn-primary btn-sm" disabled={busy}>Decide Appeal</button>
                     </form>
@@ -440,21 +440,21 @@ export function AIAdminPage() {
         </div>
         <div className="row" style={{ marginBottom: 12 }}>
           <div className="field" style={{ flex: 1 }}>
-            <label>Prompt Purpose Key</label>
-            <select className="input" name="promptKey">
+            <label htmlFor="operations-promptKey">Prompt Purpose Key</label>
+            <select id="operations-promptKey" className="input" name="promptKey">
               {['proposal-draft', 'contract-summary', 'dispute-summary', 'match-intent'].map((p) => (
                 <option key={p} value={p}>{p}</option>
               ))}
             </select>
           </div>
           <div className="field" style={{ flex: 1 }}>
-            <label>Target Model</label>
-            <input className="input" name="targetModel" defaultValue="offline:v1" required placeholder="Configured model identifier" />
+            <label htmlFor="operations-targetModel">Target Model</label>
+            <input id="operations-targetModel" className="input" name="targetModel" defaultValue="offline:v1" required placeholder="Configured model identifier" />
           </div>
         </div>
         <div className="field">
-          <label>Advisory Instructions</label>
-          <textarea
+          <label htmlFor="operations-instructions">Advisory Instructions</label>
+          <textarea id="operations-instructions"
             className="input"
             name="instructions"
             required
@@ -464,8 +464,8 @@ export function AIAdminPage() {
           />
         </div>
         <div className="field">
-          <label>Golden Test Expectations (JSON)</label>
-          <textarea
+          <label htmlFor="operations-goldenTests">Golden Test Expectations (JSON)</label>
+          <textarea id="operations-goldenTests"
             className="input"
             name="goldenTests"
             required
@@ -672,8 +672,8 @@ export function ReportsPage() {
         </div>
         <div className="row" style={{ alignItems: 'flex-end', gap: 14 }}>
           <div className="field" style={{ minWidth: 200, flex: 1 }}>
-            <label>Reporting Perspective</label>
-            <select
+            <label htmlFor="operations-reporting-perspective">Reporting Perspective</label>
+            <select id="operations-reporting-perspective"
               className="input"
               value={role}
               onChange={(e) => {
@@ -690,8 +690,8 @@ export function ReportsPage() {
 
           {role === 'buyer' && (
             <div className="field" style={{ minWidth: 200, flex: 1 }}>
-              <label>Organisation</label>
-              <select
+              <label htmlFor="operations-organisation">Organisation</label>
+              <select id="operations-organisation"
                 className="input"
                 value={orgId}
                 onChange={(e) => {
@@ -709,8 +709,8 @@ export function ReportsPage() {
           )}
 
           <div className="field" style={{ minWidth: 160, flex: 1 }}>
-            <label>From Date</label>
-            <input
+            <label htmlFor="operations-from-date">From Date</label>
+            <input id="operations-from-date"
               type="date"
               className="input"
               value={since}
@@ -719,8 +719,8 @@ export function ReportsPage() {
           </div>
 
           <div className="field" style={{ minWidth: 160, flex: 1 }}>
-            <label>To Date</label>
-            <input
+            <label htmlFor="operations-to-date">To Date</label>
+            <input id="operations-to-date"
               type="date"
               className="input"
               value={until}

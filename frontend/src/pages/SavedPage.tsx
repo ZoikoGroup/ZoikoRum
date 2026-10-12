@@ -51,7 +51,7 @@ export function SavedPage() {
           <p className="muted" style={{ margin: 0 }}>Nothing saved yet. Use ☆ Save on a profile or search result.</p>
         ) : (
           <table className="data">
-            <thead><tr><th>Professional</th><th>Specialization</th><th>Trust Tier</th><th>Availability</th><th>Saved</th><th /></tr></thead>
+            <thead><tr><th>Professional</th><th>Specialization</th><th>Trust Tier</th><th>Availability</th><th>Saved</th><th><span className="sr-only">Actions</span></th></tr></thead>
             <tbody>{items.map((s) => (
               <tr key={s.professionalId}>
                 <td>{s.available ? <Link to={`/professionals/${s.professionalId}`}><strong>{s.displayName}</strong></Link>

@@ -1,4 +1,7 @@
-import { expect, request, type APIRequestContext } from '@playwright/test'
+import { expect, request, type APIRequestContext, type Page } from '@playwright/test'
+import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 
 /* Test data through the API (the same calls the app makes), so each browser test starts from a known state.
    The stack runs with dev settings: no two-step codes, simulated identity partner, test payment provider. */
@@ -10,7 +13,7 @@ const PHOTO_PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a
 export interface Account { email: string; name: string; token: string; confirmToken: string | null; api: APIRequestContext }
 
 const unique = (name: string) => `${name.toLowerCase().replace(/\W+/g, '-')}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}@example.com`
-const day = (n: number) => new Date(Date.now() + n * 86400_000).toISOString().slice(0, 10)
+export const day = (n: number) => new Date(Date.now() + n * 86400_000).toISOString().slice(0, 10)
 
 export async function call(a: Account, method: string, url: string, data?: unknown, idempotent = false) {
   const r = await a.api.fetch(url, {
@@ -85,13 +88,19 @@ export async function buyerWithOrganisation(name: string) {
   return { account: a, org }
 }
 
-/** Request -> proposal -> accepted -> contract signed by both -> first milestone funded -> work submitted. */
-export async function engagementAwaitingAcceptance(buyer: Account, org: { id: string }, pro: Account, proId: string) {
+/** The buyer asks one professional for a proposal: an open request waiting for the professional's answer. */
+export async function proposalRequest(buyer: Account, org: { id: string }, proId: string): Promise<{ id: string; service: string }> {
   const [req] = await call(buyer, 'POST', '/v1/proposal-requests', {
     organizationId: org.id, professionalIds: [proId], service: 'Churn prediction model', engagementType: 'PROJECT',
     objective: 'Predict customer churn from product usage', details: 'Two years of usage events in Postgres.',
     desiredStartDate: day(10), estimatedDuration: 'THREE_SIX_WEEKS', budget: { maxMinor: 2_000_000, currency: 'USD' }, acknowledged: true,
   }, true)
+  return req
+}
+
+/** Request -> proposal -> accepted -> contract signed by both -> first milestone funded -> work submitted. */
+export async function engagementAwaitingAcceptance(buyer: Account, org: { id: string }, pro: Account, proId: string) {
+  const req = await proposalRequest(buyer, org, proId)
   const proposal = await call(pro, 'POST', `/v1/proposal-requests/${req.id}/proposals`, {
     summary: 'I will build and validate a churn model and ship it as an API.', scopeAlignment: 'CONFIRMED',
     deliverables: [{ key: 'model', title: 'Trained model', acceptanceCriteria: 'AUC above 0.80 on the hold-out set' },
@@ -118,4 +127,57 @@ export async function engagementAwaitingAcceptance(buyer: Account, org: { id: st
   }, 'the funded milestone')
   await call(pro, 'POST', `/v1/milestones/${first.id}/submit`, { note: 'Model trained; AUC 0.84 on hold-out.' })
   return { contract, milestone: first }
+}
+
+/** A small but real PDF upload: bytes, type and the matching fingerprint. */
+export function pdf(name: string, body = 'scan') {
+  const data = Buffer.concat([Buffer.from('%PDF-1.4\n'), Buffer.from(body)])
+  return { name, sha256: createHash('sha256').update(data).digest('hex'), size: data.length, contentType: 'application/pdf', dataBase64: data.toString('base64') }
+}
+
+/** A professional (profile not yet published) whose CPA licence is waiting in the compliance review queue. */
+export async function credentialInReview(name: string) {
+  const a = await signUp(name, 'PROFESSIONAL', 'US')
+  const pro = await call(a, 'POST', '/v1/professionals', {})
+  await call(a, 'POST', '/v1/professionals/me/credentials', {
+    credentialType: 'LICENSE', name: 'CPA', issuingBody: 'Texas State Board', registrationNumber: `TX-${Date.now()}`,
+    jurisdiction: 'US', expiresOn: day(400),
+  })
+  // The worker opens the credential case; uploading the licence puts it in review.
+  const kase = await eventually(async () => {
+    const cases = await call(a, 'GET', `/v1/verification/subjects/PROFESSIONAL/${pro.id}`)
+    return cases.find((c: { verificationType: string }) => c.verificationType === 'CREDENTIAL')
+  }, 'the credential case')
+  await call(a, 'POST', `/v1/verification/cases/${kase.id}/evidence`, { evidenceType: 'ID_DOCUMENT', items: [pdf('cpa-licence.pdf', 'licence')] })
+  return { account: a, pro, caseId: kase.id as string }
+}
+
+const REPO = fileURLToPath(new URL('../../', import.meta.url))
+const PYTHON = process.env.ZK_E2E_PYTHON ?? (process.platform === 'win32' ? `${REPO}.venv/Scripts/python.exe` : 'python')
+const E2E_DATABASE_URL = process.env.ZK_E2E_DATABASE_URL ?? 'postgresql+asyncpg://zoikorum:zoikorum@localhost:5434/zk_e2e'
+
+/** A staff member. The first Platform Admin can only be made with the operator CLI (never over HTTP), here against the
+    browser-test database; the admin then grants itself the staff roles it needs. */
+export async function staffMember(name: string, roles: string[]): Promise<Account> {
+  const email = unique(name)
+  execFileSync(PYTHON, ['-m', 'zoikorum.cli', 'create-admin', '--email', email, '--name', name, '--country', 'GB'], {
+    cwd: REPO,  // the repository root, so no developer backend/.env is read
+    env: { ...process.env, PYTHONPATH: `${REPO}backend/src`, ZK_ENV: 'local', ZK_DATABASE_URL: E2E_DATABASE_URL, ZK_ADMIN_PASSWORD: PASSWORD },
+    stdio: ['ignore', 'ignore', 'pipe'],
+  })
+  const a: Account = { email, name, token: '', confirmToken: null, api: await request.newContext({ baseURL: API_URL }) }
+  await refresh(a)
+  const me = await call(a, 'GET', '/v1/me')
+  for (const role of roles) await call(a, 'POST', `/v1/admin/identities/${me.id}/platform-roles`, { role })
+  await refresh(a)
+  return a
+}
+
+/** Signs in through the login page. */
+export async function signIn(page: Page, email: string) {
+  await page.goto('/login')
+  await page.getByLabel('Work email').fill(email)
+  await page.getByLabel('Password', { exact: true }).fill(PASSWORD)
+  await page.getByRole('button', { name: 'Sign in' }).click()
+  await expect(page).toHaveURL(/\/app\//)
 }

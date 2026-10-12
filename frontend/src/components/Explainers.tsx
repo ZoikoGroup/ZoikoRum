@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { Icon, type IconName } from './dashboard'
+import { useDialog } from './ui'
 
 /* Education module (Finance & Accounting category s.8): three short explainers shown after the first filter or
    ~20 results. Plain language, a simple step diagram each, no policy tone. */
@@ -54,6 +55,7 @@ const EXPLAINERS: Explainer[] = [
 
 export function EducationCards() {
   const [open, setOpen] = useState<Explainer | null>(null)
+  const dialog = useDialog(() => setOpen(null), open !== null)
   return (
     <section className="education" aria-label="Guides">
       {EXPLAINERS.map((e) => (
@@ -61,7 +63,7 @@ export function EducationCards() {
           <Icon name={e.icon} /><strong>{e.title}</strong><span className="muted small">{e.teaser}</span>
         </button>
       ))}
-      {open && <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="edu-title" onClick={() => setOpen(null)}>
+      {open && <div ref={dialog} className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="edu-title" onClick={() => setOpen(null)}>
         <div className="card modal" onClick={(e) => e.stopPropagation()}>
           <div className="panel-head"><h2 id="edu-title">{open.title}</h2><button className="icon-btn" aria-label="Close" onClick={() => setOpen(null)}>×</button></div>
           <ol className="edu-steps">{open.steps.map((s) => <li key={s}>{s}</li>)}</ol>

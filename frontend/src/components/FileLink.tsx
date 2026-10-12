@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from '../api/client'
+import { useDialog } from './ui'
 import type { StoredFile } from '../api/files'
 
 /** A stored document's name; clicking opens it in a viewer inside the dashboard (every opening is audited).
@@ -24,23 +25,20 @@ export function FileLinks({ files, url }: { files: StoredFile[]; url: (f: Stored
 export function DocumentViewer({ name, url, onClose }: { name: string; url: string; onClose: () => void }) {
   const [doc, setDoc] = useState<{ href: string; type: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const close = useRef(onClose)
-  useEffect(() => { close.current = onClose }, [onClose])
+  const dialog = useDialog(onClose)
   useEffect(() => {  // loads once per document (each load is an audited opening)
     let href: string | null = null
     let live = true
     api<Blob>(url, { blob: true })
       .then((blob) => { href = URL.createObjectURL(blob); if (live) setDoc({ href, type: blob.type }) })
       .catch((err) => { if (live) setError(err instanceof Error ? err.message : 'The document could not be opened') })
-    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') close.current() }
-    window.addEventListener('keydown', esc)
-    return () => { live = false; window.removeEventListener('keydown', esc); if (href) URL.revokeObjectURL(href) }
+    return () => { live = false; if (href) URL.revokeObjectURL(href) }
   }, [url])
 
   const pdf = doc?.type === 'application/pdf'
   const image = doc?.type.startsWith('image/')
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label={name} onClick={onClose}>
+    <div ref={dialog} className="modal-backdrop" role="dialog" aria-modal="true" aria-label={name} onClick={onClose}>
       <div className="card modal doc-viewer" onClick={(e) => e.stopPropagation()}>
         <div className="panel-head">
           <h2 style={{ margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</h2>

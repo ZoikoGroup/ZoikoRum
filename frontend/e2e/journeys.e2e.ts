@@ -1,13 +1,5 @@
-import { expect, test, type Page } from '@playwright/test'
-import { buyerWithOrganisation, engagementAwaitingAcceptance, PASSWORD, verifiedProfessional } from './api'
-
-async function signIn(page: Page, email: string) {
-  await page.goto('/login')
-  await page.getByLabel('Work email').fill(email)
-  await page.getByLabel('Password', { exact: true }).fill(PASSWORD)
-  await page.getByRole('button', { name: 'Sign in' }).click()
-  await expect(page).toHaveURL(/\/app\//)
-}
+import { expect, test } from '@playwright/test'
+import { buyerWithOrganisation, engagementAwaitingAcceptance, PASSWORD, signIn, verifiedProfessional } from './api'
 
 test('a new customer signs up, confirms their email and signs back in', async ({ page }) => {
   const email = `lennox-${Date.now()}@example.com`

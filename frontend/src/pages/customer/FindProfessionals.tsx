@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { formatMoney, orgApi } from '../../api/orgs'
+import { formatMoney, orgApi, type Organization } from '../../api/orgs'
 import { LABEL, taxonomyApi, type TaxonomyCategory } from '../../api/professional'
-import { searchApi, type SearchResponse, type SearchResult } from '../../api/search'
+import { searchApi, type IntentFilters, type SearchResponse, type SearchResult } from '../../api/search'
 import { CompareDialog, CompareTray } from '../../components/CompareDialog'
+import { DescribeNeed } from '../../components/DescribeNeed'
 import { EducationCards } from '../../components/Explainers'
 import { QuickView } from '../../components/QuickView'
 import { Avatar, Icon } from '../../components/dashboard'
@@ -68,7 +69,20 @@ export default function FindProfessionals() {
   const [partial, setPartial] = useState<SearchResult[] | null>(null)
   const setView = (v: 'list' | 'grid') => { setViewState(v); try { localStorage.setItem(VIEW_KEY, v) } catch { /* per-viewer convenience only */ } }
 
-  useEffect(() => { if (saved.canSave) orgApi.mine().then((o) => setBuyerCountry(o[0]?.country?.toUpperCase() ?? null)).catch(() => {}) }, [saved.canSave])
+  // Organisations the viewer buys for. With more than one, they choose whose policy applies (enterprise first by default).
+  const [orgs, setOrgs] = useState<Organization[]>([])
+  useEffect(() => {
+    if (!saved.canSave) return
+    orgApi.mine().then((o) => {
+      setOrgs(o)
+      setBuyerCountry(o[0]?.country?.toUpperCase() ?? null)
+      if (o.length > 1 && !params.get('organizationId')) {
+        const next = new URLSearchParams(params)
+        next.set('organizationId', (o.find((x) => x.orgType === 'ENTERPRISE') ?? o[0]).id)
+        setParams(next, { replace: true })
+      }
+    }).catch(() => {})
+  }, [saved.canSave])  // eslint-disable-line react-hooks/exhaustive-deps -- once per page, not per filter change
 
   useEffect(() => { taxonomyApi.all().then(setTaxonomy).catch(() => {}) }, [])
   useEffect(() => {
@@ -100,6 +114,16 @@ export default function FindProfessionals() {
     setOffset(next)
   }
   function submit(e: FormEvent) { e.preventDefault(); set('q', q.trim() || null) }
+  /** A described need replaces the filters (keeping whose policy applies and the sort), like starting a new search. */
+  function applyIntent(f: IntentFilters) {
+    const next = new URLSearchParams()
+    for (const k of ['organizationId', 'sort']) { const v = params.get(k); if (v) next.set(k, v) }
+    const values: Record<string, string | null> = { q: f.q, spec: f.spec.join(',') || null, engagementType: f.engagementType, delivery: f.delivery,
+      availability: f.availability, jurisdiction: f.jurisdiction, verified: f.verified.join(',') || null }
+    for (const [k, v] of Object.entries(values)) if (v) next.set(k, v)
+    setQ(f.q ?? '')
+    setParams(next, { replace: true })
+  }
   /** Few results (Category doc s.5.5): the same search and expertise with the other filters relaxed, clearly labelled. */
   async function showPartial() {
     const keep = Object.fromEntries(['q', 'spec', 'sort'].flatMap((k) => (params.get(k) ? [[k, params.get(k)!]] : [])))
@@ -198,6 +222,7 @@ export default function FindProfessionals() {
             placeholder="Search by profession, expertise, service or keyword (e.g. fractional CFO, transfer pricing, SOX)" />
           <button className="btn btn-primary"><Icon name="search" /> Search</button>
         </form>
+        <DescribeNeed onApply={applyIntent} />
         <div className="filter-row">
           {select('spec', 'Expertise', groups.flatMap((g) => g.specializations.map((s) => [s.slug, s.name] as [string, string])), 'Any expertise')}
           {select('jurisdiction', 'Jurisdiction', COUNTRIES, 'Global')}
@@ -239,6 +264,15 @@ export default function FindProfessionals() {
             }}><Icon name="bookmark" /> Save this search</button>}
           </div>}
           {notice && <div className="alert alert-success" role="status">{notice}</div>}
+          {orgs.length > 1 && <label className="filter-box" style={{ maxWidth: 320 }}><span>Searching for</span>
+            <select value={params.get('organizationId') ?? ''} onChange={(e) => set('organizationId', e.target.value)}>
+              {orgs.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select></label>}
+          {data?.policy && <div className="tip" role="note" style={{ marginBottom: 12 }}><Icon name="shield" /><span>
+            <strong>{data.policy.organizationName} policy applies.</strong> Showing professionals at Tier {data.policy.minTier} or above
+            {data.policy.requiredDimensions.length > 0 && ` with ${data.policy.requiredDimensions.join(', ')} verified`}
+            {data.policy.jurisdictions && ` serving ${data.policy.jurisdictions.join(', ')}`}.
+            {data.policy.hidden > 0 && ` ${data.policy.hidden} other professional${data.policy.hidden === 1 ? '' : 's'} matching your search ${data.policy.hidden === 1 ? 'is' : 'are'} not shown.`}
+            {' '}Your organisation administrator sets these rules.</span></div>}
           <div className="results-head">
             <h2 style={{ margin: 0 }}>{data ? `${data.total} professional${data.total === 1 ? '' : 's'} found` : 'Searching…'}</h2>
             <div className="view-toggle" role="group" aria-label="View">

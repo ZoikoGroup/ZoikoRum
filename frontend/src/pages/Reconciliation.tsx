@@ -51,7 +51,7 @@ export default function ReconciliationPage() {
         {rows && rows.length === 0 ? (
           <EmptyTable columns={['Day', 'Result', 'Checks', 'Run by']}><strong>No reconciliations yet.</strong> The first scheduled run happens tonight.</EmptyTable>
         ) : (
-          <table className="data"><thead><tr><th>Day</th><th>Result</th><th>Checks</th><th>Run</th><th /></tr></thead>
+          <table className="data"><thead><tr><th>Day</th><th>Result</th><th>Checks</th><th>Run</th><th><span className="sr-only">Actions</span></th></tr></thead>
             <tbody>{(rows ?? []).map((r) => <Fragment key={r.id}>
               <tr>
                 <td><strong>{r.day}</strong></td>
