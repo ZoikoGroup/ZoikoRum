@@ -15,7 +15,7 @@ export default function SignIn({ staff = false }: { staff?: boolean }) {
   const from = params.get('next') || (location.state as { from?: string } | null)?.from
   const safeNext = from && /^\/(app|invite)(\/|\?|$)/.test(from) ? from : null
 
-  const [email, setEmail] = useState('')
+  const [email, setEmail] = useState((location.state as { email?: string } | null)?.email ?? '')
   const [password, setPassword] = useState('')
   const [code, setCode] = useState('')
   const [needsCode, setNeedsCode] = useState(false)
@@ -55,6 +55,13 @@ export default function SignIn({ staff = false }: { staff?: boolean }) {
         <p className="sub">Customers, professionals, firms and enterprise teams sign in here.</p>
       </>}
       <ErrorAlert error={error} />
+      {error instanceof ApiError && (error.code === 'USE_STAFF_SIGN_IN' || error.code === 'NOT_STAFF_ACCOUNT') && (
+        // Wrong sign-in page for this account: one click to the right one, with the email carried over.
+        <button type="button" className="btn btn-secondary btn-block" style={{ marginBottom: 16 }}
+          onClick={() => { setError(null); navigate(staff ? '/login' : '/staff/login', { state: { email } }) }}>
+          {staff ? 'Continue to the main sign-in' : 'Continue to staff sign-in'}
+        </button>
+      )}
       <form onSubmit={submit} noValidate>
         {!needsCode ? (
           <>
