@@ -143,3 +143,6 @@ export async function allPages<T>(path: string, query: Record<string, string> = 
   }
   return out
 }
+
+/** The server's answer when a professional page is opened before the professional profile exists. */
+export const isNoProfile = (err: unknown) => err instanceof ApiError && err.code === 'PROFILE_NOT_FOUND'

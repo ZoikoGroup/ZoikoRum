@@ -6,7 +6,8 @@ import { formatMoney, orgApi } from '../api/orgs'
 import { CURRENCIES } from '../api/professional'
 import { useAuth } from '../auth/AuthContext'
 import { Icon } from '../components/dashboard'
-import { EmptyTable, PortalHeader, SidePanel, StatCard, Tabs } from '../components/portal'
+import { isNoProfile } from '../api/client'
+import { EmptyTable, NoProfileYet, PortalHeader, SidePanel, StatCard, Tabs } from '../components/portal'
 import { ErrorAlert, Field, useStepUp } from '../components/ui'
 import { COUNTRIES } from './Join'
 import { csv, downloadFile, saveBlob } from '../lib/exports'
@@ -49,6 +50,13 @@ export function EarningsPage() {
   const ms = (cid: string, mid: string | null) => contracts.find((c) => c.id === cid)?.milestones.find((m) => m.id === mid)
   const held = formatCurrencies(contracts.filter((c) => ['ACTIVE', 'DISPUTED'].includes(c.status)).flatMap((c) => c.milestones.filter((m) => ['IN_PROGRESS', 'SUBMITTED', 'REVISION_REQUESTED', 'ACCEPTANCE_PENDING_APPROVAL', 'DISPUTED'].includes(m.status)).map((m) => m.amount)))
   const total = (key: 'settled' | 'pending' | 'fees') => data ? formatCurrencies(Object.values(data.totalsByCurrency).map(t => t[key])) : '…'
+
+  if (isNoProfile(error)) return (
+    <>
+      <PortalHeader eyebrow="Earnings" title="Your earnings" subtitle="Money released for accepted milestones, paid out to your bank account after the platform fee." />
+      <NoProfileYet>Your payouts, platform fees and payout account appear here once you have a profile and buyers accept your work.</NoProfileYet>
+    </>
+  )
 
   return (
     <>
