@@ -7,7 +7,8 @@
     "node": "^20.19.0 || >=22.12.0"
   },
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --mode customer",
+    "dev:staff": "vite --mode staff",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "test": "vitest run",

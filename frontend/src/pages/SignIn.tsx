@@ -4,6 +4,7 @@ import { authApi } from '../api/auth'
 import { ApiError } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { AuthLayout, ErrorAlert, Field, PasswordInput } from '../components/ui'
+import { PORTAL, signInHref } from '../portal'
 
 /** Two sign-in pages: /login for customers, professionals, firms and enterprise teams, and /staff/login for Zoikorum
     staff. The server holds each account to its own page; the backend says which dashboard to open. */
@@ -15,13 +16,20 @@ export default function SignIn({ staff = false }: { staff?: boolean }) {
   const from = params.get('next') || (location.state as { from?: string } | null)?.from
   const safeNext = from && /^\/(app|invite)(\/|\?|$)/.test(from) ? from : null
 
-  const [email, setEmail] = useState((location.state as { email?: string } | null)?.email ?? '')
+  const [email, setEmail] = useState((location.state as { email?: string } | null)?.email ?? params.get('email') ?? '')
   const [password, setPassword] = useState('')
   const [code, setCode] = useState('')
   const [needsCode, setNeedsCode] = useState(false)
   const [useRecovery, setUseRecovery] = useState(false)  // lost authenticator: a one-time recovery code
   const [error, setError] = useState<unknown>(null)
   const [busy, setBusy] = useState(false)
+
+  /** The other sign-in page: on this app, or on the other app's address (separate staff and customer apps). */
+  const other = signInHref(!staff)
+  function goToOtherSignIn() {
+    if (/^https?:/.test(other)) window.location.assign(email ? `${other}?email=${encodeURIComponent(email)}` : other)
+    else navigate(other, { state: { email } })
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault()
@@ -58,7 +66,7 @@ export default function SignIn({ staff = false }: { staff?: boolean }) {
       {error instanceof ApiError && (error.code === 'USE_STAFF_SIGN_IN' || error.code === 'NOT_STAFF_ACCOUNT') && (
         // Wrong sign-in page for this account: one click to the right one, with the email carried over.
         <button type="button" className="btn btn-secondary btn-block" style={{ marginBottom: 16 }}
-          onClick={() => { setError(null); navigate(staff ? '/login' : '/staff/login', { state: { email } }) }}>
+          onClick={() => { setError(null); goToOtherSignIn() }}>
           {staff ? 'Continue to the main sign-in' : 'Continue to staff sign-in'}
         </button>
       )}
@@ -105,14 +113,14 @@ export default function SignIn({ staff = false }: { staff?: boolean }) {
         )}
       </form>
       {staff ? (
-        <p className="auth-foot">Not Zoikorum staff? <Link to="/login">Sign in here</Link></p>
+        <p className="auth-foot">Not Zoikorum staff? <a href={other} onClick={(e) => { e.preventDefault(); goToOtherSignIn() }}>Sign in here</a></p>
       ) : <>
         <div className="divider">New to Zoikorum?</div>
         <div className="row">
           <Link className="btn btn-secondary" style={{ flex: 1 }} to="/join">Create an account</Link>
           <Link className="btn btn-secondary" style={{ flex: 1 }} to="/join?type=PROFESSIONAL">Join as a Professional</Link>
         </div>
-        <p className="auth-foot small">Zoikorum staff? <Link to="/staff/login">Staff sign-in</Link></p>
+        {PORTAL === 'both' && <p className="auth-foot small">Zoikorum staff? <Link to="/staff/login">Staff sign-in</Link></p>}
       </>}
     </AuthLayout>
   )

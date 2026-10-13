@@ -25,12 +25,14 @@ class IdentitySummary:
     status: str
     email_confirmed: bool
     mfa_enabled: bool
+    staff: bool = False  # has a platform role: uses the staff web app
 
 
 def _summary(i: Identity) -> IdentitySummary:
     return IdentitySummary(
         id=i.id, email=i.email, display_name=i.display_name, country=i.country, status=i.status,
         email_confirmed=i.email_confirmed_at is not None, mfa_enabled=i.mfa_enabled_at is not None,
+        staff=bool(i.platform_roles),
     )
 
 
@@ -89,7 +91,8 @@ async def notification_account_link(session: AsyncSession, identity_id: uuid.UUI
         path = '/reset-password'
     else:
         return None
-    return get_settings().frontend_url.rstrip('/') + path + '?' + urlencode({'token': token})
+    from zoikorum.config import web_url
+    return web_url(staff=bool(identity.platform_roles)) + path + '?' + urlencode({'token': token})
 
 
 async def get_identities(session: AsyncSession, ids: list[uuid.UUID]) -> dict[uuid.UUID, IdentitySummary]:

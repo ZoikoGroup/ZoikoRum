@@ -7,7 +7,7 @@ import { defineConfig, devices } from '@playwright/test'
    the servers never start before their database exists). */
 
 const API_PORT = 8100
-const WEB_PORT = 5174
+const WEB_PORT = 5199  // not 5173 or 5174: those are the customer and staff apps (npm run dev, npm run dev:staff)
 const python = process.env.ZK_E2E_PYTHON ?? (process.platform === 'win32' ? '../.venv/Scripts/python.exe' : 'python')
 
 export default defineConfig({

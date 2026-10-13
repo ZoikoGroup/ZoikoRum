@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     tracing_endpoint: str | None = None  # OpenTelemetry collector (OTLP/HTTP traces URL); needs backend[tracing]
     tracing_sample_ratio: float = Field(default=0.1, ge=0, le=1)  # share of new traces kept
     frontend_url: str = "http://localhost:5173"  # used to build links in invitations / emails
+    # The separate staff web app (frontend VITE_PORTAL=staff). Links in emails to staff use it; empty: frontend_url.
+    staff_frontend_url: str | None = None
     database_url: str = "postgresql+asyncpg://zoikorum:zoikorum@localhost:5434/zoikorum"
     db_pool_size: int = 10
 
@@ -145,6 +147,8 @@ class Settings(BaseSettings):
                 raise ValueError(f"ZK_{name.upper()} must be set to a long random value (32+ characters) in {self.env}")
         if not self.frontend_url.startswith("https://"):
             raise ValueError(f"ZK_FRONTEND_URL must be the public https:// address in {self.env} (it is used in email links)")
+        if self.staff_frontend_url and not self.staff_frontend_url.startswith("https://"):
+            raise ValueError(f"ZK_STAFF_FRONTEND_URL must be an https:// address in {self.env}")
         return self
 
 
@@ -154,3 +158,9 @@ DEV_ENVS = ("local", "development")
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def web_url(staff: bool = False) -> str:
+    """The web app address for links: the staff app for staff (ZK_STAFF_FRONTEND_URL), otherwise ZK_FRONTEND_URL."""
+    s = get_settings()
+    return ((s.staff_frontend_url if staff else None) or s.frontend_url).rstrip("/")

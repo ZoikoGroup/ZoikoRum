@@ -2,9 +2,11 @@
 # PostgreSQL is a managed service (ZK_DATABASE_URL); files go to S3 (ZK_STORAGE_PROVIDER=s3).
 # Configuration: backend/.env.production (git-ignored; start from backend/.env.example). See backend/docs/DEPLOYMENT.md.
 #
-#   docker compose -f docker-compose.prod.yml build
+#   docker compose --env-file backend/.env.production -f docker-compose.prod.yml build   # the web apps need the addresses
 #   docker compose -f docker-compose.prod.yml run --rm migrate
-#   docker compose -f docker-compose.prod.yml up -d api worker web
+#   docker compose -f docker-compose.prod.yml up -d api worker web web-staff
+#
+# Two web apps: web (customers, app.your-domain.com, :8080) and web-staff (staff only, staff.your-domain.com, :8081).
 
 x-backend: &backend
   build: ./backend
@@ -38,11 +40,24 @@ services:
     healthcheck:
       disable: true
 
-  web:
-    build: ./frontend
+  web:  # customers, professionals, firms and enterprise teams (/login)
+    build:
+      context: ./frontend
+      args: {VITE_PORTAL: customer, VITE_CUSTOMER_URL: "${ZK_FRONTEND_URL}", VITE_STAFF_URL: "${ZK_STAFF_FRONTEND_URL}"}
     image: zoikorum-web:${ZK_RELEASE:-latest}
     environment:
       API_UPSTREAM: http://api:8000
-    ports: ["8080:8080"]  # put the TLS load balancer in front of this port
+    ports: ["8080:8080"]  # put the TLS load balancer in front of this port (app.your-domain.com)
+    depends_on: [api]
+    restart: unless-stopped
+
+  web-staff:  # Zoikorum staff only (/staff/login); restrict who can reach it (VPN, IP allow-list or identity-aware proxy)
+    build:
+      context: ./frontend
+      args: {VITE_PORTAL: staff, VITE_CUSTOMER_URL: "${ZK_FRONTEND_URL}", VITE_STAFF_URL: "${ZK_STAFF_FRONTEND_URL}"}
+    image: zoikorum-web-staff:${ZK_RELEASE:-latest}
+    environment:
+      API_UPSTREAM: http://api:8000
+    ports: ["8081:8080"]  # staff.your-domain.com
     depends_on: [api]
     restart: unless-stopped
