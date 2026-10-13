@@ -1,0 +1,66 @@
+name: Deploy backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy-backend.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        env:
+          VM_HOST: ${{ secrets.VM_HOST }}
+          VM_SSH_KEY_B64: ${{ secrets.VM_SSH_KEY_B64 }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$VM_SSH_KEY_B64" | base64 -d > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keygen -y -f ~/.ssh/id_ed25519 > /dev/null
+          ssh-keyscan -H "$VM_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Sync backend source
+        env:
+          VM_HOST: ${{ secrets.VM_HOST }}
+          VM_USER: ${{ secrets.VM_USER }}
+        run: |
+          rsync -az --delete \
+            --exclude /.venv --exclude /.env --exclude '/.env.*' --exclude /var \
+            --exclude /.deployed-requirements \
+            --exclude __pycache__ --exclude '*.pyc' --exclude .pytest_cache \
+            backend/ "$VM_USER@$VM_HOST:~/zoikorum-app/backend/"
+
+      - name: Dependencies, migrations, restart
+        env:
+          VM_HOST: ${{ secrets.VM_HOST }}
+          VM_USER: ${{ secrets.VM_USER }}
+        run: |
+          ssh "$VM_USER@$VM_HOST" 'set -e
+            cd ~/zoikorum-app/backend
+            if ! cmp -s requirements.txt .deployed-requirements; then
+              .venv/bin/pip install -q -r requirements.txt "boto3>=1.35"
+              cp requirements.txt .deployed-requirements
+            fi
+            export PYTHONPATH=$PWD/src
+            .venv/bin/alembic upgrade head
+            sudo systemctl restart zoikorum-api zoikorum-worker'
+
+      - name: Wait for the API to be ready
+        run: |
+          for i in $(seq 1 20); do
+            if curl -fsS https://api.zoikorum.com/ready | grep -q '"ready"'; then
+              echo "API ready"; exit 0
+            fi
+            sleep 3
+          done
+          echo "API did not become ready: check journalctl on the VM"; exit 1
