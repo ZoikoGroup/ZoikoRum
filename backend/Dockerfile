@@ -12,10 +12,10 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Pinned versions first (cached layer).
 COPY requirements.txt ./
 RUN pip install -r requirements.txt
-# Optional integrations: cloud = S3 storage, monitoring = error reporting, ai = Claude assistance.
+# Optional integrations: cloud = S3 storage, monitoring = error reporting, tracing = OpenTelemetry, ai = Claude.
 # Only their dependencies are installed here: the application runs from /app/src (next to /app/alembic, which the
 # startup schema check reads), so the package itself is removed again.
-ARG EXTRAS="cloud,monitoring,ai"
+ARG EXTRAS="cloud,monitoring,tracing,ai"
 COPY pyproject.toml ./
 COPY src ./src
 RUN if [ -n "$EXTRAS" ]; then pip install ".[${EXTRAS}]" && pip uninstall -y zoikorum; fi
@@ -40,4 +40,5 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
 # caller cannot pick their own address by sending the header (rate limits and signature records depend on it).
 # Override FORWARDED_ALLOW_IPS if the load balancer has a public address.
 ENV FORWARDED_ALLOW_IPS="127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
-CMD ["sh", "-c", "python -c 'from zoikorum.config import get_settings; get_settings()' && exec uvicorn zoikorum.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips=\"$FORWARDED_ALLOW_IPS\" --workers ${WEB_CONCURRENCY:-2}"]
+# The web processes add up their request counters in PROMETHEUS_MULTIPROC_DIR (GET /metrics), emptied on every start.
+CMD ["sh", "-c", "export PROMETHEUS_MULTIPROC_DIR=/tmp/zk-metrics && rm -rf \"$PROMETHEUS_MULTIPROC_DIR\" && mkdir -p \"$PROMETHEUS_MULTIPROC_DIR\" && python -c 'from zoikorum.config import get_settings; get_settings()' && exec uvicorn zoikorum.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips=\"$FORWARDED_ALLOW_IPS\" --workers ${WEB_CONCURRENCY:-2}"]

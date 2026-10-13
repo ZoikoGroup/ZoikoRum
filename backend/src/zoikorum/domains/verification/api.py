@@ -119,11 +119,13 @@ async def file_appeal(case_id: uuid.UUID, body: AppealIn, actor: CurrentActor, s
     return await service.file_appeal(session, actor, case_id, body)
 
 
-@router.get("/appeals", response_model=list[AppealQueueItemOut])
+@router.get("/appeals", response_model=Page[AppealQueueItemOut])
 async def appeal_queue(actor: CurrentActor, session: DbSession,
-                       status_: Literal["OPEN", "UPHELD", "OVERTURNED"] | None = Query(default=None, alias="status")):
-    """Compliance officers: appeals to decide (canDecide is false for the officer who made the original decision)."""
-    return await service.appeal_queue(session, actor, status_)
+                       status_: Literal["OPEN", "UPHELD", "OVERTURNED"] | None = Query(default=None, alias="status"),
+                       cursor: str | None = None, limit: int | None = Query(default=None, ge=1, le=100)):
+    """Compliance officers: appeals to decide, oldest first, one page at a time (follow nextCursor). canDecide is false
+    for the officer who made the original decision."""
+    return await service.appeal_queue(session, actor, status_, cursor, limit)
 
 
 @router.post("/appeals/{appeal_id}/decision", response_model=AppealOut)

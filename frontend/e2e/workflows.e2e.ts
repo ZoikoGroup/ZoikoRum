@@ -113,3 +113,28 @@ test('dialogs work from the keyboard: focus moves in, stays in, Escape closes, f
   await expect(dialog).toBeHidden()
   await expect(opener).toBeFocused()
 })
+
+test('an administrator pauses sign-ups during an incident and switches them back on', async ({ page }) => {
+  const admin = await staffMember('Ada Operations', ['PLATFORM_ADMIN'])
+  await signIn(page, admin.email, { staff: true })
+  await page.getByRole('link', { name: 'Switches & Worker' }).click()
+  await expect(page.getByRole('heading', { name: 'Switches and Worker' })).toBeVisible()
+  await expect(page.getByText('Events waiting')).toBeVisible()
+
+  const row = page.getByRole('row').filter({ hasText: 'New accounts' })
+  await row.getByRole('button', { name: 'Pause' }).click()
+  await row.getByLabel('Reason (recorded in the audit trail)').fill('Fraud wave of fake accounts')
+  await row.getByRole('button', { name: 'Pause now' }).click()
+  await expect(row.getByText('Paused', { exact: true })).toBeVisible()
+  await expect(row.getByText(/Fraud wave of fake accounts/)).toBeVisible()
+  const refused = await admin.api.post('/v1/auth/register', { data: {
+    email: `paused-${Date.now()}@example.com`, password: 'correct-horse-battery-staple', displayName: 'Paused', country: 'GB',
+    accountType: 'BUYER', acceptTerms: true } })
+  expect(refused.status()).toBe(503)
+
+  await row.getByRole('button', { name: 'Switch back on' }).click()
+  await row.getByLabel('Reason (recorded in the audit trail)').fill('Fraud wave contained')
+  await row.getByRole('button', { name: 'Switch on' }).click()
+  await expect(row.getByText('On', { exact: true })).toBeVisible()
+  await page.screenshot({ path: 'test-results/switches.png', fullPage: true })
+})

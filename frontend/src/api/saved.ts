@@ -1,4 +1,4 @@
-import { api } from './client'
+import { allPages, api } from './client'
 import type { Money } from './orgs'
 
 export interface SavedProfessional {
@@ -54,7 +54,7 @@ export const savedApi = {
   saveSearch: (name: string, params: Record<string, string>) => api<SavedSearch>('/v1/saved/searches', { method: 'POST', body: { name, params } }),
   searchViewed: (id: string) => api<SavedSearch>(`/v1/saved/searches/${id}/viewed`, { method: 'POST' }),
   deleteSearch: (id: string) => api<void>(`/v1/saved/searches/${id}`, { method: 'DELETE' }),
-  list: () => api<SavedProfessional[]>('/v1/saved/professionals'),
+  list: () => allPages<SavedProfessional>('/v1/saved/professionals'),
   save: (professionalId: string) => api<void>('/v1/saved/professionals', { method: 'POST', body: { professionalId } }),
   remove: (professionalId: string) => api<void>(`/v1/saved/professionals/${professionalId}`, { method: 'DELETE' }),
   collections: () => api<Collection[]>('/v1/saved/collections'),

@@ -26,6 +26,7 @@ from zoikorum.shared.auth import Actor, PlatformRole
 from zoikorum.shared.errors import Conflict, NotFound, ValidationFailed
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_event
+from zoikorum.shared.http import next_cursor, page_of, paginate
 
 
 async def seed_default_taxonomy(session: AsyncSession) -> None:
@@ -162,9 +163,11 @@ async def unsave_professional(session: AsyncSession, actor: Actor, professional_
                      payload={"professionalId": professional_id, "identityId": actor.identity_id})
 
 
-async def saved_professionals(session: AsyncSession, actor: Actor) -> list[SavedOut]:
-    rows = (await session.scalars(select(SavedProfessional).where(SavedProfessional.identity_id == actor.identity_id)
-                                  .order_by(SavedProfessional.created_at.desc()).limit(200))).all()
+async def saved_professionals(session: AsyncSession, actor: Actor, cursor: str | None = None, limit: int | None = None) -> dict:
+    stmt, lim = paginate(select(SavedProfessional).where(SavedProfessional.identity_id == actor.identity_id),
+                         SavedProfessional, cursor, limit)
+    fetched = (await session.scalars(stmt)).all()
+    rows = fetched[:lim]
     ids = [r.professional_id for r in rows]
     pros = await professional_facade.get_professionals(session, ids)
     trust = await trust_facade.get_trust_many(session, ids)
@@ -188,7 +191,7 @@ async def saved_professionals(session: AsyncSession, actor: Actor) -> list[Saved
             pricingModels=list(p.pricing_models), startingPrice=await _starting_price(session, p.id), tier=t.tier,
             dimensions=_public_dimensions(t.dimensions), lastVerifiedAt=t.updated_at, availability=p.availability,
             available=p.status == "PUBLISHED", collectionIds=membership.get(p.id, []), savedAt=r.created_at))
-    return out
+    return {"items": out, "nextCursor": next_cursor(fetched, lim)}
 
 
 def _public_dimensions(dimensions) -> dict[str, str]:
@@ -383,7 +386,7 @@ async def _catalog(session: AsyncSession) -> list:
 async def suggest(session: AsyncSession, actor: Actor, body: SuggestIn) -> SuggestOut:
     """Match the professional's own words to the taxonomy (AI assists; the person chooses)."""
     catalog = await _catalog(session)
-    result = await ai_facade.match_specializations(body.text, catalog)
+    result = await ai_facade.match_specializations(body.text, catalog, session=session, requested_by=actor.identity_id)
     by_slug = {e.slug: e for e in catalog}
     draft = result.draft
     return SuggestOut(
@@ -438,12 +441,13 @@ async def pending_names(session: AsyncSession, professional_id: uuid.UUID) -> li
     return list(rows.all())
 
 
-async def suggestion_queue(session: AsyncSession, actor: Actor) -> list[SuggestionOut]:
+async def suggestion_queue(session: AsyncSession, actor: Actor, cursor: str | None = None, limit: int | None = None) -> dict:
     actor.require_platform_role(PlatformRole.PLATFORM_ADMIN)
-    rows = (await session.scalars(select(SpecializationSuggestion).where(SpecializationSuggestion.status == "PENDING")
-                                  .order_by(SpecializationSuggestion.created_at).limit(200))).all()
-    pros = await professional_facade.get_professionals(session, [s.professional_id for s in rows if s.professional_id])
-    return [_suggestion_out(s, pros[s.professional_id].display_name if s.professional_id in pros else None) for s in rows]
+    stmt, lim = paginate(select(SpecializationSuggestion).where(SpecializationSuggestion.status == "PENDING"),
+                         SpecializationSuggestion, cursor, limit, oldest_first=True)
+    rows = (await session.scalars(stmt)).all()
+    pros = await professional_facade.get_professionals(session, [s.professional_id for s in rows[:lim] if s.professional_id])
+    return page_of(rows, lim, lambda s: _suggestion_out(s, pros[s.professional_id].display_name if s.professional_id in pros else None))
 
 
 async def decide_suggestion(session: AsyncSession, actor: Actor, suggestion_id: uuid.UUID, body: SuggestionDecisionIn) -> SuggestionOut:

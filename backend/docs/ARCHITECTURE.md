@@ -78,7 +78,7 @@ The dated audit tables below preserve earlier observations. In particular, the 2
 | Policy-as-code (EP-07) | `policy` domain: versioned profiles, rule evaluator, approvals, exceptions |
 | AI governance (Arch ch.10) | `ai` domain: prompt registry with safety approval, inference log, offline fallback; no decision-making paths |
 
-## 4. Decisions and deliberate deviations (ADR summary)
+## 4. Decisions and deliberate deviations (ADR summary; full records in `docs/adr/`)
 
 | ADR | Target in docs | What we built now | Why / migration path |
 |---|---|---|---|

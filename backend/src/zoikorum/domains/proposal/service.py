@@ -18,6 +18,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from zoikorum.domains.admin import facade as admin_facade
 from zoikorum.domains.buyer import facade as buyer_facade
 from zoikorum.domains.identity import facade as identity_facade
 from zoikorum.domains.policy import facade as policy_facade
@@ -33,7 +34,7 @@ from zoikorum.shared.auth import Actor, OrgRole
 from zoikorum.shared.errors import Conflict, Forbidden, NotFound, PolicyBlocked, ValidationFailed
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_audit, record_event
-from zoikorum.shared.http import page_of, paginate
+from zoikorum.shared.http import expect_version, page_of, paginate
 from zoikorum.shared.money import MoneyDTO
 from zoikorum.shared.relay import cancel_timer, schedule_timer
 from zoikorum.shared.state_machine import StateMachine
@@ -302,6 +303,7 @@ async def _end_proposal(session: AsyncSession, p: Proposal, status: str, reason:
 # ---- Buyer: requests -------------------------------------------------------------
 
 async def create_requests(session: AsyncSession, actor: Actor, body: RequestIn) -> list[RequestOut]:
+    await admin_facade.require_on(session, "NEW_REQUESTS")
     await _require_buyer(session, actor, body.organizationId, OrgRole.REQUESTER)
     org = await buyer_facade.get_organization(session, body.organizationId)
     if body.costCenterId:
@@ -547,9 +549,11 @@ async def create_proposal(session: AsyncSession, actor: Actor, request_id: uuid.
     return (await _proposals_out(session, [p]))[0]
 
 
-async def update_proposal(session: AsyncSession, actor: Actor, proposal_id: uuid.UUID, body: ProposalIn) -> ProposalOut:
+async def update_proposal(session: AsyncSession, actor: Actor, proposal_id: uuid.UUID, body: ProposalIn,
+                          if_match: str | None = None) -> ProposalOut:
     p = await _proposal(session, proposal_id, lock=True)
     await _require_owner(session, actor, p.professional_id)
+    expect_version(if_match, p.version, "This proposal")
     if p.status not in ("DRAFT", "REVISION_REQUESTED"):
         raise Conflict("Only a draft, or a proposal the buyer asked you to revise, can be edited", code="PROPOSAL_LOCKED")
     _apply(p, body)
@@ -575,9 +579,27 @@ def _completeness(p: Proposal) -> list[str]:
     return missing
 
 
-async def submit_proposal(session: AsyncSession, actor: Actor, proposal_id: uuid.UUID) -> ProposalOut:
+def _capacity_note(pro) -> str:
+    if pro.availability != "AT_CAPACITY":
+        return ""
+    if pro.max_concurrent_engagements is not None and pro.active_engagements >= pro.max_concurrent_engagements:
+        return f"{pro.active_engagements} active engagements against your limit of {pro.max_concurrent_engagements}"
+    return "marked as temporarily unavailable"
+
+
+async def submit_proposal(session: AsyncSession, actor: Actor, proposal_id: uuid.UUID,
+                          confirm_capacity: bool = False) -> ProposalOut:
+    """Capacity must not be exceeded without an explicit override: at capacity, the professional confirms they can
+    take this on (recorded on the proposal), or raises their limit first."""
+    await admin_facade.require_on(session, "PROPOSAL_SUBMISSION")
     p = await _proposal(session, proposal_id, lock=True)
     await _require_owner(session, actor, p.professional_id)
+    pro = await professional_facade.get_professional(session, p.professional_id)
+    note = _capacity_note(pro) if pro else ""
+    if note and not confirm_capacity:
+        raise Conflict(f"You are at capacity ({note}). Confirm you can take this on, or raise your limit in Services.",
+                       code="AT_CAPACITY")
+    p.capacity_confirmed_at = clock.now() if note else None
     r = await _request(session, p.request_id, lock=True)
     if r.status not in ("OPEN", "PROPOSAL_RECEIVED"):
         raise Conflict("This request is no longer open", code="REQUEST_NOT_OPEN")
@@ -702,6 +724,9 @@ async def accept_proposal(session: AsyncSession, actor: Actor, proposal_id: uuid
     _check_tier(await trust_facade.get_trust(session, p.professional_id), "This professional")
     org = await buyer_facade.get_organization(session, p.organization_id)
     pro = await professional_facade.get_professional(session, p.professional_id)
+    if pro is not None and pro.availability == "AT_CAPACITY" and p.capacity_confirmed_at is None:
+        raise Conflict(f"{pro.display_name} is now at capacity and cannot take on another engagement. Ask them to confirm "
+                       "or revise the proposal, or choose another professional.", code="PROFESSIONAL_AT_CAPACITY")
     if pro is not None and _conflict(set(pro.jurisdictions_served), org):
         raise PolicyBlocked(f"{pro.display_name} does not serve {org.country}; the engagement cannot be agreed. "
                             "Choose a professional who serves your country.", code="JURISDICTION_CONFLICT")

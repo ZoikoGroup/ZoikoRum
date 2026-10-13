@@ -3,12 +3,13 @@ from __future__ import annotations
 import uuid
 from typing import Literal
 
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, Query, Response, status
 
 from zoikorum.domains.dispute import service
 from zoikorum.domains.dispute.schemas import AppealIn, AppealDecisionIn, AssignIn, DisputeIn, DisputeOut, EvidenceIn, RecommendationIn, ResolutionIn
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
+from zoikorum.shared.http import Page
 from zoikorum.shared.idempotency import IdempotencyKey
 from zoikorum.shared.uploads import file_response
 
@@ -42,10 +43,11 @@ async def open_dispute(body: DisputeIn, actor: CurrentActor, session: DbSession,
     return await idem.run(session, actor, lambda: service.open_dispute(session, actor, body), status_code=201)
 
 
-@router.get(D, response_model=list[DisputeOut])
+@router.get(D, response_model=Page[DisputeOut])
 async def list_disputes(actor: CurrentActor, session: DbSession, role: Literal["buyer", "professional", "operator"] = "buyer",
-                        contractId: uuid.UUID | None = None):
-    return await service.list_disputes(session, actor, role, contractId)
+                        contractId: uuid.UUID | None = None, cursor: str | None = None, limit: int | None = Query(default=None, ge=1, le=100)):
+    """Newest first, one page at a time (follow nextCursor)."""
+    return await service.list_disputes(session, actor, role, contractId, cursor, limit)
 
 
 @router.get(f"{D}/{{case_id}}", response_model=DisputeOut)

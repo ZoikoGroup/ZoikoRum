@@ -75,7 +75,7 @@ async def test_customer_finds_hires_pays_and_receives_work(client, make_user, dr
     # Release minus the 10% fee, invoice for the buyer, payout to the professional once a bank account exists.
     esc = await escrow_of(client, buyer, c)
     assert esc["allocations"][0]["released"]["amountMinor"] == 900_000 and esc["fees"]["amountMinor"] == 100_000
-    invoices = (await client.get("/v1/payments/invoices", headers=buyer.h, params={"organizationId": org["id"]})).json()
+    invoices = (await client.get("/v1/payments/invoices", headers=buyer.h, params={"organizationId": org["id"]})).json()["items"]
     assert len(invoices) == 1 and re.fullmatch(r"ZK-INV-\d{6}", invoices[0]["number"])
     await client.put("/v1/payout-accounts/me", headers=pro_user.h, json=BANK)
     earnings = (await client.get("/v1/payments/earnings/me", headers=pro_user.h)).json()
@@ -163,7 +163,7 @@ async def test_disagreement_is_resolved_through_a_dispute_with_money_frozen(clie
     assert (await client.get(f"{D}/{d['id']}", headers=buyer.h)).json()["status"] == "CLOSED"
     esc = await escrow_of(client, buyer, c)
     assert esc["refunded"]["amountMinor"] == 400_000 and esc["allocations"][0]["released"]["amountMinor"] == 540_000
-    refunds = (await client.get("/v1/payments/refunds", headers=buyer.h, params={"organizationId": org["id"]})).json()
+    refunds = (await client.get("/v1/payments/refunds", headers=buyer.h, params={"organizationId": org["id"]})).json()["items"]
     assert [r["status"] for r in refunds] == ["SETTLED"]
     await balanced(sf)
 

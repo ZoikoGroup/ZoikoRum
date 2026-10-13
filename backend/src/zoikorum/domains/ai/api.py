@@ -1,9 +1,10 @@
 import uuid
 from typing import Literal
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
-from zoikorum.domains.ai import service
+from zoikorum.config import get_settings
+from zoikorum.domains.ai import claude, service
 from zoikorum.domains.ai.models import PromptVersion, InferenceLog
 from zoikorum.domains.proposal import facade as proposal
 from zoikorum.domains.professional import facade as professional
@@ -12,7 +13,7 @@ from zoikorum.domains.contract import facade as contract
 from zoikorum.domains.dispute import facade as dispute
 from zoikorum.shared.auth import CurrentActor, PlatformRole
 from zoikorum.shared.db import DbSession
-from zoikorum.shared.http import enforce_budget
+from zoikorum.shared.http import enforce_budget, page_of, paginate
 from zoikorum.shared.errors import NotFound, Conflict
 from zoikorum.shared.idempotency import IdempotencyKey
 from zoikorum.shared.events import record_audit
@@ -88,6 +89,18 @@ async def prompts(actor: CurrentActor, session: DbSession):
     return [service.prompt_out(p) for p in (await session.scalars(select(PromptVersion).order_by(PromptVersion.prompt_key, PromptVersion.version.desc()))).all()]
 
 
+@router.get("/prompts/built-in")
+async def built_in_prompts(actor: CurrentActor):
+    """The prompts that ship with the platform (search, verification, marketplace): changed only through code review
+    with their golden tests, and switched off with ZK_AI_DISABLED_PROMPTS."""
+    actor.require_platform_role(PlatformRole.AI_SAFETY_REVIEWER)
+    s = get_settings()
+    return [{"promptKey": p.key, "version": p.version, "purpose": p.purpose, "owner": p.owner, "targetModel": s.ai_model,
+             "goldenTests": p.golden_tests, "fallback": p.fallback,
+             "status": "OFF" if p.key in s.ai_disabled_prompts else ("ACTIVE" if claude.available(p) else "NOT_CONFIGURED")}
+            for p in claude.BUILT_IN.values()]
+
+
 @router.post("/prompts", status_code=201)
 async def create_prompt(body: PromptIn, actor: CurrentActor, session: DbSession, idem: IdempotencyKey):
     return await idem.run(session, actor, lambda: service.create_prompt(session, actor, body), status_code=201)
@@ -110,9 +123,11 @@ async def retire_prompt(prompt_id: uuid.UUID, actor: CurrentActor, session: DbSe
 
 
 @router.get("/inferences")
-async def inferences(actor: CurrentActor, session: DbSession):
+async def inferences(actor: CurrentActor, session: DbSession, cursor: str | None = None, limit: int | None = Query(default=None, ge=1, le=100)):
+    """Newest first, one page at a time (follow nextCursor)."""
     actor.require_platform_role(PlatformRole.AI_SAFETY_REVIEWER)
-    rows = (await session.scalars(select(InferenceLog).order_by(InferenceLog.created_at.desc()).limit(100))).all()
+    stmt, lim = paginate(select(InferenceLog), InferenceLog, cursor, limit)
     # Outputs remain within the subject's access scope; governance sees metadata only.
-    return [{"id": r.id, "purpose": r.purpose, "model": r.model, "promptVersion": r.prompt_version,
-             "inputHash": r.input_sha256, "fallbackUsed": r.fallback_used, "latencyMs": r.latency_ms, "createdAt": r.created_at} for r in rows]
+    return page_of((await session.scalars(stmt)).all(), lim, lambda r: {
+        "id": r.id, "purpose": r.purpose, "model": r.model, "promptVersion": r.prompt_version, "inputHash": r.input_sha256,
+        "fallbackUsed": r.fallback_used, "latencyMs": r.latency_ms, "createdAt": r.created_at})

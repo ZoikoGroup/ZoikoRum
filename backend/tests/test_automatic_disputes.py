@@ -48,12 +48,12 @@ async def test_repeated_rejection_triggers_once_and_does_not_punish_filing(clien
         revised = await client.post(f'/v1/milestones/{mid}/request-revision', headers=buyer.h, json={'reason': 'Please address the documented acceptance criteria.'})
         assert revised.status_code == 200, revised.text
         await drain()
-    cases = (await client.get('/v1/disputes', headers=buyer.h, params={'contractId': c['id']})).json()
+    cases = (await client.get('/v1/disputes', headers=buyer.h, params={'contractId': c['id']})).json()['items']
     assert len(cases) == 1 and cases[0]['initiatorParty'] == 'PLATFORM'
     escrow = await escrow_of(client, buyer, c)
     assert escrow['allocations'][0]['state'] == 'ON_HOLD'
     await drain()
-    assert len((await client.get('/v1/disputes', headers=buyer.h, params={'contractId': c['id']})).json()) == 1
+    assert len((await client.get('/v1/disputes', headers=buyer.h, params={'contractId': c['id']})).json()['items']) == 1
     assert (await client.get(f"/v1/trust/professionals/{pro['id']}")).json()['tier'] == 'B'
 
 
@@ -67,7 +67,7 @@ async def test_confirmed_revocation_triggers_intake_but_an_advisory_flag_does_no
         record_event(session, E.RISK_FLAG_RAISED, aggregate_type='Professional', aggregate_id=pro['id'],
             payload={'subjectType': 'PROFESSIONAL', 'subjectId': pro['id'], 'reasonCodes': ['REVIEW_NEEDED'], 'advisoryOnly': True})
     await drain()
-    assert (await client.get('/v1/disputes', headers=buyer.h, params={'contractId': c['id']})).json() == []
+    assert (await client.get('/v1/disputes', headers=buyer.h, params={'contractId': c['id']})).json()['items'] == []
     assert (await client.get(f"/v1/trust/professionals/{pro['id']}")).json()['tier'] == 'B'
     async with sf() as session:
         checks = await verification.get_checks(session, 'PROFESSIONAL', uuid.UUID(pro['id']))
@@ -78,12 +78,12 @@ async def test_confirmed_revocation_triggers_intake_but_an_advisory_flag_does_no
         json={'reasonCode': 'CONFIRMED_REVOCATION', 'publicReason': 'The independently reviewed identity evidence is no longer valid.'})
     assert revoked.status_code == 200, revoked.text
     await drain()
-    cases = (await client.get('/v1/disputes', headers=buyer.h, params={'contractId': c['id']})).json()
+    cases = (await client.get('/v1/disputes', headers=buyer.h, params={'contractId': c['id']})).json()['items']
     assert len(cases) == 1 and cases[0]['initiatorParty'] == 'PLATFORM' and cases[0]['category'] == 'COMPLIANCE_BREACH'
     escrow = await escrow_of(client, buyer, c)
     assert all(allocation['state'] == 'ON_HOLD' for allocation in escrow['allocations'])
     await drain()
-    assert len((await client.get('/v1/disputes', headers=buyer.h, params={'contractId': c['id']})).json()) == 1
+    assert len((await client.get('/v1/disputes', headers=buyer.h, params={'contractId': c['id']})).json()['items']) == 1
     trust = await client.get(f"/v1/trust/professionals/{pro['id']}")
     assert trust.status_code == 200 and trust.json()['tier'] == 'C'
 
@@ -93,7 +93,7 @@ async def test_missed_deadline_policy_is_pinned_and_uses_actual_funded_state(cli
     current = (await client.get(f"/v1/contracts/{c['id']}", headers=buyer.h)).json()
     assert current['terms']['policySettings']['autoDisputeMissedDeadline'] is True
     clock.advance(timedelta(days=12)); await drain(); clock.set_now(None)
-    cases = (await client.get('/v1/disputes', headers=buyer.h, params={'contractId': c['id']})).json()
+    cases = (await client.get('/v1/disputes', headers=buyer.h, params={'contractId': c['id']})).json()['items']
     assert len(cases) == 1 and cases[0]['category'] == 'TIMELINE_DELAY'
     escrow = await escrow_of(client, buyer, c)
     assert escrow['allocations'][0]['state'] == 'ON_HOLD'

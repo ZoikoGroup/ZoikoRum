@@ -86,7 +86,7 @@ async def test_collections_compare_and_enriched_saved_list(client, make_user, dr
     r = await client.post(f"/v1/saved/collections/{c['id']}/items", headers=buyer.h, json={"professionalIds": [a["id"], b["id"]]})
     assert r.status_code == 200 and r.json()["count"] == 2
 
-    saved = (await client.get("/v1/saved/professionals", headers=buyer.h)).json()  # adding to a collection also saves
+    saved = (await client.get("/v1/saved/professionals", headers=buyer.h)).json()["items"]  # adding to a collection also saves
     ann = next(s for s in saved if s["displayName"] == "Ann")
     assert ann["collectionIds"] == [c["id"]] and ann["startingPrice"] == {"amountMinor": 150000, "currency": "USD"}
     assert ann["specializations"] == ["Fractional CFO"] and ann["dimensions"]["restrictions"] == "CLEAR"
@@ -94,7 +94,7 @@ async def test_collections_compare_and_enriched_saved_list(client, make_user, dr
     await client.delete(f"/v1/saved/collections/{c['id']}/items/{b['id']}", headers=buyer.h)
     assert (await client.get("/v1/saved/collections", headers=buyer.h)).json()[0]["count"] == 1
     await client.delete(f"/v1/saved/collections/{c['id']}", headers=buyer.h)
-    assert len((await client.get("/v1/saved/professionals", headers=buyer.h)).json()) == 2  # still saved
+    assert len((await client.get("/v1/saved/professionals", headers=buyer.h)).json()["items"]) == 2  # still saved
     other = await make_user("oli")
     assert (await client.post(f"/v1/saved/collections/{c['id']}/items", headers=other.h,
                               json={"professionalIds": [a["id"]]})).status_code == 404

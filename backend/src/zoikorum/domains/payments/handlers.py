@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import uuid
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.domains.payments import reconciliation, service
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import EventEnvelope, subscribe
+from zoikorum.shared.metrics import gauge_source
 from zoikorum.shared.relay import on_timer
 
 
@@ -25,7 +28,17 @@ async def on_refunded(session: AsyncSession, event: EventEnvelope) -> None:
     await service.on_refunded(session, event.payload)
 
 
+@on_timer(service.PAYOUT_RESUME_TIMER)
+async def on_payout_resume(session: AsyncSession, key: str, payload: dict) -> None:
+    await service.resume_payout(session, uuid.UUID(key.split(":")[0]))
+
+
 @on_timer(reconciliation.TIMER)
 async def on_daily_reconciliation(session: AsyncSession, key: str, payload: dict) -> None:
     await service.retry_failed_refunds(session)
     await reconciliation.scheduled(session)
+
+
+@gauge_source
+async def reconciliation_gauges(session: AsyncSession) -> list[tuple[str, str, float]]:
+    return await reconciliation.health(session)

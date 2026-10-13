@@ -43,14 +43,14 @@ async def test_an_appeal_is_decided_once_by_an_independent_reviewer(client, make
     r = await client.post(f"{V}/cases/{case['id']}/evidence", headers=u.h, json={"evidenceType": "ID_DOCUMENT", "items": [upload("clear.pdf", b"clear")]})
     assert r.status_code == 200 and len(r.json()["evidence"]) == 2
 
-    queue = (await client.get(f"{V}/appeals", headers=first.h)).json()
+    queue = (await client.get(f"{V}/appeals", headers=first.h)).json()["items"]
     assert len(queue) == 1 and queue[0]["canDecide"] is False  # the original reviewer cannot decide the appeal
     body = {"outcome": "OVERTURNED", "note": "The new scan is clear and matches the profile."}
     r = await client.post(f"{V}/appeals/{queue[0]['id']}/decision", headers=first.h, json=body)
     assert r.status_code == 403 and r.json()["code"] == "INDEPENDENT_REVIEWER_REQUIRED"
 
     second = await officer(make_user, "olu")
-    assert (await client.get(f"{V}/appeals", headers=second.h)).json()[0]["canDecide"] is True
+    assert (await client.get(f"{V}/appeals", headers=second.h)).json()["items"][0]["canDecide"] is True
     r = await client.post(f"{V}/appeals/{queue[0]['id']}/decision", headers=second.h, json=body)
     assert r.json()["status"] == "OVERTURNED"
     assert (await client.post(f"{V}/appeals/{queue[0]['id']}/decision", headers=second.h, json=body)).json()["code"] == "APPEAL_DECIDED"
@@ -85,7 +85,7 @@ async def test_appeals_are_time_bounded_and_upheld_decisions_stand(client, make_
     u2, pro2, case2, first2 = await failed_identity_case(client, make_user, drain)
     await client.post(f"{V}/cases/{case2['id']}/appeal", headers=u2.h, json={"statement": "I believe the document was readable enough."})
     second = await officer(make_user, "olu")
-    appeal = (await client.get(f"{V}/appeals", headers=second.h)).json()[0]
+    appeal = (await client.get(f"{V}/appeals", headers=second.h)).json()["items"][0]
     r = await client.post(f"{V}/appeals/{appeal['id']}/decision", headers=second.h,
                           json={"outcome": "UPHELD", "note": "Still unreadable. Please start a new check with a clear scan."})
     assert r.json()["status"] == "UPHELD"
@@ -124,9 +124,9 @@ async def test_partial_acceptance_needs_the_professionals_agreement(client, make
     a1 = esc["allocations"][0]
     assert a1["state"] == "PARTIALLY_RELEASED" and a1["released"]["amountMinor"] == 720_000 and a1["fee"]["amountMinor"] == 80_000
     assert esc["refunded"]["amountMinor"] == 200_000 and esc["held"]["amountMinor"] == 0
-    refunds = (await client.get("/v1/payments/refunds", headers=buyer.h, params={"organizationId": c["organizationId"]})).json()
+    refunds = (await client.get("/v1/payments/refunds", headers=buyer.h, params={"organizationId": c["organizationId"]})).json()["items"]
     assert [(x["amount"]["amountMinor"], x["status"]) for x in refunds] == [(200_000, "SETTLED")]
-    invoices = (await client.get("/v1/payments/invoices", headers=buyer.h, params={"organizationId": c["organizationId"]})).json()
+    invoices = (await client.get("/v1/payments/invoices", headers=buyer.h, params={"organizationId": c["organizationId"]})).json()["items"]
     assert invoices[0]["total"]["amountMinor"] == 800_000
     await balanced(sf)
 
@@ -220,7 +220,7 @@ async def test_the_same_id_document_from_two_accounts_opens_a_merge_flow(client,
 
     admin = await make_user("ada", platform_roles=("PLATFORM_ADMIN",))
     await admin.step_up()
-    (case,) = (await client.get("/v1/admin/duplicate-accounts", headers=admin.h)).json()
+    (case,) = (await client.get("/v1/admin/duplicate-accounts", headers=admin.h)).json()["items"]
     assert case["userAnswer"] == "MERGE_REQUESTED" and case["account"] and case["otherAccount"]
     r = await client.post(f"/v1/admin/duplicate-accounts/{case['id']}/resolve", headers=admin.h,
                           json={"outcome": "MERGED", "keepIdentityId": str(first.id), "note": "Same passport; keeping the first account."})
@@ -244,7 +244,7 @@ async def test_the_same_id_document_from_two_accounts_opens_a_merge_flow(client,
     assert blocked.status_code == 403, blocked.text
     assert blocked.json()["code"] == "ACCOUNT_NOT_ACTIVE"
     assert (await client.get("/v1/me", headers=first.h)).status_code == 200
-    assert (await client.get("/v1/admin/duplicate-accounts", headers=admin.h)).json() == []
+    assert (await client.get("/v1/admin/duplicate-accounts", headers=admin.h)).json()["items"] == []
 
 
 # ---- Weekly hours and search eligibility fields ----------------------------------------------------------------------------

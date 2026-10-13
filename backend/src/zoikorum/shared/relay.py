@@ -22,10 +22,11 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from zoikorum.config import get_settings
-from zoikorum.shared import clock, context
+from zoikorum.shared import clock, context, observability
 from zoikorum.shared.event_catalog import FINANCIAL_EVENTS
 from zoikorum.shared.events import EventEnvelope, Subscription, registry
 from zoikorum.shared.platform_models import ConsumerFailure, InboxEntry, OutboxEvent, Timer
+from zoikorum.shared.retry import is_permanent, scheduled
 
 log = logging.getLogger("zoikorum.relay")
 
@@ -46,24 +47,29 @@ def _consumer_context(env: EventEnvelope, consumer: str) -> context.ExecutionCon
 async def deliver(sf: async_sessionmaker[AsyncSession], sub: Subscription, env: EventEnvelope) -> bool:
     """Run one subscriber for one event. Returns True on success (or duplicate)."""
     try:
-        async with sf() as session:
-            async with session.begin():
-                inserted = await session.execute(
-                    pg_insert(InboxEntry)
-                    .values(consumer=sub.consumer, event_id=env.eventId)
-                    .on_conflict_do_nothing()
-                    .returning(InboxEntry.id)
-                )
-                if inserted.scalar_one_or_none() is None:
-                    return True  # already processed by this consumer
-                with context.use_context(_consumer_context(env, sub.consumer)):
-                    await sub.handler(session, env)
+        with observability.span(f"consume {env.eventType}", consumer=sub.consumer, event_id=env.eventId,
+                                correlation_id=env.correlationId):
+            await _deliver(sf, sub, env)
         await _resolve_failure(sf, sub.consumer, env)
         return True
     except Exception as exc:  # noqa: BLE001 - every consumer failure is recorded
         log.warning("consumer %s failed on %s: %s", sub.consumer, env.eventType, exc)
         await _record_failure(sf, sub.consumer, env, exc)
         return False
+
+
+async def _deliver(sf: async_sessionmaker[AsyncSession], sub: Subscription, env: EventEnvelope) -> None:
+    async with sf() as session, session.begin():
+        inserted = await session.execute(
+            pg_insert(InboxEntry)
+            .values(consumer=sub.consumer, event_id=env.eventId)
+            .on_conflict_do_nothing()
+            .returning(InboxEntry.id)
+        )
+        if inserted.scalar_one_or_none() is None:
+            return  # already processed by this consumer
+        with context.use_context(_consumer_context(env, sub.consumer)):
+            await sub.handler(session, env)
 
 
 async def _record_failure(sf, consumer: str, env: EventEnvelope, exc: Exception) -> None:
@@ -86,14 +92,15 @@ async def _record_failure(sf, consumer: str, env: EventEnvelope, exc: Exception)
             session.add(row)
         row.attempts += 1
         row.last_error = "".join(traceback.format_exception_only(type(exc), exc))[-4000:]
-        if row.attempts >= settings.consumer_max_attempts:
+        if row.attempts >= settings.consumer_max_attempts or is_permanent(exc):
+            # A failure that cannot succeed on a retry (invalid data, not allowed) goes to an operator at once.
             row.status = "DEAD"
             row.next_attempt_at = None
-            log.error("consumer %s dead-lettered event %s", consumer, env.eventId)
+            log.error("consumer %s dead-lettered event %s%s", consumer, env.eventId,
+                      " (will not succeed on retry)" if is_permanent(exc) else "")
         else:
-            delay = _BACKOFF_SECONDS[min(row.attempts - 1, len(_BACKOFF_SECONDS) - 1)]
             row.status = "RETRYING"
-            row.next_attempt_at = clock.now() + timedelta(seconds=delay)
+            row.next_attempt_at = clock.now() + timedelta(seconds=scheduled(row.attempts, _BACKOFF_SECONDS))
 
 
 async def _resolve_failure(sf, consumer: str, env: EventEnvelope) -> None:
@@ -236,7 +243,7 @@ async def fire_due_timers(sf: async_sessionmaker[AsyncSession], now: datetime | 
                     actor_id=f"timer:{t.kind}",
                     actor_type="system",
                 )
-                with context.use_context(ctx):
+                with context.use_context(ctx), observability.span(f"timer {t.kind}", correlation_id=ctx.correlation_id):
                     if handler is not None:
                         await handler(session, t.key, t.payload)
                 t.fired_at = clock.now()
@@ -248,7 +255,7 @@ async def fire_due_timers(sf: async_sessionmaker[AsyncSession], now: datetime | 
                 if t is not None:
                     t.attempts += 1
                     t.last_error = str(exc)[-4000:]
-                    t.fire_at = now + timedelta(seconds=_BACKOFF_SECONDS[min(t.attempts - 1, 4)])
+                    t.fire_at = now + timedelta(seconds=scheduled(t.attempts, _BACKOFF_SECONDS))
     return fired
 
 

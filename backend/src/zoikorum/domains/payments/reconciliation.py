@@ -135,3 +135,13 @@ async def scheduled(session: AsyncSession) -> None:
 async def bootstrap(session: AsyncSession) -> None:
     nxt = next_run(clock.now())
     await schedule_timer(session, TIMER, nxt.date().isoformat(), nxt)
+
+
+async def health(session: AsyncSession) -> list[tuple[str, str, float]]:
+    """Metrics (shared/metrics.py): the payments SLO is zero unresolved mismatches, and the daily run must happen."""
+    latest = await session.scalar(select(ReconciliationBatch).order_by(ReconciliationBatch.day.desc()).limit(1))
+    if latest is None:
+        return []
+    return [("zk_reconciliation_latest_mismatches", "Mismatches in the latest reconciled day (must be 0)", latest.mismatches),
+            ("zk_reconciliation_latest_age_days", "Days since the latest reconciled day (2 or more: the daily run is not "
+             "happening)", (clock.now().date() - latest.day).days)]

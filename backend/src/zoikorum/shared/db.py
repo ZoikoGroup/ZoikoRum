@@ -110,6 +110,9 @@ def get_engine() -> AsyncEngine:
     if _engine is None:
         s = get_settings()
         _engine = create_async_engine(s.database_url, pool_size=s.db_pool_size, pool_pre_ping=True)
+        from zoikorum.shared import observability
+
+        observability.instrument_engine(_engine)
         _session_factory = async_sessionmaker(_engine, expire_on_commit=False, autoflush=True)
     return _engine
 

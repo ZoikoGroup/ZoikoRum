@@ -951,3 +951,114 @@ export function DeadLettersPage() {
     </>
   )
 }
+
+interface OpsSwitch {
+  key: string
+  label: string
+  effect: string
+  money: boolean
+  paused: boolean
+  reason: string | null
+  changedAt: string | null
+}
+
+interface Backlog {
+  unpublishedEvents: number
+  oldestUnpublishedSeconds: number
+  overdueTimers: number
+  oldestOverdueTimerSeconds: number
+  retryingDeliveries: number
+  deadLetters: number
+  deadFinancialLetters: number
+}
+
+const ago = (s: number) => (s < 90 ? `${Math.round(s)} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${Math.round(s / 3600)} h`)
+
+/** Operational switches (pause one kind of action at once) and how far behind the background worker is. */
+export function SwitchesPage() {
+  const { user } = useAuth()
+  const [rows, setRows] = useState<OpsSwitch[]>([])
+  const [backlog, setBacklog] = useState<Backlog | null>(null)
+  const [editing, setEditing] = useState<OpsSwitch | null>(null)
+  const [reason, setReason] = useState('')
+  const [error, setError] = useState<unknown>(null)
+  const { run, modal } = useStepUp(setError)
+  const admin = !!user?.platformRoles.includes('PLATFORM_ADMIN')
+
+  const reload = useCallback(async () => {
+    const [s, b] = await Promise.all([api<OpsSwitch[]>('/v1/admin/switches'), api<Backlog>('/v1/admin/worker')])
+    setRows(s)
+    setBacklog(b)
+  }, [])
+  useEffect(() => {
+    reload().catch(setError)
+  }, [reload])
+
+  const save = (s: OpsSwitch) => run(async () => {
+    await api(`/v1/admin/switches/${s.key}`, { method: 'PUT', body: { paused: !s.paused, reason } })
+    setEditing(null)
+    setReason('')
+    await reload()
+  })
+
+  return (
+    <>
+      <PortalHeader eyebrow="Operations" title="Switches and Worker"
+        subtitle="Pause one kind of action at once during an incident. Every change needs two-step sign-in and a reason, and is audited."
+        actions={<button className="btn btn-secondary" onClick={() => reload().catch(setError)}><Icon name="clock" /> Refresh</button>} />
+      <ErrorAlert error={error} />
+      {modal}
+
+      {backlog && (
+        <div className="stat-row four">
+          <StatCard icon="clock" tone={backlog.oldestUnpublishedSeconds > 120 ? 'red' : 'green'} label="Events waiting"
+            value={backlog.unpublishedEvents} sub={backlog.unpublishedEvents ? `oldest ${ago(backlog.oldestUnpublishedSeconds)}` : 'worker is up to date'} />
+          <StatCard icon="bell" tone={backlog.oldestOverdueTimerSeconds > 300 ? 'red' : 'green'} label="Overdue timers"
+            value={backlog.overdueTimers} sub={backlog.overdueTimers ? `oldest ${ago(backlog.oldestOverdueTimerSeconds)}` : 'none'} />
+          <StatCard icon="gear" tone={backlog.retryingDeliveries ? 'amber' : 'green'} label="Retrying deliveries" value={backlog.retryingDeliveries} />
+          <StatCard icon="shield" tone={backlog.deadLetters ? 'red' : 'green'} label="Failed deliveries" value={backlog.deadLetters}
+            sub={backlog.deadFinancialLetters ? `${backlog.deadFinancialLetters} about money` : undefined} to="/app/ops/dead-letters" />
+        </div>
+      )}
+
+      <section className="card panel">
+        <div className="panel-head"><h3 style={{ margin: 0 }}>Switches</h3></div>
+        <table className="data">
+          <thead><tr><th scope="col">Action</th><th scope="col">While paused</th><th scope="col">State</th><th scope="col"><span className="sr-only">Change</span></th></tr></thead>
+          <tbody>
+            {rows.map((s) => {
+              const allowed = admin || s.money
+              return (
+                <tr key={s.key}>
+                  <td><strong>{s.label}</strong>{s.money && <div className="small muted">Money: Financial Operations may change it too</div>}</td>
+                  <td className="small">{s.effect}</td>
+                  <td>
+                    <span className={`badge ${s.paused ? 'prio-high' : 'green'}`}>{s.paused ? 'Paused' : 'On'}</span>
+                    {s.reason && <div className="small muted">{s.reason}{s.changedAt ? ` · ${new Date(s.changedAt).toLocaleString()}` : ''}</div>}
+                  </td>
+                  <td>
+                    {allowed && editing?.key !== s.key && (
+                      <button className={`btn btn-sm ${s.paused ? 'btn-primary' : 'btn-secondary'}`} onClick={() => { setEditing(s); setReason('') }}>
+                        {s.paused ? 'Switch back on' : 'Pause'}
+                      </button>
+                    )}
+                    {editing?.key === s.key && (
+                      <form onSubmit={(e) => { e.preventDefault(); save(s) }} style={{ display: 'grid', gap: 6, minWidth: 220 }}>
+                        <label className="small" htmlFor={`reason-${s.key}`}>Reason (recorded in the audit trail)</label>
+                        <input id={`reason-${s.key}`} className="input" value={reason} onChange={(e) => setReason(e.target.value)} minLength={10} maxLength={500} required />
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <button className="btn btn-primary btn-sm">{s.paused ? 'Switch on' : 'Pause now'}</button>
+                          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing(null)}>Cancel</button>
+                        </div>
+                      </form>
+                    )}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </section>
+    </>
+  )
+}

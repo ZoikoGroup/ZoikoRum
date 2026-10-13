@@ -9,10 +9,20 @@ import smtplib
 import socket
 import ssl
 from email.message import EmailMessage
+from functools import lru_cache
 from urllib.parse import urlsplit
 
 from zoikorum.config import get_settings
+from zoikorum.shared.circuit import CircuitBreaker
 from zoikorum.shared.errors import ValidationFailed
+
+
+@lru_cache
+def mail_breaker() -> CircuitBreaker:
+    """While the mail server is down, queued emails fail fast and wait for their retry instead of each holding a
+    worker for the full connection timeout."""
+    s = get_settings()
+    return CircuitBreaker("mail server", s.provider_breaker_failures, s.provider_breaker_reset_seconds)
 
 
 class ConsoleEmailProvider:
@@ -40,7 +50,7 @@ class SMTPEmailProvider:
                 refused = smtp.send_message(message)
                 if refused:
                     raise RuntimeError("Mail server refused recipient")
-        await asyncio.to_thread(transmit)
+        await mail_breaker().acall(asyncio.to_thread, transmit)
         return "DELIVERED"
 
 

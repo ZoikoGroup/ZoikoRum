@@ -129,3 +129,17 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
   if (blob) return (await res.blob()) as T
   return res.json() as Promise<T>
 }
+
+/** Every page of a paged list, in the endpoint's order, following nextCursor (at most maxPages of 100 rows). */
+export async function allPages<T>(path: string, query: Record<string, string> = {}, maxPages = 50): Promise<T[]> {
+  const out: T[] = []
+  let cursor: string | null = null
+  for (let i = 0; i < maxPages; i++) {
+    const page: { items: T[]; nextCursor: string | null } =
+      await api(path, { query: { ...query, limit: '100', ...(cursor ? { cursor } : {}) } })
+    out.push(...page.items)
+    cursor = page.nextCursor
+    if (!cursor) break
+  }
+  return out
+}

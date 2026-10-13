@@ -15,6 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.config import get_settings
+from zoikorum.domains.admin import facade as admin_facade
 from zoikorum.domains.buyer import facade as buyer_facade
 from zoikorum.domains.contract import facade as contract_facade
 from zoikorum.domains.policy import facade as policy_facade
@@ -222,6 +223,7 @@ async def ledger(session: AsyncSession, actor: Actor, account_id: uuid.UUID) -> 
 async def fund(session: AsyncSession, actor: Actor, account_id: uuid.UUID, body: FundIn) -> EscrowOut:
     from zoikorum.domains.payments import facade as payments_facade
     payments_facade.require_available()
+    await admin_facade.require_on(session, "FUNDING")
     a = await _account(session, account_id, lock=True)
     if await _viewer(session, actor, a) != "BUYER":
         raise Forbidden("Only the buyer funds escrow")
@@ -367,6 +369,9 @@ def _accepted_gross(accepted_release_minor: int | None, funded_minor: int) -> in
     return accepted_release_minor
 
 
+RELEASE_RESUME_TIMER = "escrow.release_resume"
+
+
 async def milestone_accepted(session: AsyncSession, payload: dict) -> None:
     """Consumer of MILESTONE_ACCEPTED. Releases the milestone's escrow to the professional, minus the platform fee."""
     milestone_id = uuid.UUID(str(payload["milestoneId"]))
@@ -388,6 +393,11 @@ async def milestone_accepted(session: AsyncSession, payload: dict) -> None:
         evaluated("BLOCKED", f"NOT_FUNDED:{x.state}")
         return
 
+    if await admin_facade.is_paused(session, "RELEASES"):
+        evaluated("BLOCKED", "RELEASES_PAUSED")  # staff paused releases: try again in 10 minutes, never dropped
+        when = clock.now() + timedelta(minutes=10)
+        await schedule_timer(session, RELEASE_RESUME_TIMER, f"{milestone_id}:{int(when.timestamp()) // 600}", when)
+        return
     contract = await contract_facade.get_contract(session, a.contract_id)
     milestone = next((m for m in contract.milestones if m.id == milestone_id), None)
     if milestone is None or milestone.status != "ACCEPTED":

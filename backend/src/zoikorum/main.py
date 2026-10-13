@@ -8,17 +8,19 @@ Each domain in ``zoikorum.domains.DOMAINS`` contributes:
 
 from __future__ import annotations
 
+import hmac
 import importlib
 import importlib.util
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, Response
 
 from zoikorum.config import get_settings
 from zoikorum.domains import DOMAINS
 from zoikorum.shared import http, observability
+from zoikorum.shared import housekeeping  # noqa: F401 - registers the daily clean-up timer
 from zoikorum.shared import platform_models  # noqa: F401 - registers platform tables
 from zoikorum.shared.db import dispose_engine
 
@@ -73,6 +75,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     http.install(app)
+    observability.instrument_app(app)
     async def validate_actor(actor, path, method):
         from zoikorum.domains.identity import facade as identity
         from zoikorum.domains.admin import facade as admin
@@ -105,6 +108,20 @@ def create_app() -> FastAPI:
         if problem:
             return JSONResponse({"status": "not_ready", "reason": problem}, status_code=503)
         return JSONResponse({"status": "ready", "service": settings.service_name})
+
+    @app.get("/metrics", include_in_schema=False)
+    async def metrics_page(request: Request) -> Response:
+        """Prometheus metrics (shared/metrics.py). Only with the bearer token; otherwise it does not exist."""
+        from zoikorum.shared import metrics
+        from zoikorum.shared.db import session_factory
+
+        token = get_settings().metrics_token
+        sent = request.headers.get("Authorization", "")
+        if not token or not hmac.compare_digest(sent.encode(), f"Bearer {token}".encode()):
+            return Response(status_code=404)
+        async with session_factory()() as session:
+            body, content_type = await metrics.render(session)
+        return Response(body, media_type=content_type)
 
     return app
 

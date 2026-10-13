@@ -84,7 +84,7 @@ async def test_direct_resolution_partial_refund(client, make_user, drain, sf):
     assert esc["refunded"]["amountMinor"] == 400_000 and esc["held"]["amountMinor"] == 0
     k = (await client.get(f"{C}/{c['id']}", headers=buyer.h)).json()
     assert k["status"] == "ACTIVE" and k["milestones"][0]["status"] == "ACCEPTED"  # the second milestone continues
-    refunds = (await client.get("/v1/payments/refunds", headers=buyer.h, params={"organizationId": c["organizationId"]})).json()
+    refunds = (await client.get("/v1/payments/refunds", headers=buyer.h, params={"organizationId": c["organizationId"]})).json()["items"]
     assert [(x["amount"]["amountMinor"], x["status"]) for x in refunds] == [(400_000, "SETTLED")]
     assert (await client.get("/v1/payments/earnings/me", headers=pro_user.h)).json()["payouts"][0]["net"]["amountMinor"] == 540_000
     await balanced(sf)

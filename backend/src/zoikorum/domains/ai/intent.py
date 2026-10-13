@@ -19,11 +19,15 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from zoikorum.config import get_settings
+from zoikorum.domains.ai import claude
 from zoikorum.domains.ai.specializations import CatalogEntry, _words
 
 log = logging.getLogger("zoikorum.ai")
-PROMPT_VERSION = "search-intent-1"
+PROMPT = claude.BUILT_IN["search-intent"]
+PROMPT_VERSION = PROMPT.label
 MAX_SPECIALIZATIONS = 3
 
 ENGAGEMENT_TYPES = ("ADVISORY", "PROJECT", "RETAINER", "FRACTIONAL")
@@ -200,32 +204,19 @@ _SYSTEM = (
 )
 
 
-async def _claude_intent(text: str, catalog: list[CatalogEntry]) -> SearchIntent | None:
+async def _claude_intent(text: str, catalog: list[CatalogEntry], session: AsyncSession | None = None,
+                         requested_by=None) -> SearchIntent | None:
     s = get_settings()
-    if s.ai_provider != "anthropic" or not s.anthropic_api_key:
-        return None
-    try:
-        import anthropic  # optional dependency: only needed when an API key is configured
-    except ImportError:
-        log.warning("ai_provider=anthropic but the anthropic package is not installed; using keyword rules")
-        return None
     lines = "\n".join(f"{e.slug} | {e.name} | {e.group_name} | {e.category_name}" for e in catalog)
-    try:
-        client = anthropic.AsyncAnthropic(api_key=s.anthropic_api_key, timeout=15.0, max_retries=1)
-        response = await client.messages.parse(
-            model=s.ai_model,
-            max_tokens=1000,
-            system=[{"type": "text", "text": _SYSTEM}, {"type": "text", "text": f"Catalog (slug | name | group | category):\n{lines}",
-                                                         "cache_control": {"type": "ephemeral"}}],
-            messages=[{"role": "user", "content": f"<buyer_request>\n{text}\n</buyer_request>"}],
-            output_format=_IntentOut,
-        )
-    except anthropic.APIError as exc:  # network, rate limit, auth, server errors
-        log.warning("search intent via Claude failed (%s); using keyword rules", type(exc).__name__)
+    out = await claude.parse(
+        PROMPT, _IntentOut, input_sha256=claude.input_hash(text), timeout=15.0, session=session, requested_by=requested_by,
+        max_tokens=1000,
+        system=[{"type": "text", "text": _SYSTEM}, {"type": "text", "text": f"Catalog (slug | name | group | category):\n{lines}",
+                                                     "cache_control": {"type": "ephemeral"}}],
+        messages=[{"role": "user", "content": f"<buyer_request>\n{text}\n</buyer_request>"}],
+    )
+    if out is None:
         return None
-    if response.stop_reason == "refusal" or response.parsed_output is None:
-        return None
-    out = response.parsed_output
     known = {e.slug for e in catalog}
     code = (out.jurisdiction or "").strip().upper()
     keywords = " ".join((out.keywords or "").split()[:6]) or None
@@ -238,10 +229,12 @@ async def _claude_intent(text: str, catalog: list[CatalogEntry]) -> SearchIntent
     return _with_reasons(intent, catalog)
 
 
-async def extract_search_intent(text: str, catalog: list[CatalogEntry]) -> SearchIntent:
-    """Never raises: Claude when configured, otherwise (or on any failure) keyword rules."""
+async def extract_search_intent(text: str, catalog: list[CatalogEntry], *, session: AsyncSession | None = None,
+                                requested_by=None) -> SearchIntent:
+    """Never raises: Claude when configured, otherwise (or on any failure) keyword rules. With ``session`` the call is
+    logged in ai.inference_logs."""
     try:
-        result = await _claude_intent(text, catalog)
+        result = await _claude_intent(text, catalog, session, requested_by)
     except Exception:  # noqa: BLE001 - AI must degrade, never break the caller
         log.exception("unexpected error in search intent; using keyword rules")
         result = None

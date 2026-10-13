@@ -1,4 +1,4 @@
-import { api } from './client'
+import { allPages, api } from './client'
 import type { StoredFile, Upload } from './files'
 import type { Money } from './orgs'
 
@@ -56,7 +56,7 @@ export const disputeApi = {
   open: (body: { contractId: string; milestoneIds: string[]; category: DisputeCategory; summary: string; desiredOutcome: DisputeOutcome; context: string }) =>
     api<Dispute>(D, { method: 'POST', body, headers: idem() }),
   list: (role: 'buyer' | 'professional' | 'operator', contractId?: string) =>
-    api<Dispute[]>(D, { query: { role, ...(contractId ? { contractId } : {}) } }),
+    allPages<Dispute>(D, { role, ...(contractId ? { contractId } : {}) }),
   get: (id: string) => api<Dispute>(`${D}/${id}`),
   addEvidence: (id: string, body: { evidenceType: EvidenceType; description: string; items: Upload[] }) =>
     api<Dispute>(`${D}/${id}/evidence`, { method: 'POST', body }),

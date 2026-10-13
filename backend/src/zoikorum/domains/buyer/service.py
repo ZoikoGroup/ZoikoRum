@@ -30,6 +30,7 @@ from zoikorum.shared.crypto import sha256_hex
 from zoikorum.shared.errors import Conflict, Forbidden, NotFound, StepUpRequired, ValidationFailed
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_event
+from zoikorum.shared.http import expect_version
 from zoikorum.shared.money import Money, MoneyDTO
 
 INVITE_TTL = timedelta(days=7)
@@ -120,7 +121,7 @@ async def _out(session: AsyncSession, org: Organization, my_roles: list[str]) ->
     count = await session.scalar(
         select(func.count()).select_from(OrgMember).where(OrgMember.organization_id == org.id, OrgMember.status == "ACTIVE")
     )
-    return OrganizationOut(id=org.id, name=org.name, orgType=org.org_type, country=org.country, status=org.status,
+    return OrganizationOut(id=org.id, version=org.version, name=org.name, orgType=org.org_type, country=org.country, status=org.status,
                            businessContext=org.business_context, industry=org.industry, timeZone=org.time_zone,
                            myRoles=sorted(my_roles), memberCount=count or 0,
                            createdAt=org.created_at)
@@ -144,9 +145,11 @@ async def get_organization(session: AsyncSession, actor: Actor, org_id: uuid.UUI
 
 
 async def update_organization(session: AsyncSession, actor: Actor, org_id: uuid.UUID, name: str | None, ctx: str | None,
-                              industry: str | None = None, time_zone: str | None = None) -> OrganizationOut:
+                              industry: str | None = None, time_zone: str | None = None,
+                              if_match: str | None = None) -> OrganizationOut:
     m = await _require_member(session, actor, org_id, OrgRole.ORG_ADMIN)
     org = await _org(session, org_id, lock=True)
+    expect_version(if_match, org.version, "The organisation profile")
     changes = {}
     if name and name.strip() != org.name:
         org.name = changes["name"] = name.strip()

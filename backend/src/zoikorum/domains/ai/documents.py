@@ -11,16 +11,21 @@ problem, the result is NOT_CHECKED and staff review the file as before. Never ra
 from __future__ import annotations
 
 import base64
+import hashlib
 import logging
 from dataclasses import dataclass
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from zoikorum.config import get_settings
+from zoikorum.domains.ai import claude
 
 log = logging.getLogger("zoikorum.ai")
-PROMPT_VERSION = "document-check-1"
+PROMPT = claude.BUILT_IN["document-check"]
+PROMPT_VERSION = PROMPT.label
 MAX_BYTES = 5 * 1024 * 1024  # the model's limit per image; larger files are left to staff
 IMAGE_TYPES = ("image/jpeg", "image/png")
 
@@ -53,10 +58,12 @@ _SYSTEM = (
 )
 
 
-async def assess_document(data: bytes, content_type: str, expected: str) -> DocumentCheck:
+async def assess_document(data: bytes, content_type: str, expected: str, *, session: AsyncSession | None = None,
+                          subject_id=None, requested_by=None) -> DocumentCheck:
+    """Never raises. With ``session`` the call is logged in ai.inference_logs (the file's hash, never the file)."""
     s = get_settings()
-    if s.ai_provider != "anthropic" or not s.anthropic_api_key:
-        return not_checked("Automatic document check is off (no AI key configured). Review the file yourself.")
+    if not claude.available(PROMPT):
+        return not_checked("Automatic document check is off. Review the file yourself.")
     if len(data) > MAX_BYTES:
         return not_checked("File too large for the automatic check. Review the file yourself.")
     if content_type in IMAGE_TYPES:
@@ -65,23 +72,12 @@ async def assess_document(data: bytes, content_type: str, expected: str) -> Docu
         block = {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": base64.b64encode(data).decode()}}
     else:
         return not_checked("This file type is not checked automatically.")
-    try:
-        import anthropic  # optional dependency: only needed when an API key is configured
-    except ImportError:
-        log.warning("ai_provider=anthropic but the anthropic package is not installed; documents are not checked")
-        return not_checked("Automatic document check is unavailable. Review the file yourself.")
-    try:
-        client = anthropic.AsyncAnthropic(api_key=s.anthropic_api_key, timeout=30.0, max_retries=1)
-        response = await client.messages.parse(
-            model=s.ai_model, max_tokens=400, system=_SYSTEM,
-            messages=[{"role": "user", "content": [block, {"type": "text", "text": f"Requested document: {expected}"}]}],
-            output_format=_CheckOut,
-        )
-    except Exception as exc:  # noqa: BLE001 - AI must degrade, never break evidence handling
-        log.warning("document check via Claude failed (%s)", type(exc).__name__)
-        return not_checked("The automatic check could not run. Review the file yourself.")
-    if response.stop_reason == "refusal" or response.parsed_output is None:
-        return not_checked("The automatic check gave no answer. Review the file yourself.")
-    out = response.parsed_output
+    out = await claude.parse(
+        PROMPT, _CheckOut, input_sha256=hashlib.sha256(data).hexdigest(), timeout=30.0, session=session,
+        subject_id=subject_id, requested_by=requested_by, max_tokens=400, system=_SYSTEM,
+        messages=[{"role": "user", "content": [block, {"type": "text", "text": f"Requested document: {expected}"}]}],
+    )
+    if out is None:
+        return not_checked("The automatic check could not run or gave no answer. Review the file yourself.")
     return DocumentCheck(verdict=out.verdict, seen=out.seen.strip()[:120] or None, note=out.note.strip()[:300],
                          source=f"ai:{s.ai_model}@{PROMPT_VERSION}")

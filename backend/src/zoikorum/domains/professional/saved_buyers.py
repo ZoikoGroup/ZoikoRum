@@ -27,11 +27,11 @@ async def _relationships(session: AsyncSession, professional_id: uuid.UUID) -> d
     from zoikorum.domains.contract import facade as contract_facade
     from zoikorum.domains.proposal import facade as proposal_facade
 
-    requests = await proposal_facade.buyer_relationships(session, professional_id)
+    by_request = await proposal_facade.buyer_relationships(session, professional_id)
     engagements = await contract_facade.engagements_by_organization(session, professional_id)
     out: dict[uuid.UUID, dict] = {}
-    for org in set(requests) | set(engagements):
-        r, e = requests.get(org, {}), engagements.get(org, {})
+    for org in set(by_request) | set(engagements):
+        r, e = by_request.get(org, {}), engagements.get(org, {})
         last = [d for d in (r.get("lastRequestAt"), e.get("lastEngagementAt")) if d]
         out[org] = {"requests": r.get("requests", 0), "engagements": e.get("engagements", 0),
                     "completed": e.get("completed", 0), "lastActivityAt": max(last) if last else None}

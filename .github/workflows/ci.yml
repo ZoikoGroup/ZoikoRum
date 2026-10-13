@@ -1,5 +1,5 @@
 # Runs on every push and pull request: backend unit, integration and regression tests + migration drift check;
-# frontend lint, unit tests, type-check and build; the deployable images build.
+# frontend lint, unit tests, type-check and build; the deployable images build; security scans.
 name: CI
 
 on:
@@ -66,6 +66,32 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+
+  security:
+    # Engineering Handbook 19.4: known-vulnerable dependencies, risky code patterns and committed secrets fail the build.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # the secret scan reads the whole history
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Python dependencies with known vulnerabilities
+        run: |
+          pip install pip-audit bandit
+          pip-audit -r backend/requirements.txt -r backend/requirements-dev.txt --progress-spinner off
+      - name: Python code scan (medium severity and above)
+        run: bandit -q -r backend/src -ll
+      - name: JavaScript dependencies with known vulnerabilities
+        working-directory: frontend
+        run: npm audit --audit-level=high
+      - name: Secrets in the code or its history
+        run: |
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.21.2 git /repo --no-banner --redact --config /repo/.gitleaks.toml
 
   images:
     # The deployable images must build, and the API image must refuse development secrets outside development.

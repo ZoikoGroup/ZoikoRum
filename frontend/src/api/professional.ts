@@ -1,4 +1,4 @@
-import { api } from './client'
+import { allPages, api } from './client'
 import type { Money } from './orgs'
 
 // ---- Capability taxonomy (public) ----------------------------------------------
@@ -29,7 +29,7 @@ export const taxonomyApi = {
   submitSuggestion: (body: { text: string; name: string; categorySlug?: string | null; groupSlug?: string | null; description?: string; credentialLikely?: boolean; source?: string }) =>
     api<SpecializationSuggestion>('/v1/taxonomy/suggestions', { method: 'POST', body }),
   mySuggestions: () => api<SpecializationSuggestion[]>('/v1/taxonomy/suggestions/mine'),
-  queue: () => api<SpecializationSuggestion[]>('/v1/admin/taxonomy/suggestions'),
+  queue: () => allPages<SpecializationSuggestion>('/v1/admin/taxonomy/suggestions'),
   decide: (id: string, body: { action: 'APPROVE' | 'MERGE' | 'REJECT'; name?: string; groupSlug?: string; requiresCredential?: boolean; regulated?: boolean; mergeSlug?: string; note?: string }) =>
     api<SpecializationSuggestion>(`/v1/admin/taxonomy/suggestions/${id}/decision`, { method: 'POST', body }),
 }

@@ -20,6 +20,7 @@ from zoikorum.shared.auth import Actor, PlatformRole
 from zoikorum.shared.errors import Conflict, NotFound, ValidationFailed
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_event
+from zoikorum.shared.http import page_of, paginate
 
 RESOLVERS = (PlatformRole.PLATFORM_ADMIN, PlatformRole.TS_ANALYST)
 
@@ -91,12 +92,13 @@ async def answer(session: AsyncSession, actor: Actor, suspicion_id: uuid.UUID, b
     return _out(d, await _names(session, {d.identity_id, d.other_identity_id}), staff=False)
 
 
-async def queue(session: AsyncSession, actor: Actor) -> list[DuplicateOut]:
+async def queue(session: AsyncSession, actor: Actor, cursor: str | None = None, limit: int | None = None) -> dict:
     actor.require_platform_role(*RESOLVERS)
-    rows = (await session.scalars(select(DuplicateSuspicion).where(DuplicateSuspicion.status.in_(("OPEN", "ANSWERED")))
-                                  .order_by(DuplicateSuspicion.created_at).limit(200))).all()
-    people = await _names(session, {i for d in rows for i in (d.identity_id, d.other_identity_id)})
-    return [_out(d, people, staff=True) for d in rows]
+    stmt, lim = paginate(select(DuplicateSuspicion).where(DuplicateSuspicion.status.in_(("OPEN", "ANSWERED"))),
+                         DuplicateSuspicion, cursor, limit, oldest_first=True)
+    rows = (await session.scalars(stmt)).all()
+    people = await _names(session, {i for d in rows[:lim] for i in (d.identity_id, d.other_identity_id)})
+    return page_of(rows, lim, lambda d: _out(d, people, staff=True))
 
 
 async def resolve(session: AsyncSession, actor: Actor, suspicion_id: uuid.UUID, body: DuplicateResolveIn) -> DuplicateOut:

@@ -1,4 +1,4 @@
-import { api } from './client'
+import { allPages, api } from './client'
 import type { Upload } from './files'
 
 export type SubjectType = 'PROFESSIONAL' | 'FIRM'
@@ -120,7 +120,7 @@ export const verificationApi = {
   decide: (id: string, body: { decision: 'VERIFIED' | 'FAILED' | 'NEEDS_INFO'; reasonCode: string; publicReason?: string; expiresAt?: string }) =>
     api<VerificationCase>(`${V}/cases/${id}/decision`, { method: 'POST', body }),
   appeal: (id: string, statement: string) => api<VerificationCase>(`${V}/cases/${id}/appeal`, { method: 'POST', body: { statement } }),
-  appeals: () => api<AppealQueueItem[]>(`${V}/appeals`),
+  appeals: () => allPages<AppealQueueItem>(`${V}/appeals`),
   decideAppeal: (id: string, body: { outcome: 'UPHELD' | 'OVERTURNED'; note: string; expiresAt?: string }) =>
     api<Appeal>(`${V}/appeals/${id}/decision`, { method: 'POST', body }),
   revoke: (id: string, reasonCode: string, publicReason: string) =>
