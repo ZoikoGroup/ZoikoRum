@@ -16,10 +16,14 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel, Field
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from zoikorum.config import get_settings
+from zoikorum.domains.ai import claude
 
 log = logging.getLogger("zoikorum.ai")
-PROMPT_VERSION = "spec-match-1"
+PROMPT = claude.BUILT_IN["spec-match"]
+PROMPT_VERSION = PROMPT.label
 MAX_MATCHES = 5
 
 
@@ -109,33 +113,20 @@ _SYSTEM = (
 )
 
 
-async def _claude_match(text: str, catalog: list[CatalogEntry]) -> SpecializationMatch | None:
+async def _claude_match(text: str, catalog: list[CatalogEntry], session: AsyncSession | None = None,
+                       requested_by=None) -> SpecializationMatch | None:
     s = get_settings()
-    if s.ai_provider != "anthropic" or not s.anthropic_api_key:
-        return None
-    try:
-        import anthropic  # optional dependency: only needed when an API key is configured
-    except ImportError:
-        log.warning("ai_provider=anthropic but the anthropic package is not installed; using keyword matching")
-        return None
     lines = "\n".join(f"{e.slug} | {e.name} | group {e.group_slug} ({e.group_name}) | category {e.category_slug} ({e.category_name})"
                       for e in catalog)
-    try:
-        client = anthropic.AsyncAnthropic(api_key=s.anthropic_api_key, timeout=20.0, max_retries=1)
-        response = await client.messages.parse(
-            model=s.ai_model,
-            max_tokens=2000,
-            system=[{"type": "text", "text": _SYSTEM}, {"type": "text", "text": f"Catalog (slug | name | group | category):\n{lines}",
-                                                         "cache_control": {"type": "ephemeral"}}],
-            messages=[{"role": "user", "content": f"The professional describes their work as:\n\n{text}"}],
-            output_format=_MatchOut,
-        )
-    except anthropic.APIError as exc:  # network, rate limit, auth, server errors
-        log.warning("specialization matching via Claude failed (%s); using keyword matching", type(exc).__name__)
+    out = await claude.parse(
+        PROMPT, _MatchOut, input_sha256=claude.input_hash(text), timeout=20.0, session=session,
+        requested_by=requested_by, max_tokens=2000,
+        system=[{"type": "text", "text": _SYSTEM}, {"type": "text", "text": f"Catalog (slug | name | group | category):\n{lines}",
+                                                     "cache_control": {"type": "ephemeral"}}],
+        messages=[{"role": "user", "content": f"The professional describes their work as:\n\n{text}"}],
+    )
+    if out is None:
         return None
-    if response.stop_reason == "refusal" or response.parsed_output is None:
-        return None
-    out = response.parsed_output
     known = {e.slug: e for e in catalog}
     slugs = tuple(dict.fromkeys(x for x in out.matching_slugs if x in known))[:MAX_MATCHES]
     draft = None
@@ -147,10 +138,12 @@ async def _claude_match(text: str, catalog: list[CatalogEntry]) -> Specializatio
     return SpecializationMatch(slugs=slugs, draft=draft, source=f"ai:{s.ai_model}@{PROMPT_VERSION}")
 
 
-async def match_specializations(text: str, catalog: list[CatalogEntry]) -> SpecializationMatch:
-    """Never raises: Claude when configured, otherwise (or on any failure) keyword matching."""
+async def match_specializations(text: str, catalog: list[CatalogEntry], *, session: AsyncSession | None = None,
+                                requested_by=None) -> SpecializationMatch:
+    """Never raises: Claude when configured, otherwise (or on any failure) keyword matching. With ``session`` the call
+    is logged in ai.inference_logs."""
     try:
-        result = await _claude_match(text, catalog)
+        result = await _claude_match(text, catalog, session, requested_by)
     except Exception:  # noqa: BLE001 - AI must degrade, never break the caller
         log.exception("unexpected error in specialization matching; using keyword matching")
         result = None

@@ -13,7 +13,7 @@ from zoikorum.domains.proposal.schemas import (
 )
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
-from zoikorum.shared.http import Page
+from zoikorum.shared.http import IfMatch, Page
 from zoikorum.shared.idempotency import IdempotencyKey
 from zoikorum.shared.uploads import file_response
 
@@ -95,8 +95,9 @@ async def get_proposal(proposal_id: uuid.UUID, actor: CurrentActor, session: DbS
 
 
 @router.patch(f"{P}/{{proposal_id}}", response_model=ProposalOut)
-async def update_proposal(proposal_id: uuid.UUID, body: ProposalIn, actor: CurrentActor, session: DbSession):
-    return await service.update_proposal(session, actor, proposal_id, body)
+async def update_proposal(proposal_id: uuid.UUID, body: ProposalIn, actor: CurrentActor, session: DbSession,
+                          if_match: IfMatch = None):
+    return await service.update_proposal(session, actor, proposal_id, body, if_match)
 
 
 @router.post(f"{P}/{{proposal_id}}/attachments", response_model=ProposalOut)
@@ -117,8 +118,10 @@ async def proposal_attachment(proposal_id: uuid.UUID, sha256: str, actor: Curren
 
 
 @router.post(f"{P}/{{proposal_id}}/submit", response_model=ProposalOut)
-async def submit(proposal_id: uuid.UUID, actor: CurrentActor, session: DbSession, idem: IdempotencyKey):
-    return await idem.run(session, actor, lambda: service.submit_proposal(session, actor, proposal_id))
+async def submit(proposal_id: uuid.UUID, actor: CurrentActor, session: DbSession, idem: IdempotencyKey,
+                 confirmCapacity: bool = False):
+    """confirmCapacity: the professional confirms they can take this on although at capacity."""
+    return await idem.run(session, actor, lambda: service.submit_proposal(session, actor, proposal_id, confirmCapacity))
 
 
 @router.post(f"{P}/{{proposal_id}}/withdraw", response_model=ProposalOut)

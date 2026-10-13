@@ -23,6 +23,7 @@ from zoikorum.shared.crypto import canonical_json, encrypt_field, decrypt_field,
 from zoikorum.shared.errors import Forbidden, NotFound, Conflict, ValidationFailed
 from zoikorum.shared.http import paginate, page_of
 from zoikorum.shared.relay import schedule_timer
+from zoikorum.shared.retry import exponential
 from zoikorum.config import get_settings
 
 EMAIL_TIMER = 'notification.email_delivery'
@@ -230,7 +231,7 @@ async def deliver_email(session, key):
         row.last_error = 'Email provider could not deliver this message'
         if row.created_at + timedelta(hours=24) > clock.now():
             await schedule_timer(session, EMAIL_TIMER, f'{row.id}:{row.email_attempts}',
-                clock.now() + timedelta(seconds=min(3600, 30 * 2 ** min(row.email_attempts, 10))))
+                clock.now() + timedelta(seconds=exponential(row.email_attempts + 1)))
         else:
             row.email_status = 'FAILED'
             record_event(session, E.NOTIFICATION_FAILED, aggregate_type='Notification', aggregate_id=row.id,
@@ -295,7 +296,7 @@ async def deliver_webhook(session, key):
         error = 'Webhook destination is unreachable or unsafe'
     session.add(DeliveryAttempt(delivery_id=delivery.id, response_status=status, error=error, attempt=delivery.attempts))
     if error:
-        when = clock.now() + timedelta(seconds=min(3600, 30 * 2 ** min(delivery.attempts, 10)))
+        when = clock.now() + timedelta(seconds=exponential(delivery.attempts + 1))
         if when < delivery.retry_until:
             await schedule_timer(session, WEBHOOK_TIMER, f'{delivery.id}:{delivery.attempts}', when)
         else:

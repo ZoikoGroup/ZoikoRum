@@ -8,9 +8,9 @@ import logging
 import time
 import uuid
 from datetime import datetime
-from typing import Any, Generic, TypeVar
+from typing import Annotated, Any, Generic, TypeVar
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -19,7 +19,7 @@ from sqlalchemy.exc import ProgrammingError
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from zoikorum.config import get_settings
-from zoikorum.shared import context, ratelimit
+from zoikorum.shared import context, metrics, observability, ratelimit
 from zoikorum.shared.errors import DomainError, RateLimited, ValidationFailed, VersionConflict, ServiceUnavailable
 
 log = logging.getLogger("zoikorum.http")
@@ -45,12 +45,17 @@ class CorrelationMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         cid = request.headers.get("X-Correlation-Id") or context.new_correlation_id()
         with context.use_context(context.ExecutionContext(correlation_id=cid, actor_type="anonymous")):
+            observability.tag_current_span(correlation_id=cid)
             started = time.perf_counter()
             response = await call_next(request)
             response.headers["X-Correlation-Id"] = cid
+            elapsed = time.perf_counter() - started
             log.info("request", extra={"fields": {
                 "method": request.method, "route": request.url.path, "status": response.status_code,
-                "ms": round((time.perf_counter() - started) * 1000, 1)}})
+                "ms": round(elapsed * 1000, 1)}})
+            if request.url.path != "/metrics":
+                metrics.observe_request(request.method, getattr(request.scope.get("route"), "path", None),
+                                        response.status_code, elapsed)
             return response
 
 
@@ -201,19 +206,44 @@ def clamp_limit(limit: int | None) -> int:
     return max(1, min(limit or 20, MAX_PAGE))
 
 
-def paginate(stmt: Any, model: Any, cursor: str | None, limit: int | None):
-    """Keyset pagination on (created_at DESC, id DESC). Returns (stmt, limit)."""
+def paginate(stmt: Any, model: Any, cursor: str | None, limit: int | None, *, oldest_first: bool = False):
+    """Keyset pagination on (created_at, id): newest first, or oldest first for work queues. Returns (stmt, limit)."""
     from sqlalchemy import and_, or_
 
     lim = clamp_limit(limit)
     pos = decode_cursor(cursor)
     if pos:
         t, i = pos
-        stmt = stmt.where(or_(model.created_at < t, and_(model.created_at == t, model.id < i)))
-    return stmt.order_by(model.created_at.desc(), model.id.desc()).limit(lim + 1), lim
+        if oldest_first:
+            stmt = stmt.where(or_(model.created_at > t, and_(model.created_at == t, model.id > i)))
+        else:
+            stmt = stmt.where(or_(model.created_at < t, and_(model.created_at == t, model.id < i)))
+    order = (model.created_at, model.id) if oldest_first else (model.created_at.desc(), model.id.desc())
+    return stmt.order_by(*order).limit(lim + 1), lim
+
+
+def next_cursor(rows: list, lim: int, key=lambda r: r) -> str | None:
+    """The cursor for the page after ``rows[:lim]`` (``rows`` holds one extra row when there is one)."""
+    if len(rows) <= lim or not lim:
+        return None
+    last = key(rows[lim - 1])
+    return encode_cursor(last.created_at, last.id)
 
 
 def page_of(rows: list, lim: int, to_dto) -> dict:
-    items = rows[:lim]
-    nxt = encode_cursor(items[-1].created_at, items[-1].id) if len(rows) > lim and items else None
-    return {"items": [to_dto(r) for r in items], "nextCursor": nxt}
+    return {"items": [to_dto(r) for r in rows[:lim]], "nextCursor": next_cursor(rows, lim)}
+
+
+# ---- Optimistic concurrency (Engineering Handbook 18.4) -------------------------------------------------------------
+
+IfMatch = Annotated[str | None, Header(alias="If-Match", description="The version you last saw (the resource's `version`). "
+                                       "Refused with 409 VERSION_CONFLICT if someone changed it since.")]
+
+
+def expect_version(if_match: str | None, current: int, what: str) -> None:
+    """Refuse an edit made on an old copy: two people editing the same thing must not silently overwrite each other.
+    Without the header the edit goes ahead (older clients)."""
+    raw = (if_match or "").strip().removeprefix("W/").strip('"')
+    if raw.isdigit() and int(raw) != current:
+        raise VersionConflict(f"{what} was changed by someone else while you were editing. Reload to see the changes, "
+                              "then make yours again.")

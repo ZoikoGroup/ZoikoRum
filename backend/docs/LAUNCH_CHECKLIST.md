@@ -58,6 +58,9 @@ The code has a setting or a placeholder for each; someone with authority has to 
 | ☐ | Staging environment set up exactly like production, with the partner services in test mode | Engineering lead |
 | ☐ | Restore test: restore a database backup to a new server and start the app against it | Engineering lead |
 | ☐ | Monitoring and alerts: `/ready` failing, error rate, slow responses, worker stopped, disk and database size | Engineering lead |
+| ☐ | Prometheus scrapes `GET /metrics` with `ZK_METRICS_TOKEN`. Suggested alerts: `zk_outbox_oldest_unpublished_seconds` > 120 or `zk_timers_oldest_overdue_seconds` > 300 (worker stopped or behind); `zk_consumer_dead_letters_financial` > 0 (page Financial Operations); `zk_reconciliation_latest_mismatches` > 0 or `zk_reconciliation_latest_age_days` ≥ 2; `zk_circuit_open` = 1 for 5 minutes; p99 of `zk_http_request_duration_seconds` over 300 ms for search or 500 ms for proposal changes | Engineering lead |
+| ☐ | Incident switches rehearsed on staging (Administration → Switches & Worker): pause and resume funding, releases and payouts; releases and payouts must go out on their own within 10 minutes of switching back on. Alert on any `zk_switch_paused_*` = 1 for more than a day | Engineering lead + Financial Operations |
+| ☐ | Traces (optional): `ZK_TRACING_ENDPOINT` points at an OpenTelemetry collector; image built with the `tracing` extra (default) | Engineering lead |
 | ☐ | On-call rota and an incident contact list (including Stripe and Veriff support) | Engineering lead + management |
 | ☐ | Load test on staging passed and recorded below (`backend/scripts/load_test.py`, see [DEPLOYMENT.md](DEPLOYMENT.md#load-test-staging-before-launch-and-before-big-releases)) | Engineering |
 | ☐ | One full engagement done end to end on staging with real partner test modes: sign-up, Veriff check, request, proposal, contract, funding, delivery, acceptance, payout, invoice | Product + engineering |

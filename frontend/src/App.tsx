@@ -66,6 +66,7 @@ const AIAdminPage = lazy(() => import('./pages/Operations').then((m) => ({ defau
 const ReportsPage = lazy(() => import('./pages/Operations').then((m) => ({ default: m.ReportsPage })))
 const PlatformAnalyticsPage = lazy(() => import('./pages/Operations').then((m) => ({ default: m.PlatformAnalyticsPage })))
 const DeadLettersPage = lazy(() => import('./pages/Operations').then((m) => ({ default: m.DeadLettersPage })))
+const SwitchesPage = lazy(() => import('./pages/Operations').then((m) => ({ default: m.SwitchesPage })))
 
 const ENTERPRISE: ('ENTERPRISE_ADMIN' | 'ENTERPRISE_MEMBER')[] = ['ENTERPRISE_ADMIN', 'ENTERPRISE_MEMBER']
 const CUSTOMER: ('BUYER' | 'ENTERPRISE_ADMIN' | 'ENTERPRISE_MEMBER')[] = ['BUYER', ...ENTERPRISE]
@@ -148,6 +149,7 @@ export default function App() {
             <Route path="ops/ai" element={<RequireRole any={['AI_SAFETY_REVIEWER']}><AIAdminPage /></RequireRole>} />
             <Route path="ops/analytics" element={<RequireRole any={[...PLATFORM_ROLES]}><PlatformAnalyticsPage /></RequireRole>} />
             <Route path="ops/dead-letters" element={<RequireRole any={['FINANCIAL_OPS', 'PLATFORM_ADMIN']}><DeadLettersPage /></RequireRole>} />
+            <Route path="ops/switches" element={<RequireRole any={['FINANCIAL_OPS', 'PLATFORM_ADMIN']}><SwitchesPage /></RequireRole>} />
             <Route path="security" element={<Security />} />
             <Route path="forbidden" element={<ForbiddenPage />} />
           </Route>

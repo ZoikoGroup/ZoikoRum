@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from fastapi import APIRouter
+from pydantic import BaseModel, Field
 
-from zoikorum.domains.admin import service
+from zoikorum.domains.admin import service, switches
 from zoikorum.shared.auth import CurrentActor
+from zoikorum.shared import metrics
 from zoikorum.shared.db import DbSession
 import uuid
 from sqlalchemy import select
@@ -103,6 +105,32 @@ async def replay(failure_id: uuid.UUID, actor: CurrentActor, session: DbSession)
     ok = await replay_dead_letter(session_factory(), failure_id, authorised_by=str(actor.identity_id), financial_ops=financial_ops)
     record_audit(session, "admin.dead_letter.replayed", object_type="ConsumerFailure", object_id=failure_id, details={"succeeded": ok})
     return {"replayed": ok}
+
+
+class SwitchIn(BaseModel):
+    paused: bool
+    reason: str = Field(min_length=10, max_length=500)
+
+
+@router.get("/v1/admin/switches")
+async def list_switches(actor: CurrentActor, session: DbSession) -> list[dict]:
+    """Staff: the operational switches and who last changed each one."""
+    await service.staff(session, actor, PlatformRole.PLATFORM_ADMIN, PlatformRole.FINANCIAL_OPS)
+    return await switches.list_switches(session)
+
+
+@router.put("/v1/admin/switches/{key}")
+async def set_switch(key: str, body: SwitchIn, actor: CurrentActor, session: DbSession) -> dict:
+    """Pause or resume one kind of action at once (step-up, reason, audited). Money switches: Platform Admin or
+    Financial Operations; the others: Platform Admin."""
+    return await switches.set_switch(session, actor, key, body.paused, body.reason)
+
+
+@router.get("/v1/admin/worker")
+async def worker(actor: CurrentActor, session: DbSession) -> dict:
+    """Staff: how far behind the background worker is (the same numbers as GET /metrics)."""
+    await service.staff(session, actor, PlatformRole.PLATFORM_ADMIN, PlatformRole.FINANCIAL_OPS)
+    return await metrics.worker_backlog(session)
 
 
 @router.get("/v1/admin/overview")

@@ -84,7 +84,7 @@ async def test_suggestions_are_reviewed_before_they_go_live(client, make_user, d
 
     admin = await make_user("ada", platform_roles=("PLATFORM_ADMIN",))
     await admin.step_up()
-    (queued,) = (await client.get("/v1/admin/taxonomy/suggestions", headers=admin.h)).json()
+    (queued,) = (await client.get("/v1/admin/taxonomy/suggestions", headers=admin.h)).json()["items"]
     assert queued["professionalName"] == "Ann"
     r = await client.post(f"/v1/admin/taxonomy/suggestions/{queued['id']}/decision", headers=admin.h, json={"action": "APPROVE"})
     assert r.json()["status"] == "APPROVED" and r.json()["resolvedSlug"] == "robotic-process-automation"

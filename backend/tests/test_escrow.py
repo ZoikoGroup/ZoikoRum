@@ -60,12 +60,12 @@ async def test_fund_hold_release_invoice_and_payout(client, make_user, drain, sf
     await balanced(sf)
 
     org_id = c["organizationId"]
-    invoices = (await client.get("/v1/payments/invoices", headers=buyer.h, params={"organizationId": org_id})).json()
+    invoices = (await client.get("/v1/payments/invoices", headers=buyer.h, params={"organizationId": org_id})).json()["items"]
     # Numbers come from a database sequence shared across tests, so check the format rather than a fixed value.
     assert len(invoices) == 1 and invoices[0]["total"]["amountMinor"] == 1_000_000
     assert re.fullmatch(r"ZK-INV-\d{6}", invoices[0]["number"])
     assert invoices[0]["lines"][0]["description"].startswith("M1 ")
-    charges = (await client.get("/v1/payments/charges", headers=buyer.h, params={"organizationId": org_id})).json()
+    charges = (await client.get("/v1/payments/charges", headers=buyer.h, params={"organizationId": org_id})).json()["items"]
     assert charges[0]["status"] == "CAPTURED" and "4242" in charges[0]["methodLabel"]
 
     # No payout account yet: the payout waits, then settles once an account is added (two-step confirmation).

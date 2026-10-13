@@ -1,9 +1,12 @@
 import uuid
-from zoikorum.domains.admin import service
+from zoikorum.domains.admin import service, switches
 from zoikorum.shared.events import subscribe
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.relay import on_timer
 from zoikorum.shared import clock
+from zoikorum.shared.metrics import gauge_source
+
+gauge_source(switches.gauges)
 
 
 async def signal(session, event):

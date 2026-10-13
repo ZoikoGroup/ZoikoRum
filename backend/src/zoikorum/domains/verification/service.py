@@ -30,7 +30,7 @@ from zoikorum.shared.auth import Actor, FirmRole, PlatformRole
 from zoikorum.shared.errors import Conflict, Forbidden, NotFound, ValidationFailed
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_audit, record_event
-from zoikorum.shared.http import page_of, paginate
+from zoikorum.shared.http import next_cursor, page_of, paginate
 from zoikorum.shared.relay import cancel_timer, schedule_timer
 from zoikorum.shared.state_machine import StateMachine
 from zoikorum.shared.storage import get_storage
@@ -387,7 +387,8 @@ async def check_evidence(session: AsyncSession, payload: dict) -> None:
         label=case.label, jurisdiction=(case.jurisdiction or "the jurisdiction").upper())
     for item in items:
         data = get_storage().get(item.storage_key, item.storage_version) if item.storage_key else None
-        result = await ai_facade.assess_document(data, item.content_type or "", expected) if data else             ai_facade.DocumentCheck("NOT_CHECKED", None, "The file is not stored, so it was not checked.", "none")
+        result = await ai_facade.assess_document(data, item.content_type or "", expected, session=session, subject_id=case.id,
+                                                 requested_by=item.uploaded_by) if data else             ai_facade.DocumentCheck("NOT_CHECKED", None, "The file is not stored, so it was not checked.", "none")
         session.add(EvidenceCheck(evidence_id=item.id, case_id=case.id, verdict=result.verdict, seen=result.seen,
                                   note=result.note, source=result.source))
         if result.verdict in FLAGGED:
@@ -628,19 +629,23 @@ async def file_appeal(session: AsyncSession, actor: Actor, case_id: uuid.UUID, b
     return await _out(session, case, True)
 
 
-async def appeal_queue(session: AsyncSession, actor: Actor, status: str | None) -> list[AppealQueueItemOut]:
+async def appeal_queue(session: AsyncSession, actor: Actor, status: str | None, cursor: str | None = None,
+                       limit: int | None = None) -> dict:
     actor.require_platform_role(*REVIEWERS)
-    rows = (await session.execute(select(Appeal, VerificationCase).join(VerificationCase, VerificationCase.id == Appeal.case_id)
-                                  .where(Appeal.status == (status or "OPEN")).order_by(Appeal.created_at).limit(200))).all()
+    stmt, lim = paginate(select(Appeal, VerificationCase).join(VerificationCase, VerificationCase.id == Appeal.case_id)
+                         .where(Appeal.status == (status or "OPEN")), Appeal, cursor, limit, oldest_first=True)
+    fetched = (await session.execute(stmt)).all()
+    rows = fetched[:lim]
     counts = dict((await session.execute(select(EvidenceItem.case_id, func.count())
                                          .where(EvidenceItem.case_id.in_([c.id for _, c in rows])).group_by(EvidenceItem.case_id))).all())
     pros = await professional_facade.get_professionals(session, [c.subject_id for _, c in rows if c.subject_type == "PROFESSIONAL"])
-    return [AppealQueueItemOut(
+    items = [AppealQueueItemOut(
         id=a.id, caseId=c.id, caseLabel=c.label, verificationType=c.verification_type, subjectType=c.subject_type, subjectId=c.subject_id,
         subjectName=pros[c.subject_id].display_name if c.subject_id in pros else None, caseStatus=c.status, originalReason=c.public_reason,
         statement=a.statement, status=a.status, evidenceCount=counts.get(c.id, 0),
         canDecide=a.original_reviewer_id != actor.identity_id and c.owner_identity_id != actor.identity_id, filedAt=a.created_at)
         for a, c in rows]
+    return {"items": items, "nextCursor": next_cursor(fetched, lim, key=lambda r: r[0])}
 
 
 async def decide_appeal(session: AsyncSession, actor: Actor, appeal_id: uuid.UUID, body: AppealDecisionIn) -> AppealOut:

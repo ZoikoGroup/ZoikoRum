@@ -1,4 +1,4 @@
-import { api } from './client'
+import { allPages, api } from './client'
 import type { StoredFile, Upload } from './files'
 import type { Money } from './orgs'
 
@@ -145,7 +145,7 @@ export const proposalFileUrl = (proposalId: string, sha256: string) => `${P}/${p
 export const proposalApi = {
   createRequests: (body: RequestInput) => api<ProposalRequest[]>(R, { method: 'POST', body, headers: idem() }),
   list: (role: 'buyer' | 'professional', status?: string) =>
-    api<{ items: ProposalRequest[]; nextCursor: string | null }>(R, { query: { role, limit: '100', ...(status ? { status } : {}) } }).then((r) => r.items),
+    allPages<ProposalRequest>(R, { role, ...(status ? { status } : {}) }),
   summary: (role: 'buyer' | 'professional') => api<RequestSummary>(`${R}/summary`, { query: { role } }),
   get: (id: string) => api<ProposalRequest>(`${R}/${id}`),
   send: (id: string) => api<ProposalRequest[]>(`${R}/${id}/send`, { method: 'POST', body: { acknowledged: true }, headers: idem() }),
@@ -156,10 +156,14 @@ export const proposalApi = {
   proposals: (requestId: string) => api<Proposal[]>(`${R}/${requestId}/proposals`),
   createProposal: (requestId: string, body: ProposalInput) => api<Proposal>(`${R}/${requestId}/proposals`, { method: 'POST', body }),
   getProposal: (id: string) => api<Proposal>(`${P}/${id}`),
-  updateProposal: (id: string, body: ProposalInput) => api<Proposal>(`${P}/${id}`, { method: 'PATCH', body }),
+  /** version: the one this edit started from; a newer one on the server is refused (409 VERSION_CONFLICT). */
+  updateProposal: (id: string, version: number, body: ProposalInput) =>
+    api<Proposal>(`${P}/${id}`, { method: 'PATCH', body, headers: { 'If-Match': String(version) } }),
   addProposalFiles: (id: string, files: Upload[]) => api<Proposal>(`${P}/${id}/attachments`, { method: 'POST', body: { files } }),
   removeProposalFile: (id: string, sha256: string) => api<Proposal>(`${P}/${id}/attachments/${sha256}`, { method: 'DELETE' }),
-  submit: (id: string) => api<Proposal>(`${P}/${id}/submit`, { method: 'POST', headers: idem() }),
+  /** confirmCapacity: the professional confirms they can take this on although at capacity. */
+  submit: (id: string, confirmCapacity = false) =>
+    api<Proposal>(`${P}/${id}/submit`, { method: 'POST', headers: idem(), query: confirmCapacity ? { confirmCapacity: 'true' } : undefined }),
   withdraw: (id: string) => api<Proposal>(`${P}/${id}/withdraw`, { method: 'POST' }),
   requestRevision: (id: string, changes: { field: string; requested: string }[], note?: string) =>
     api<Proposal>(`${P}/${id}/request-revision`, { method: 'POST', body: { changes, note: note || null } }),

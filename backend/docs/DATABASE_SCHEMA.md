@@ -29,7 +29,7 @@ Migrations: `backend/alembic/versions/` (`alembic upgrade head`).
 - [messaging](#schema-messaging) — 5 tables
 - [notification](#schema-notification) — 5 tables
 - [ai](#schema-ai) — 3 tables
-- [admin](#schema-admin) — 1 tables
+- [admin](#schema-admin) — 2 tables
 - [analytics](#schema-analytics) — 1 tables
 - [review](#schema-review) — 1 tables
 
@@ -704,6 +704,7 @@ One per request. DRAFT -> SUBMITTED -> REVISION_REQUESTED -> SUBMITTED ... -> AC
 | `revision_requests` | JSONB | no |  |
 | `revision_count` | INTEGER | no |  |
 | `submitted_at` | DATETIME | yes |  |
+| `capacity_confirmed_at` | DATETIME | yes |  |
 | `decided_at` | DATETIME | yes |  |
 | `decided_by` | UUID | yes |  |
 | `reason_code` | varchar(60) | yes |  |
@@ -1800,8 +1801,8 @@ Base class used for declarative class definitions.  The :class:`_orm.Declarative
 | `input_sha256` | varchar(64) | no |  |
 | `output` | TEXT | no |  |
 | `purpose` | varchar(60) | no |  |
-| `subject_id` | UUID | no |  |
-| `requested_by` | UUID | no |  |
+| `subject_id` | UUID | yes |  |
+| `requested_by` | UUID | yes |  |
 | `latency_ms` | INTEGER | no |  |
 | `fallback_used` | BOOLEAN | no |  |
 | `id` | UUID | no | PK |
@@ -1871,6 +1872,20 @@ Base class used for declarative class definitions.  The :class:`_orm.Declarative
 | `updated_at` | DATETIME | no |  |
 | `created_at` | DATETIME | no |  |
 | `version` | BIGINT | no |  |
+
+### `admin.feature_switches`
+
+An operational switch (admin/switches.py): while ``paused``, its kind of action is refused or deferred.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `key` | varchar(40) | no | unique |
+| `paused` | BOOLEAN | no |  |
+| `reason` | varchar(500) | yes |  |
+| `changed_by` | UUID | yes |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
 
 <a id="schema-analytics"></a>
 ## Schema `analytics`

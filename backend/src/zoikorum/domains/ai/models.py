@@ -28,8 +28,9 @@ class InferenceLog(Base, UUIDPk, CreatedAt):
     input_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     output: Mapped[str] = mapped_column(Text, nullable=False)
     purpose: Mapped[str] = mapped_column(String(60), nullable=False)
-    subject_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    requested_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    # Empty for built-in features without one (a signed-out visitor's search, a search with no record behind it).
+    subject_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    requested_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     latency_ms: Mapped[int] = mapped_column(Integer, nullable=False)
     fallback_used: Mapped[bool] = mapped_column(Boolean, nullable=False)
 

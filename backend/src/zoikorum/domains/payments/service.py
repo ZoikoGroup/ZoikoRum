@@ -11,10 +11,12 @@ import hashlib
 import json
 import uuid
 import asyncio
+from datetime import timedelta
 
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from zoikorum.domains.admin import facade as admin_facade
 from zoikorum.domains.buyer import facade as buyer_facade
 from zoikorum.domains.contract import facade as contract_facade
 from zoikorum.domains.escrow import facade as escrow_facade
@@ -29,7 +31,9 @@ from zoikorum.shared.auth import Actor
 from zoikorum.shared.errors import DomainError, Forbidden, NotFound, PolicyBlocked, ServiceUnavailable, ValidationFailed
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_audit, record_event
+from zoikorum.shared.http import page_of, paginate
 from zoikorum.shared.money import MoneyDTO
+from zoikorum.shared.relay import schedule_timer
 
 
 def _m(minor: int, ccy: str) -> MoneyDTO:
@@ -80,7 +84,15 @@ async def charge_for_funding(session: AsyncSession, payload: dict) -> None:
 
 # ---- Release: invoice for the buyer, payout for the professional --------------------------------
 
+PAYOUT_RESUME_TIMER = "payments.payout_resume"
+
+
 async def _send_payout(session: AsyncSession, p: Payout, account: PayoutAccount) -> None:
+    if await admin_facade.is_paused(session, "PAYOUTS"):
+        p.status = "QUEUED"  # staff paused payouts: try again in 10 minutes, never dropped
+        when = clock.now() + timedelta(minutes=10)
+        await schedule_timer(session, PAYOUT_RESUME_TIMER, f"{p.id}:{int(when.timestamp()) // 600}", when)
+        return
     payload = {"payoutId": p.id, "professionalId": p.professional_id, "releaseId": p.release_id, "amountMinor": p.amount_minor,
                "currency": p.currency}
     p.status = "INITIATED"
@@ -234,11 +246,13 @@ async def _require_member(session: AsyncSession, actor: Actor, organization_id: 
         raise Forbidden("You are not a member of this organisation")
 
 
-async def invoices(session: AsyncSession, actor: Actor, organization_id: uuid.UUID) -> list[InvoiceOut]:
+async def invoices(session: AsyncSession, actor: Actor, organization_id: uuid.UUID, cursor: str | None = None,
+                   limit: int | None = None) -> dict:
     await _require_member(session, actor, organization_id)
-    rows = (await session.scalars(select(Invoice).where(Invoice.organization_id == organization_id).order_by(Invoice.created_at.desc()).limit(200))).all()
-    return [InvoiceOut(id=i.id, number=i.number, contractId=i.contract_id, milestoneId=i.milestone_id, lines=i.lines, tax=_m(i.tax_minor, i.currency),
-                       total=_m(i.total_minor, i.currency), issuedAt=i.issued_at) for i in rows]
+    stmt, lim = paginate(select(Invoice).where(Invoice.organization_id == organization_id), Invoice, cursor, limit)
+    return page_of((await session.scalars(stmt)).all(), lim, lambda i: InvoiceOut(
+        id=i.id, number=i.number, contractId=i.contract_id, milestoneId=i.milestone_id, lines=i.lines,
+        tax=_m(i.tax_minor, i.currency), total=_m(i.total_minor, i.currency), issuedAt=i.issued_at))
 
 
 async def invoice_pdf(session: AsyncSession, actor: Actor, invoice_id: uuid.UUID) -> tuple[bytes, str]:
@@ -270,13 +284,14 @@ async def invoice_pdf(session: AsyncSession, actor: Actor, invoice_id: uuid.UUID
     return pdf.render(doc), f"{inv.number}.pdf"
 
 
-async def charges(session: AsyncSession, actor: Actor, organization_id: uuid.UUID) -> list[ChargeOut]:
+async def charges(session: AsyncSession, actor: Actor, organization_id: uuid.UUID, cursor: str | None = None,
+                  limit: int | None = None) -> dict:
     await _require_member(session, actor, organization_id)
-    rows = (await session.scalars(select(PaymentIntent).where(PaymentIntent.organization_id == organization_id)
-                                  .order_by(PaymentIntent.created_at.desc()).limit(200))).all()
-    return [ChargeOut(id=p.id, contractId=p.contract_id, amount=_m(p.amount_minor, p.currency), status=p.status, methodLabel=p.method_label,
-                      failureMessage=p.failure_message, createdAt=p.created_at, capturedAt=p.captured_at,
-                      chargedBackAt=p.charged_back_at) for p in rows]
+    stmt, lim = paginate(select(PaymentIntent).where(PaymentIntent.organization_id == organization_id), PaymentIntent,
+                         cursor, limit)
+    return page_of((await session.scalars(stmt)).all(), lim, lambda p: ChargeOut(
+        id=p.id, contractId=p.contract_id, amount=_m(p.amount_minor, p.currency), status=p.status, methodLabel=p.method_label,
+        failureMessage=p.failure_message, createdAt=p.created_at, capturedAt=p.captured_at, chargedBackAt=p.charged_back_at))
 
 
 async def has_valid_payout_account(session: AsyncSession, professional_id: uuid.UUID) -> bool:
@@ -356,8 +371,21 @@ async def retry_failed_refunds(session: AsyncSession) -> int:
     return retried
 
 
-async def refunds(session: AsyncSession, actor: Actor, organization_id: uuid.UUID) -> list[RefundOut]:
+async def refunds(session: AsyncSession, actor: Actor, organization_id: uuid.UUID, cursor: str | None = None,
+                  limit: int | None = None) -> dict:
     await _require_member(session, actor, organization_id)
-    rows = (await session.scalars(select(Refund).where(Refund.organization_id == organization_id).order_by(Refund.created_at.desc()).limit(200))).all()
-    return [RefundOut(id=r.id, contractId=r.contract_id, milestoneId=r.milestone_id, disputeId=r.dispute_id, amount=_m(r.amount_minor, r.currency),
-                      status=r.status, createdAt=r.created_at, settledAt=r.settled_at) for r in rows]
+    stmt, lim = paginate(select(Refund).where(Refund.organization_id == organization_id), Refund, cursor, limit)
+    return page_of((await session.scalars(stmt)).all(), lim, lambda r: RefundOut(
+        id=r.id, contractId=r.contract_id, milestoneId=r.milestone_id, disputeId=r.dispute_id,
+        amount=_m(r.amount_minor, r.currency), status=r.status, createdAt=r.created_at, settledAt=r.settled_at))
+
+
+async def resume_payout(session: AsyncSession, payout_id: uuid.UUID) -> None:
+    """Timer: a payout that waited while payouts were paused (admin switch PAYOUTS)."""
+    p = await session.get(Payout, payout_id, with_for_update=True)
+    if p is None or p.status != "QUEUED":
+        return
+    account = await session.scalar(select(PayoutAccount).where(PayoutAccount.professional_id == p.professional_id,
+                                                               PayoutAccount.status == "ACTIVE"))
+    if account is not None:
+        await _send_payout(session, p, account)

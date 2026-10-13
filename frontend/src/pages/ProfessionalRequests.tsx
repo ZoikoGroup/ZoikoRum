@@ -204,14 +204,14 @@ export function ProfessionalRequestDetail() {
     const b = body()
     let saved: Proposal
     if (proposal) {
-      saved = await proposalApi.updateProposal(proposal.id, b)
+      saved = await proposalApi.updateProposal(proposal.id, proposal.version, b)
     } else {
       try {
         saved = await proposalApi.createProposal(req.id, b)
       } catch (err) {
         if (!(err instanceof ApiError && err.code === 'PROPOSAL_EXISTS')) throw err
         const existing = (await proposalApi.proposals(req.id))[0]
-        saved = await proposalApi.updateProposal(existing.id, b)
+        saved = await proposalApi.updateProposal(existing.id, existing.version, b)
       }
     }
     setProposal(saved)
@@ -354,7 +354,16 @@ export function ProfessionalRequestDetail() {
               <div className="wizard-nav">
                 <div style={{ flex: 1 }} />
                 <button className="btn btn-secondary" disabled={busy} onClick={() => run(save, 'Draft saved.')}>Save draft</button>
-                <button className="btn btn-primary btn-lg" disabled={busy} onClick={() => run(async () => { const p = await save(); await proposalApi.submit(p.id) },
+                <button className="btn btn-primary btn-lg" disabled={busy} onClick={() => run(async () => {
+                  const p = await save()
+                  try {
+                    await proposalApi.submit(p.id)
+                  } catch (err) {
+                    // At capacity: an explicit, recorded confirmation is the only way past the limit.
+                    if (!(err instanceof ApiError && err.code === 'AT_CAPACITY') || !window.confirm(`${err.message}\n\nSubmit anyway?`)) throw err
+                    await proposalApi.submit(p.id, true)
+                  }
+                },
                   proposal?.status === 'REVISION_REQUESTED' ? 'Revised proposal sent to the buyer.' : 'Proposal sent to the buyer.')}>
                   {proposal?.status === 'REVISION_REQUESTED' ? 'Send revised proposal' : 'Submit proposal'}</button>
               </div>

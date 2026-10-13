@@ -255,9 +255,10 @@ async def answer_duplicate(suspicion_id: uuid.UUID, body: DuplicateAnswerIn, act
     return await duplicates.answer(session, actor, suspicion_id, body)
 
 
-@router.get("/admin/duplicate-accounts", response_model=list[DuplicateOut])
-async def duplicate_queue(actor: CurrentActor, session: DbSession):
-    return await duplicates.queue(session, actor)
+@router.get("/admin/duplicate-accounts", response_model=Page[DuplicateOut])
+async def duplicate_queue(actor: CurrentActor, session: DbSession, cursor: str | None = None, limit: int | None = Query(default=None, ge=1, le=100)):
+    """Oldest first, one page at a time (follow nextCursor)."""
+    return await duplicates.queue(session, actor, cursor, limit)
 
 
 @router.post("/admin/duplicate-accounts/{suspicion_id}/resolve", response_model=DuplicateOut)

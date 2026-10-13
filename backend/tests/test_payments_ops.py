@@ -106,7 +106,7 @@ async def test_chargeback_on_held_money_unfunds_the_milestone(client, make_user,
     k = (await client.get(f"{C}/{c['id']}", headers=pro_user.h)).json()
     assert k["milestones"][0]["status"] == "PENDING_FUNDING"  # no work without funding
     assert (await client.post(f"/v1/milestones/{m1}/submit", headers=pro_user.h, json={"note": "x"})).json()["code"] == "NOT_FUNDED"
-    charges = (await client.get("/v1/payments/charges", headers=buyer.h, params={"organizationId": c["organizationId"]})).json()
+    charges = (await client.get("/v1/payments/charges", headers=buyer.h, params={"organizationId": c["organizationId"]})).json()["items"]
     assert charges[0]["status"] == "CHARGED_BACK" and charges[0]["chargedBackAt"]
     ledger = (await client.get(f"{E}/{esc['id']}/ledger", headers=buyer.h)).json()
     assert {(x["entryType"], x["ledgerAccount"]) for x in ledger if x["entryType"] == "CHARGEBACK"} == {

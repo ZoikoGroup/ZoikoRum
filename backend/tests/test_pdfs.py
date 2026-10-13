@@ -51,7 +51,7 @@ async def test_invoice_pdf(client, make_user, drain, sf):
     await client.post(f"/v1/milestones/{m1['id']}/submit", headers=pro_user.h, json={"note": "Master file"})
     await client.post(f"/v1/milestones/{m1['id']}/accept", headers=buyer.idem())
     await drain()
-    (invoice,) = (await client.get("/v1/payments/invoices", headers=buyer.h, params={"organizationId": c["organizationId"]})).json()
+    (invoice,) = (await client.get("/v1/payments/invoices", headers=buyer.h, params={"organizationId": c["organizationId"]})).json()["items"]
 
     url = f"/v1/payments/invoices/{invoice['id']}/pdf"
     r = await client.get(url, headers=buyer.h)

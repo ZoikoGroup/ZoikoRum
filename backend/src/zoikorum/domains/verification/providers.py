@@ -64,9 +64,15 @@ class PersonaProvider:
         headers = {"Authorization": "Bearer " + self.settings.persona_api_key, "Persona-Version": "2025-12-08"}
         if key:
             headers["Idempotency-Key"] = key
-        try:
+        async def send() -> httpx.Response:
             async with httpx.AsyncClient(base_url="https://api.withpersona.com/api/v1/", timeout=20, transport=self.transport) as client:
                 result = await client.post(path, json=body, headers=headers)
+            if result.status_code >= 500:
+                result.raise_for_status()  # a partner outage counts against the breaker; a 4xx is an answer
+            return result
+
+        try:
+            result = await _partner_breaker().acall(send)
             result.raise_for_status()
             return result.json()
         except httpx.HTTPError as exc:
@@ -115,7 +121,7 @@ class VeriffProvider:
             return result
 
         try:
-            result = await _veriff_breaker().acall(send)
+            result = await _partner_breaker().acall(send)
         except httpx.HTTPError as exc:
             raise ServiceUnavailable("Identity partner could not complete the request", code="PROVIDER_UNAVAILABLE") from exc
         if result.status_code >= 400:
@@ -163,6 +169,7 @@ class SimulatedProvider:
 
 
 @lru_cache
-def _veriff_breaker() -> CircuitBreaker:
+def _partner_breaker() -> CircuitBreaker:
+    """One breaker for the identity partner in use (Persona or Veriff; only one is configured at a time)."""
     settings = get_settings()
     return CircuitBreaker("identity partner", settings.provider_breaker_failures, settings.provider_breaker_reset_seconds)

@@ -114,16 +114,16 @@ async def test_buyers_save_and_unsave_professionals(client, make_user, drain, sf
     url = "/v1/saved/professionals"
     assert (await client.post(url, headers=buyer.h, json={"professionalId": pro["id"]})).status_code == 204
     assert (await client.post(url, headers=buyer.h, json={"professionalId": pro["id"]})).status_code == 204  # idempotent
-    (saved,) = (await client.get(url, headers=buyer.h)).json()
+    (saved,) = (await client.get(url, headers=buyer.h)).json()["items"]
     assert saved["displayName"] == "Pia" and saved["primarySpecialization"] == "Fractional CFO"
     assert saved["tier"] == "C" and saved["available"] is True
     async with sf() as s:
         assert await facade.saved_by(s, uuid.UUID(pro["id"])) == [buyer.id]
 
     await client.post("/v1/professionals/me/unpublish", headers=u.h)
-    assert (await client.get(url, headers=buyer.h)).json()[0]["available"] is False  # kept, marked unavailable
+    assert (await client.get(url, headers=buyer.h)).json()["items"][0]["available"] is False  # kept, marked unavailable
     other = await make_user("oli")
     assert (await client.post(url, headers=other.h, json={"professionalId": pro["id"]})).status_code == 404  # unpublished
     assert (await client.delete(f"{url}/{pro['id']}", headers=buyer.h)).status_code == 204
-    assert (await client.get(url, headers=buyer.h)).json() == []
+    assert (await client.get(url, headers=buyer.h)).json()["items"] == []
     assert (await client.get(url)).status_code == 401

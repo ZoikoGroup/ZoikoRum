@@ -143,6 +143,7 @@ export default function AppShell() {
           <Item to="/app/ops/audit" icon="contract">Audit Exports</Item>
           <Item to="/app/ops/safety" icon="shield">Safety Cases</Item>
           {user.platformRoles.includes('AI_SAFETY_REVIEWER') && <Item to="/app/ops/ai" icon="gear">AI Governance</Item>}
+          {user.platformRoles.some((r) => ['FINANCIAL_OPS', 'PLATFORM_ADMIN'].includes(r)) && <Item to="/app/ops/switches" icon="lock">Switches &amp; Worker</Item>}
           {user.platformRoles.some((r) => ['FINANCIAL_OPS', 'PLATFORM_ADMIN'].includes(r)) && <Item to="/app/ops/dead-letters" icon="gear">Failed Deliveries</Item>}
         </>}
 

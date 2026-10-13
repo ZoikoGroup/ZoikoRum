@@ -84,10 +84,21 @@ def pytest_collection_modifyitems(items):
         item.add_marker(pytest.mark.unit if pure else pytest.mark.integration)
 
 
+def _close_breakers():
+    """The provider circuit breakers live for the whole process; one test's simulated outage must not leak."""
+    from zoikorum.domains.ai import claude
+    from zoikorum.domains.notification import providers as mail
+    from zoikorum.domains.payments import providers as payments
+    from zoikorum.domains.verification import providers as partner
+    for b in (claude.breaker(), mail.mail_breaker(), payments.breaker(), partner._partner_breaker()):
+        b.reset()
+
+
 @pytest.fixture(autouse=True)
 def clean_db(request):
-    """Unit tests never touch the database; every other test starts from empty tables."""
+    """Unit tests never touch the database; every other test starts from empty tables (and closed circuit breakers)."""
     clock.set_now(None)
+    _close_breakers()
     if not request.node.get_closest_marker("unit"):
         request.getfixturevalue("_fresh_db")
     yield
