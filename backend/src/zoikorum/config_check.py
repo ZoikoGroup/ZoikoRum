@@ -1,7 +1,7 @@
 """Deployment check: is this environment's configuration complete and usable? (python -m zoikorum.cli check-config)
 
 Prints one line per area - OK, WARN or MISSING - and never a configuration value (no addresses, keys or passwords).
-With --connect it also tries the database, Redis, the S3 bucket and the email server. Exit code 1 when anything
+With --connect it also tries the database, Redis, the storage bucket (GCS or S3) and the email server. Exit code 1 when anything
 required for a server deployment is missing or unreachable, so a release pipeline can stop before going live.
 In local development everything is reported for information only.
 """
@@ -68,14 +68,18 @@ def review(s: Settings) -> list[tuple[str, str, str]]:
     else:
         add(MISSING, "Identity checks", f"ZK_VERIFICATION_PROVIDER={provider} is for development; set veriff")
 
-    if s.storage_provider == "s3" and s.s3_bucket:
+    if s.storage_provider == "gcs" and s.gcs_bucket:
+        add(OK, "File storage", "Google Cloud Storage bucket configured" + (", with a KMS key" if s.gcs_kms_key_name else ""))
+    elif s.storage_provider == "gcs":
+        add(MISSING, "File storage", "ZK_GCS_BUCKET is needed")
+    elif s.storage_provider == "s3" and s.s3_bucket:
         add(OK, "File storage", "S3 bucket configured" + (", with Object Lock" if s.s3_object_lock_mode else ""))
         if s.s3_object_lock_mode and not s.s3_retention_days:
             add(MISSING, "File storage", "ZK_S3_OBJECT_LOCK_MODE needs ZK_S3_RETENTION_DAYS")
     elif s.storage_provider == "s3":
         add(MISSING, "File storage", "ZK_S3_BUCKET is needed")
     else:
-        add(MISSING, "File storage", "local disk: files are lost when a container is replaced; set s3")
+        add(MISSING, "File storage", "local disk: files are lost when a container is replaced; set gcs (or s3)")
 
     if s.redis_url:
         add(OK, "Rate limits", "shared through Redis")
@@ -124,6 +128,18 @@ def connect(s: Settings) -> list[tuple[str, str, str]]:
             out.append((OK, "Redis", "reachable"))
         except Exception as exc:  # noqa: BLE001
             out.append((MISSING, "Redis", f"cannot connect ({type(exc).__name__})"))
+    if s.storage_provider == "gcs" and s.gcs_bucket:
+        try:
+            from google.cloud import storage as gcs
+
+            bucket = gcs.Client().get_bucket(s.gcs_bucket)
+            if bucket.versioning_enabled or bucket.retention_period:
+                kept = "versioning on" if bucket.versioning_enabled else "retention policy on"
+                out.append((OK, "GCS bucket", f"reachable with this server's service account, {kept}"))
+            else:
+                out.append((MISSING, "GCS bucket", "reachable, but neither object versioning nor a retention policy is on"))
+        except Exception as exc:  # noqa: BLE001
+            out.append((MISSING, "GCS bucket", f"not reachable ({type(exc).__name__})"))
     if s.storage_provider == "s3" and s.s3_bucket:
         try:
             import boto3

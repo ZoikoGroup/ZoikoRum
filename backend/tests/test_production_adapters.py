@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from prodsettings import PRODUCTION
+from zoikorum import config_check
 from zoikorum.config import Settings
 from zoikorum.domains.payments import providers
 from zoikorum.domains.payments.stripe_provider import StripeProvider
@@ -190,3 +191,105 @@ async def test_persona_owner_scope_receipts_and_late_events(client, make_user, d
     assert snapshot.status_code == 200, snapshot.text
     assert snapshot.json()["tier"] == "B"
     assert snapshot.json()["dimensions"]["identity"] == "VERIFIED"
+
+
+# ---- Google Cloud Storage (ZK_STORAGE_PROVIDER=gcs) -------------------------------------------------------------------
+
+class GCSError(Exception):
+    def __init__(self, code): super().__init__(code); self.code = code
+
+
+class FakeBlob:
+    def __init__(self, bucket, name, kms_key_name=None, generation=None):
+        self.bucket, self.name, self.kms_key_name, self.generation = bucket, name, kms_key_name, generation
+        self.metadata, self.temporary_hold, self.patched = None, False, False
+
+    def upload_from_string(self, data, content_type=None, if_generation_match=None, checksum=None):
+        self.bucket.uploads.append({"name": self.name, "if_generation_match": if_generation_match, "checksum": checksum,
+                                    "kms": self.kms_key_name, "metadata": self.metadata})
+        if if_generation_match == 0 and self.name in self.bucket.live:
+            raise GCSError(412)
+        self.bucket.next_gen += 1
+        self.generation = self.bucket.next_gen
+        self.bucket.live[self.name] = self
+        self.bucket.versions[(self.name, self.generation)] = data
+
+    def download_as_bytes(self, checksum=None):
+        generation = self.generation or (self.bucket.live[self.name].generation if self.name in self.bucket.live else None)
+        if (self.name, generation) not in self.bucket.versions:
+            raise GCSError(404)
+        return self.bucket.versions[(self.name, generation)]
+
+    def delete(self):
+        if self.name not in self.bucket.live:
+            raise GCSError(404)
+        del self.bucket.live[self.name]  # versioned: the old generation stays readable
+
+    def patch(self): self.patched = True
+
+
+class FakeGCSBucket:
+    def __init__(self, versioning=True):
+        self.versioning_enabled, self.live, self.versions, self.uploads, self.next_gen = versioning, {}, {}, [], 1000
+        self.retention_period = None
+
+    def reload(self): pass
+    def blob(self, name, kms_key_name=None, generation=None): return FakeBlob(self, name, kms_key_name, generation)
+
+    def get_blob(self, name, generation=None):
+        if generation is None:
+            return self.live.get(name)
+        return FakeBlob(self, name, generation=generation) if (name, generation) in self.versions else None
+
+
+class FakeGCSClient:
+    def __init__(self, bucket): self._bucket = bucket
+    def bucket(self, name): return self._bucket
+
+
+def gcs_adapter(bucket, **settings):
+    storage._VERSIONING_CHECKED.clear()
+    return storage.GCSStorage(Settings(_env_file=None, storage_provider="gcs", gcs_bucket="fixture", **settings), FakeGCSClient(bucket))
+
+
+@pytest.mark.unit
+def test_gcs_objects_are_versioned_checked_never_replaced_and_held():
+    bucket = FakeGCSBucket()
+    adapter = gcs_adapter(bucket, gcs_kms_key_name="projects/p/locations/l/keyRings/r/cryptoKeys/k")
+    version = adapter.put("evidence/file", b"evidence")
+    upload = bucket.uploads[0]
+    assert upload["if_generation_match"] == 0 and upload["checksum"] == "crc32c"  # only if new, integrity-checked
+    assert upload["kms"].endswith("cryptoKeys/k") and len(upload["metadata"]["sha256"]) == 64
+    assert adapter.put("evidence/file", b"evidence") == version  # the same file again: the stored version
+    with pytest.raises(ValidationFailed) as err:
+        adapter.put("evidence/file", b"something else")
+    assert err.value.code == "IMMUTABLE_FILE"
+    assert adapter.get("evidence/file", version) == b"evidence" and adapter.get("missing/file") is None
+    adapter.legal_hold("evidence/file", version, True)
+    with pytest.raises(ValidationFailed): adapter.delete("evidence/file")  # evidence is never deleted here
+    with pytest.raises(ValidationFailed): adapter.put("../outside", b"no")
+
+
+@pytest.mark.unit
+def test_gcs_refuses_a_bucket_without_versioning_and_lets_photos_go():
+    with pytest.raises(ValidationFailed) as err:
+        gcs_adapter(FakeGCSBucket(versioning=False)).put("evidence/file", b"x")
+    assert err.value.code == "STORAGE_VERSIONING_REQUIRED"
+    kept = FakeGCSBucket(versioning=False)
+    kept.retention_period = 7 * 365 * 86400  # a retention policy instead of versioning (GCS allows only one)
+    assert gcs_adapter(kept).put("evidence/file", b"x")
+    bucket = FakeGCSBucket()
+    adapter = gcs_adapter(bucket)
+    adapter.put("professionals/p1/photo-0a1b2c", b"old photo")
+    adapter.delete("professionals/p1/photo-0a1b2c")  # a replaced profile photo is not evidence
+    assert "professionals/p1/photo-0a1b2c" not in bucket.live
+
+
+@pytest.mark.unit
+def test_production_selects_google_cloud_storage(monkeypatch):
+    settings = Settings(_env_file=None, **PRODUCTION, storage_provider="gcs", gcs_bucket="zk-files")
+    monkeypatch.setattr(storage, "get_settings", lambda: settings)
+    monkeypatch.setattr(storage.GCSStorage, "__init__", lambda self, s, client=None: setattr(self, "settings", s))
+    assert isinstance(storage.get_storage(), storage.GCSStorage)
+    rows = dict((area, (status, detail)) for status, area, detail in config_check.review(settings))
+    assert rows["File storage"][0] == "OK" and "Google Cloud Storage" in rows["File storage"][1]

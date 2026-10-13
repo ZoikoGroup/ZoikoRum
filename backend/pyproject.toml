@@ -26,7 +26,8 @@ dependencies = [
 dev = ["pytest>=8", "pytest-asyncio>=0.24", "psycopg[binary]>=3.2"]
 kafka = ["aiokafka>=0.11"]
 ai = ["anthropic>=1,<2"]  # messages.parse(output_format=...) for the built-in prompts
-cloud = ["boto3>=1.35"]
+cloud = ["boto3>=1.35"]  # Amazon S3 storage
+gcs = ["google-cloud-storage>=2.18,<4"]  # Google Cloud Storage
 monitoring = ["sentry-sdk>=2.0"]
 tracing = ["opentelemetry-sdk>=1.30", "opentelemetry-exporter-otlp-proto-http>=1.30",
            "opentelemetry-instrumentation-fastapi>=0.51b0", "opentelemetry-instrumentation-sqlalchemy>=0.51b0",

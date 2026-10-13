@@ -92,7 +92,10 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = True
     redis_url: str | None = None  # shared rate limits across API servers, e.g. redis://redis:6379/0
     storage_dir: str = "var/storage"  # LocalDiskStorage root (development); S3 bucket in production
-    storage_provider: str = "local"  # local | s3
+    storage_provider: str = "local"  # local | gcs (Google Cloud Storage) | s3 (Amazon S3)
+    gcs_bucket: str | None = None  # Google Cloud Storage bucket (object versioning on, public access prevented)
+    # Optional customer-managed encryption key: projects/<p>/locations/<l>/keyRings/<r>/cryptoKeys/<k>
+    gcs_kms_key_name: str | None = None
     s3_bucket: str | None = None
     aws_region: str = "us-east-1"
     s3_endpoint_url: str | None = None  # local S3-compatible service; not used for public file access
