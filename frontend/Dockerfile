@@ -1,7 +1,7 @@
 # Zoikorum web app: static build served by nginx, which also forwards the API (/v1, /health, /ready) so the browser
 # sees one origin (no CORS). API_UPSTREAM is the backend address, e.g. http://api:8000 (see backend/docs/DEPLOYMENT.md).
 
-FROM node:22-alpine AS build
+FROM node:26-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
