@@ -29,7 +29,9 @@ test('a new customer signs up, confirms their email and signs back in', async ({
   await expect(page.getByRole('button', { name: 'Resend confirmation email' })).toBeVisible()
   // Development mode shows the confirmation link that the email would carry.
   await page.getByRole('link', { name: 'confirm now' }).click()
-  await expect(page.getByText(/confirmed/i).first()).toBeVisible()
+  // The exact success message: /confirmed/i would also match the "Not confirmed" badge and move on before the
+  // confirmation request finishes (leaving the page then cancels it).
+  await expect(page.getByText('Your email is confirmed.')).toBeVisible()
 
   await page.goto('/app/account')
   await expect(page.getByText('Confirmed', { exact: true })).toBeVisible()

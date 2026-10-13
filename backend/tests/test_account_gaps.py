@@ -75,6 +75,13 @@ async def test_staff_see_the_name_and_details_to_compare_and_insurance_needs_an_
     reasons = (await client.get(f"{V}/decision-reasons", headers=o.h, params={"verificationType": "INSURANCE"})).json()
     unrelated = next(x for x in reasons if x["code"] == "DOCUMENT_UNRELATED")
     assert "indemnity insurance certificate" in unrelated["message"] and "FAILED" in unrelated["decisions"]
+    codes = {x["code"] for x in reasons}  # only reasons that fit an insurance check
+    assert "DOCUMENT_MATCH" in codes and not codes & {"PARTNER_VERIFIED", "REGISTRY_MATCH", "NOT_IN_REGISTER"}
+    missing = next(x for x in reasons if x["code"] == "NO_DOCUMENT")  # nothing uploaded yet: ask for it
+    assert missing["decisions"] == ["NEEDS_INFO"] and "indemnity insurance certificate" in missing["message"]
+    identity = {x["code"] for x in (await client.get(f"{V}/decision-reasons", headers=o.h,
+                                                     params={"verificationType": "IDENTITY"})).json()}
+    assert "PARTNER_VERIFIED" in identity and "REGISTRY_MATCH" not in identity
 
 
 async def test_a_legal_name_change_means_identity_is_verified_again(client, make_user, drain, sf):

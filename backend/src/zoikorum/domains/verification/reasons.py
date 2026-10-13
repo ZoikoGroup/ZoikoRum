@@ -11,6 +11,8 @@ DECISION_REASONS: list[tuple[str, str, tuple[str, ...], str]] = [
     ("DOCUMENT_MATCH", "Document matches the claim", ("VERIFIED",), ""),
     ("REGISTRY_MATCH", "Confirmed with the official register", ("VERIFIED",), ""),
     ("PARTNER_VERIFIED", "Identity partner's capture reviewed and accepted", ("VERIFIED",), ""),
+    ("NO_DOCUMENT", "No document uploaded yet", ("NEEDS_INFO",),
+     "We need {expected} to complete this check. Please upload it on your Verification page."),
     ("DOCUMENT_UNRELATED", "Document is unrelated to the check", ("NEEDS_INFO", "FAILED"),
      "The file you uploaded is not the document we asked for. Please upload {expected}."),
     ("WRONG_DOCUMENT_TYPE", "Wrong type of document", ("NEEDS_INFO",),
@@ -44,7 +46,16 @@ EXPECTED_SHORT = {
 }
 
 
+# Reasons that only make sense for some checks (the rest fit every check). The list only guides the review screen.
+ONLY_FOR = {
+    "PARTNER_VERIFIED": ("IDENTITY",),
+    "REGISTRY_MATCH": ("CREDENTIAL", "FIRM_REGISTRATION", "JURISDICTION"),
+    "NOT_IN_REGISTER": ("CREDENTIAL", "FIRM_REGISTRATION", "JURISDICTION"),
+}
+
+
 def reasons_for(verification_type: str | None = None) -> list[dict]:
     expected = EXPECTED_SHORT.get(verification_type or "", "the document we asked for")
     return [{"code": code, "label": label, "decisions": list(decisions), "message": message.format(expected=expected)}
-            for code, label, decisions, message in DECISION_REASONS]
+            for code, label, decisions, message in DECISION_REASONS
+            if not verification_type or verification_type in ONLY_FOR.get(code, (verification_type,))]
