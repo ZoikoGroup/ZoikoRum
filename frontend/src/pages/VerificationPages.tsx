@@ -375,8 +375,13 @@ function AutomaticCheck({ check }: { check?: EvidenceCheck | null }) {
   )
 }
 
+/** Partner answers that leave the decision to staff (verification service PARTNER_REVIEW). */
+const PARTNER_CAPTURED = ['declined', 'failed', 'needs_review', 'completed', 'resubmission_requested']
+
 function DecisionForm({ c, onDone }: { c: VerificationCase; onDone: () => void }) {
-  const [decision, setDecision] = useState<'VERIFIED' | 'NEEDS_INFO' | 'FAILED'>('VERIFIED')
+  // Verifying needs something to look at: an uploaded document or the identity partner's capture (screening excepted).
+  const canVerify = c.verificationType === 'RESTRICTIONS' || c.evidence.length > 0 || PARTNER_CAPTURED.includes(c.hostedStatus ?? '')
+  const [decision, setDecision] = useState<'VERIFIED' | 'NEEDS_INFO' | 'FAILED'>(canVerify ? 'VERIFIED' : 'NEEDS_INFO')
   const [reasons, setReasons] = useState<DecisionReason[]>([])
   const [reasonCode, setReasonCode] = useState('')
   const [otherCode, setOtherCode] = useState('')
@@ -414,10 +419,16 @@ function DecisionForm({ c, onDone }: { c: VerificationCase; onDone: () => void }
     <form onSubmit={submit}>
       {modal}
       <ErrorAlert error={error} />
+      {!canVerify && (
+        <div className="alert alert-info" role="note">
+          Nothing to verify against yet: no documents have been uploaded. Ask for more information (the professional is
+          told what to upload), or record that it could not be verified.
+        </div>
+      )}
       <div className="row">
         <Field label="Decision" id="d-decision">
           <select id="d-decision" className="input" value={decision} onChange={(e) => pickDecision(e.target.value as typeof decision)}>
-            <option value="VERIFIED">Verified</option>
+            {canVerify && <option value="VERIFIED">Verified</option>}
             <option value="NEEDS_INFO">Ask for more information</option>
             <option value="FAILED">Not verified</option>
           </select>
