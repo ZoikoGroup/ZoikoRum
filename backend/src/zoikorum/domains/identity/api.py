@@ -26,7 +26,9 @@ from zoikorum.domains.identity.schemas import (
     IdentityOut,
     LoginIn,
     MfaEnrollOut,
+    MfaResetIn,
     MfaVerifyIn,
+    RecoveryCodesOut,
     RefreshIn,
     RegisterIn,
     RegisterOut,
@@ -38,7 +40,7 @@ from zoikorum.domains.identity.schemas import (
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession, session_factory
 from zoikorum.shared.errors import Unauthenticated
-from zoikorum.shared.http import Page
+from zoikorum.shared.http import Page, enforce_budget
 
 router = APIRouter(prefix="/v1", tags=["identity"])
 
@@ -70,10 +72,12 @@ async def confirm_email(body: ConfirmEmailIn, session: DbSession) -> IdentityOut
 
 @router.post("/auth/login", response_model=AuthOut)
 async def login(body: LoginIn, request: Request) -> AuthOut:
+    await enforce_budget("login-email", body.email.lower(), 10, 10, "Too many sign-in attempts for this account. Wait a minute and try again.")
     # Own transaction: a failed attempt must still commit its lockout counter.
     async with session_factory()() as session:
         async with session.begin():
-            result = await service.login(session, body.email, body.password, body.totpCode, _ua(request))
+            result = await service.login(session, body.email, body.password, body.totpCode, _ua(request), body.recoveryCode,
+                                         body.portal)
     if isinstance(result, service.LoginFailure):
         raise Unauthenticated(result.detail, code=result.code)
     return result
@@ -97,6 +101,8 @@ async def logout(actor: CurrentActor, session: DbSession) -> None:
 
 @router.post("/auth/password/forgot", response_model=ForgotPasswordOut, status_code=status.HTTP_202_ACCEPTED)
 async def forgot_password(body: ForgotPasswordIn, session: DbSession) -> ForgotPasswordOut:
+    # A few reset emails an hour per address: nobody can flood someone's inbox from many addresses.
+    await enforce_budget("reset-email", str(body.email).lower(), 3, 3, "A reset email was sent recently. Check your inbox, or try again later.")
     token = await service.request_password_reset(session, body.email)
     # Same response whether or not the email exists (no account enumeration).
     return ForgotPasswordOut(resetToken=token if _expose_dev_tokens() else None)
@@ -113,14 +119,27 @@ async def mfa_enroll(actor: CurrentActor, session: DbSession) -> MfaEnrollOut:
     return MfaEnrollOut(secret=secret, otpauthUri=uri)
 
 
-@router.post("/auth/mfa/verify", status_code=status.HTTP_204_NO_CONTENT)
-async def mfa_verify(body: MfaVerifyIn, actor: CurrentActor, session: DbSession) -> None:
-    await service.verify_mfa(session, actor, body.totpCode)
+@router.post("/auth/mfa/verify", response_model=RecoveryCodesOut)
+async def mfa_verify(body: MfaVerifyIn, actor: CurrentActor, session: DbSession) -> RecoveryCodesOut:
+    """Turns two-step verification on and returns one-time recovery codes (shown only now)."""
+    return RecoveryCodesOut(recoveryCodes=await service.verify_mfa(session, actor, body.totpCode))
+
+
+@router.post("/auth/mfa/recovery-codes", response_model=RecoveryCodesOut)
+async def mfa_recovery_codes(actor: CurrentActor, session: DbSession) -> RecoveryCodesOut:
+    """Replace all recovery codes (needs a fresh two-step confirmation)."""
+    return RecoveryCodesOut(recoveryCodes=await service.regenerate_recovery_codes(session, actor))
 
 
 @router.post("/auth/step-up", response_model=TokenPair)
-async def step_up(body: StepUpIn, request: Request, actor: CurrentActor, session: DbSession) -> TokenPair:
-    return await service.step_up(session, actor, body.totpCode, _ua(request))
+async def step_up(body: StepUpIn, request: Request, actor: CurrentActor) -> TokenPair:
+    # Own transaction: a wrong code must still commit its lockout counter.
+    async with session_factory()() as session:
+        async with session.begin():
+            result = await service.step_up(session, actor, body.totpCode, _ua(request))
+    if isinstance(result, service.LoginFailure):
+        raise Unauthenticated(result.detail, code=result.code)
+    return result
 
 
 @router.get("/me", response_model=IdentityOut)
@@ -194,6 +213,13 @@ async def list_staff(actor: CurrentActor, session: DbSession) -> list[StaffMembe
 async def grant_role(identity_id: uuid.UUID, body: GrantRoleIn, actor: CurrentActor, session: DbSession) -> IdentityOut:
     identity = await service.grant_platform_role(session, actor, identity_id, body.role)
     return service.to_out(identity, [])
+
+
+@router.post("/admin/identities/{identity_id}/mfa-reset", response_model=IdentityOut)
+async def mfa_reset(identity_id: uuid.UUID, body: MfaResetIn, actor: CurrentActor, session: DbSession) -> IdentityOut:
+    """Platform Admin: remove two-step verification for someone who lost their authenticator and recovery codes, after
+    confirming who they are. They set it up again at their next sign-in."""
+    return service.to_out(await service.reset_mfa(session, actor, identity_id, body.reason), [])
 
 
 @router.delete("/admin/identities/{identity_id}/platform-roles/{role}", response_model=IdentityOut)

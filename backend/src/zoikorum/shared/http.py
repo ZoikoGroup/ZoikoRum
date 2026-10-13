@@ -97,6 +97,27 @@ class SecurityHeadersMiddleware:
         await self.app(scope, receive, send_with_headers)
 
 
+def caller_key(request: Request) -> tuple[str, str]:
+    """("user", identity id) for a valid access token, else ("anonymous", client address). An unverified header never
+    names a bucket: a made-up token would otherwise get a fresh budget on every request."""
+    auth = request.headers.get("Authorization") or ""
+    if auth.startswith("Bearer "):
+        from zoikorum.shared.auth import decode_access_token
+
+        try:
+            return "user", str(decode_access_token(auth[7:]).identity_id)
+        except DomainError:
+            pass
+    return "anonymous", request.client.host if request.client else "unknown"
+
+
+async def enforce_budget(kind: str, identifier: str, rate_per_min: int, burst: int, message: str) -> None:
+    """A specific budget on top of the general one (sign-in per email, AI calls per person, ...)."""
+    if get_settings().rate_limit_enabled and not await ratelimit.get_buckets().take(
+            ratelimit.bucket_key(kind, identifier), rate_per_min, burst):
+        raise RateLimited(message)
+
+
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Token bucket per caller (Architecture 7.4): per signed-in session, or per client address (behind the load
     balancer uvicorn takes it from X-Forwarded-For). Shared across servers through Redis when ZK_REDIS_URL is set
@@ -107,9 +128,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         if not get_settings().rate_limit_enabled:
             return await call_next(request)
-        auth = request.headers.get("Authorization")
-        kind = "user" if auth else "anonymous"
-        identifier = auth or (request.client.host if request.client else "unknown")
+        kind, identifier = caller_key(request)
         rate_per_min, burst = self.LIMITS[kind]
         if not await ratelimit.get_buckets().take(ratelimit.bucket_key(kind, identifier), rate_per_min, burst):
             return problem(RateLimited())

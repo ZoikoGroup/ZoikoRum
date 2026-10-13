@@ -27,4 +27,5 @@ async def on_refunded(session: AsyncSession, event: EventEnvelope) -> None:
 
 @on_timer(reconciliation.TIMER)
 async def on_daily_reconciliation(session: AsyncSession, key: str, payload: dict) -> None:
+    await service.retry_failed_refunds(session)
     await reconciliation.scheduled(session)

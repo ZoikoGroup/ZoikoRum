@@ -83,7 +83,8 @@ async def _apply(session: AsyncSession, event_type: str, data: dict) -> str:
         account.status = "ACTIVE" if data.get("payoutsEnabled") and data.get("detailsSubmitted") else "PENDING"
         if account.status == "ACTIVE":
             from zoikorum.domains.payments.service import _send_payout
-            waiting = (await session.scalars(select(Payout).where(Payout.professional_id == account.professional_id, Payout.status == "QUEUED").with_for_update())).all()
+            waiting = (await session.scalars(select(Payout).where(Payout.professional_id == account.professional_id,
+                                                                  Payout.status.in_(("QUEUED", "FAILED"))).with_for_update())).all()
             for payout in waiting:
                 await _send_payout(session, payout, account)
         return "account eligibility updated"
@@ -122,7 +123,9 @@ async def _apply(session: AsyncSession, event_type: str, data: dict) -> str:
                          payload={"refundId": r.id, "organizationId": r.organization_id, "amountMinor": r.amount_minor, "currency": r.currency})
             return "refund settled"
         if event_type == "refund.failed":
-            r.status = "FAILED"
+            if r.status != "FAILED":
+                from zoikorum.domains.payments.service import refund_failed
+                refund_failed(session, r, str(data.get("message") or ""))
             return "refund failed"
         return "refund already settled"
     return "ignored"

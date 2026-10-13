@@ -33,6 +33,7 @@ EVENT_TITLES = {
     E.DATA_REQUEST_CREATED: 'Privacy request received', E.DATA_REQUEST_COMPLETED: 'Your privacy request is complete',
     E.DATA_REQUEST_BLOCKED: 'Account deletion on hold', E.DATA_REQUEST_CANCELLED: 'Account deletion cancelled',
     E.MFA_ENROLLED: 'Two-step verification enabled', E.PASSWORD_CHANGED: 'Your password changed',
+    E.MFA_RECOVERY_CODE_USED: 'A recovery code was used to sign in', E.MFA_RESET: 'Two-step verification was reset',
     E.AUTHENTICATION_FAILED: 'Account security alert', E.IDENTITY_SUSPENDED: 'Account restricted',
     E.IDENTITY_REINSTATED: 'Account restored',
     E.PROPOSAL_REQUESTED: 'New proposal request', E.PROPOSAL_REQUEST_DECLINED: 'Request declined',
@@ -50,6 +51,10 @@ EVENT_TITLES = {
     E.MILESTONE_SUBMITTED: 'Work submitted for review', E.MILESTONE_ACCEPTED: 'Milestone accepted',
     E.MILESTONE_REVISION_REQUESTED: 'Work changes requested', E.MILESTONE_ACCEPTANCE_REMINDER: 'Review reminder',
     E.MILESTONE_ACCEPTANCE_OVERDUE: 'Milestone review overdue',
+    E.MILESTONE_FUNDING_REMINDER: 'Funding due soon', E.MILESTONE_FUNDING_REVERSED: 'Payment reversed: pause work on this milestone',
+    E.MILESTONE_PARTIAL_ACCEPTANCE_OFFERED: 'Partial acceptance offered', E.MILESTONE_PARTIAL_ACCEPTANCE_DECLINED: 'Partial acceptance declined',
+    E.ESCROW_RELEASE_BLOCKED: 'Payment release not approved', E.REFUND_SETTLED: 'Refund completed',
+    E.REFUND_FAILED: 'Refund could not be completed',
     E.VERIFICATION_NEEDS_INFO: 'Verification needs information', E.VERIFICATION_COMPLETED: 'Verification completed',
     E.VERIFICATION_FAILED: 'Verification unsuccessful', E.VERIFICATION_EXPIRING: 'Verification expires soon',
     E.VERIFICATION_EXPIRED: 'Verification expired',
@@ -64,6 +69,8 @@ EVENT_TITLES = {
     E.ENFORCEMENT_ACTION_APPLIED: 'Account safety decision', E.ENFORCEMENT_ACTION_REVERSED: 'Restriction reversed',
     E.ENFORCEMENT_APPEAL_DECIDED: 'Safety appeal decided',
 }
+# Always shown in the app (email still follows the person's preferences): disputes and money that needs action.
+MUST_SEE = frozenset({E.PAYMENT_FAILED, E.MILESTONE_FUNDING_REVERSED, E.REFUND_FAILED, E.ESCROW_RELEASE_BLOCKED, E.PAYOUT_FAILED})
 WEBHOOK_EVENTS = frozenset(e for e in EVENT_TITLES if domain_of(e) in {'proposal', 'contract', 'escrow', 'policy', 'dispute', 'verification'})
 
 
@@ -133,6 +140,7 @@ async def queue_event(session, event):
         return
     found, org_id, pro_identity = await recipients(session, event)
     mandatory = domain_of(event.eventType) in {'identity', 'admin'}
+    must_see = mandatory or domain_of(event.eventType) == 'dispute' or event.eventType in MUST_SEE
     saved_buyer = (event.eventType == E.PROPOSAL_REQUESTED and org_id and _uuid(event.payload.get('professionalId'))
                    and await professional.saved_buyer_alerts(session, _uuid(event.payload['professionalId']), org_id))
     notice = event.payload.get('notice') if domain_of(event.eventType) == 'admin' else None
@@ -141,7 +149,7 @@ async def queue_event(session, event):
         prefs = await session.scalar(select(Preference).where(Preference.identity_id == recipient))
         priority = bool(saved_buyer and recipient == pro_identity)  # the professional asked to always hear from this buyer
         email_on = mandatory or priority or prefs is None or prefs.email
-        in_app = mandatory or priority or prefs is None or prefs.in_app
+        in_app = must_see or priority or prefs is None or prefs.in_app
         if not email_on and not in_app:
             continue
         nid = uuid.uuid4()

@@ -8,7 +8,10 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth()
   const location = useLocation()
   if (loading) return <div className="page-loading" aria-busy="true">Loading…</div>
-  if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />
+  if (!user) {
+    const staffArea = location.pathname.startsWith('/app/ops')
+    return <Navigate to={staffArea ? '/staff/login' : '/login'} replace state={{ from: location.pathname }} />
+  }
   if (user.status === 'SUSPENDED' && location.pathname !== '/app/safety') return <Navigate to="/app/safety" replace />
   if (user.status !== 'SUSPENDED' && user.mfaRequired && location.pathname !== '/app/security') {
     return <Navigate to="/app/security" replace state={{ required: true }} />

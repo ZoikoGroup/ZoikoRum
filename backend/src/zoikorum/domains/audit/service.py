@@ -127,6 +127,8 @@ async def verify_chain(session: AsyncSession, batch: int = 5000) -> dict:
 
 def _authorise_scope(actor: Actor, tenant_id: str | None) -> None:
     if actor.has_platform_role(PlatformRole.COMPLIANCE_OFFICER, PlatformRole.LEGAL, PlatformRole.PLATFORM_ADMIN):
+        # Same rule as every staff tool: staff read the audit trail only with two-step verification on.
+        actor.require_platform_role(PlatformRole.COMPLIANCE_OFFICER, PlatformRole.LEGAL, PlatformRole.PLATFORM_ADMIN)
         return
     if tenant_id and actor.has_org_role(tenant_id, OrgRole.ORG_ADMIN, OrgRole.LEGAL_REVIEWER):
         return

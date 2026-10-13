@@ -28,7 +28,7 @@ from zoikorum.shared.events import record_audit
 
 PARTNER_NAMES = {"persona": "Persona", "veriff": "Veriff", "simulated": "Veriff (simulated)"}
 # A partner answer after which the professional may start a fresh hosted session.
-RESTARTABLE = ("resubmission_requested", "abandoned")
+RESTARTABLE = ("resubmission_requested", "abandoned", "expired")
 
 
 def configuration():
@@ -98,8 +98,8 @@ async def apply_result(session, provider_session, case, status, reason=None):
         provider_session.status = "submitted"
         _move(case, "IN_REVIEW")
         return "submitted"
-    if status == "abandoned":
-        if provider_session.status in ("pending", "submitted"):
+    if status in ("abandoned", "expired"):  # the person left (or the link lapsed) before finishing: nothing was captured,
+        if provider_session.status in ("pending", "submitted"):  # so there is nothing to review; they can start again
             provider_session.status = "abandoned"
         return "abandoned"
     provider_session.status, provider_session.reason = status, (str(reason)[:300] if reason else None)
@@ -116,7 +116,7 @@ async def apply_result(session, provider_session, case, status, reason=None):
                               + (f" ({reason})." if reason else "."))
         service._evt(session, E.VERIFICATION_NEEDS_INFO, case, reasonCode=case.reason_code, publicReason=case.public_reason)
         return "needs info"
-    if status in ("completed", "failed", "declined", "needs_review", "expired"):
+    if status in ("completed", "failed", "declined", "needs_review"):
         case.provider_result = "FAIL" if status in ("failed", "declined") else "REVIEW"
         _move(case, "IN_REVIEW")
         return "human review"

@@ -48,6 +48,8 @@ async def test_export_requires_compliance_authority(client, make_user, drain):
     await drain()
     body = {"objectId": str(user.id), "format": "json"}
     assert (await client.post("/v1/audit/exports", headers=user.h, json=body)).status_code == 403
+    assert (await client.post("/v1/audit/exports", headers=officer.h, json=body)).status_code == 401  # staff need two-step first
+    await officer.step_up()
     r = await client.post("/v1/audit/exports", headers=officer.h, json=body)
     assert r.status_code == 201 and r.json()["recordCount"] >= 1
     r = await client.get(f"/v1/audit/exports/{r.json()['id']}/download", headers=officer.h)

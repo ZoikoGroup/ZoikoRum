@@ -17,11 +17,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from zoikorum.config import get_settings
 from zoikorum.domains.firm import facade as firm_facade
 from zoikorum.domains.professional import facade as professional_facade
-from zoikorum.domains.verification.models import Appeal, EvidenceItem, ProviderSession, VerificationCase
+from zoikorum.domains.ai import facade as ai_facade
+from zoikorum.domains.verification.models import Appeal, EvidenceCheck, EvidenceItem, ProviderSession, VerificationCase
 from zoikorum.domains.verification.providers import get_provider
+from zoikorum.domains.verification.reasons import ESCALATE
 from zoikorum.domains.verification.schemas import (
-    AppealDecisionIn, AppealIn, AppealOut, AppealQueueItemOut, CaseIn, CaseOut, DecisionIn, EvidenceIn, EvidenceOut, QueueItemOut,
-    RevokeIn,
+    AppealDecisionIn, AppealIn, AppealOut, AppealQueueItemOut, CaseIn, CaseOut, DecisionIn, EvidenceCheckOut, EvidenceIn, EvidenceOut,
+    QueueItemOut, RevokeIn,
 )
 from zoikorum.shared import clock
 from zoikorum.shared.auth import Actor, FirmRole, PlatformRole
@@ -43,6 +45,8 @@ CASE_STATES = StateMachine("VerificationCase", {
     "REVOKED": {"VERIFIED"},  # only through an upheld appeal (decide_appeal)
 })
 OPEN_STATES = ("PENDING", "IN_REVIEW", "NEEDS_INFO")
+RENEWAL_WINDOW = timedelta(days=60)  # a verified check can be renewed this long before it expires
+EXPIRY_REQUIRED = ("INSURANCE",)  # verified only with an end date
 # Published service levels (Onboarding s.15): identity 24h, credential 48h median.
 SLA = {"IDENTITY": timedelta(hours=24), "CREDENTIAL": timedelta(hours=48)}
 DEFAULT_SLA = timedelta(hours=72)
@@ -95,10 +99,16 @@ async def _case(session: AsyncSession, case_id: uuid.UUID, lock: bool = False) -
     return case
 
 
-async def _evidence(session: AsyncSession, case_id: uuid.UUID) -> list[EvidenceOut]:
+async def _evidence(session: AsyncSession, case_id: uuid.UUID, staff: bool = False) -> list[EvidenceOut]:
     rows = (await session.scalars(select(EvidenceItem).where(EvidenceItem.case_id == case_id).order_by(EvidenceItem.created_at))).all()
+    checks = {c.evidence_id: c for c in (await session.scalars(select(EvidenceCheck).where(EvidenceCheck.case_id == case_id))).all()}         if staff else {}
     return [EvidenceOut(id=e.id, evidenceType=e.evidence_type, fileName=e.file_name, sha256=e.sha256, sizeBytes=e.size_bytes,
-                        contentType=e.content_type, hasFile=bool(e.storage_key), uploadedAt=e.created_at) for e in rows]
+                        contentType=e.content_type, hasFile=bool(e.storage_key), uploadedAt=e.created_at,
+                        automaticCheck=_check_out(checks.get(e.id))) for e in rows]
+
+
+def _check_out(c: EvidenceCheck | None) -> EvidenceCheckOut | None:
+    return EvidenceCheckOut(verdict=c.verdict, seen=c.seen, note=c.note, source=c.source, checkedAt=c.created_at) if c else None
 
 
 def _appeal_out(a: Appeal) -> AppealOut:
@@ -120,11 +130,18 @@ async def _out(session: AsyncSession, case: VerificationCase, is_mine: bool) -> 
         status=case.status, label=case.label, jurisdiction=case.jurisdiction, credentialClaimId=case.credential_claim_id,
         specialization=case.specialization, estimatedCompletion=case.estimated_completion, verifiedAt=case.verified_at,
         expiresAt=case.expires_at, reasonCode=case.reason_code, publicReason=case.public_reason, isMine=is_mine,
-        evidence=await _evidence(session, case.id), createdAt=case.created_at, version=case.version,
+        evidence=await _evidence(session, case.id, staff=not is_mine), createdAt=case.created_at, version=case.version,
         appeal=_appeal_out(appeal) if appeal else None,
         appealDeadline=deadline if deadline and deadline > clock.now() else None,
         **_hosted_fields(await session.scalar(select(ProviderSession).where(ProviderSession.case_id == case.id))),
+        **(await _review_fields(session, case) if not is_mine else {}),
     )
+
+
+async def _review_fields(session: AsyncSession, case: VerificationCase) -> dict:
+    """What a reviewer compares the documents against: the details entered for the check and the name as on ID."""
+    name = await professional_facade.legal_name(session, case.subject_id) if case.subject_type == "PROFESSIONAL" else None
+    return {"details": dict(case.details or {}) or None, "subjectLegalName": name}
 
 
 def _hosted_fields(ps: ProviderSession | None) -> dict:
@@ -135,7 +152,7 @@ def _hosted_fields(ps: ProviderSession | None) -> dict:
 
 
 # A partner answer that leaves the decision to a compliance officer; the documents are in the partner's dashboard.
-PARTNER_REVIEW = ("declined", "failed", "needs_review", "completed", "expired", "resubmission_requested")
+PARTNER_REVIEW = ("declined", "failed", "needs_review", "completed", "resubmission_requested")
 
 
 def _clean_details(details: dict) -> dict:
@@ -179,14 +196,18 @@ async def start_case(session: AsyncSession, actor: Actor, body: CaseIn) -> CaseO
     jurisdiction = body.jurisdiction.upper() if body.jurisdiction else None
     if body.verificationType == "JURISDICTION" and not jurisdiction:
         raise ValidationFailed("Say which jurisdiction to check", code="JURISDICTION_REQUIRED")
-    stmt = select(VerificationCase.id).where(
+    stmt = select(VerificationCase).where(
         VerificationCase.subject_type == body.subjectType, VerificationCase.subject_id == body.subjectId,
         VerificationCase.verification_type == body.verificationType,
         VerificationCase.status.in_((*OPEN_STATES, "VERIFIED")))
     if jurisdiction:
         stmt = stmt.where(VerificationCase.jurisdiction == jurisdiction)
-    if await session.scalar(stmt.limit(1)):
-        raise Conflict("This check is already in progress or verified", code="CASE_EXISTS")
+    renew_from = clock.now() + RENEWAL_WINDOW
+    for existing in (await session.scalars(stmt)).all():
+        if existing.status in OPEN_STATES:
+            raise Conflict("This check is already in progress", code="CASE_EXISTS")
+        if existing.expires_at is None or existing.expires_at > renew_from:
+            raise Conflict("This check is verified. You can renew it in the two months before it expires.", code="CASE_EXISTS")
     label = LABELS[body.verificationType] + (f" ({jurisdiction})" if jurisdiction else "")
     case = await _open(session, subject_type=body.subjectType, subject_id=body.subjectId, owner_identity_id=actor.identity_id,
                        verification_type=body.verificationType, label=label, jurisdiction=jurisdiction,
@@ -221,7 +242,62 @@ async def open_restrictions_screening(session: AsyncSession, p: dict) -> None:
         return
     await _open(session, subject_type="PROFESSIONAL", subject_id=pro.id, owner_identity_id=pro.identity_id,
                 verification_type="RESTRICTIONS", label=LABELS["RESTRICTIONS"],
-                details={"name": pro.display_name, "country": pro.country})
+                details={"name": await professional_facade.legal_name(session, pro.id) or pro.display_name, "country": pro.country})
+
+
+async def _close(session: AsyncSession, case: VerificationCase, reason_code: str, public_reason: str) -> None:
+    """Close a check because something it relied on changed: an open one fails, a verified one is revoked."""
+    if case.status in OPEN_STATES:
+        _fail(session, case, reviewer_id=None, reason_code=reason_code, public_reason=public_reason)
+    elif case.status == "VERIFIED":
+        CASE_STATES.assert_can(case.status, "REVOKED")
+        case.status, case.reason_code, case.public_reason = "REVOKED", reason_code, public_reason
+        case.decided_at, case.reviewer_id = clock.now(), None
+        await _cancel_expiry_timers(session, case)
+        _evt(session, E.VERIFICATION_REVOKED, case, reasonCode=reason_code, publicReason=public_reason)
+
+
+async def credential_withdrawn(session: AsyncSession, payload: dict) -> None:
+    """A withdrawn credential no longer counts for trust, tiers or verified jurisdictions, and leaves the review queue."""
+    for case in (await session.scalars(select(VerificationCase).where(
+            VerificationCase.credential_claim_id == uuid.UUID(str(payload["credentialClaimId"]))).with_for_update())).all():
+        await _close(session, case, "WITHDRAWN", "You withdrew this credential.")
+
+
+async def profile_changed(session: AsyncSession, payload: dict, changed_at: datetime) -> None:
+    """A new legal name means the identity check no longer proves who this is: checks made before the change are done
+    again, and screening re-runs on the new name. (Events arrive after the fact: a check completed after the change was
+    made with the new name and stays.)"""
+    if "legalName" not in (payload.get("changes") or []):
+        return
+    pro_id = uuid.UUID(str(payload["professionalId"]))
+    rows = (await session.scalars(select(VerificationCase).where(
+        VerificationCase.subject_type == "PROFESSIONAL", VerificationCase.subject_id == pro_id,
+        VerificationCase.verification_type == "IDENTITY", VerificationCase.status.in_((*OPEN_STATES, "VERIFIED")),
+        VerificationCase.created_at < changed_at).with_for_update())).all()
+    for case in rows:
+        await _close(session, case, "NAME_CHANGED", "You changed the legal name on your profile. Verify your identity again "
+                                                    "with a document in that name.")
+    pro = await professional_facade.get_professional(session, pro_id)
+    if pro is not None and not await session.scalar(select(VerificationCase.id).where(
+            VerificationCase.subject_type == "PROFESSIONAL", VerificationCase.subject_id == pro_id,
+            VerificationCase.verification_type == "RESTRICTIONS", VerificationCase.status.in_(OPEN_STATES))):
+        name = await professional_facade.legal_name(session, pro_id) or pro.display_name
+        await _open(session, subject_type="PROFESSIONAL", subject_id=pro.id, owner_identity_id=pro.identity_id,
+                    verification_type="RESTRICTIONS", label=LABELS["RESTRICTIONS"], details={"name": name, "country": pro.country})
+
+
+async def firm_details_changed(session: AsyncSession, payload: dict) -> None:
+    """The firm's legal name or registration number changed: its registration must be checked again."""
+    if not {"legalName", "registrationNumber"} & set((payload.get("changes") or {}).keys()):
+        return
+    rows = (await session.scalars(select(VerificationCase).where(
+        VerificationCase.subject_type == "FIRM", VerificationCase.subject_id == uuid.UUID(str(payload["firmId"])),
+        VerificationCase.verification_type == "FIRM_REGISTRATION",
+        VerificationCase.status.in_((*OPEN_STATES, "VERIFIED"))).with_for_update())).all()
+    for case in rows:
+        await _close(session, case, "DETAILS_CHANGED", "Your firm's legal name or registration number changed. Start the "
+                                                       "registration check again with documents showing the new details.")
 
 
 # ---- Evidence --------------------------------------------------------------------
@@ -256,6 +332,8 @@ async def add_evidence(session: AsyncSession, actor: Actor, case_id: uuid.UUID, 
         select(Appeal.id).where(Appeal.case_id == case.id, Appeal.status == "OPEN"))
     if case.status not in OPEN_STATES and not appeal_open:
         raise Conflict("Evidence can only be added while the check is open", code="CASE_CLOSED")
+    if case.verification_type == "IDENTITY":
+        body = body.model_copy(update={"evidenceType": "ID_DOCUMENT"})
     stored = [(f, _checked_file(f)) for f in body.items]  # validate every file before storing any
     for f, data in stored:
         key = f"verification/{case.id}/{f.sha256}"
@@ -283,17 +361,69 @@ async def _check_duplicate_documents(session: AsyncSession, case: VerificationCa
                      payload={"identityId": case.owner_identity_id, "otherIdentityId": other})
 
 
+# ---- Automatic first look at evidence (staff hint only) --------------------------------------------------------------
+
+# What each check asks for, in the words the document check compares against.
+EXPECTED_DOCUMENT = {
+    "IDENTITY": "a government identity document: passport, national ID card or driving licence",
+    "CREDENTIAL": "a professional licence, certificate or registration for: {label}",
+    "FIRM_REGISTRATION": "a company registration certificate or extract from the official company register",
+    "INSURANCE": "a professional indemnity insurance certificate or policy schedule",
+    "JURISDICTION": "proof of the right to practise in {jurisdiction}: a licence, registration or regulator letter",
+}
+FLAGGED = ("UNRELATED", "UNREADABLE")
+
+
+async def check_evidence(session: AsyncSession, payload: dict) -> None:
+    """After an upload: look at each new file once and store the hint for the reviewer. Never changes the case."""
+    case = await session.get(VerificationCase, uuid.UUID(str(payload["caseId"])))
+    hashes = [f["sha256"] for f in payload.get("files", [])]
+    if case is None or not hashes:
+        return
+    done = select(EvidenceCheck.evidence_id).where(EvidenceCheck.case_id == case.id)
+    items = (await session.scalars(select(EvidenceItem).where(
+        EvidenceItem.case_id == case.id, EvidenceItem.sha256.in_(hashes), EvidenceItem.id.not_in(done)))).all()
+    expected = EXPECTED_DOCUMENT.get(case.verification_type, "{label}").format(
+        label=case.label, jurisdiction=(case.jurisdiction or "the jurisdiction").upper())
+    for item in items:
+        data = get_storage().get(item.storage_key, item.storage_version) if item.storage_key else None
+        result = await ai_facade.assess_document(data, item.content_type or "", expected) if data else             ai_facade.DocumentCheck("NOT_CHECKED", None, "The file is not stored, so it was not checked.", "none")
+        session.add(EvidenceCheck(evidence_id=item.id, case_id=case.id, verdict=result.verdict, seen=result.seen,
+                                  note=result.note, source=result.source))
+        if result.verdict in FLAGGED:
+            _evt(session, E.VERIFICATION_EVIDENCE_FLAGGED, case, evidenceId=item.id, verdict=result.verdict)
+    await session.flush()
+
+
 # ---- Decisions -------------------------------------------------------------------
 
 def _default_expiry(case: VerificationCase) -> datetime | None:
-    raw = (case.details or {}).get("expiresOn")
+    raw = (case.details or {}).get("expiresOn") if case.credential_claim_id else None
     if not raw:
         return None
-    return datetime.combine(date.fromisoformat(raw), time(23, 59, 59), tzinfo=timezone.utc)
+    try:
+        return datetime.combine(date.fromisoformat(str(raw)), time(23, 59, 59), tzinfo=timezone.utc)
+    except ValueError:
+        return None  # an unreadable date: the reviewer sets one
+
+
+async def _retire_renewed(session: AsyncSession, case: VerificationCase) -> None:
+    """A renewal replaces the earlier verified check for the same thing: that one stops quietly (no expiry reminders, no
+    "expired" notice that would undo the renewal)."""
+    older = (await session.scalars(select(VerificationCase).where(
+        VerificationCase.id != case.id, VerificationCase.status == "VERIFIED",
+        VerificationCase.subject_type == case.subject_type, VerificationCase.subject_id == case.subject_id,
+        VerificationCase.verification_type == case.verification_type,
+        VerificationCase.jurisdiction.is_not_distinct_from(case.jurisdiction),
+        VerificationCase.credential_claim_id.is_not_distinct_from(case.credential_claim_id)).with_for_update())).all()
+    for old in older:
+        await _cancel_expiry_timers(session, old)
+        old.status, old.reason_code = "EXPIRED", "RENEWED"
 
 
 async def _verify(session: AsyncSession, case: VerificationCase, *, reviewer_id: uuid.UUID | None, expires_at: datetime | None) -> None:
     CASE_STATES.assert_can(case.status, "VERIFIED")
+    await _retire_renewed(session, case)
     now = clock.now()
     case.status, case.verified_at, case.decided_at, case.reviewer_id = "VERIFIED", now, now, reviewer_id
     case.expires_at = expires_at or _default_expiry(case)
@@ -319,6 +449,8 @@ async def decide(session: AsyncSession, actor: Actor, case_id: uuid.UUID, body: 
     actor.require_platform_role(*REVIEWERS)
     actor.require_step_up()
     case = await _case(session, case_id, lock=True)
+    if case.status not in OPEN_STATES:
+        raise Conflict("This check has already been decided. A different reviewer handles any appeal.", code="CASE_DECIDED")
     if case.owner_identity_id == actor.identity_id or (
             case.subject_type == "FIRM" and await firm_facade.member_roles(session, case.subject_id, actor.identity_id)):
         raise Forbidden("You cannot review your own verification or your own firm's", code="SELF_REVIEW")
@@ -327,6 +459,9 @@ async def decide(session: AsyncSession, actor: Actor, case_id: uuid.UUID, body: 
     if body.decision == "VERIFIED":
         if body.expiresAt and body.expiresAt <= clock.now():
             raise ValidationFailed("The expiry date must be in the future", code="INVALID_EXPIRY")
+        if case.verification_type in EXPIRY_REQUIRED and not (body.expiresAt or _default_expiry(case)):
+            raise ValidationFailed("Enter the date this policy or document ends: it cannot stay verified forever",
+                                   code="EXPIRY_REQUIRED")
         # Evidence-based verification (Trust charter s.6): screening is checked against lists, everything else needs a
         # document - uploaded here, or captured by the identity partner (the reviewer opens it in the partner's dashboard).
         partner = await session.scalar(select(ProviderSession.status).where(ProviderSession.case_id == case.id))
@@ -344,6 +479,8 @@ async def decide(session: AsyncSession, actor: Actor, case_id: uuid.UUID, body: 
         CASE_STATES.assert_can(case.status, "NEEDS_INFO")
         case.status, case.reason_code, case.public_reason = "NEEDS_INFO", body.reasonCode, body.publicReason
         _evt(session, E.VERIFICATION_NEEDS_INFO, case, reasonCode=body.reasonCode, publicReason=body.publicReason)
+    if body.reasonCode in ESCALATE:  # an apparently altered or fake document is also a Trust & Safety matter
+        _evt(session, E.VERIFICATION_FRAUD_SUSPECTED, case, reasonCode=body.reasonCode)
     await session.flush()
     return await _out(session, case, False)
 
@@ -431,6 +568,10 @@ async def review_queue(session: AsyncSession, actor: Actor, cursor: str | None, 
     counts = dict((await session.execute(
         select(EvidenceItem.case_id, func.count()).where(EvidenceItem.case_id.in_([c.id for c in rows])).group_by(EvidenceItem.case_id)
     )).all())
+    flagged = dict((await session.execute(
+        select(EvidenceCheck.case_id, func.count()).where(EvidenceCheck.case_id.in_([c.id for c in rows]),
+                                                          EvidenceCheck.verdict.in_(FLAGGED)).group_by(EvidenceCheck.case_id)
+    )).all())
     pros = await professional_facade.get_professionals(session, [c.subject_id for c in rows if c.subject_type == "PROFESSIONAL"])
     names = {k: v.display_name for k, v in pros.items()}
     for c in rows:
@@ -443,7 +584,8 @@ async def review_queue(session: AsyncSession, actor: Actor, cursor: str | None, 
     return page_of(list(rows), lim, lambda c: QueueItemOut(**_hosted_fields(hosted.get(c.id)),
         id=c.id, subjectType=c.subject_type, subjectId=c.subject_id, subjectName=names.get(c.subject_id),
         verificationType=c.verification_type, status=c.status, label=c.label, jurisdiction=c.jurisdiction,
-        providerResult=c.provider_result, evidenceCount=counts.get(c.id, 0), estimatedCompletion=c.estimated_completion,
+        providerResult=c.provider_result, evidenceCount=counts.get(c.id, 0), flaggedEvidence=flagged.get(c.id, 0),
+        estimatedCompletion=c.estimated_completion,
         overdue=bool(c.estimated_completion and c.estimated_completion < now), createdAt=c.created_at))
 async def enforcement_reset(session, payload):
     from zoikorum.domains.admin import facade as admin
@@ -456,6 +598,7 @@ async def enforcement_reset(session, payload):
         if payload["action"] == "CREDENTIAL_ENFORCEMENT" and case.verification_type != "CREDENTIAL":
             continue
         case.status, case.reason_code = "REVOKED", "ENFORCEMENT_REVIEW_REQUIRED"
+        case.decided_at, case.reviewer_id = clock.now(), None  # the appeal window runs from this revocation
         case.public_reason = "This check requires a new compliance review following a notified enforcement action."
         await _cancel_expiry_timers(session, case)
         _evt(session, E.VERIFICATION_REVOKED, case, reasonCode=case.reason_code, publicReason=case.public_reason)

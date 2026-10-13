@@ -145,6 +145,8 @@ async def reverse_case(session, actor, case_id, reason):
     c = await case_get(session, case_id, True)
     if await is_subject(session, actor, c):
         raise Forbidden("You cannot reverse your own restriction")
+    if c.level >= 3 and c.proposed_by == actor.identity_id:
+        raise Forbidden("Another senior reviewer must reverse a restriction you proposed", code="FOUR_EYES")
     await reverse(session, c, actor.identity_id, reason)
     return case_out(c)
 

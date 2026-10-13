@@ -1,6 +1,19 @@
 import { expect, test } from '@playwright/test'
 import { buyerWithOrganisation, engagementAwaitingAcceptance, PASSWORD, signIn, verifiedProfessional } from './api'
 
+test('staff and customers each sign in on their own page', async ({ page }) => {
+  const { account: buyer } = await buyerWithOrganisation('Lennox Portal')
+  await page.goto('/staff/login')
+  await expect(page.getByRole('heading', { name: 'Zoikorum staff sign-in' })).toBeVisible()
+  await page.getByLabel('Work email').fill(buyer.email)
+  await page.getByLabel('Password', { exact: true }).fill(PASSWORD)
+  await page.getByRole('button', { name: 'Sign in' }).click()
+  await expect(page.getByText(/for Zoikorum staff only/)).toBeVisible()  // a customer account is refused here
+  await page.getByRole('link', { name: 'Sign in here' }).click()
+  await expect(page).toHaveURL(/\/login$/)
+  await signIn(page, buyer.email)
+})
+
 test('a new customer signs up, confirms their email and signs back in', async ({ page }) => {
   const email = `lennox-${Date.now()}@example.com`
   await page.goto('/join')

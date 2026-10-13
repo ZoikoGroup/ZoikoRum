@@ -15,6 +15,18 @@ from zoikorum.shared import http, ratelimit
 REDIS_URL = os.environ.get("ZK_TEST_REDIS_URL", "redis://localhost:6380/15")
 
 
+def access_token() -> str:
+    """A validly signed access token for a new identity (budgets are per verified identity)."""
+    import jwt
+
+    from zoikorum.config import get_settings
+    from zoikorum.shared import clock
+
+    s, now = get_settings(), int(clock.now().timestamp())
+    return jwt.encode({"iss": s.jwt_issuer, "sub": str(uuid.uuid4()), "typ": "access", "iat": now, "exp": now + 600},
+                      s.jwt_secret, algorithm="HS256")
+
+
 async def redis_or_skip():
     from redis.asyncio import Redis
 
@@ -71,8 +83,11 @@ async def test_middleware_refuses_over_the_budget(monkeypatch):
     async def ping():
         return {"ok": True}
 
+    a, b = access_token(), access_token()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         anonymous = [(await client.get("/ping")).status_code for _ in range(3)]
-        signed_in = [(await client.get("/ping", headers={"Authorization": "Bearer a"})).status_code for _ in range(4)]
-        other = (await client.get("/ping", headers={"Authorization": "Bearer b"})).status_code
+        signed_in = [(await client.get("/ping", headers={"Authorization": f"Bearer {a}"})).status_code for _ in range(4)]
+        other = (await client.get("/ping", headers={"Authorization": f"Bearer {b}"})).status_code
+        made_up = (await client.get("/ping", headers={"Authorization": "Bearer not-a-real-token"})).status_code
     assert anonymous == [200, 200, 429] and signed_in == [200, 200, 200, 429] and other == 200
+    assert made_up == 429  # an unverified token is the anonymous caller, not a fresh budget

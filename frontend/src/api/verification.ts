@@ -5,10 +5,16 @@ export type SubjectType = 'PROFESSIONAL' | 'FIRM'
 export type SelfServiceType = 'IDENTITY' | 'JURISDICTION' | 'INSURANCE' | 'FIRM_REGISTRATION'
 export type EvidenceType = 'ID_DOCUMENT' | 'PROOF_OF_ADDRESS' | 'LICENSE' | 'CERTIFICATE' | 'INSURANCE_POLICY' | 'REGISTRATION_DOCUMENT' | 'OTHER'
 
+/** Automatic first look at a file (staff view only): a hint for the reviewer, never a decision. */
+export interface EvidenceCheck {
+  verdict: 'MATCHES' | 'UNRELATED' | 'UNREADABLE' | 'UNSURE' | 'NOT_CHECKED'; seen: string | null; note: string; source: string; checkedAt: string
+}
 export interface Evidence {
   id: string; evidenceType: string; fileName: string; sha256: string; sizeBytes: number
-  contentType: string | null; hasFile: boolean; uploadedAt: string
+  contentType: string | null; hasFile: boolean; uploadedAt: string; automaticCheck?: EvidenceCheck | null
 }
+/** A standard reason for a review decision, with the message pre-filled for the professional. */
+export interface DecisionReason { code: string; label: string; decisions: ('VERIFIED' | 'NEEDS_INFO' | 'FAILED')[]; message: string }
 export type EvidenceContentType = 'application/pdf' | 'image/jpeg' | 'image/png'
 export interface EvidenceUploadItem { name: string; sha256: string; size: number; contentType: EvidenceContentType; dataBase64: string }
 
@@ -36,6 +42,8 @@ export interface VerificationCase {
   hostedProvider?: string | null  // identity check in a partner's hosted flow: persona | veriff | simulated
   hostedStatus?: HostedStatus | null
   hostedReason?: string | null
+  details?: Record<string, string | number | boolean | null> | null  // staff view: what the documents should show
+  subjectLegalName?: string | null  // staff view: name as on ID
 }
 
 export type HostedStatus = 'pending' | 'submitted' | 'approved' | 'declined' | 'failed' | 'needs_review' | 'completed'
@@ -69,6 +77,7 @@ export interface QueueItem {
   hostedStatus?: HostedStatus | null
   hostedReason?: string | null
   evidenceCount: number
+  flaggedEvidence?: number
   estimatedCompletion: string | null
   overdue: boolean
   createdAt: string
@@ -106,6 +115,8 @@ export const verificationApi = {
   queue: (cursor?: string | null) =>
     api<{ items: QueueItem[]; nextCursor: string | null }>(`${V}/review-queue`, { query: cursor ? { cursor } : undefined }),
   verified: () => api<{ items: QueueItem[]; nextCursor: string | null }>(`${V}/review-queue`, { query: { status: 'VERIFIED', limit: '50' } }),
+  decisionReasons: (verificationType: string) =>
+    api<DecisionReason[]>(`${V}/decision-reasons`, { query: { verificationType } }),
   decide: (id: string, body: { decision: 'VERIFIED' | 'FAILED' | 'NEEDS_INFO'; reasonCode: string; publicReason?: string; expiresAt?: string }) =>
     api<VerificationCase>(`${V}/cases/${id}/decision`, { method: 'POST', body }),
   appeal: (id: string, statement: string) => api<VerificationCase>(`${V}/cases/${id}/appeal`, { method: 'POST', body: { statement } }),

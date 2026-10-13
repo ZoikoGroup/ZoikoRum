@@ -26,8 +26,8 @@ from zoikorum.domains.dispute.schemas import (
 from zoikorum.domains.identity import facade as identity_facade
 from zoikorum.domains.professional import facade as professional_facade
 from zoikorum.shared import clock
-from zoikorum.shared.auth import Actor, PlatformRole
-from zoikorum.shared.errors import Conflict, Forbidden, NotFound, ValidationFailed
+from zoikorum.shared.auth import Actor, OrgRole, PlatformRole
+from zoikorum.shared.errors import Conflict, Forbidden, NotFound, PolicyBlocked, ValidationFailed
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_audit, record_event
 from zoikorum.shared.money import MoneyDTO
@@ -49,6 +49,7 @@ SKIP_DIRECT = ("PROFESSIONAL_CONDUCT", "COMPLIANCE_BREACH")  # conduct/complianc
 OPERATORS = (PlatformRole.MEDIATOR, PlatformRole.LEGAL, PlatformRole.PLATFORM_ADMIN)
 TIMER_EVIDENCE = "dispute.evidence_window"
 TIMER_DIRECT = "dispute.direct_resolution_window"
+TIMER_RECOMMENDATION = "dispute.recommendation_answer"  # an unanswered recommendation counts as declined
 CATEGORY_LABEL = {"SCOPE_DELIVERABLES": "Scope & deliverables", "QUALITY_ACCEPTANCE": "Quality / acceptance", "TIMELINE_DELAY": "Timeline & delays",
                   "PAYMENT_RELEASE": "Payment & release", "PROFESSIONAL_CONDUCT": "Professional conduct", "COMPLIANCE_BREACH": "Compliance / policy breach",
                   "JURISDICTION_LEGAL": "Jurisdictional or legal"}
@@ -87,6 +88,28 @@ async def _party_of(session: AsyncSession, actor: Actor, org_id: uuid.UUID, prof
     if pro is not None and pro.identity_id == actor.identity_id:
         return "PROFESSIONAL"
     return None
+
+
+BUYER_DECIDERS = (OrgRole.REQUESTER, OrgRole.APPROVER)  # the same people who may accept work or sign for the organisation
+
+
+async def _require_buyer_authority(session: AsyncSession, actor: Actor, c, release_minor: int = 0, *, settle: bool = True) -> None:
+    """Acting for the buyer organisation in a dispute is held to the same rules as accepting work: the Requester or
+    Approver role, and - when it settles money - a fresh two-step confirmation and the person's spend limit."""
+    roles = await buyer_facade.get_member_roles(session, c.organization_id, actor.identity_id)
+    if not roles.intersection(BUYER_DECIDERS):
+        raise Forbidden("Acting on a dispute for your organisation needs the Requester or Approver role", code="ROLE_REQUIRED")
+    if not settle:
+        return
+    actor.require_step_up()
+    limit = await buyer_facade.get_member_spend_limit(session, c.organization_id, actor.identity_id)
+    if release_minor and limit is not None and (limit.currency != c.currency or release_minor > limit.minor):
+        raise PolicyBlocked("Releasing this amount is above your approval limit; ask a colleague with a higher limit",
+                            code="SPEND_LIMIT_EXCEEDED")
+
+
+def _release(allocations: list[dict]) -> int:
+    return sum(int(a.get("releaseMinor") or 0) for a in allocations)
 
 
 async def _viewer(session: AsyncSession, actor: Actor, c: DisputeCase) -> str:
@@ -243,6 +266,8 @@ async def open_dispute(session: AsyncSession, actor: Actor, body: DisputeIn) -> 
     party = await _party_of(session, actor, k.organization_id, k.professional_id)
     if party is None:
         raise NotFound("Contract not found")
+    if party == "BUYER":
+        await _require_buyer_authority(session, actor, k, settle=False)  # opening freezes money: decider roles only
     if k.status not in ("ACTIVE", "DISPUTED"):
         raise Conflict("Only an active engagement can be disputed", code="CONTRACT_NOT_ACTIVE")
     ms = {m.id: m for m in k.milestones}
@@ -364,6 +389,8 @@ async def propose(session: AsyncSession, actor: Actor, case_id: uuid.UUID, body:
     if c.status != "DIRECT_RESOLUTION":
         raise Conflict("Proposals are made during the direct resolution window", code="NOT_IN_DIRECT_RESOLUTION")
     allocations = await _allocations(session, c, body.outcome, body.allocations)
+    if party == "BUYER":
+        await _require_buyer_authority(session, actor, c, _release(allocations))
     for p in (await session.scalars(select(ResolutionProposal).where(
             ResolutionProposal.case_id == c.id, ResolutionProposal.party == party, ResolutionProposal.status == "OPEN"))).all():
         p.status = "SUPERSEDED"
@@ -390,6 +417,8 @@ async def respond(session: AsyncSession, actor: Actor, proposal_id: uuid.UUID, a
         raise Forbidden("The other party answers your proposal")
     if p.status != "OPEN" or c.status != "DIRECT_RESOLUTION":
         raise Conflict("This proposal is no longer open", code="PROPOSAL_CLOSED")
+    if accept and party == "BUYER":
+        await _require_buyer_authority(session, actor, c, _release(p.allocations))
     p.status, p.responded_at = ("ACCEPTED" if accept else "REJECTED"), clock.now()
     label = await _actor_label(session, actor, party)
     if accept:
@@ -428,6 +457,10 @@ async def assign_mediator(session: AsyncSession, actor: Actor, case_id: uuid.UUI
         raise NotFound("Mediator not found")
     if await _party_of(session, Actor(identity_id=who.id, session_id=None, email=who.email), c.organization_id, c.professional_id):
         raise Forbidden("A party to the dispute cannot mediate it", code="CONFLICT_OF_INTEREST")
+    if PlatformRole.MEDIATOR not in await identity_facade.live_platform_roles(session, who.id):
+        raise ValidationFailed("Choose someone with the Mediator role and an active account", code="NOT_A_MEDIATOR")
+    if c.pending_decision:
+        raise Conflict("A platform decision is awaiting approval; the mediator cannot change now", code="DECISION_PENDING")
     c.mediator_identity_id = who.id
     _log(session, c, "MEDIATOR", "System", "A neutral mediator was assigned.")
     await session.flush()
@@ -451,8 +484,29 @@ async def recommend(session: AsyncSession, actor: Actor, case_id: uuid.UUID, bod
                         "acceptedBy": [], "rejectedBy": [], "issuedAt": clock.now().isoformat()}
     _log(session, c, "RECOMMENDATION", "Mediator", f"Recommendation issued: {OUTCOME_LABEL[body.outcome]}. Binding only if both parties accept.")
     _evt(session, E.DISPUTE_RECOMMENDATION_ISSUED, c, outcome=body.outcome)
+    # Mediation must not stall with the money frozen: a party who does not answer in time is treated as declining.
+    answer_by = add_business_days(clock.now(), get_settings().dispute_direct_resolution_business_days)
+    await schedule_timer(session, TIMER_RECOMMENDATION, f"{c.id}:{c.recommendation['issuedAt']}", answer_by,
+                         {"disputeId": str(c.id), "issuedAt": c.recommendation["issuedAt"]})
     await session.flush()
     return await _out(session, actor, c, "MEDIATOR")
+
+
+async def recommendation_lapsed(session: AsyncSession, payload: dict) -> None:
+    """The answer window closed: whoever has not answered is treated as declining, so the mediator can propose a platform
+    decision instead of the case (and the frozen money) waiting forever."""
+    c = await _case(session, uuid.UUID(payload["disputeId"]), lock=True)
+    r = dict(c.recommendation or {})
+    if c.status != "MEDIATION" or r.get("issuedAt") != payload.get("issuedAt"):
+        return  # decided, or a newer recommendation replaced this one
+    silent = [p for p in ("BUYER", "PROFESSIONAL") if p not in r["acceptedBy"] and p not in r["rejectedBy"]]
+    if not silent:
+        return
+    r["rejectedBy"] = [*r["rejectedBy"], *silent]
+    c.recommendation = r
+    _log(session, c, "RECOMMENDATION_LAPSED", "Zoikorum",
+         f"No answer from the {' and '.join(p.lower() for p in silent)} in time: treated as declined. The mediator may propose a platform decision.")
+    await session.flush()
 
 
 async def answer_recommendation(session: AsyncSession, actor: Actor, case_id: uuid.UUID, accept: bool) -> DisputeOut:
@@ -463,6 +517,8 @@ async def answer_recommendation(session: AsyncSession, actor: Actor, case_id: uu
     r = dict(c.recommendation)
     if party in r["acceptedBy"] or party in r["rejectedBy"]:
         raise Conflict("You have already answered this recommendation", code="ALREADY_ANSWERED")
+    if accept and party == "BUYER":
+        await _require_buyer_authority(session, actor, c, _release(r["allocations"]))
     r["acceptedBy" if accept else "rejectedBy"] = [*r["acceptedBy" if accept else "rejectedBy"], party]
     c.recommendation = r
     _log(session, c, "RECOMMENDATION_ANSWER", await _actor_label(session, actor, party), "Accepted the recommendation." if accept
@@ -495,6 +551,8 @@ async def approve_decision(session: AsyncSession, actor: Actor, case_id: uuid.UU
         raise Conflict("There is no platform decision awaiting approval", code="NO_PENDING_DECISION")
     if c.pending_decision["proposedBy"] == str(actor.identity_id):
         raise Forbidden("The person who proposed a decision cannot also approve it", code="FOUR_EYES")
+    if await _party_of(session, actor, c.organization_id, c.professional_id):
+        raise Forbidden("A party to the dispute cannot approve its decision", code="CONFLICT_OF_INTEREST")
     d = c.pending_decision
     await _resolve(session, c, d["outcome"], d["allocations"], "PLATFORM", actor.identity_id, d["summary"], d["citations"])
     c.pending_decision = None
@@ -679,11 +737,17 @@ async def repeated_rejection(session, payload):
         await automatic_case(session, cid, {uuid.UUID(str(payload["milestoneId"]))}, "QUALITY_ACCEPTANCE", "repeated deliverable rejection")
 
 
+# Verification closes a check with these when the professional changed something themselves (verification/service.py).
+SELF_INITIATED_CLOSURES = ("NAME_CHANGED", "WITHDRAWN", "DETAILS_CHANGED")
+
+
 async def compliance_trigger(session, payload):
     if payload.get("subjectType") != "PROFESSIONAL":
         return
     if payload.get("action") and payload["action"] not in ("CREDENTIAL_ENFORCEMENT", "VERIFICATION_RESET", "ENGAGEMENT_SUSPENSION"):
         return
+    if payload.get("reasonCode") in SELF_INITIATED_CLOSURES:
+        return  # the professional changed their name, details or withdrew a credential: re-verify, not a breach
     pid = uuid.UUID(str(payload["subjectId"]))
     for cid in await contract_facade.active_contract_ids(session, pid):
         if (await contract_facade.policy_controls(session, cid)).get("autoDisputeComplianceFlag"):

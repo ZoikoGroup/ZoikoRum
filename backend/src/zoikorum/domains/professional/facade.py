@@ -89,6 +89,12 @@ async def get_professional(session: AsyncSession, professional_id: uuid.UUID) ->
     return _summary(p) if p else None
 
 
+async def legal_name(session: AsyncSession, professional_id: uuid.UUID) -> str | None:
+    """The name as on the professional's ID - for compliance reviewers comparing documents only; never shown publicly."""
+    p = await session.get(Professional, professional_id)
+    return p.legal_name if p else None
+
+
 async def get_professional_by_identity(session: AsyncSession, identity_id: uuid.UUID) -> ProfessionalSummary | None:
     p = await session.scalar(select(Professional).where(Professional.identity_id == identity_id))
     return _summary(p) if p else None

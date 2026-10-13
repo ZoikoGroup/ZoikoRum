@@ -82,6 +82,22 @@ class EvidenceItem(Base, UUIDPk, CreatedAt):
     uploaded_by: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
 
 
+class EvidenceCheck(Base, UUIDPk, CreatedAt):
+    """Automatic first look at one evidence file (ai.facade.assess_document): a hint for the reviewer, never a decision.
+    Kept apart from EvidenceItem, which is append-only."""
+
+    __tablename__ = "evidence_checks"
+    __table_args__ = {"schema": SCHEMA}
+
+    evidence_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.evidence_items.id"),
+                                                   nullable=False, unique=True)
+    case_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.cases.id"), nullable=False, index=True)
+    verdict: Mapped[str] = mapped_column(String(20), nullable=False)  # MATCHES | UNRELATED | UNREADABLE | UNSURE | NOT_CHECKED
+    seen: Mapped[str | None] = mapped_column(String(120))  # what the file appears to be
+    note: Mapped[str] = mapped_column(String(300), nullable=False)
+    source: Mapped[str] = mapped_column(String(100), nullable=False)  # ai:<model>@<version> | none
+
+
 class Appeal(Base, UUIDPk, Timestamps):
     """An appeal against a FAILED or REVOKED verification (Governance playbook s.11, Onboarding s.16 "appeal path").
     One per case, time-bounded, evidence-based, decided once by a compliance officer who did not make the original decision."""

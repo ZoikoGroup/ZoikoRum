@@ -22,6 +22,8 @@ class E:
     EMAIL_CONFIRMED = _t("identity", "identity", "email_confirmed")
     EMAIL_CONFIRMATION_REQUESTED = _t("identity", "identity", "email_confirmation_requested")  # "resend the link"
     MFA_ENROLLED = _t("identity", "identity", "mfa_enrolled")
+    MFA_RECOVERY_CODE_USED = _t("identity", "identity", "mfa_recovery_code_used")  # signed in with a one-time recovery code
+    MFA_RESET = _t("identity", "identity", "mfa_reset")  # staff removed two-step verification after an identity check
     AUTHENTICATION_SUCCEEDED = _t("identity", "session", "authentication_succeeded")
     AUTHENTICATION_FAILED = _t("identity", "session", "authentication_failed")
     SESSION_CREATED = _t("identity", "session", "created")
@@ -82,6 +84,7 @@ class E:
     CAPACITY_CHANGED = _t("professional", "professional", "capacity_changed")
     JURISDICTIONS_UPDATED = _t("professional", "professional", "jurisdictions_updated")
     CREDENTIAL_SUBMITTED = _t("professional", "credential", "submitted")
+    CREDENTIAL_WITHDRAWN = _t("professional", "credential", "withdrawn")  # the professional removed it; its check closes
 
     # ---- Marketplace ---------------------------------------------------------
     TAXONOMY_UPDATED = _t("marketplace", "taxonomy", "updated")
@@ -146,6 +149,7 @@ class E:
     ESCROW_HOLD_APPLIED = _t("escrow", "account", "hold_applied")
     ESCROW_HOLD_RELEASED = _t("escrow", "account", "hold_released")
     ESCROW_RELEASE_EVALUATED = _t("escrow", "account", "release_evaluated")
+    ESCROW_RELEASE_BLOCKED = _t("escrow", "account", "release_blocked")  # accepted work, release approval denied or expired
     ESCROW_RELEASE_PENDING_APPROVAL = _t("escrow", "account", "release_pending_approval")
     ESCROW_RELEASED = _t("escrow", "account", "released")
     ESCROW_REFUNDED = _t("escrow", "account", "refunded")
@@ -164,6 +168,7 @@ class E:
     INVOICE_ISSUED = _t("payments", "invoice", "issued")
     PAYMENT_CHARGED_BACK = _t("payments", "payment_intent", "charged_back")  # card issuer reversed a captured payment
     CHARGEBACK_RECEIVED = _t("payments", "payment_intent", "chargeback_received")
+    REFUND_FAILED = _t("payments", "refund", "failed")  # the provider could not return the money; retried daily
     RECONCILIATION_COMPLETED = _t("payments", "reconciliation", "completed")
     RECONCILIATION_MISMATCH = _t("payments", "reconciliation", "mismatch_detected")
 
@@ -178,6 +183,8 @@ class E:
     VERIFICATION_REVOKED = _t("verification", "case", "revoked")
     VERIFICATION_APPEAL_FILED = _t("verification", "appeal", "filed")
     VERIFICATION_DUPLICATE_DOCUMENT = _t("verification", "evidence", "duplicate_document")  # same ID document from two accounts
+    VERIFICATION_FRAUD_SUSPECTED = _t("verification", "case", "fraud_suspected")  # reviewer: document appears altered or fake
+    VERIFICATION_EVIDENCE_FLAGGED = _t("verification", "evidence", "flagged")  # automatic check: unrelated or unreadable (hint only)
     VERIFICATION_APPEAL_DECIDED = _t("verification", "appeal", "decided")
 
     # ---- Trust ---------------------------------------------------------------

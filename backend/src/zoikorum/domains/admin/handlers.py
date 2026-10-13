@@ -10,7 +10,7 @@ async def signal(session, event):
     await service.triage_signal(session, event)
 
 
-for kind in (E.RISK_FLAG_RAISED, E.MESSAGE_FLAGGED, E.TRUST_PROFILE_FLAGGED):
+for kind in (E.RISK_FLAG_RAISED, E.MESSAGE_FLAGGED, E.TRUST_PROFILE_FLAGGED, E.VERIFICATION_FRAUD_SUSPECTED):
     subscribe(kind, consumer="admin.triage")(signal)
 
 

@@ -35,5 +35,9 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
   CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).status == 200 else 1)"
 # Settings are validated once before the web workers start, so a bad configuration exits with a clear message
-# instead of workers restarting in a loop. The load balancer terminates TLS; trust its X-Forwarded-* headers.
-CMD ["sh", "-c", "python -c 'from zoikorum.config import get_settings; get_settings()' && exec uvicorn zoikorum.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*' --workers ${WEB_CONCURRENCY:-2}"]
+# instead of workers restarting in a loop. The load balancer terminates TLS. X-Forwarded-For is trusted only from
+# private networks (nginx and the load balancer): the client address is the right-most one not on those networks, so a
+# caller cannot pick their own address by sending the header (rate limits and signature records depend on it).
+# Override FORWARDED_ALLOW_IPS if the load balancer has a public address.
+ENV FORWARDED_ALLOW_IPS="127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+CMD ["sh", "-c", "python -c 'from zoikorum.config import get_settings; get_settings()' && exec uvicorn zoikorum.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips=\"$FORWARDED_ALLOW_IPS\" --workers ${WEB_CONCURRENCY:-2}"]

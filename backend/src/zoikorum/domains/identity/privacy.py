@@ -43,6 +43,7 @@ async def erase(session: AsyncSession, identity_id: uuid.UUID) -> dict:
     identity.password_hash = None
     identity.phone_enc = None
     identity.mfa_secret_enc = None
+    identity.mfa_recovery_hashes = None
     identity.mfa_enabled_at = None
     identity.signup_organization_name = None
     identity.time_zone = None

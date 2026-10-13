@@ -4,3 +4,8 @@ dist/
 .env.*
 *.tsbuildinfo
 coverage/
+# Browser tests and their output are not part of the website
+e2e/
+test-results/
+playwright-report/
+playwright.config.ts

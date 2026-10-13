@@ -84,7 +84,7 @@ class PersonaProvider:
 
 # Veriff decision statuses -> the case outcome (see integration.apply_result).
 VERIFF_STATUS = {"approved": "approved", "declined": "declined", "resubmission_requested": "resubmission_requested",
-                 "review": "needs_review", "expired": "expired", "abandoned": "expired"}
+                 "review": "needs_review", "expired": "abandoned", "abandoned": "abandoned"}  # never finished: nothing captured
 
 
 class VeriffProvider:

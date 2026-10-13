@@ -39,5 +39,8 @@ from zoikorum.domains.ai.specializations import (  # noqa: E402  (contract re-ex
 # ---- "Describe what you need" search ------------------------------------------------------------------------------
 from zoikorum.domains.ai.intent import SearchIntent, extract_search_intent  # noqa: E402  (contract re-export)
 
-__all__ = ["CatalogEntry", "Draft", "MatchIntent", "SearchIntent", "SpecializationMatch", "extract_match_intent",
-           "extract_search_intent", "match_specializations"]
+# ---- First look at uploaded verification documents --------------------------------------------------------------------
+from zoikorum.domains.ai.documents import DocumentCheck, assess_document  # noqa: E402  (contract re-export)
+
+__all__ = ["CatalogEntry", "DocumentCheck", "Draft", "MatchIntent", "SearchIntent", "SpecializationMatch", "assess_document",
+           "extract_match_intent", "extract_search_intent", "match_specializations"]

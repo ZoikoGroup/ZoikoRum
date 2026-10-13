@@ -71,8 +71,9 @@ export interface StaffMember {
 export const authApi = {
   register: (input: RegisterInput) =>
     api<AuthResult & { emailConfirmationToken: string | null }>('/v1/auth/register', { method: 'POST', body: input, auth: false }),
-  login: (email: string, password: string, totpCode?: string) =>
-    api<AuthResult>('/v1/auth/login', { method: 'POST', body: { email, password, totpCode }, auth: false }),
+  /** portal: which sign-in page this is; the server keeps staff and customer accounts on their own page. */
+  login: (email: string, password: string, totpCode?: string, recoveryCode?: string, portal?: 'customer' | 'staff') =>
+    api<AuthResult>('/v1/auth/login', { method: 'POST', body: { email, password, totpCode, recoveryCode, portal }, auth: false }),
   logout: () => api<void>('/v1/auth/logout', { method: 'POST' }),
   me: () => api<User>('/v1/me'),
   confirmEmail: (token: string) => api<User>('/v1/auth/confirm-email', { method: 'POST', body: { token }, auth: false }),
@@ -83,7 +84,10 @@ export const authApi = {
   resetPassword: (token: string, newPassword: string) =>
     api<void>('/v1/auth/password/reset', { method: 'POST', body: { token, newPassword }, auth: false }),
   enrollMfa: () => api<{ secret: string; otpauthUri: string }>('/v1/auth/mfa/enroll', { method: 'POST' }),
-  verifyMfa: (totpCode: string) => api<void>('/v1/auth/mfa/verify', { method: 'POST', body: { totpCode } }),
+  /** Turns two-step verification on; returns one-time recovery codes, shown only this once. */
+  verifyMfa: (totpCode: string) => api<{ recoveryCodes: string[] }>('/v1/auth/mfa/verify', { method: 'POST', body: { totpCode } }),
+  newRecoveryCodes: () => api<{ recoveryCodes: string[] }>('/v1/auth/mfa/recovery-codes', { method: 'POST' }),
+  resetMfa: (id: string, reason: string) => api<User>(`/v1/admin/identities/${id}/mfa-reset`, { method: 'POST', body: { reason } }),
   stepUp: (totpCode: string) => api<TokenPair>('/v1/auth/step-up', { method: 'POST', body: { totpCode } }),
   addAccountType: (accountType: 'BUYER' | 'PROFESSIONAL') =>
     api<AuthResult>('/v1/me/account-types', { method: 'POST', body: { accountType } }),

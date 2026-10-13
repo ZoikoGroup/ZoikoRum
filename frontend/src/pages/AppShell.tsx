@@ -206,7 +206,8 @@ export default function AppShell() {
               <NavLink to="/app/settings">Settings</NavLink>
               <NavLink to="/app/account">Profile &amp; roles</NavLink>
               <NavLink to="/app/security">Two-step verification</NavLink>
-              <button onClick={async () => { await logout(); navigate('/login') }}>Sign out</button>
+              <button onClick={async () => { const staff = (user?.platformRoles.length ?? 0) > 0; await logout()
+                navigate(staff ? '/staff/login' : '/login') }}>Sign out</button>
             </div>
           </details>
         </header>

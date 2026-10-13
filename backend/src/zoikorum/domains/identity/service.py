@@ -8,6 +8,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import timedelta
@@ -190,8 +193,42 @@ class LoginFailure:
     code: str = "UNAUTHENTICATED"
 
 
+RECOVERY_CODES = 10
+
+
+def _count_failure(identity: Identity) -> None:
+    """Wrong password, authenticator code or recovery code: all count towards the same temporary lockout."""
+    identity.failed_login_count += 1
+    if identity.failed_login_count >= MAX_FAILED_LOGINS:
+        identity.locked_until = clock.now() + LOCKOUT
+        identity.failed_login_count = 0
+
+
+def _recovery_hash(code: str) -> str:
+    """Keyed hash: a copy of the database alone is not enough to try codes offline."""
+    return hmac.new(get_settings().field_encryption_key.encode(), code.strip().lower().encode(), hashlib.sha256).hexdigest()
+
+
+def _new_recovery_codes(identity: Identity) -> list[str]:
+    codes = []
+    for _ in range(RECOVERY_CODES):
+        raw = secrets.token_hex(10)  # 80 random bits
+        codes.append("-".join(raw[i:i + 5] for i in range(0, 20, 5)))
+    identity.mfa_recovery_hashes = [_recovery_hash(c) for c in codes]
+    return codes
+
+
+def _use_recovery_code(identity: Identity, code: str) -> bool:
+    h = _recovery_hash(code)
+    if h not in (identity.mfa_recovery_hashes or []):
+        return False
+    identity.mfa_recovery_hashes = [x for x in identity.mfa_recovery_hashes if x != h]  # one use only
+    return True
+
+
 async def login(
-    session: AsyncSession, email: str, password: str, totp: str | None, user_agent: str | None
+    session: AsyncSession, email: str, password: str, totp: str | None, user_agent: str | None,
+    recovery_code: str | None = None, portal: str | None = None,
 ) -> AuthOut | LoginFailure:
     identity = await session.scalar(select(Identity).where(Identity.email == email.lower()).with_for_update())
     now = clock.now()
@@ -213,13 +250,29 @@ async def login(
         # Returned, not raised: the failure counter and event must still commit.
         return LoginFailure("Email or password is incorrect")
 
+    # Checked only after the password is right, so a stranger cannot learn which emails belong to staff.
+    staff = bool(identity.platform_roles)
+    if portal == "staff" and not staff:
+        return LoginFailure("This sign-in is for Zoikorum staff only. Customers and professionals sign in on the main "
+                            "sign-in page.", "NOT_STAFF_ACCOUNT")
+    if portal == "customer" and staff:
+        return LoginFailure("Staff accounts sign in on the staff sign-in page.", "USE_STAFF_SIGN_IN")
+
     strength = AuthStrength.PASSWORD
-    if identity.mfa_enabled_at is not None and not (get_settings().mfa_bypass and not totp):
-        if not totp:
-            raise Unauthenticated("Enter the 6-digit code from your authenticator", code="MFA_REQUIRED")
-        if not pyotp.TOTP(decrypt_field(identity.mfa_secret_enc)).verify(totp, valid_window=1):
-            _evt(session, E.AUTHENTICATION_FAILED, identity, reason="BAD_TOTP")
-            return LoginFailure("Authentication code is incorrect", "MFA_INVALID")
+    if identity.mfa_enabled_at is not None and not (get_settings().mfa_bypass and not (totp or recovery_code)):
+        if recovery_code:  # lost authenticator: a one-time recovery code instead of the 6-digit code
+            if not _use_recovery_code(identity, recovery_code):
+                _count_failure(identity)
+                _evt(session, E.AUTHENTICATION_FAILED, identity, reason="BAD_RECOVERY_CODE", lockedUntil=identity.locked_until)
+                return LoginFailure("That recovery code is not valid or was already used", "MFA_INVALID")
+            _evt(session, E.MFA_RECOVERY_CODE_USED, identity, remaining=len(identity.mfa_recovery_hashes or []))
+        else:
+            if not totp:
+                raise Unauthenticated("Enter the 6-digit code from your authenticator", code="MFA_REQUIRED")
+            if not pyotp.TOTP(decrypt_field(identity.mfa_secret_enc)).verify(totp, valid_window=1):
+                _count_failure(identity)
+                _evt(session, E.AUTHENTICATION_FAILED, identity, reason="BAD_TOTP", lockedUntil=identity.locked_until)
+                return LoginFailure("Authentication code is incorrect", "MFA_INVALID")
         strength = AuthStrength.MFA
 
     identity.failed_login_count = 0
@@ -278,25 +331,60 @@ async def enroll_mfa(session: AsyncSession, actor: Actor) -> tuple[str, str]:
     return secret, uri
 
 
-async def verify_mfa(session: AsyncSession, actor: Actor, code: str) -> None:
+async def verify_mfa(session: AsyncSession, actor: Actor, code: str) -> list[str]:
+    """Turns two-step verification on. Returns the one-time recovery codes (shown once; only hashes are kept)."""
     identity = await _get_for_update(session, actor.identity_id)
     if not identity.mfa_secret_enc:
         raise Conflict("Start MFA enrollment first", code="MFA_NOT_ENROLLING")
     if not pyotp.TOTP(decrypt_field(identity.mfa_secret_enc)).verify(code, valid_window=1):
         raise ValidationFailed("Authentication code is incorrect", code="MFA_INVALID")
+    if identity.mfa_enabled_at is not None:
+        return []
+    identity.mfa_enabled_at = clock.now()
+    _evt(session, E.MFA_ENROLLED, identity, method="TOTP")
+    return _new_recovery_codes(identity)
+
+
+async def regenerate_recovery_codes(session: AsyncSession, actor: Actor) -> list[str]:
+    """New recovery codes replace all old ones. Needs a fresh two-step confirmation."""
+    actor.require_step_up()
+    identity = await _get_for_update(session, actor.identity_id)
     if identity.mfa_enabled_at is None:
-        identity.mfa_enabled_at = clock.now()
-        _evt(session, E.MFA_ENROLLED, identity, method="TOTP")
+        raise Conflict("Turn on two-step verification first", code="MFA_NOT_ENABLED")
+    record_audit(session, "identity.mfa.recovery_codes_replaced", object_type="Identity", object_id=identity.id)
+    return _new_recovery_codes(identity)
 
 
-async def step_up(session: AsyncSession, actor: Actor, code: str, user_agent: str | None) -> TokenPair:
+async def reset_mfa(session: AsyncSession, actor: Actor, identity_id: uuid.UUID, reason: str) -> Identity:
+    """Support, after confirming who the person is by other means: removes two-step verification so they can set it up
+    again. Platform Admin with a fresh confirmation; never for one's own account; signs the person out everywhere."""
+    actor.require_platform_role(PlatformRole.PLATFORM_ADMIN)
+    actor.require_step_up()
+    if identity_id == actor.identity_id:
+        raise Forbidden("Another administrator must reset your own two-step verification", code="SELF_RESET")
+    identity = await _get_for_update(session, identity_id)
+    if identity.mfa_enabled_at is None:
+        raise Conflict("Two-step verification is not on for this account", code="MFA_NOT_ENABLED")
+    identity.mfa_secret_enc = identity.mfa_enabled_at = identity.mfa_recovery_hashes = None
+    await session.execute(update(Session).where(Session.identity_id == identity_id, Session.revoked_at.is_(None))
+                          .values(revoked_at=clock.now()))
+    _evt(session, E.MFA_RESET, identity, resetBy=actor.identity_id)
+    record_audit(session, "identity.mfa.reset", object_type="Identity", object_id=identity.id, details={"reason": reason.strip()[:500]})
+    return identity
+
+
+async def step_up(session: AsyncSession, actor: Actor, code: str, user_agent: str | None) -> TokenPair | LoginFailure:
     """Elevate the current session (Architecture 11.4). New session in same family."""
     identity = await _get_for_update(session, actor.identity_id)
     if identity.mfa_enabled_at is None:
         raise Forbidden("Enable MFA before performing sensitive operations", code="MFA_NOT_ENABLED")
+    if identity.locked_until and identity.locked_until > clock.now():
+        raise Unauthenticated("Too many wrong codes. Try again in a few minutes.", code="ACCOUNT_LOCKED")
     if not pyotp.TOTP(decrypt_field(identity.mfa_secret_enc)).verify(code, valid_window=1):
-        _evt(session, E.AUTHENTICATION_FAILED, identity, reason="BAD_TOTP_STEP_UP")
-        raise Unauthenticated("Authentication code is incorrect", code="MFA_INVALID")
+        _count_failure(identity)
+        _evt(session, E.AUTHENTICATION_FAILED, identity, reason="BAD_TOTP_STEP_UP", lockedUntil=identity.locked_until)
+        return LoginFailure("Authentication code is incorrect", "MFA_INVALID")
+    identity.failed_login_count = 0
     family = None
     if actor.session_id:
         old = await session.get(Session, actor.session_id)
@@ -312,6 +400,8 @@ async def grant_platform_role(session: AsyncSession, actor: Actor, identity_id: 
     actor.require_step_up()
     if role not in PlatformRole.ALL:
         raise ValidationFailed(f"Unknown platform role {role}")
+    if identity_id == actor.identity_id:
+        raise Forbidden("Another administrator must grant you a staff role", code="SELF_GRANT")
     identity = await _get_for_update(session, identity_id)
     if role not in identity.platform_roles:
         identity.platform_roles = sorted({*identity.platform_roles, role})
@@ -494,8 +584,14 @@ async def list_staff(session: AsyncSession, actor: Actor) -> list[StaffMemberOut
     ]
 
 
-async def create_platform_admin(session: AsyncSession, email: str, password: str, display_name: str, country: str) -> Identity:
-    """Bootstrap only (CLI). Creates the first Platform Admin or promotes an existing account."""
+async def create_platform_admin(session: AsyncSession, email: str, password: str, display_name: str, country: str,
+                                extra_roles: tuple[str, ...] = ()) -> Identity:
+    """Bootstrap only (CLI, run by whoever operates the servers). Creates the first Platform Admin or promotes an
+    existing account; ``extra_roles`` adds other staff roles at the same time (nobody can grant roles to themselves in
+    the app)."""
+    unknown = sorted(set(extra_roles) - set(PlatformRole.ALL))
+    if unknown:
+        raise ValidationFailed(f"Unknown platform role(s): {', '.join(unknown)}")
     identity = await session.scalar(select(Identity).where(Identity.email == email.lower()).with_for_update())
     if identity is None:
         identity = Identity(
@@ -508,6 +604,10 @@ async def create_platform_admin(session: AsyncSession, email: str, password: str
     elif PlatformRole.PLATFORM_ADMIN not in identity.platform_roles:
         identity.platform_roles = sorted({*identity.platform_roles, PlatformRole.PLATFORM_ADMIN})
     _evt(session, E.PLATFORM_ROLE_GRANTED, identity, role=PlatformRole.PLATFORM_ADMIN, grantedBy="bootstrap-cli")
+    for role in extra_roles:
+        if role not in identity.platform_roles:
+            identity.platform_roles = sorted({*identity.platform_roles, role})
+            _evt(session, E.PLATFORM_ROLE_GRANTED, identity, role=role, grantedBy="bootstrap-cli")
     return identity
 
 

@@ -12,7 +12,7 @@ import json
 import uuid
 from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.config import get_settings
@@ -60,6 +60,7 @@ MILESTONE_STATES = StateMachine("Milestone", {
 DECIDERS = (OrgRole.REQUESTER, OrgRole.APPROVER)
 VIEWERS = (PlatformRole.PLATFORM_ADMIN, PlatformRole.COMPLIANCE_OFFICER, PlatformRole.LEGAL, PlatformRole.MEDIATOR)
 TIMER_SIGNATURE = "contract.signature_deadline"
+TIMER_SIGNATURE_EXPIRY = "contract.signature_expiry"  # a never-signed contract ends; nobody is left waiting forever"
 TIMER_REVIEW_REMINDER = "contract.review_reminder"  # one day before the buyer's review window closes
 TIMER_REVIEW_DUE = "contract.review_due"  # the review window has passed
 TIMER_AUTO_ACCEPT = "contract.policy_auto_accept"
@@ -558,6 +559,23 @@ async def signature_deadline_passed(session: AsyncSession, payload: dict) -> Non
     signed = set((await session.scalars(select(Signature.party).where(
         Signature.contract_id == c.id, Signature.contract_version == c.contract_version))).all())
     _evt(session, E.SIGNATURE_DEADLINE_ESCALATED, c, waitingFor=sorted({"BUYER", "PROFESSIONAL"} - signed))
+    if c.activated_at is None:  # a new agreement (not an amendment): it lapses if it is still unsigned a period later
+        await schedule_timer(session, TIMER_SIGNATURE_EXPIRY, str(c.id),
+                             clock.now() + timedelta(days=get_settings().signature_deadline_days), {"contractId": str(c.id)})
+
+
+async def signature_expired(session: AsyncSession, payload: dict) -> None:
+    """Still unsigned a full period after the deadline: the agreement lapses (no money has moved: escrow opens only
+    when both have signed), so the buyer can engage someone else and the professional is not held to it."""
+    c = await session.get(Contract, uuid.UUID(payload["contractId"]), with_for_update=True)
+    if c is None or c.status != "PENDING_SIGNATURE" or c.activated_at is not None:
+        return
+    CONTRACT_STATES.assert_can(c.status, "TERMINATED")
+    c.status = "TERMINATED"
+    for m in await _milestones(session, c.id, lock=True):
+        if MILESTONE_STATES.can(m.status, "CANCELLED"):
+            m.status = "CANCELLED"
+    _evt(session, E.CONTRACT_TERMINATED, c, reason="SIGNATURE_EXPIRED")
 
 
 # ---- Reads ------------------------------------------------------------------------------------
@@ -712,7 +730,9 @@ async def document_pdf(session: AsyncSession, actor: Actor, contract_id: uuid.UU
 
 async def _scope(session: AsyncSession, actor: Actor, role: str):
     if role == "buyer":
-        return or_(Contract.organization_id.in_(actor.org_ids), Contract.buyer_identity_id == actor.identity_id)
+        # Live memberships only: someone removed from the organisation stops seeing its contracts at once (their sign-in
+        # token may still list it for a few minutes, and having created a contract gives no lasting access).
+        return Contract.organization_id.in_(await buyer_facade.list_identity_organizations(session, actor.identity_id))
     pro = await professional_facade.get_professional_by_identity(session, actor.identity_id)
     return Contract.professional_id == pro.id if pro else None
 
@@ -955,6 +975,11 @@ async def cancel_remaining_cycles(session: AsyncSession, actor: Actor, contract_
     future = [m for m in ms if m.status == "PENDING_FUNDING"]
     if not future:
         raise Conflict("There are no unfunded cycles left to cancel", code="NOTHING_TO_CANCEL")
+    states = await escrow_facade.get_allocation_states_for_amendment(session, c.id, {m.id for m in future}) or {}
+    paying = [m for m in future if states.get(m.id) == "FUNDING"]
+    if paying:
+        raise Conflict(f"A payment for M{paying[0].sequence} is still being processed. Cancel once it has finished or failed.",
+                       code="PAYMENT_IN_PROGRESS")
     for m in future:
         MILESTONE_STATES.assert_can(m.status, "CANCELLED")
         m.status = "CANCELLED"
@@ -1032,10 +1057,14 @@ async def dispute_resolved(session: AsyncSession, payload: dict) -> None:
             m.status = "CANCELLED"
         else:  # REWORK / EXTEND: back to work; the money stays held
             m.status = "IN_PROGRESS"
+    for m in ms:
+        if m.status == "CANCELLED" and outcomes.get(str(m.id)) == "CANCEL":
+            _evt(session, E.MILESTONE_CANCELLED, c, milestoneId=m.id, reason="DISPUTE_DECISION")
     if payload.get("outcome") == "TERMINATION":
         for m in ms:
             if m.status in ("PENDING_FUNDING", "IN_PROGRESS", "SUBMITTED", "REVISION_REQUESTED"):
                 m.status = "CANCELLED"
+                _evt(session, E.MILESTONE_CANCELLED, c, milestoneId=m.id, reason="DISPUTE_DECISION")
         c.status = "TERMINATED"
         _evt(session, E.CONTRACT_TERMINATED, c, reason="DISPUTE_DECISION", disputeId=payload["disputeId"])
         return
@@ -1151,6 +1180,10 @@ async def policy_auto_accept(session, payload):
         return
     auto_days = c.terms.get("policySettings", {}).get("autoAcceptAfterDays")
     if not auto_days or not m.submitted_at or m.submitted_at + timedelta(days=auto_days) > clock.now():
+        return
+    if m.partial_offer_minor is not None:  # the buyer offered to accept part of it: wait for that answer, then try again
+        await schedule_timer(session, TIMER_AUTO_ACCEPT, f"{payload['submissionId']}:{clock.now().date().isoformat()}",
+                             clock.now() + timedelta(days=1), payload)
         return
     from zoikorum.domains.dispute import facade as dispute_facade
     if await dispute_facade.open_disputes_for_contract(session, c.id):

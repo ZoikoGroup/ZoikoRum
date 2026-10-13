@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   CASE_STATUS, DIMENSION_VALUE, DIMENSIONS, evidenceFileUrl, HOSTED_NOTE, PARTNER_NAME, trustApi, verificationApi,
-  type AppealQueueItem, type EvidenceType, type QueueItem, type SelfServiceType, type SubjectType, type Trust, type VerificationCase,
+  type AppealQueueItem, type DecisionReason, type EvidenceCheck, type EvidenceType, type QueueItem, type SelfServiceType, type SubjectType, type Trust, type VerificationCase,
 } from '../api/verification'
 import { toUpload } from '../api/files'
 import { FileLink } from '../components/FileLink'
@@ -132,7 +132,8 @@ function CaseCard({ c, onChange, hostedOn }: { c: VerificationCase; onChange: (c
       {hosted && <HostedVerification c={c} onChange={onChange} />}
       {hosted && !uploadInstead && <button type="button" className="text-btn small"
         onClick={() => setUploadInstead(true)}>Can't use a camera? Upload your document for a person to review instead</button>}
-      {c.isMine && OPEN.includes(c.status) && c.verificationType !== 'RESTRICTIONS' && (!hosted || uploadInstead) && <EvidenceUpload c={c} onDone={onChange} />}
+      {c.isMine && OPEN.includes(c.status) && (c.verificationType !== 'RESTRICTIONS' || c.status === 'NEEDS_INFO')
+        && (!hosted || uploadInstead) && <EvidenceUpload c={c} onDone={onChange} />}
       {c.appeal && <div className={`alert ${c.appeal.status === 'OVERTURNED' ? 'alert-success' : 'alert-info'}`} style={{ marginTop: 10 }}>
         <strong>Appeal {c.appeal.status === 'OPEN' ? 'under review' : c.appeal.status === 'OVERTURNED' ? 'successful' : 'not upheld'}</strong>
         {c.appeal.status === 'OPEN' ? ' — an independent reviewer will decide. You can add new documents below.' : c.appeal.decisionNote ? `: ${c.appeal.decisionNote}` : ''}
@@ -358,10 +359,40 @@ export function FirmVerificationPage() {
 
 // ---- Compliance review queue -------------------------------------------------
 
+const CHECK_LABEL: Record<EvidenceCheck['verdict'], [string, string]> = {
+  MATCHES: ['Looks right', 'green'], UNRELATED: ['May be unrelated', 'warn'], UNREADABLE: ['Hard to read', 'warn'],
+  UNSURE: ['Unsure', ''], NOT_CHECKED: ['Not checked', ''],
+}
+
+/** The automatic first look at a file: a hint only. The reviewer opens the file and decides. */
+function AutomaticCheck({ check }: { check?: EvidenceCheck | null }) {
+  if (!check) return <span className="muted small">Pending…</span>
+  const [label, tone] = CHECK_LABEL[check.verdict]
+  return (
+    <span className="small"><span className={`badge ${tone}`}>{label}</span>
+      {check.seen && <> <span className="muted">Looks like {check.seen}.</span></>}
+      {check.verdict !== 'MATCHES' && <div className="muted">{check.note}</div>}</span>
+  )
+}
+
 function DecisionForm({ c, onDone }: { c: VerificationCase; onDone: () => void }) {
   const [decision, setDecision] = useState<'VERIFIED' | 'NEEDS_INFO' | 'FAILED'>('VERIFIED')
+  const [reasons, setReasons] = useState<DecisionReason[]>([])
   const [reasonCode, setReasonCode] = useState('')
+  const [otherCode, setOtherCode] = useState('')
   const [publicReason, setPublicReason] = useState('')
+  useEffect(() => { verificationApi.decisionReasons(c.verificationType).then(setReasons).catch(() => {}) }, [c.verificationType])
+  const fitting = reasons.filter((r) => r.decisions.includes(decision))
+  /** A standard reason fills in its plain-language message; staff can still edit it. */
+  function pickReason(code: string) {
+    setReasonCode(code)
+    const message = reasons.find((r) => r.code === code)?.message
+    if (message) setPublicReason(message)
+  }
+  function pickDecision(next: typeof decision) {
+    setDecision(next)
+    if (reasonCode && !reasons.find((r) => r.code === reasonCode)?.decisions.includes(next)) { setReasonCode(''); setPublicReason('') }
+  }
   const [expiresAt, setExpiresAt] = useState('')
   const [error, setError] = useState<unknown>(null)
   const { run, modal } = useStepUp(setError)
@@ -371,7 +402,8 @@ function DecisionForm({ c, onDone }: { c: VerificationCase; onDone: () => void }
     setError(null)
     run(async () => {
       await verificationApi.decide(c.id, {
-        decision, reasonCode, ...(publicReason ? { publicReason } : {}),
+        decision, reasonCode: reasonCode === 'OTHER' && otherCode.trim() ? otherCode.trim() : reasonCode,
+        ...(publicReason ? { publicReason } : {}),
         ...(decision === 'VERIFIED' && expiresAt ? { expiresAt: new Date(`${expiresAt}T23:59:59Z`).toISOString() } : {}),
       })
       onDone()
@@ -384,15 +416,24 @@ function DecisionForm({ c, onDone }: { c: VerificationCase; onDone: () => void }
       <ErrorAlert error={error} />
       <div className="row">
         <Field label="Decision" id="d-decision">
-          <select id="d-decision" className="input" value={decision} onChange={(e) => setDecision(e.target.value as typeof decision)}>
+          <select id="d-decision" className="input" value={decision} onChange={(e) => pickDecision(e.target.value as typeof decision)}>
             <option value="VERIFIED">Verified</option>
             <option value="NEEDS_INFO">Ask for more information</option>
             <option value="FAILED">Not verified</option>
           </select>
         </Field>
-        <Field label="Reason code" id="d-code" hint="e.g. DOCUMENT_MATCH, REGISTRY_MATCH, BLURRY_SCAN">
-          <input id="d-code" className="input" value={reasonCode} onChange={(e) => setReasonCode(e.target.value.toUpperCase())} required minLength={2} />
+        <Field label="Reason" id="d-code" hint="Standard reasons fill in the message below; you can edit it.">
+          <select id="d-code" className="input" value={reasonCode} onChange={(e) => pickReason(e.target.value)} required>
+            <option value="">Choose a reason…</option>
+            {fitting.map((r) => <option key={r.code} value={r.code}>{r.label}</option>)}
+          </select>
         </Field>
+        {reasonCode === 'OTHER' && (
+          <Field label="Short code for this reason (optional)" id="d-other" hint="For reports, e.g. EMBASSY_LETTER">
+            <input id="d-other" className="input" value={otherCode} maxLength={60}
+              onChange={(e) => setOtherCode(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, '_'))} />
+          </Field>
+        )}
         {decision === 'VERIFIED' && (
           <Field label="Valid until (optional)" id="d-exp" hint="Credentials default to their own expiry date.">
             <input id="d-exp" className="input" type="date" value={expiresAt} onChange={(e) => setExpiresAt(e.target.value)} />
@@ -442,6 +483,14 @@ export function ReviewQueuePage() {
                 {selected.jurisdiction && ` · ${countryName(selected.jurisdiction)}`}</p></div>
             <CaseStatusBadge status={selected.status} />
           </div>
+          {(selected.subjectLegalName || selected.details) && (
+            <div className="tip" style={{ marginBottom: 12 }}><span>
+              <strong>Compare the documents with:</strong>
+              {selected.subjectLegalName && <div>Name as on ID: <strong>{selected.subjectLegalName}</strong></div>}
+              {selected.details && Object.entries(selected.details).filter(([, v]) => v !== null && v !== '').map(([k, v]) =>
+                <div key={k}>{k.replace(/([A-Z])/g, ' $1').replace(/^./, (x) => x.toUpperCase())}: <strong>{String(v)}</strong></div>)}
+            </span></div>
+          )}
           <h3>Evidence</h3>
           {selected.hostedStatus && selected.evidence.length === 0 ? (
             <div className="alert alert-info" style={{ marginBottom: 16 }}>
@@ -451,9 +500,11 @@ export function ReviewQueuePage() {
             </div>
           ) : selected.evidence.length === 0 ? <p className="muted small">No documents submitted. Registry and screening checks may not need any.</p> : (
             <table className="data" style={{ marginBottom: 16 }}>
-              <thead><tr><th>File</th><th>Type</th><th>SHA-256</th><th>Received</th></tr></thead>
+              <thead><tr><th>File</th><th>Type</th><th>Automatic check</th><th>SHA-256</th><th>Received</th></tr></thead>
               <tbody>{selected.evidence.map((e) => (
-                <tr key={e.id}><td><FileLink file={{ name: e.fileName, hasFile: e.hasFile }} url={evidenceFileUrl(e.id)} /></td><td>{e.evidenceType}</td><td><code>{e.sha256.slice(0, 16)}…</code></td><td>{fmtDate(e.uploadedAt)}</td></tr>
+                <tr key={e.id}><td><FileLink file={{ name: e.fileName, hasFile: e.hasFile }} url={evidenceFileUrl(e.id)} /></td><td>{e.evidenceType}</td>
+                  <td><AutomaticCheck check={e.automaticCheck} /></td>
+                  <td><code>{e.sha256.slice(0, 16)}…</code></td><td>{fmtDate(e.uploadedAt)}</td></tr>
               ))}</tbody>
             </table>
           )}
@@ -476,7 +527,8 @@ export function ReviewQueuePage() {
                     {q.hostedReason && ` — ${q.hostedReason}`}</div>}</td>
                 <td>{q.subjectName ?? '—'} <span className="muted small">({q.subjectType === 'FIRM' ? 'Firm' : 'Professional'})</span></td>
                 <td><CaseStatusBadge status={q.status} /></td>
-                <td>{q.evidenceCount}</td>
+                <td>{q.evidenceCount}{(q.flaggedEvidence ?? 0) > 0 && <> <span className="badge warn" title="The automatic check thinks a file is unrelated or unreadable">
+                  {q.flaggedEvidence} flagged</span></>}</td>
                 <td>{fmtDate(q.estimatedCompletion)} {q.overdue && <span className="badge warn">Overdue</span>}</td>
                 <td style={{ textAlign: 'right' }}><button className="btn btn-secondary btn-sm" onClick={() => open(q.id)}>Review</button></td>
               </tr>

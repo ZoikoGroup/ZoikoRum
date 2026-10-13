@@ -21,7 +21,7 @@ Migrations: `backend/alembic/versions/` (`alembic upgrade head`).
 - [contract](#schema-contract) — 6 tables
 - [escrow](#schema-escrow) — 5 tables
 - [payments](#schema-payments) — 7 tables
-- [verification](#schema-verification) — 5 tables
+- [verification](#schema-verification) — 6 tables
 - [trust](#schema-trust) — 3 tables
 - [policy](#schema-policy) — 6 tables
 - [dispute](#schema-dispute) — 5 tables
@@ -190,6 +190,7 @@ Aggregate root: one ZoikoID per human or service actor.
 | `signup_organization_name` | varchar(200) | yes |  |
 | `mfa_secret_enc` | varchar(500) | yes |  |
 | `mfa_enabled_at` | DATETIME | yes |  |
+| `mfa_recovery_hashes` | JSONB | yes |  |
 | `failed_login_count` | INTEGER | no |  |
 | `locked_until` | DATETIME | yes |  |
 | `enterprise_federated` | BOOLEAN | no |  |
@@ -926,6 +927,7 @@ UNFUNDED -> FUNDED -> PARTIALLY_RELEASED -> FULLY_RELEASED (DISPUTED / REFUNDED 
 | `released_minor` | BIGINT | no |  |
 | `refunded_minor` | BIGINT | no |  |
 | `fees_minor` | BIGINT | no |  |
+| `fee_bps` | INTEGER | yes |  |
 | `id` | UUID | no | PK |
 | `updated_at` | DATETIME | no |  |
 | `created_at` | DATETIME | no |  |
@@ -1204,6 +1206,21 @@ One check of one subject. PENDING -> IN_REVIEW -> NEEDS_INFO -> VERIFIED | FAILE
 | `updated_at` | DATETIME | no |  |
 | `created_at` | DATETIME | no |  |
 | `version` | BIGINT | no |  |
+
+### `verification.evidence_checks`
+
+Automatic first look at one evidence file (ai.facade.assess_document): a hint for the reviewer, never a decision. Kept apart from EvidenceItem, which is append-only.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `evidence_id` | UUID | no | FK → verification.evidence_items.id, unique |
+| `case_id` | UUID | no | FK → verification.cases.id, indexed |
+| `verdict` | varchar(20) | no |  |
+| `seen` | varchar(120) | yes |  |
+| `note` | varchar(300) | no |  |
+| `source` | varchar(100) | no |  |
+| `id` | UUID | no | PK |
+| `created_at` | DATETIME | no |  |
 
 ### `verification.evidence_items` — append-only
 
@@ -1640,7 +1657,7 @@ Base class used for declarative class definitions.  The :class:`_orm.Declarative
 | `id` | UUID | no | PK |
 | `created_at` | DATETIME | no |  |
 
-Unique together: (thread_id, source_event_id); (thread_id, sequence)
+Unique together: (thread_id, sequence); (thread_id, source_event_id)
 
 ### `messaging.read_positions`
 

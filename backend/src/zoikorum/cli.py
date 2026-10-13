@@ -4,6 +4,7 @@
     python -m zoikorum.cli reindex-search      # rebuild the search projection from the owning domains
     python -m zoikorum.cli schema-doc          # regenerate docs/DATABASE_SCHEMA.md from the models
     python -m zoikorum.cli reconcile --day 2026-10-06   # payments reconciliation for one UTC day (default: yesterday)
+    python -m zoikorum.cli check-config [--connect]   # is this environment's configuration complete? (no values printed)
 
 The first Platform Admin can only be created here (never over HTTP). The password
 is read from a prompt or ZK_ADMIN_PASSWORD - never pass it as an argument.
@@ -16,19 +17,25 @@ import asyncio
 import getpass
 import os
 
-from zoikorum.main import load_domains
 from zoikorum.shared import context
 from zoikorum.shared.db import dispose_engine, session_factory
 
 
-async def _create_admin(email: str, name: str, country: str, password: str) -> None:
+def load_domains() -> None:
+    # Imported when a command needs the app, so check-config can report bad settings instead of failing on import.
+    from zoikorum.main import load_domains as load
+
+    load()
+
+
+async def _create_admin(email: str, name: str, country: str, password: str, roles: tuple[str, ...] = ()) -> None:
     from zoikorum.domains.identity import service
 
     load_domains()
     ctx = context.ExecutionContext(correlation_id=context.new_correlation_id(), actor_id="cli", actor_type="operator")
     with context.use_context(ctx):
         async with session_factory()() as s, s.begin():
-            identity = await service.create_platform_admin(s, email, password, name, country)
+            identity = await service.create_platform_admin(s, email, password, name, country, roles)
     await dispose_engine()
     print(f"Platform Admin ready: {identity.email} ({identity.id}). Sign in and enable MFA to use staff tools.")
 
@@ -72,12 +79,19 @@ def main() -> None:
     ca.add_argument("--email", required=True)
     ca.add_argument("--name", default="Platform Admin")
     ca.add_argument("--country", default="US")
+    ca.add_argument("--roles", default="", help="extra staff roles, comma-separated (e.g. COMPLIANCE_OFFICER,MEDIATOR)")
     sub.add_parser("reindex-search", help="rebuild the search projection")
     sd = sub.add_parser("schema-doc", help="write the database schema as Markdown")
     sd.add_argument("--out", default="docs/DATABASE_SCHEMA.md")
     rc = sub.add_parser("reconcile", help="reconcile escrow ledger, payments and provider for one day")
     rc.add_argument("--day", help="YYYY-MM-DD (UTC); default yesterday")
+    cc = sub.add_parser("check-config", help="report missing or unreachable services for this environment")
+    cc.add_argument("--connect", action="store_true", help="also try the database, Redis, S3 and the email server")
     args = parser.parse_args()
+    if args.cmd == "check-config":
+        from zoikorum.config_check import run
+
+        raise SystemExit(run(args.connect))
     if args.cmd == "reconcile":
         asyncio.run(_reconcile(args.day))
     if args.cmd == "reindex-search":
@@ -99,7 +113,8 @@ def main() -> None:
         password = os.environ.get("ZK_ADMIN_PASSWORD") or getpass.getpass("Password (min 12 chars): ")
         if len(password) < 12:
             raise SystemExit("Password must be at least 12 characters")
-        asyncio.run(_create_admin(args.email, args.name, args.country, password))
+        roles = tuple(r.strip().upper() for r in args.roles.split(",") if r.strip())
+        asyncio.run(_create_admin(args.email, args.name, args.country, password, roles))
 
 
 if __name__ == "__main__":

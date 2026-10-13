@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.domains.buyer import facade as buyer_facade
 from zoikorum.domains.contract import facade as contract_facade
+from zoikorum.domains.escrow import facade as escrow_facade
 from zoikorum.domains.payments.models import INVOICE_NUMBER_SEQ, Invoice, PaymentIntent, Payout, PayoutAccount, Refund
 from zoikorum.domains.payments.providers import get_provider
 from zoikorum.domains.payments.schemas import ChargeOut, EarningsOut, InvoiceOut, PayoutAccountIn, PayoutAccountOut, PayoutOut, RefundOut
@@ -25,7 +26,7 @@ from zoikorum.domains.trust import facade as trust_facade
 from zoikorum.config import get_settings
 from zoikorum.shared import clock, pdf
 from zoikorum.shared.auth import Actor
-from zoikorum.shared.errors import Forbidden, NotFound, PolicyBlocked, ValidationFailed
+from zoikorum.shared.errors import DomainError, Forbidden, NotFound, PolicyBlocked, ServiceUnavailable, ValidationFailed
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_audit, record_event
 from zoikorum.shared.money import MoneyDTO
@@ -42,6 +43,8 @@ async def charge_for_funding(session: AsyncSession, payload: dict) -> None:
     funding_id = uuid.UUID(str(payload["fundingId"]))
     if await session.scalar(select(PaymentIntent.id).where(PaymentIntent.funding_id == funding_id)):
         return
+    if not await escrow_facade.funding_open(session, funding_id):
+        return  # cancelled or already failed while this was waiting: never charge it
     provider = get_provider()
     pi = PaymentIntent(funding_id=funding_id, escrow_account_id=uuid.UUID(str(payload["escrowAccountId"])),
                        contract_id=uuid.UUID(str(payload["contractId"])), organization_id=uuid.UUID(str(payload["organizationId"])),
@@ -51,8 +54,16 @@ async def charge_for_funding(session: AsyncSession, payload: dict) -> None:
     base = {"paymentIntentId": pi.id, "escrowAccountId": pi.escrow_account_id, "fundingId": funding_id,
             "amountMinor": pi.amount_minor, "currency": pi.currency}
     record_event(session, E.PAYMENT_INTENT_CREATED, aggregate_type="PaymentIntent", aggregate_id=pi.id, tenant_id=pi.organization_id, payload=base)
-    result = await asyncio.to_thread(provider.charge, payload["paymentMethodToken"], pi.amount_minor, pi.currency,
-                                     idempotency_key=str(funding_id))
+    try:
+        result = await asyncio.to_thread(provider.charge, payload["paymentMethodToken"], pi.amount_minor, pi.currency,
+                                         idempotency_key=str(funding_id))
+    except ServiceUnavailable:
+        raise  # provider down: retried; if it stays down, the funding check timer reverts the milestones
+    except DomainError as exc:  # the provider refused the request (amount, card, configuration): a failed payment
+        pi.status, pi.failure_code, pi.failure_message = "FAILED", exc.code, str(exc.detail or exc.title)[:300]
+        record_event(session, E.PAYMENT_FAILED, aggregate_type="PaymentIntent", aggregate_id=pi.id, tenant_id=pi.organization_id,
+                     payload={**base, "failureCode": exc.code, "failureMessage": pi.failure_message})
+        return
     pi.method_label = result.method_label
     pi.provider_ref = result.provider_ref
     if result.ok and result.pending:
@@ -281,7 +292,9 @@ async def on_refunded(session: AsyncSession, payload: dict) -> None:
     if await session.scalar(select(Refund.id).where(Refund.escrow_refund_id == escrow_refund_id)):
         return
     funding_ids = [uuid.UUID(str(f)) for f in payload.get("fundingIds") or []]
-    intent = await session.scalar(select(PaymentIntent).where(PaymentIntent.funding_id.in_(funding_ids), PaymentIntent.status == "CAPTURED")) \
+    # The original charge, whatever happened since (a partial chargeback leaves part of it refundable).
+    intent = await session.scalar(select(PaymentIntent).where(PaymentIntent.funding_id.in_(funding_ids),
+                                                              PaymentIntent.status.in_(("CAPTURED", "CHARGED_BACK")))) \
         if funding_ids else None
     r = Refund(escrow_refund_id=escrow_refund_id, payment_intent_id=intent.id if intent else None,
                organization_id=uuid.UUID(str(payload["organizationId"])), contract_id=uuid.UUID(str(payload["contractId"])),
@@ -293,8 +306,14 @@ async def on_refunded(session: AsyncSession, payload: dict) -> None:
     base = {"refundId": r.id, "escrowRefundId": escrow_refund_id, "organizationId": r.organization_id, "amountMinor": r.amount_minor,
             "currency": r.currency}
     record_event(session, E.REFUND_INITIATED, aggregate_type="Refund", aggregate_id=r.id, tenant_id=r.organization_id, payload=base)
-    result = await asyncio.to_thread(get_provider().refund, intent.provider_ref if intent else None, r.amount_minor, r.currency,
-                                     idempotency_key=str(escrow_refund_id))
+    try:
+        result = await asyncio.to_thread(get_provider().refund, intent.provider_ref if intent else None, r.amount_minor, r.currency,
+                                         idempotency_key=str(escrow_refund_id))
+    except ServiceUnavailable:
+        raise  # provider down: the consumer retries
+    except DomainError as exc:  # the provider refused it: recorded, announced, retried daily
+        refund_failed(session, r, str(exc.detail))
+        return
     r.provider_ref = result.provider_ref
     if result.ok and result.pending:
         r.status = "INITIATED"
@@ -302,7 +321,39 @@ async def on_refunded(session: AsyncSession, payload: dict) -> None:
         r.status, r.provider_ref, r.settled_at = "SETTLED", result.provider_ref, clock.now()
         record_event(session, E.REFUND_SETTLED, aggregate_type="Refund", aggregate_id=r.id, tenant_id=r.organization_id, payload=base)
     else:
-        r.status = "FAILED"
+        refund_failed(session, r, getattr(result, "failure_message", None))
+
+
+def refund_failed(session: AsyncSession, r: Refund, message: str | None) -> None:
+    r.status = "FAILED"
+    record_event(session, E.REFUND_FAILED, aggregate_type="Refund", aggregate_id=r.id, tenant_id=r.organization_id,
+                 payload={"refundId": r.id, "organizationId": r.organization_id, "contractId": r.contract_id,
+                          "amountMinor": r.amount_minor, "currency": r.currency,
+                          "failureMessage": (message or "The payment provider could not return the money")[:300]})
+
+
+async def retry_failed_refunds(session: AsyncSession) -> int:
+    """Daily: try failed refunds again. Each refund is tried on its own (one the provider still refuses never stops the
+    others, or the reconciliation that runs after). The provider key changes per day: a failed refund is not replayed,
+    while two tries on the same day can never refund twice."""
+    retried = 0
+    for r in (await session.scalars(select(Refund).where(Refund.status == "FAILED").with_for_update(skip_locked=True))).all():
+        intent = await session.get(PaymentIntent, r.payment_intent_id) if r.payment_intent_id else None
+        try:
+            result = await asyncio.to_thread(get_provider().refund, intent.provider_ref if intent else None, r.amount_minor,
+                                             r.currency, idempotency_key=f"{r.escrow_refund_id}:{clock.now().date().isoformat()}")
+        except DomainError:
+            continue  # still refused or provider down: stays FAILED for Financial Ops, tried again tomorrow
+        if result.ok:
+            r.provider_ref = result.provider_ref
+            r.status = "INITIATED" if result.pending else "SETTLED"
+            if not result.pending:
+                r.settled_at = clock.now()
+                record_event(session, E.REFUND_SETTLED, aggregate_type="Refund", aggregate_id=r.id, tenant_id=r.organization_id,
+                             payload={"refundId": r.id, "organizationId": r.organization_id, "amountMinor": r.amount_minor,
+                                      "currency": r.currency})
+            retried += 1
+    return retried
 
 
 async def refunds(session: AsyncSession, actor: Actor, organization_id: uuid.UUID) -> list[RefundOut]:

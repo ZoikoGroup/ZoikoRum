@@ -15,7 +15,7 @@ import json
 import uuid
 from datetime import date, datetime, time, timedelta, timezone
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.domains.buyer import facade as buyer_facade
@@ -451,7 +451,8 @@ def _status_filter(stmt, model, status: str | None):
 async def _scope(session: AsyncSession, actor: Actor, role: str):
     """WHERE clause for the caller's requests, or None when they have none."""
     if role == "buyer":
-        return or_(ProposalRequest.organization_id.in_(actor.org_ids), ProposalRequest.buyer_identity_id == actor.identity_id)
+        # Live memberships only (see contract._scope): removed members stop seeing the organisation's requests at once.
+        return ProposalRequest.organization_id.in_(await buyer_facade.list_identity_organizations(session, actor.identity_id))
     pid = await _my_professional_id(session, actor)
     if pid is None:
         return None
@@ -705,7 +706,7 @@ async def accept_proposal(session: AsyncSession, actor: Actor, proposal_id: uuid
         raise PolicyBlocked(f"{pro.display_name} does not serve {org.country}; the engagement cannot be agreed. "
                             "Choose a professional who serves your country.", code="JURISDICTION_CONFLICT")
     limit = await buyer_facade.get_member_spend_limit(session, p.organization_id, actor.identity_id)
-    if limit is not None and limit.currency == p.currency and p.total_minor > limit.minor:
+    if limit is not None and (limit.currency != p.currency or p.total_minor > limit.minor):
         raise PolicyBlocked(f"{_money(p.total_minor, p.currency)} is above your approval limit of "
                             f"{_money(limit.minor, limit.currency)}; ask a colleague with a higher limit to accept",
                             code="SPEND_LIMIT_EXCEEDED")
