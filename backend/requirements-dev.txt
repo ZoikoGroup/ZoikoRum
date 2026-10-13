@@ -2,7 +2,7 @@
 # Install:     pip install -r backend/requirements-dev.txt && pip install --no-deps -e backend
 -r requirements.txt
 colorama==0.4.6; sys_platform == "win32"
-iniconfig==2.3.0
+iniconfig==2.3.1
 packaging==26.3
 pluggy==1.6.0
 psycopg==3.3.6
