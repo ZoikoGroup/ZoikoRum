@@ -4,7 +4,7 @@
 #   migrate  (one-off job)     alembic upgrade head
 # Configuration comes only from environment variables (ZK_*); no .env file is copied into the image.
 
-FROM python:3.13-slim AS build
+FROM python:3.14-slim AS build
 ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 WORKDIR /build
 RUN python -m venv /opt/venv
@@ -20,7 +20,7 @@ COPY pyproject.toml ./
 COPY src ./src
 RUN if [ -n "$EXTRAS" ]; then pip install ".[${EXTRAS}]" && pip uninstall -y zoikorum; fi
 
-FROM python:3.13-slim AS runtime
+FROM python:3.14-slim AS runtime
 ENV PATH="/opt/venv/bin:$PATH" PYTHONPATH=/app/src PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 ZK_ENV=production
 RUN useradd --system --uid 10001 --home-dir /app zoikorum
 WORKDIR /app
