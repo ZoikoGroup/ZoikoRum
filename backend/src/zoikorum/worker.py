@@ -26,6 +26,9 @@ async def _bootstrap_timers() -> None:
         from zoikorum.domains.payments import reconciliation  # daily at 01:00 UTC, re-arms itself
 
         await reconciliation.bootstrap(s)
+        from zoikorum.shared import housekeeping  # daily at 02:30 UTC, re-arms itself
+
+        await housekeeping.bootstrap(s)
 
 
 async def run(poll_seconds: float = 0.5) -> None:

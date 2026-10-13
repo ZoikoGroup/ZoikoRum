@@ -287,7 +287,7 @@ function ProfileForm({ org, onDone }: { org: Organization; onDone: (o: Organizat
   async function save(e: FormEvent) {
     e.preventDefault()
     setError(null)
-    try { onDone(await orgApi.update(org.id, f)) } catch (err) { setError(err) }
+    try { onDone(await orgApi.update(org.id, org.version, f)) } catch (err) { setError(err) }
   }
   return (
     <form onSubmit={save}>

@@ -61,7 +61,7 @@ async def require_member(session, actor, org_id, *roles):
 
 
 async def attributes_for(session, org_id, professional_id, *, amount=0, currency=None,
-                         engagement_type=None, specialization=None, cost_center_id=None, extra=None):
+                         engagement_type=None, specialization=None, cost_center_id=None, extra=None, actor_identity_id=None):
     org = await buyer.get_organization(session, org_id)
     pro = await professional.get_professional(session, professional_id)
     if not org or not pro:
@@ -76,8 +76,13 @@ async def attributes_for(session, org_id, professional_id, *, amount=0, currency
         Attr.PRO_RESTRICTED: pro.status == "SUSPENDED" or snapshot.dimensions.get("restrictions") == "FLAGGED" or bool(
             set(await admin_facade.active_restrictions(session, "PROFESSIONAL", pro.id)).intersection(
                 {"ENGAGEMENT_SUSPENSION", "CREDENTIAL_ENFORCEMENT", "VERIFICATION_RESET", "OFFBOARD", "SUSPEND_ACCOUNT"})) or bool(
+            set(await admin_facade.active_restrictions(session, "IDENTITY", pro.identity_id)).intersection(
+                {"SUSPEND_ACCOUNT", "OFFBOARD", "ENGAGEMENT_SUSPENSION"})),
+        # The buyer side on its own: the organisation, or the person acting for it, is suspended from engagements.
+        Attr.BUYER_RESTRICTED: bool(
             set(await admin_facade.active_restrictions(session, "ORGANIZATION", org_id)).intersection({"ENGAGEMENT_SUSPENSION"})) or bool(
-            set(await admin_facade.active_restrictions(session, "IDENTITY", pro.identity_id)).intersection({"SUSPEND_ACCOUNT", "OFFBOARD"})),
+            actor_identity_id and actor_identity_id != pro.identity_id and set(await admin_facade.active_restrictions(
+                session, "IDENTITY", actor_identity_id)).intersection({"ENGAGEMENT_SUSPENSION", "SUSPEND_ACCOUNT", "OFFBOARD"})),
         Attr.BUYER_COUNTRY: org.country, Attr.BUYER_ORG_TYPE: org.org_type,
         Attr.ENGAGEMENT_VALUE_MINOR: amount, Attr.AMOUNT_MINOR: amount,
         Attr.ENGAGEMENT_CURRENCY: currency, Attr.ENGAGEMENT_TYPE: engagement_type,
@@ -340,6 +345,9 @@ async def evaluate(session, ctx, *, dry_run=False, preview_profile_id=None):
     attrs = ctx.attributes
     if attrs.get(Attr.PRO_RESTRICTED):
         fail(Decision.BLOCK, "PROFESSIONAL_RESTRICTED", "This professional is currently restricted")
+    if attrs.get(Attr.BUYER_RESTRICTED):
+        fail(Decision.BLOCK, "BUYER_RESTRICTED", "Engagement activity for your organisation is currently restricted. "
+                                                 "See the notice in your account for details and how to appeal.")
     if ctx.action in (PolicyAction.PROPOSAL_SUBMIT, PolicyAction.PROPOSAL_ACCEPT) and attrs.get(Attr.PRO_TIER) == "C":
         fail(Decision.BLOCK, "MINIMUM_PLATFORM_TIER", "Tier C professionals cannot submit or receive accepted proposals")
     if version:

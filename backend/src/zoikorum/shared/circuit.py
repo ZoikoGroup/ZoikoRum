@@ -17,6 +17,12 @@ from zoikorum.shared.errors import ServiceUnavailable
 
 log = logging.getLogger("zoikorum.circuit")
 T = TypeVar("T")
+_breakers: list["CircuitBreaker"] = []
+
+
+def all_breakers() -> list["CircuitBreaker"]:
+    """Every breaker created in this process (for the metrics page)."""
+    return list(_breakers)
 
 
 class CircuitBreaker:
@@ -26,6 +32,7 @@ class CircuitBreaker:
         self.reset_seconds = reset_seconds
         self.failures = 0
         self.opened_at = None
+        _breakers.append(self)
 
     @property
     def state(self) -> str:

@@ -22,6 +22,7 @@ from zoikorum.domains.buyer.schemas import (
 )
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
+from zoikorum.shared.http import IfMatch
 
 router = APIRouter(prefix="/v1/organizations", tags=["buyer organizations"])
 
@@ -60,8 +61,10 @@ async def get_organization(org_id: uuid.UUID, actor: CurrentActor, session: DbSe
 
 
 @router.patch("/{org_id}", response_model=OrganizationOut)
-async def update_organization(org_id: uuid.UUID, body: OrganizationPatch, actor: CurrentActor, session: DbSession):
-    return await service.update_organization(session, actor, org_id, body.name, body.businessContext, body.industry, body.timeZone)
+async def update_organization(org_id: uuid.UUID, body: OrganizationPatch, actor: CurrentActor, session: DbSession,
+                              if_match: IfMatch = None):
+    return await service.update_organization(session, actor, org_id, body.name, body.businessContext, body.industry,
+                                             body.timeZone, if_match)
 
 
 @router.get("/{org_id}/billing-contacts", response_model=list[BillingContactOut])

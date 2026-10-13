@@ -301,10 +301,11 @@ def _item(doc: Doc, why: list[str]) -> ResultItem:
     )
 
 
-async def intent(session: AsyncSession, body: IntentIn) -> IntentOut:
+async def intent(session: AsyncSession, body: IntentIn, actor: Actor | None = None) -> IntentOut:
     """Turn a buyer's own words into search filters (AI assists; the buyer reviews and changes them)."""
     catalog = await marketplace_facade.specialization_catalog(session)
-    i = await ai_facade.extract_search_intent(body.text, catalog)
+    i = await ai_facade.extract_search_intent(body.text, catalog, session=session,
+                                              requested_by=actor.identity_id if actor else None)
     filters = IntentFilters(q=i.keywords, spec=list(i.specializations), engagementType=i.engagement_type, delivery=i.delivery,
                             availability=i.availability, jurisdiction=i.jurisdiction, verified=list(i.verified))
     return IntentOut(filters=filters, reasons=list(i.reasons), source=i.source)

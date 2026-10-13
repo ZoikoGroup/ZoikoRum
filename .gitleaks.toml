@@ -1,0 +1,7 @@
+# Secret scanning (CI job "security"). Default rules, plus places that only hold made-up examples.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Example values in the product and engineering documents (e.g. Idempotency-Key: buyer_123-escrow_123-ms_001)"
+paths = ['''docs/product/text/.*\.md''']

@@ -28,6 +28,7 @@ export const FIRM_ROLE_INFO: Record<FirmRole, { label: string; desc: string }> =
 
 export interface Organization {
   id: string
+  version: number
   name: string
   orgType: 'INDIVIDUAL' | 'BUSINESS' | 'ENTERPRISE'
   country: string
@@ -94,8 +95,9 @@ const O = '/v1/organizations'
 export const orgApi = {
   mine: () => api<Organization[]>(`${O}/mine`),
   get: (id: string) => api<Organization>(`${O}/${id}`),
-  update: (id: string, body: { name?: string; industry?: string; timeZone?: string; businessContext?: string }) =>
-    api<Organization>(`${O}/${id}`, { method: 'PATCH', body }),
+  /** version: the one this edit started from; a newer one on the server is refused (409 VERSION_CONFLICT). */
+  update: (id: string, version: number, body: { name?: string; industry?: string; timeZone?: string; businessContext?: string }) =>
+    api<Organization>(`${O}/${id}`, { method: 'PATCH', body, headers: { 'If-Match': String(version) } }),
   billingContacts: (id: string) => api<BillingContact[]>(`${O}/${id}/billing-contacts`),
   setBillingContacts: (id: string, primaryIdentityId: string, backupIdentityId?: string | null) =>
     api<BillingContact[]>(`${O}/${id}/billing-contacts`, { method: 'PUT', body: { primaryIdentityId, backupIdentityId: backupIdentityId || null } }),

@@ -129,6 +129,9 @@ async def _start_session(
 
 
 async def register(session: AsyncSession, data: RegisterIn, user_agent: str | None):
+    from zoikorum.domains.admin import facade as admin_facade
+
+    await admin_facade.require_on(session, "SIGN_UPS")
     email = data.email.lower()
     if await session.scalar(select(Identity.id).where(Identity.email == email)):
         raise Conflict("An account with this email already exists", code="EMAIL_TAKEN")

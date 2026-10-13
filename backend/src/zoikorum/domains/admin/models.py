@@ -1,7 +1,7 @@
 from __future__ import annotations
 import uuid
 from datetime import datetime
-from sqlalchemy import DateTime, Integer, String
+from sqlalchemy import Boolean, DateTime, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from zoikorum.shared.db import Base, UUIDPk, Timestamps, Versioned
@@ -29,3 +29,13 @@ class EnforcementCase(Base, UUIDPk, Timestamps, Versioned):
     applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reversed_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     appeal: Mapped[dict | None] = mapped_column(JSONB)
+
+
+class FeatureSwitch(Base, UUIDPk, Timestamps):
+    """An operational switch (admin/switches.py): while ``paused``, its kind of action is refused or deferred."""
+    __tablename__ = "feature_switches"
+    __table_args__ = {"schema": "admin"}
+    key: Mapped[str] = mapped_column(String(40), nullable=False, unique=True)
+    paused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    reason: Mapped[str | None] = mapped_column(String(500))
+    changed_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))

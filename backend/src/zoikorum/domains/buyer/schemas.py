@@ -13,6 +13,7 @@ OrgRoleName = Literal["ORG_ADMIN", "REQUESTER", "APPROVER", "BUDGET_OWNER", "LEG
 
 class OrganizationOut(BaseModel):
     id: uuid.UUID
+    version: int  # send back as If-Match when editing
     name: str
     orgType: str
     country: str

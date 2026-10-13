@@ -100,6 +100,8 @@ class Proposal(Base, UUIDPk, Timestamps, Versioned):
     revision_requests: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)  # [{at, changes, note}]
     revision_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The professional confirmed they can take this on although at capacity (their explicit override).
+    capacity_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     decided_by: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
     reason_code: Mapped[str | None] = mapped_column(String(60))

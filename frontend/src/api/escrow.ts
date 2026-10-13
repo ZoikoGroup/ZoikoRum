@@ -1,4 +1,4 @@
-import { api } from './client'
+import { allPages, api } from './client'
 import type { Money } from './orgs'
 
 /* Escrow & payments (Step 8). Buyers fund milestones; money is held until the milestone is accepted, then released to
@@ -61,10 +61,10 @@ export const paymentsApi = {
   earnings: () => api<Earnings>('/v1/payments/earnings/me'),
   setPayoutAccount: (body: { holderName: string; country: string; currency: string; accountNumber: string }) =>
     api<Earnings['payoutAccount']>('/v1/payout-accounts/me', { method: 'PUT', body }),
-  invoices: (organizationId: string) => api<Invoice[]>('/v1/payments/invoices', { query: { organizationId } }),
+  invoices: (organizationId: string) => allPages<Invoice>('/v1/payments/invoices', { organizationId }),
   /** The invoice as a PDF (members of the buyer organisation; audited). */
   invoicePdf: (id: string) => api<Blob>(`/v1/payments/invoices/${id}/pdf`, { blob: true }),
-  charges: (organizationId: string) => api<Charge[]>('/v1/payments/charges', { query: { organizationId } }),
+  charges: (organizationId: string) => allPages<Charge>('/v1/payments/charges', { organizationId }),
   reconciliations: () => api<Reconciliation[]>('/v1/payments/reconciliations'),
   reconcile: (day: string) => api<Reconciliation>('/v1/payments/reconciliations', { method: 'POST', body: { day } }),
 }

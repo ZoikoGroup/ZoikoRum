@@ -470,6 +470,10 @@ async def withdraw_credential(session: AsyncSession, actor: Actor, claim_id: uui
     c = await session.get(CredentialClaim, claim_id, with_for_update=True)
     if c is None or c.professional_id != pro.id or c.status == "WITHDRAWN":
         raise NotFound("Credential not found")
+    if c.status == "EXPIRED":
+        # Trust & Safety Charter s.7.2: an expired credential stays visible as "Expired"; renew it instead of hiding it.
+        raise Conflict("An expired credential stays on your profile as \"Expired\". Renew it to have it validated again.",
+                       code="EXPIRED_CREDENTIAL_STAYS_VISIBLE")
     previous, c.status = c.status, "WITHDRAWN"
     record_audit(session, "CREDENTIAL_WITHDRAWN", object_type="CredentialClaim", object_id=c.id, tenant_id=pro.id,
                  details={"professionalId": str(pro.id), "previousStatus": previous})

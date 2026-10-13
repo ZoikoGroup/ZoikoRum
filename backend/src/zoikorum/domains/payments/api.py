@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Header, Request, Response
+from fastapi import APIRouter, Header, Query, Request, Response
 
 from zoikorum.domains.payments import reconciliation, service, webhooks
 from zoikorum.domains.payments.schemas import (
@@ -10,6 +10,7 @@ from zoikorum.domains.payments.schemas import (
 )
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
+from zoikorum.shared.http import Page
 
 router = APIRouter(tags=["payments"])
 
@@ -25,9 +26,10 @@ async def earnings(actor: CurrentActor, session: DbSession):
     return await service.earnings(session, actor)
 
 
-@router.get("/v1/payments/invoices", response_model=list[InvoiceOut])
-async def invoices(organizationId: uuid.UUID, actor: CurrentActor, session: DbSession):
-    return await service.invoices(session, actor, organizationId)
+@router.get("/v1/payments/invoices", response_model=Page[InvoiceOut])
+async def invoices(organizationId: uuid.UUID, actor: CurrentActor, session: DbSession, cursor: str | None = None, limit: int | None = Query(default=None, ge=1, le=100)):
+    """Newest first, one page at a time (follow nextCursor)."""
+    return await service.invoices(session, actor, organizationId, cursor, limit)
 
 
 @router.get("/v1/payments/invoices/{invoice_id}/pdf")
@@ -38,14 +40,16 @@ async def invoice_pdf(invoice_id: uuid.UUID, actor: CurrentActor, session: DbSes
         "Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
 
 
-@router.get("/v1/payments/charges", response_model=list[ChargeOut])
-async def charges(organizationId: uuid.UUID, actor: CurrentActor, session: DbSession):
-    return await service.charges(session, actor, organizationId)
+@router.get("/v1/payments/charges", response_model=Page[ChargeOut])
+async def charges(organizationId: uuid.UUID, actor: CurrentActor, session: DbSession, cursor: str | None = None, limit: int | None = Query(default=None, ge=1, le=100)):
+    """Newest first, one page at a time (follow nextCursor)."""
+    return await service.charges(session, actor, organizationId, cursor, limit)
 
 
-@router.get("/v1/payments/refunds", response_model=list[RefundOut])
-async def refunds(organizationId: uuid.UUID, actor: CurrentActor, session: DbSession):
-    return await service.refunds(session, actor, organizationId)
+@router.get("/v1/payments/refunds", response_model=Page[RefundOut])
+async def refunds(organizationId: uuid.UUID, actor: CurrentActor, session: DbSession, cursor: str | None = None, limit: int | None = Query(default=None, ge=1, le=100)):
+    """Newest first, one page at a time (follow nextCursor)."""
+    return await service.refunds(session, actor, organizationId, cursor, limit)
 
 
 @router.post("/v1/payments/webhooks/{provider}")

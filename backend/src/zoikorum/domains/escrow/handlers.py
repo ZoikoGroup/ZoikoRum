@@ -66,6 +66,12 @@ async def on_milestone_accepted(session: AsyncSession, event: EventEnvelope) -> 
     await service.release_accepted_siblings(session, event.payload["contractId"])
 
 
+@on_timer(service.RELEASE_RESUME_TIMER)
+async def resume_paused_release(session: AsyncSession, key: str, payload: dict) -> None:
+    """A release that waited while staff had paused releases (admin switch RELEASES)."""
+    await service.milestone_accepted(session, {"milestoneId": key.split(":")[0]})
+
+
 @subscribe(E.APPROVAL_GRANTED, consumer="escrow.resume_approved_release")
 @subscribe(E.EXCEPTION_GRANTED, consumer="escrow.resume_excepted_release")
 async def on_policy_authorized(session: AsyncSession, event: EventEnvelope) -> None:

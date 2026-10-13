@@ -10,6 +10,7 @@ import pytest
 from test_search import URL, publish
 from test_taxonomy_suggestions import catalog
 from zoikorum.config import Settings
+from zoikorum.domains.ai import claude
 from zoikorum.domains.ai import intent as ai
 from zoikorum.domains.search import api as search_api
 from zoikorum.shared import ratelimit
@@ -72,9 +73,17 @@ async def test_claude_output_is_checked_against_the_catalog(monkeypatch):
         def __init__(self, **kwargs):
             self.messages = Messages()
 
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
     fake = SimpleNamespace(AsyncAnthropic=Client, APIError=Exception)
     monkeypatch.setitem(__import__("sys").modules, "anthropic", fake)
-    monkeypatch.setattr(ai, "get_settings", lambda: Settings(_env_file=None, ai_provider="anthropic", anthropic_api_key="test-key"))
+    configured = Settings(_env_file=None, ai_provider="anthropic", anthropic_api_key="test-key")
+    monkeypatch.setattr(ai, "get_settings", lambda: configured)
+    monkeypatch.setattr(claude, "get_settings", lambda: configured)
     i = await ai.extract_search_intent("an ongoing fractional CFO", catalog())
     assert i.source.startswith("ai:") and i.specializations == ("fractional-cfo",) and i.engagement_type == "RETAINER"
     assert i.jurisdiction is None and i.verified == ("credentials",) and i.keywords == "one two three four five six"

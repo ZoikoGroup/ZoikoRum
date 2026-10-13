@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_format: str | None = None  # json | text; default text in local development, json elsewhere
     sentry_dsn: str | None = None  # error reporting (needs backend[monitoring]); personal data is never sent
+    tracing_endpoint: str | None = None  # OpenTelemetry collector (OTLP/HTTP traces URL); needs backend[tracing]
+    tracing_sample_ratio: float = Field(default=0.1, ge=0, le=1)  # share of new traces kept
     frontend_url: str = "http://localhost:5173"  # used to build links in invitations / emails
     database_url: str = "postgresql+asyncpg://zoikorum:zoikorum@localhost:5434/zoikorum"
     db_pool_size: int = 10
@@ -62,11 +64,20 @@ class Settings(BaseSettings):
     payout_settlement_business_days: int = 2  # expected bank arrival after a payout starts (shown to professionals)
     provider_breaker_failures: int = 5  # consecutive provider errors before the circuit opens
     provider_breaker_reset_seconds: int = 30  # how long an open circuit waits before a trial call
+    # GET /metrics (Prometheus) needs "Authorization: Bearer <this>"; empty: the page does not exist.
+    metrics_token: str | None = None
+    # Daily clean-up of bookkeeping rows (shared/housekeeping.py): replayed-request records, and events every consumer
+    # has handled. Business records, audit and the money ledger are never touched.
+    idempotency_retention_days: int = Field(default=30, ge=1)
+    event_retention_days: int = Field(default=30, ge=7)
 
     ai_provider: str = "offline"  # offline | anthropic
     trust_completion_half_life_days: int = Field(default=365, ge=1)
     trust_completion_full_credit: int = Field(default=10, ge=1)
     ai_model: str = "claude-opus-5-5"
+    # Built-in prompts switched off without a release (their feature uses its non-AI rules): any of search-intent,
+    # document-check, spec-match (ai/claude.py BUILT_IN).
+    ai_disabled_prompts: list[str] = Field(default_factory=list)
     anthropic_api_key: str | None = None
     email_provider: str = "console"  # console | smtp
     smtp_host: str | None = None

@@ -13,7 +13,7 @@ from zoikorum.domains.marketplace.schemas import (
 )
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
-from zoikorum.shared.http import enforce_budget
+from zoikorum.shared.http import Page, enforce_budget
 
 router = APIRouter(tags=["marketplace"])
 
@@ -42,9 +42,10 @@ async def my_suggestions(actor: CurrentActor, session: DbSession):
     return await service.my_suggestions(session, actor)
 
 
-@router.get("/v1/admin/taxonomy/suggestions", response_model=list[SuggestionOut])
-async def suggestion_queue(actor: CurrentActor, session: DbSession):
-    return await service.suggestion_queue(session, actor)
+@router.get("/v1/admin/taxonomy/suggestions", response_model=Page[SuggestionOut])
+async def suggestion_queue(actor: CurrentActor, session: DbSession, cursor: str | None = None, limit: int | None = Query(default=None, ge=1, le=100)):
+    """Oldest first, one page at a time (follow nextCursor)."""
+    return await service.suggestion_queue(session, actor, cursor, limit)
 
 
 @router.post("/v1/admin/taxonomy/suggestions/{suggestion_id}/decision", response_model=SuggestionOut)
@@ -79,10 +80,10 @@ async def deprecate_specialization(slug: str, actor: CurrentActor, session: DbSe
     return await service.deprecate_specialization(session, actor, slug)
 
 
-@router.get("/v1/saved/professionals", response_model=list[SavedOut])
-async def saved(actor: CurrentActor, session: DbSession):
-    """Your saved professionals, newest first."""
-    return await service.saved_professionals(session, actor)
+@router.get("/v1/saved/professionals", response_model=Page[SavedOut])
+async def saved(actor: CurrentActor, session: DbSession, cursor: str | None = None, limit: int | None = Query(default=None, ge=1, le=100)):
+    """Your saved professionals, newest first, one page at a time (follow nextCursor)."""
+    return await service.saved_professionals(session, actor, cursor, limit)
 
 
 @router.post("/v1/saved/professionals", status_code=status.HTTP_204_NO_CONTENT)

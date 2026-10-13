@@ -67,7 +67,8 @@ class Attr:
     PRO_DIMENSIONS = "professional.dimensions"  # dict dimension->status (trust facade)
     PRO_JURISDICTIONS = "professional.jurisdictions"  # list ISO-2 served
     PRO_LICENSED = "professional.licensedJurisdictions"
-    PRO_RESTRICTED = "professional.restricted"  # bool, active enforcement restriction
+    PRO_RESTRICTED = "professional.restricted"  # bool, active enforcement restriction on the professional (profile or person)
+    BUYER_RESTRICTED = "buyer.restricted"  # bool, the buyer organisation or the person acting for it is suspended from engagements
     BUYER_COUNTRY = "buyer.country"
     BUYER_ORG_TYPE = "buyer.orgType"
     COST_CENTER_ID = "buyer.costCenterId"
@@ -193,7 +194,7 @@ async def commercial_context(session, *, org_id, professional_id, action, subjec
     from zoikorum.domains.policy import service
     attrs = await service.attributes_for(session, org_id, professional_id, amount=amount,
         currency=currency, engagement_type=engagement_type, specialization=specialization,
-        cost_center_id=cost_center_id, extra=extra)
+        cost_center_id=cost_center_id, extra=extra, actor_identity_id=actor_identity_id)
     if platform_default_pinned:
         attrs["policy.platformDefaultPinned"] = True
     return PolicyContext(org_id, action, subject_type, subject_id, actor_identity_id, attrs, pinned_version_id)

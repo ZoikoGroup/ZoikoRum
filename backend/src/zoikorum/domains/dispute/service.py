@@ -30,6 +30,7 @@ from zoikorum.shared.auth import Actor, OrgRole, PlatformRole
 from zoikorum.shared.errors import Conflict, Forbidden, NotFound, PolicyBlocked, ValidationFailed
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_audit, record_event
+from zoikorum.shared.http import next_cursor, paginate
 from zoikorum.shared.money import MoneyDTO
 from zoikorum.shared.relay import cancel_timer, schedule_timer
 from zoikorum.shared.state_machine import StateMachine
@@ -235,8 +236,9 @@ async def get_dispute(session: AsyncSession, actor: Actor, case_id: uuid.UUID) -
     return await _out(session, actor, c, await _viewer(session, actor, c))
 
 
-async def list_disputes(session: AsyncSession, actor: Actor, role: str, contract_id: uuid.UUID | None) -> list[DisputeOut]:
-    stmt = select(DisputeCase).order_by(DisputeCase.created_at.desc()).limit(100)
+async def list_disputes(session: AsyncSession, actor: Actor, role: str, contract_id: uuid.UUID | None,
+                        cursor: str | None = None, limit: int | None = None) -> dict:
+    stmt = select(DisputeCase)
     if contract_id:
         stmt = stmt.where(DisputeCase.contract_id == contract_id)
     if role == "buyer":
@@ -244,17 +246,19 @@ async def list_disputes(session: AsyncSession, actor: Actor, role: str, contract
     elif role == "professional":
         pro = await professional_facade.get_professional_by_identity(session, actor.identity_id)
         if pro is None:
-            return []
+            return {"items": [], "nextCursor": None}
         stmt = stmt.where(DisputeCase.professional_id == pro.id)
     else:
         actor.require_platform_role(*OPERATORS)
+    stmt, lim = paginate(stmt, DisputeCase, cursor, limit)
+    rows = (await session.scalars(stmt)).all()
     out = []
-    for c in (await session.scalars(stmt)).all():
+    for c in rows[:lim]:
         try:
             out.append(await _out(session, actor, c, await _viewer(session, actor, c)))
         except NotFound:
             continue  # stale token org list: skip cases the caller cannot see
-    return out
+    return {"items": out, "nextCursor": next_cursor(rows, lim)}
 
 
 # ---- Intake ------------------------------------------------------------------------------------------------
