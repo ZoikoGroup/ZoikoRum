@@ -1,0 +1,29 @@
+# Local development infrastructure for the Zoikorum backend.
+# Postgres hosts every domain schema (one schema per bounded context).
+# Redis is used for caches / rate limits only - never as a source of truth.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: zoikorum-postgres
+    environment:
+      POSTGRES_USER: zoikorum
+      POSTGRES_PASSWORD: zoikorum
+      POSTGRES_DB: zoikorum
+    ports:
+      - "5434:5432"
+    volumes:
+      - zoikorum-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zoikorum"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: zoikorum-redis
+    ports:
+      - "6380:6379"
+
+volumes:
+  zoikorum-pg:

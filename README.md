@@ -1,1 +1,60 @@
-# ZoikoRum
+# Zoikorum
+
+Governed professional-services marketplace: verified professionals, contract-required engagements,
+escrow-protected payments and an audit-grade record of every action.
+
+| Folder | What it is | Docs |
+|---|---|---|
+| [`backend/`](backend/) | FastAPI + PostgreSQL modular monolith: one schema per domain, outbox events, audit ledger | [backend/README.md](backend/README.md), [Architecture](backend/docs/ARCHITECTURE.md), [Build spec](backend/docs/BUILD_SPEC.md) |
+| [`frontend/`](frontend/) | React 19 + TypeScript + Vite web app | [frontend/README.md](frontend/README.md) |
+| `docker-compose.yml` | Local Postgres 16 (port 5434) and Redis 7 (port 6380) | |
+| [`docs/product/`](docs/product/README.md) | The 18 product documents (originals + readable text) | |
+| `start-dev.ps1` | Starts the whole dev stack on Windows | |
+| `run-tests.ps1` | Runs every test suite (or one kind: `-Kind unit`, `integration`, `regression`) | |
+| `.github/workflows/ci.yml` | CI: migrations, backend unit / integration / regression tests, frontend lint, unit tests, build | |
+
+## Quick start (Windows)
+
+Prerequisites: Docker Desktop, Python 3.12+, Node.js 20.19+ (or 22.12+).
+
+```powershell
+python -m venv .venv
+.venv\Scripts\pip install -r backend\requirements-dev.txt
+.venv\Scripts\pip install --no-deps -e backend
+copy backend\.env.example backend\.env      # then change the secrets
+cd frontend; npm install; cd ..
+
+.\start-dev.ps1                              # database, migrations, API, worker and frontend
+```
+
+Then open http://localhost:5173. Create the first Platform Admin with
+`python -m zoikorum.cli create-admin` (see the backend README). macOS/Linux: run the same steps with
+`.venv/bin/...` and start the servers as described in each folder's README.
+
+## Testing
+
+```powershell
+.\run-tests.ps1                    # everything (needs the Docker database)
+.\run-tests.ps1 -Kind unit         # fast: backend business rules + frontend helpers, no database
+.\run-tests.ps1 -Kind regression   # end-to-end journeys across Steps 1-9
+```
+
+| Kind | What it checks | Where |
+|---|---|---|
+| Unit | Pure rules: fees and rounding, escrow status, ledger balance, state machines, business days, jurisdiction conflicts, upload checks; frontend helpers (uploads, CSV, password strength, money) | `backend/tests/test_unit_rules.py` and other plain tests (auto-marked); `frontend/src/**/*.test.ts` (Vitest) |
+| Integration | One feature through the API and a real Postgres database | the per-domain `backend/tests/test_*.py` files |
+| Regression | Whole journeys: find -> request -> proposal -> contract -> escrow -> delivery -> release -> payout; dispute with frozen money and settlement; access boundaries | `backend/tests/test_regression.py` |
+
+Run the regression suite before every merge; CI runs all three on every push.
+
+## Build status
+
+Built in small, reviewed steps. See [ARCHITECTURE.md §6](backend/docs/ARCHITECTURE.md) for the current status:
+Steps 0–9 form the core marketplace. Steps 10–18 now have backend and frontend implementations for messaging, change orders, enterprise policies, notifications, dispute extras, reviews, AI assistance, reports and safety tools. This is implementation status, not a claim of production readiness. See [current merge status and validation limits](backend/docs/CURRENT_STATUS.md) and [Steps 12–18](backend/docs/STEPS_12_18_IMPLEMENTATION.md) for remaining work.
+
+## Rules of the road
+
+- Read [BUILD_SPEC §0](backend/docs/BUILD_SPEC.md) before writing backend code: domains talk only through
+  `facade.py` or events, money is integer minor units, every commercial action is idempotent, policy-checked and audited.
+- Never commit `.env` files or secrets.
+- Every database change ships as an Alembic migration; CI fails if the models and migrations drift.

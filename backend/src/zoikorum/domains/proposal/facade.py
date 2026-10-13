@@ -1,0 +1,104 @@
+"""Proposal facade - CONTRACT. Signatures and DTOs are fixed."""
+
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from zoikorum.domains.proposal.models import Proposal, ProposalRequest
+
+
+@dataclass(frozen=True)
+class RequestSummary:
+    id: uuid.UUID
+    organization_id: uuid.UUID
+    buyer_identity_id: uuid.UUID
+    professional_id: uuid.UUID
+    offering_id: uuid.UUID | None
+    engagement_type: str
+    status: str
+    nda_required: bool
+
+
+@dataclass(frozen=True)
+class ProposalSummary:
+    id: uuid.UUID
+    request_id: uuid.UUID
+    organization_id: uuid.UUID
+    buyer_identity_id: uuid.UUID
+    professional_id: uuid.UUID
+    status: str
+    total_minor: int
+    currency: str
+    policy_version_id: uuid.UUID | None
+
+
+async def get_request(session: AsyncSession, request_id: uuid.UUID) -> RequestSummary | None:
+    r = await session.get(ProposalRequest, request_id)
+    if r is None:
+        return None
+    return RequestSummary(id=r.id, organization_id=r.organization_id, buyer_identity_id=r.buyer_identity_id,
+                          professional_id=r.professional_id, offering_id=r.offering_id, engagement_type=r.engagement_type,
+                          status=r.status, nda_required=r.nda_required)
+
+
+async def assistance_brief(session: AsyncSession, request_id: uuid.UUID) -> dict | None:
+    r = await session.get(ProposalRequest, request_id)
+    if not r:
+        return None
+    return {"service": r.service, "objective": r.objective, "details": r.details,
+            "engagementType": r.engagement_type, "duration": r.estimated_duration,
+            "ndaRequired": r.nda_required, "ndaAccepted": r.nda_accepted_at is not None}
+
+
+async def get_proposal(session: AsyncSession, proposal_id: uuid.UUID) -> ProposalSummary | None:
+    p = await session.get(Proposal, proposal_id)
+    if p is None:
+        return None
+    return ProposalSummary(id=p.id, request_id=p.request_id, organization_id=p.organization_id,
+                           buyer_identity_id=p.buyer_identity_id, professional_id=p.professional_id, status=p.status,
+                           total_minor=p.total_minor, currency=p.currency, policy_version_id=p.policy_version_id)
+
+
+async def messaging_access(session: AsyncSession, request_id: uuid.UUID) -> tuple[str, bool, bool] | None:
+    """Read-only messaging metadata; keep the existing request DTO contract unchanged."""
+    r = await session.get(ProposalRequest, request_id)
+    if r is None:
+        return None
+    accepted = await session.scalar(
+        select(Proposal.id).where(Proposal.request_id == request_id, Proposal.status == "ACCEPTED")
+    )
+    can_send = r.status in {"OPEN", "PROPOSAL_RECEIVED"} or accepted is not None
+    return r.service, not r.nda_required or r.nda_accepted_at is not None, can_send
+async def response_stats(session: AsyncSession, professional_id: uuid.UUID) -> dict[str, float | int | None]:
+    """How quickly a professional answers requests (first proposal sent, or a decline), for the public profile."""
+    from statistics import median
+
+    from sqlalchemy import select
+
+    reqs = (await session.scalars(select(ProposalRequest).where(
+        ProposalRequest.professional_id == professional_id, ProposalRequest.sent_at.is_not(None)))).all()
+    if not reqs:
+        return {"requests": 0, "responded": 0, "medianHours": None}
+    sent = {r.id: r.sent_at for r in reqs}
+    first = {p.request_id: p.submitted_at for p in (await session.scalars(select(Proposal).where(
+        Proposal.request_id.in_(list(sent)), Proposal.submitted_at.is_not(None)))).all()}
+    hours = []
+    for r in reqs:
+        answered = first.get(r.id) or (r.closed_at if r.status == "DECLINED" else None)
+        if answered:
+            hours.append(max(0.0, (answered - r.sent_at).total_seconds() / 3600))
+    return {"requests": len(reqs), "responded": len(hours), "medianHours": round(median(hours), 1) if hours else None}
+
+
+async def buyer_relationships(session: AsyncSession, professional_id: uuid.UUID) -> dict[uuid.UUID, dict]:
+    """Organisations that have sent this professional a request: how many, and when last (saved buyers)."""
+    from sqlalchemy import func
+
+    rows = (await session.execute(select(ProposalRequest.organization_id, func.count(), func.max(ProposalRequest.sent_at))
+                                  .where(ProposalRequest.professional_id == professional_id, ProposalRequest.sent_at.is_not(None))
+                                  .group_by(ProposalRequest.organization_id))).all()
+    return {org: {"requests": n, "lastRequestAt": last} for org, n, last in rows}

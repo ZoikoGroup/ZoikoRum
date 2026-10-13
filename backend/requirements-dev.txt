@@ -1,0 +1,13 @@
+# Pinned development/test dependencies (pytest, sync Postgres driver for the test harness).
+# Install:     pip install -r backend/requirements-dev.txt && pip install --no-deps -e backend
+-r requirements.txt
+colorama==0.4.6; sys_platform == "win32"
+iniconfig==2.3.0
+packaging==26.3
+pluggy==1.6.0
+psycopg==3.3.6
+psycopg-binary==3.3.6
+Pygments==2.21.0
+pytest==9.1.1
+pytest-asyncio==1.4.0
+tzdata==2026.5; sys_platform == "win32"

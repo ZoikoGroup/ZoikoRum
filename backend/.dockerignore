@@ -1,0 +1,16 @@
+# Keep the image small and free of secrets and local data.
+.env
+.env.*
+!.env.example
+.venv/
+var/
+tests/
+docs/
+**/__pycache__/
+**/*.pyc
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage

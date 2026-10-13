@@ -1,0 +1,132 @@
+from __future__ import annotations
+
+import uuid
+from typing import Literal
+
+from fastapi import APIRouter, Query, Request, Response, status
+
+from zoikorum.domains.verification import service
+from zoikorum.domains.verification.schemas import (
+    AppealDecisionIn, AppealIn, AppealOut, AppealQueueItemOut, CaseIn, CaseOut, DecisionIn, EvidenceIn, HostedSimulateIn, QueueItemOut,
+    RevokeIn,
+)
+from zoikorum.shared.auth import CurrentActor
+from zoikorum.shared.db import DbSession
+from zoikorum.shared.http import Page
+
+router = APIRouter(prefix="/v1/verification", tags=["verification"])
+
+
+@router.get("/decision-reasons")
+async def decision_reasons(actor: CurrentActor, verificationType: str | None = None) -> list[dict]:
+    """Standard reasons for review decisions (staff), each with the message pre-filled for the professional."""
+    from zoikorum.domains.verification.reasons import reasons_for
+
+    actor.require_platform_role(*service.REVIEWERS)
+    return reasons_for(verificationType)
+
+
+@router.get("/configuration")
+async def provider_configuration(actor: CurrentActor):
+    from zoikorum.domains.verification.integration import configuration
+    return configuration()
+
+
+@router.post("/cases/{case_id}/hosted-session")
+async def hosted_session(case_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    from zoikorum.domains.verification.integration import hosted
+    return await hosted(session, actor, case_id)
+
+
+@router.post("/cases/{case_id}/hosted-refresh", response_model=CaseOut)
+async def hosted_refresh(case_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    """Back from the identity partner: fetch its answer now."""
+    from zoikorum.domains.verification.integration import refresh
+    return await refresh(session, actor, case_id)
+
+
+@router.post("/cases/{case_id}/hosted-simulate", response_model=CaseOut)
+async def hosted_simulate(case_id: uuid.UUID, body: HostedSimulateIn, actor: CurrentActor, session: DbSession):
+    """Development only (ZK_VERIFICATION_PROVIDER=simulated): give the answer an identity partner would give."""
+    from zoikorum.domains.verification.integration import simulate
+    return await simulate(session, actor, case_id, body.status)
+
+
+@router.post("/webhooks/veriff")
+async def veriff_receipt(request: Request, session: DbSession):
+    """Veriff decision and event webhooks, signed with the shared secret."""
+    from zoikorum.domains.verification.integration import veriff_receipt
+    return await veriff_receipt(session, request.headers, await request.body())
+
+
+@router.post("/webhooks/persona")
+async def persona_receipt(request: Request, session: DbSession):
+    from zoikorum.domains.verification.integration import receipt
+    return await receipt(session, request.headers.get("persona-signature"), await request.body())
+
+
+@router.post("/cases", response_model=CaseOut, status_code=status.HTTP_201_CREATED)
+async def start_case(body: CaseIn, actor: CurrentActor, session: DbSession):
+    return await service.start_case(session, actor, body)
+
+
+@router.get("/cases/{case_id}", response_model=CaseOut)
+async def get_case(case_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    return await service.get_case(session, actor, case_id)
+
+
+@router.post("/cases/{case_id}/evidence", response_model=CaseOut)
+async def add_evidence(case_id: uuid.UUID, body: EvidenceIn, actor: CurrentActor, session: DbSession):
+    return await service.add_evidence(session, actor, case_id, body)
+
+
+@router.get("/evidence/{evidence_id}/file")
+async def evidence_file(evidence_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> Response:
+    """Opens an uploaded document (owner or reviewer). Audited; never cached; shown in a sandbox."""
+    data, content_type, name = await service.evidence_file(session, actor, evidence_id)
+    safe = "".join(ch for ch in name if ch.isalnum() or ch in "._- ")[:120] or "document"
+    return Response(data, media_type=content_type, headers={
+        "Content-Disposition": f'inline; filename="{safe}"', "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox"})
+
+
+@router.get("/subjects/{subject_type}/{subject_id}", response_model=list[CaseOut])
+async def subject_cases(subject_type: Literal["PROFESSIONAL", "FIRM"], subject_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    return await service.subject_cases(session, actor, subject_type, subject_id)
+
+
+@router.get("/review-queue", response_model=Page[QueueItemOut])
+async def review_queue(actor: CurrentActor, session: DbSession, cursor: str | None = None,
+                       limit: int | None = Query(default=None, ge=1, le=100),
+                       status_: Literal["PENDING", "IN_REVIEW", "NEEDS_INFO", "VERIFIED"] | None = Query(default=None, alias="status")):
+    """Compliance officers: open checks, newest first. Each item shows whether its SLA is overdue."""
+    return await service.review_queue(session, actor, cursor, limit, status_)
+
+
+@router.post("/cases/{case_id}/decision", response_model=CaseOut)
+async def decide(case_id: uuid.UUID, body: DecisionIn, actor: CurrentActor, session: DbSession):
+    return await service.decide(session, actor, case_id, body)
+
+
+@router.post("/cases/{case_id}/revoke", response_model=CaseOut)
+async def revoke(case_id: uuid.UUID, body: RevokeIn, actor: CurrentActor, session: DbSession):
+    return await service.revoke(session, actor, case_id, body)
+
+
+@router.post("/cases/{case_id}/appeal", response_model=CaseOut, status_code=status.HTTP_201_CREATED)
+async def file_appeal(case_id: uuid.UUID, body: AppealIn, actor: CurrentActor, session: DbSession):
+    """The subject appeals a failed or revoked check, once, within the appeal window. Add new documents as evidence."""
+    return await service.file_appeal(session, actor, case_id, body)
+
+
+@router.get("/appeals", response_model=list[AppealQueueItemOut])
+async def appeal_queue(actor: CurrentActor, session: DbSession,
+                       status_: Literal["OPEN", "UPHELD", "OVERTURNED"] | None = Query(default=None, alias="status")):
+    """Compliance officers: appeals to decide (canDecide is false for the officer who made the original decision)."""
+    return await service.appeal_queue(session, actor, status_)
+
+
+@router.post("/appeals/{appeal_id}/decision", response_model=AppealOut)
+async def decide_appeal(appeal_id: uuid.UUID, body: AppealDecisionIn, actor: CurrentActor, session: DbSession):
+    """One final decision by an independent compliance officer (step-up). Overturned -> the check becomes verified."""
+    return await service.decide_appeal(session, actor, appeal_id, body)

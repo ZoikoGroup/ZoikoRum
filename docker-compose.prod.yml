@@ -1,0 +1,48 @@
+# Single-host deployment (staging or a small production): migrations, API, worker and the web app.
+# PostgreSQL is a managed service (ZK_DATABASE_URL); files go to S3 (ZK_STORAGE_PROVIDER=s3).
+# Configuration: backend/.env.production (git-ignored; start from backend/.env.example). See backend/docs/DEPLOYMENT.md.
+#
+#   docker compose -f docker-compose.prod.yml build
+#   docker compose -f docker-compose.prod.yml run --rm migrate
+#   docker compose -f docker-compose.prod.yml up -d api worker web
+
+x-backend: &backend
+  build: ./backend
+  image: zoikorum-backend:${ZK_RELEASE:-latest}
+  env_file: ./backend/.env.production
+  environment:
+    ZK_RELEASE: ${ZK_RELEASE:-latest}
+    ZK_REDIS_URL: ${ZK_REDIS_URL:-redis://redis:6379/0}  # shared rate limits; point at a managed Redis if you have one
+  restart: unless-stopped
+
+services:
+  migrate:  # one-off: apply database migrations before starting a new release
+    <<: *backend
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    profiles: ["migrate"]
+
+  api:
+    <<: *backend
+    expose: ["8000"]
+    depends_on: [redis]
+
+  redis:  # rate-limit counters only (no business data); losing it is harmless
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    restart: unless-stopped
+
+  worker:  # outbox relay, durable timers, retries; one instance per database
+    <<: *backend
+    command: ["python", "-m", "zoikorum.worker"]
+    healthcheck:
+      disable: true
+
+  web:
+    build: ./frontend
+    image: zoikorum-web:${ZK_RELEASE:-latest}
+    environment:
+      API_UPSTREAM: http://api:8000
+    ports: ["8080:8080"]  # put the TLS load balancer in front of this port
+    depends_on: [api]
+    restart: unless-stopped

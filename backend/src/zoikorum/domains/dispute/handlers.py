@@ -1,0 +1,53 @@
+"""Dispute phases move on durable timers; a case closes once escrow has executed the decision."""
+
+from __future__ import annotations
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from zoikorum.domains.dispute import service
+from zoikorum.shared.event_catalog import E
+from zoikorum.shared.events import EventEnvelope, subscribe
+from zoikorum.shared.relay import on_timer
+
+
+@subscribe(E.CONTRACT_ACTIVATED, consumer="dispute.deadline_triggers")
+@subscribe(E.CONTRACT_AMENDED, consumer="dispute.deadline_triggers")
+@subscribe(E.ESCROW_FUNDED, consumer="dispute.deadline_triggers")
+async def schedule_deadlines(session: AsyncSession, event: EventEnvelope) -> None:
+    await service.schedule_deadlines(session, event.payload)
+
+
+@subscribe(E.MILESTONE_REVISION_REQUESTED, consumer="dispute.rejection_trigger")
+async def repeated_rejection(session: AsyncSession, event: EventEnvelope) -> None:
+    await service.repeated_rejection(session, event.payload)
+
+
+@on_timer(service.TIMER_MISSED_DEADLINE)
+async def missed_deadline(session: AsyncSession, key: str, payload: dict) -> None:
+    await service.missed_deadline(session, payload)
+
+
+@subscribe(E.ENFORCEMENT_ACTION_APPLIED, consumer="dispute.compliance_trigger")
+@subscribe(E.VERIFICATION_REVOKED, consumer="dispute.compliance_trigger")
+async def compliance_trigger(session, event):
+    await service.compliance_trigger(session, event.payload)
+
+
+@subscribe(E.ESCROW_RESOLUTION_EXECUTED, consumer="dispute.close_after_execution")
+async def on_resolution_executed(session: AsyncSession, event: EventEnvelope) -> None:
+    await service.resolution_executed(session, event.payload)
+
+
+@on_timer(service.TIMER_EVIDENCE)
+async def on_evidence_window(session: AsyncSession, key: str, payload: dict) -> None:
+    await service.evidence_window_closed(session, payload)
+
+
+@on_timer(service.TIMER_RECOMMENDATION)
+async def on_recommendation_lapsed(session: AsyncSession, key: str, payload: dict) -> None:
+    await service.recommendation_lapsed(session, payload)
+
+
+@on_timer(service.TIMER_DIRECT)
+async def on_direct_window(session: AsyncSession, key: str, payload: dict) -> None:
+    await service.direct_window_closed(session, payload)

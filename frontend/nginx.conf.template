@@ -1,0 +1,41 @@
+# Rendered at container start: ${API_UPSTREAM} comes from the environment.
+server {
+    listen 8080;
+    server_name _;
+    root /usr/share/nginx/html;
+    server_tokens off;
+
+    # Uploads are base64 JSON: 25 MB of files per request is about 34 MB on the wire.
+    client_max_body_size 40m;
+
+    location ~ ^/(v1/|health$|ready$) {
+        proxy_pass ${API_UPSTREAM};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Correlation-Id $request_id;
+        proxy_read_timeout 60s;
+    }
+
+    # Built files have content hashes in their names: cache them for a year.
+    location /assets/ {
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        try_files $uri =404;
+    }
+
+    # Single-page app: every other path serves index.html, which is never cached so releases show up at once.
+    # Browser security headers for the web app; API responses (above) carry the API's own headers only.
+    # Inline style attributes are used by React components; scripts are only our own bundle.
+    location / {
+        add_header Cache-Control "no-cache" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; frame-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "DENY" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()" always;
+        add_header Strict-Transport-Security "max-age=63072000; includeSubDomains" always;
+        try_files $uri /index.html;
+    }
+}
