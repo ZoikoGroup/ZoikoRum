@@ -40,6 +40,14 @@ async def invoice_pdf(invoice_id: uuid.UUID, actor: CurrentActor, session: DbSes
         "Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
 
 
+@router.get("/v1/payments/payouts/{payout_id}/pdf")
+async def payout_statement_pdf(payout_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> Response:
+    """Professional: the statement for one of your payouts as a PDF (gross, platform fee, net, bank, transfer reference). Audited."""
+    data, name = await service.payout_statement_pdf(session, actor, payout_id)
+    return Response(data, media_type="application/pdf", headers={
+        "Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
+
+
 @router.get("/v1/payments/charges", response_model=Page[ChargeOut])
 async def charges(organizationId: uuid.UUID, actor: CurrentActor, session: DbSession, cursor: str | None = None, limit: int | None = Query(default=None, ge=1, le=100)):
     """Newest first, one page at a time (follow nextCursor)."""

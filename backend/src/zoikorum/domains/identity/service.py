@@ -176,6 +176,16 @@ async def resend_email_confirmation(session: AsyncSession, actor: Actor) -> str:
     return tokens.mint_purpose_token(identity.id, "email_confirm", EMAIL_TOKEN_TTL)
 
 
+async def email_confirmation_link_token(session: AsyncSession, actor: Actor) -> str:
+    """A confirmation-link token without sending an email: local development and tests only (identity api)."""
+    identity = await session.get(Identity, actor.identity_id)
+    if identity is None:
+        raise NotFound("Identity not found")
+    if identity.email_confirmed_at is not None:
+        raise Conflict("Your email address is already confirmed", code="EMAIL_ALREADY_CONFIRMED")
+    return tokens.mint_purpose_token(identity.id, "email_confirm", EMAIL_TOKEN_TTL)
+
+
 async def confirm_email(session: AsyncSession, token: str) -> Identity:
     try:
         identity_id = tokens.read_purpose_token(token, "email_confirm")

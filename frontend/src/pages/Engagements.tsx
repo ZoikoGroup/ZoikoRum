@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useTwoStepReady } from '../auth/useTwoStep'
 import { EngagementReview } from '../components/EngagementReview'
 import { AIAssistance } from '../components/AIAssistance'
 import { Link, useParams } from 'react-router-dom'
@@ -87,6 +88,7 @@ export function EngagementsPage({ side }: { side: Side }) {
 export function EngagementDetail({ side }: { side: Side }) {
   const { id = '' } = useParams()
   const { user } = useAuth()
+  const twoStepReady = useTwoStepReady()
   const [c, setC] = useState<Contract | null>(null)
   const [error, setError] = useState<unknown>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -224,7 +226,7 @@ export function EngagementDetail({ side }: { side: Side }) {
                     <span className="muted small">{s ? `${s.signerName} · ${new Date(s.signedAt).toLocaleString()} · two-step confirmed` : 'Not signed yet'}</span></span></li>
                 })}
               </ol>
-              {c.canSign && (user?.mfaEnabled || user?.mfaBypass ? <>
+              {c.canSign && (twoStepReady ? <>
                 <label className="checkbox" style={{ marginTop: 12 }}><input type="checkbox" checked={read} onChange={(e) => setRead(e.target.checked)} />
                   <span>I have read the agreement and agree to its terms (version {c.contractVersion}).</span></label>
                 <button className="btn btn-primary btn-lg" style={{ width: '100%', marginTop: 10 }} disabled={!read || busy}
@@ -234,9 +236,9 @@ export function EngagementDetail({ side }: { side: Side }) {
                     setNotice(side === 'buyer' ? 'Signed. The professional will be asked to countersign.' : 'Countersigned. The engagement is now active.')
                   }) }}>
                   {side === 'buyer' ? 'Sign contract' : 'Countersign contract'}</button>
-                <p className="muted small" style={{ margin: '8px 0 0' }}>{user?.mfaBypass ? 'Development mode: no authenticator code is asked.' : "You'll be asked for a code from your authenticator app."}</p>
-              </> : <div className="tip" style={{ marginTop: 12 }}><Icon name="lock" /><span>Signing needs two-step verification.
-                {' '}<Link to="/app/security">Turn it on</Link>, then come back to sign.</span></div>)}
+                <p className="muted small" style={{ margin: '8px 0 0' }}>{user?.mfaBypass ? 'Development mode: no authenticator code is asked.' : "You'll be asked to confirm with your authenticator app or a passkey."}</p>
+              </> : <div className="tip" style={{ marginTop: 12 }}><Icon name="lock" /><span>Signing needs two-step verification: an authenticator
+                app or a passkey. <Link to="/app/security">Set one up</Link>, then come back to sign.</span></div>)}
             </section>
           </aside>
         </div>

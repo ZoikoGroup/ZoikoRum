@@ -4,6 +4,7 @@ import { authApi } from '../api/auth'
 import { ApiError } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { AuthLayout, ErrorAlert, Field, PasswordInput } from '../components/ui'
+import { passkeyCancelled, passkeysSupported, signWithPasskey } from '../lib/passkeys'
 import { PORTAL, signInHref } from '../portal'
 
 /** Two sign-in pages: /login for customers, professionals, firms and enterprise teams, and /staff/login for Zoikorum
@@ -29,6 +30,22 @@ export default function SignIn({ staff = false }: { staff?: boolean }) {
   function goToOtherSignIn() {
     if (/^https?:/.test(other)) window.location.assign(email ? `${other}?email=${encodeURIComponent(email)}` : other)
     else navigate(other, { state: { email } })
+  }
+
+  /** Sign in with a passkey on this device: no email, password or code to type. */
+  async function withPasskey() {
+    setBusy(true)
+    setError(null)
+    try {
+      const credential = await signWithPasskey(await authApi.passkeyLoginOptions())
+      const result = await authApi.passkeyLogin(credential, staff ? 'staff' : 'customer')
+      accept(result)
+      navigate(result.user.mfaRequired ? '/app/security' : safeNext ?? `/app/${result.user.defaultDashboard}`, { replace: true })
+    } catch (err) {
+      if (!passkeyCancelled(err)) setError(err)
+    } finally {
+      setBusy(false)
+    }
   }
 
   async function submit(e: FormEvent) {
@@ -112,6 +129,11 @@ export default function SignIn({ staff = false }: { staff?: boolean }) {
           </button>
         )}
       </form>
+      {!needsCode && passkeysSupported() && (
+        <button type="button" className="btn btn-secondary btn-block" style={{ marginTop: 10 }} disabled={busy} onClick={withPasskey}>
+          Sign in with a passkey
+        </button>
+      )}
       {staff ? (
         <p className="auth-foot">Not Zoikorum staff? <a href={other} onClick={(e) => { e.preventDefault(); goToOtherSignIn() }}>Sign in here</a></p>
       ) : <>

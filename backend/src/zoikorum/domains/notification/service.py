@@ -34,6 +34,7 @@ EVENT_TITLES = {
     E.DATA_REQUEST_CREATED: 'Privacy request received', E.DATA_REQUEST_COMPLETED: 'Your privacy request is complete',
     E.DATA_REQUEST_BLOCKED: 'Account deletion on hold', E.DATA_REQUEST_CANCELLED: 'Account deletion cancelled',
     E.MFA_ENROLLED: 'Two-step verification enabled', E.PASSWORD_CHANGED: 'Your password changed',
+    E.PASSKEY_ADDED: 'A passkey was added to your account', E.PASSKEY_REMOVED: 'A passkey was removed from your account',
     E.MFA_RECOVERY_CODE_USED: 'A recovery code was used to sign in', E.MFA_RESET: 'Two-step verification was reset',
     E.AUTHENTICATION_FAILED: 'Account security alert', E.IDENTITY_SUSPENDED: 'Account restricted',
     E.IDENTITY_REINSTATED: 'Account restored',

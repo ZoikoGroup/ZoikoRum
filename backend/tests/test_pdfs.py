@@ -1,4 +1,4 @@
-"""Server-generated PDFs: the engagement agreement and invoices (shared/pdf.py)."""
+"""Server-generated PDFs: the engagement agreement, invoices and payout statements (shared/pdf.py)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import text
 
 from test_contract import C, signed_contract
-from test_escrow import E, escrow_of
+from test_escrow import BANK, E, escrow_of
 from zoikorum.shared import pdf
 
 
@@ -63,3 +63,29 @@ async def test_invoice_pdf(client, make_user, drain, sf):
     async with sf() as s:
         recorded = await s.scalar(text("SELECT evidence_hash FROM audit.audit_records WHERE action LIKE '%invoice.pdf_downloaded%' LIMIT 1"))
     assert recorded and len(recorded) == 64  # the invoice content's SHA-256, also printed in the PDF footer
+
+
+async def test_payout_statement_pdf_for_the_professional_only(client, make_user, drain, sf):
+    pro_user, pro, buyer, c = await signed_contract(client, make_user, drain)
+    esc = await escrow_of(client, buyer, c)
+    m1 = c["milestones"][0]
+    await client.post(f"{E}/{esc['id']}/fund", headers=buyer.idem(), json={"milestoneIds": [m1["id"]], "paymentMethodToken": "tok_visa"})
+    await drain()
+    await client.post(f"/v1/milestones/{m1['id']}/submit", headers=pro_user.h, json={"note": "Master file"})
+    await client.post(f"/v1/milestones/{m1['id']}/accept", headers=buyer.idem())
+    await drain()
+    assert (await client.put("/v1/payout-accounts/me", headers=pro_user.h, json=BANK)).status_code == 200
+    (payout,) = (await client.get("/v1/payments/earnings/me", headers=pro_user.h)).json()["payouts"]
+    assert payout["status"] == "SETTLED"
+
+    url = f"/v1/payments/payouts/{payout['id']}/pdf"
+    r = await client.get(url, headers=pro_user.h)
+    assert r.status_code == 200 and r.content.startswith(b"%PDF-") and r.headers["cache-control"] == "no-store"
+    assert f'ZK-PAY-{payout["id"][:8].upper()}.pdf' in r.headers["content-disposition"]
+    assert (await client.get(url, headers=pro_user.h)).content == r.content  # same payout, same file
+    assert (await client.get(url, headers=buyer.h)).status_code == 404  # only the professional who was paid
+    assert (await client.get("/v1/payments/payouts/00000000-0000-0000-0000-000000000000/pdf", headers=pro_user.h)).status_code == 404
+    await drain()
+    async with sf() as s:
+        hashes = (await s.scalars(text("SELECT evidence_hash FROM audit.audit_records WHERE action LIKE '%payout.statement_downloaded%'"))).all()
+    assert len(hashes) == 2 and len(hashes[0]) == 64  # refused and missing downloads record nothing

@@ -138,3 +138,27 @@ test('an administrator pauses sign-ups during an incident and switches them back
   await expect(row.getByText('On', { exact: true })).toBeVisible()
   await page.screenshot({ path: 'test-results/switches.png', fullPage: true })
 })
+
+test('an organisation adds its legal entity and the contract names it as the buyer', async ({ page }) => {
+  const { account: pro, pro: profile } = await verifiedProfessional('Venky Entity')
+  const { account: buyer, org } = await buyerWithOrganisation('Lennox Entity')
+  await signIn(page, buyer.email)
+  await page.goto('/app/organisation?tab=entities')
+  await page.getByRole('button', { name: 'Add legal entity' }).click()
+  await page.getByLabel('Registered name').fill('Lennox Analytics Ltd')
+  await page.getByLabel('Country of registration').selectOption('GB')
+  await page.getByLabel('Company registration number (optional)').fill('09876543')
+  await page.getByLabel('Tax ID: VAT, GSTIN, EIN (optional)').fill('GB987654321')
+  await page.getByLabel('Registered address').fill('2 Kings Road, Manchester M1 1AA')
+  await page.getByRole('button', { name: 'Save' }).click()
+  const row = page.getByRole('row').filter({ hasText: 'Lennox Analytics Ltd' })
+  await expect(row.getByText('Default')).toBeVisible()  // the first entity is the default
+
+  const { contract } = await engagementAwaitingAcceptance(buyer, org, pro, profile.id)  // a request with no choice: the default
+  await page.goto(`/app/engagements/${contract.id}`)
+  const parties = page.getByRole('complementary').filter({ hasText: 'Parties' })
+  await expect(parties.getByText('Lennox Analytics Ltd')).toBeVisible()
+  await expect(parties.getByText(/Reg\. no\. 09876543/)).toBeVisible()
+  const document = await buyer.api.get(`/v1/contracts/${contract.id}/document`, { headers: { Authorization: `Bearer ${buyer.token}` } })
+  expect(await document.text()).toContain('Buyer: Lennox Analytics Ltd (registration no. 09876543, tax ID GB987654321')
+})

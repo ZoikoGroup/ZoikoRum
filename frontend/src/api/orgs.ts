@@ -72,6 +72,19 @@ export interface Invitation {
 export interface BusinessUnit { id: string; name: string; parentId: string | null }
 export interface CostCenter { id: string; name: string; code: string; businessUnitId: string | null; quarterlyBudget: Money | null }
 
+/** A registered company the organisation contracts and is invoiced through. */
+export interface LegalEntity {
+  id: string
+  legalName: string
+  registrationNumber: string | null
+  country: string
+  registeredAddress: string
+  taxId: string | null
+  isDefault: boolean
+  status: 'ACTIVE' | 'ARCHIVED'
+}
+export type LegalEntityInput = Omit<LegalEntity, 'id' | 'status'>
+
 export interface Firm {
   id: string
   legalName: string
@@ -116,6 +129,11 @@ export const orgApi = {
   businessUnits: (id: string) => api<BusinessUnit[]>(`${O}/${id}/business-units`),
   createBusinessUnit: (id: string, name: string) => api<BusinessUnit>(`${O}/${id}/business-units`, { method: 'POST', body: { name } }),
   costCenters: (id: string) => api<CostCenter[]>(`${O}/${id}/cost-centers`),
+  legalEntities: (id: string) => api<LegalEntity[]>(`${O}/${id}/legal-entities`),
+  createLegalEntity: (id: string, body: LegalEntityInput) => api<LegalEntity>(`${O}/${id}/legal-entities`, { method: 'POST', body }),
+  updateLegalEntity: (id: string, entityId: string, body: LegalEntityInput) =>
+    api<LegalEntity>(`${O}/${id}/legal-entities/${entityId}`, { method: 'PUT', body }),
+  archiveLegalEntity: (id: string, entityId: string) => api<LegalEntity>(`${O}/${id}/legal-entities/${entityId}/archive`, { method: 'POST' }),
   createCostCenter: (id: string, body: { name: string; code: string; businessUnitId?: string | null; quarterlyBudget?: Money | null }) =>
     api<CostCenter>(`${O}/${id}/cost-centers`, { method: 'POST', body }),
 }

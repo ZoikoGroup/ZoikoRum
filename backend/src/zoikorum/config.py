@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:5173"  # used to build links in invitations / emails
     # The separate staff web app (frontend VITE_PORTAL=staff). Links in emails to staff use it; empty: frontend_url.
     staff_frontend_url: str | None = None
+    # Passkeys: the WebAuthn relying party (a domain). Empty: the web app's host name. With separate customer and staff
+    # apps (app.your-domain.com, staff.your-domain.com) set their shared parent domain: your-domain.com.
+    webauthn_rp_id: str | None = None
     database_url: str = "postgresql+asyncpg://zoikorum:zoikorum@localhost:5434/zoikorum"
     db_pool_size: int = 10
 

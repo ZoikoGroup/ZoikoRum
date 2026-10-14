@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, String, UniqueConstraint, text
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -97,6 +97,25 @@ class CostCenter(Base, UUIDPk, Timestamps):
     code: Mapped[str] = mapped_column(String(50), nullable=False)
     quarterly_budget_minor: Mapped[int | None] = mapped_column(BigInteger)
     currency: Mapped[str | None] = mapped_column(String(3))
+
+
+class LegalEntity(Base, UUIDPk, Timestamps):
+    """A registered company the organisation contracts and is invoiced through (Engineering Handbook 17.1), e.g. a
+    group with "Acme Ltd" (UK) and "Acme Inc" (US). One is the default; archived ones stay for past contracts."""
+
+    __tablename__ = "legal_entities"
+    __table_args__ = (UniqueConstraint("organization_id", "legal_name"), {"schema": SCHEMA})
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.organizations.id"), nullable=False, index=True
+    )
+    legal_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    registration_number: Mapped[str | None] = mapped_column(String(100))
+    country: Mapped[str] = mapped_column(String(2), nullable=False)
+    registered_address: Mapped[str] = mapped_column(String(500), nullable=False)
+    tax_id: Mapped[str | None] = mapped_column(String(50))  # VAT, GSTIN, EIN ...
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="ACTIVE")  # ACTIVE | ARCHIVED
 
 
 class BillingContact(Base, UUIDPk, Timestamps):

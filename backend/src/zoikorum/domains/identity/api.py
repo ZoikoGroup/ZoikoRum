@@ -6,7 +6,7 @@ from typing import Literal
 from fastapi import APIRouter, Query, Request, Response, status
 
 from zoikorum.config import get_settings
-from zoikorum.domains.identity import duplicates, privacy_requests, service
+from zoikorum.domains.identity import duplicates, passkeys, privacy_requests, service
 from zoikorum.domains.identity.schemas import (
     DataRequestIn,
     DuplicateAnswerIn,
@@ -28,6 +28,11 @@ from zoikorum.domains.identity.schemas import (
     MfaEnrollOut,
     MfaResetIn,
     MfaVerifyIn,
+    PasskeyLoginIn,
+    PasskeyOptionsIn,
+    PasskeyOut,
+    PasskeyRegisterIn,
+    PasskeyStepUpIn,
     RecoveryCodesOut,
     RefreshIn,
     RegisterIn,
@@ -39,7 +44,7 @@ from zoikorum.domains.identity.schemas import (
 )
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession, session_factory
-from zoikorum.shared.errors import Unauthenticated
+from zoikorum.shared.errors import RateLimited, Unauthenticated
 from zoikorum.shared.http import Page, enforce_budget
 
 router = APIRouter(prefix="/v1", tags=["identity"])
@@ -142,6 +147,63 @@ async def step_up(body: StepUpIn, request: Request, actor: CurrentActor) -> Toke
     return result
 
 
+# ---- Passkeys ----------------------------------------------------------------------------------------------------------
+
+@router.post("/auth/passkey/options")
+async def passkey_login_options(session: DbSession) -> dict:
+    """Start signing in with a passkey: the browser picks one of the passkeys it holds for this site."""
+    return await passkeys.login_options(session)
+
+
+@router.post("/auth/passkey", response_model=AuthOut)
+async def passkey_login(body: PasskeyLoginIn, request: Request) -> AuthOut:
+    # Own transaction: a failed attempt must still commit its lockout counter and use up the challenge.
+    async with session_factory()() as session:
+        async with session.begin():
+            result = await passkeys.login(session, body.credential, _ua(request), body.portal)
+    if isinstance(result, service.LoginFailure):
+        raise Unauthenticated(result.detail, code=result.code)
+    return result
+
+
+@router.post("/auth/step-up/passkey/options")
+async def passkey_step_up_options(actor: CurrentActor, session: DbSession) -> dict:
+    return await passkeys.step_up_options(session, actor)
+
+
+@router.post("/auth/step-up/passkey", response_model=TokenPair)
+async def passkey_step_up(body: PasskeyStepUpIn, request: Request, actor: CurrentActor) -> TokenPair:
+    """Confirm a sensitive action with a passkey instead of the 6-digit code."""
+    async with session_factory()() as session:
+        async with session.begin():
+            result = await passkeys.step_up(session, actor, body.credential, _ua(request))
+    if isinstance(result, service.LoginFailure):
+        raise Unauthenticated(result.detail, code=result.code)
+    return result
+
+
+@router.get("/me/passkeys", response_model=list[PasskeyOut])
+async def my_passkeys(actor: CurrentActor, session: DbSession):
+    return await passkeys.list_passkeys(session, actor)
+
+
+@router.post("/me/passkeys/options")
+async def passkey_registration_options(body: PasskeyOptionsIn, actor: CurrentActor, session: DbSession) -> dict:
+    """Start adding a passkey (needs the account password)."""
+    await enforce_budget("passkey-add", str(actor.identity_id), 5, 5, "Too many attempts. Wait a minute and try again.")
+    return await passkeys.registration_options(session, actor, body.password)
+
+
+@router.post("/me/passkeys", response_model=PasskeyOut, status_code=status.HTTP_201_CREATED)
+async def add_passkey(body: PasskeyRegisterIn, actor: CurrentActor, session: DbSession):
+    return await passkeys.register(session, actor, body.name, body.credential)
+
+
+@router.delete("/me/passkeys/{passkey_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_passkey(passkey_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> None:
+    await passkeys.remove(session, actor, passkey_id)
+
+
 @router.get("/me", response_model=IdentityOut)
 async def me(actor: CurrentActor, session: DbSession) -> IdentityOut:
     return await service.get_me(session, actor)
@@ -167,7 +229,14 @@ async def sign_out_device(session_id: uuid.UUID, actor: CurrentActor, session: D
 @router.post("/me/email-confirmation", response_model=ResendConfirmationOut)
 async def resend_email_confirmation(actor: CurrentActor, session: DbSession) -> ResendConfirmationOut:
     """Send a new email-confirmation link (at most one a minute)."""
-    token = await service.resend_email_confirmation(session, actor)
+    try:
+        token = await service.resend_email_confirmation(session, actor)
+    except RateLimited:
+        if get_settings().env not in ("local", "development"):  # tests and servers keep the one-a-minute limit
+            raise
+        # Local development has no inbox: hand out the link again instead of making the developer wait (no email sent).
+        return ResendConfirmationOut(message="Development mode: no email is sent locally.",
+                                     emailConfirmationToken=await service.email_confirmation_link_token(session, actor))
     return ResendConfirmationOut(emailConfirmationToken=token if _expose_dev_tokens() else None)
 
 

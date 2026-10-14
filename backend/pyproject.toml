@@ -20,6 +20,7 @@ dependencies = [
     "fpdf2>=2.8",  # server-generated PDFs (contracts, invoices)
     "redis>=5,<7",  # shared rate limits across API processes (ZK_REDIS_URL)
     "prometheus-client>=0.20",  # GET /metrics (shared/metrics.py)
+    "webauthn>=2.5,<3",  # passkeys (identity/passkeys.py)
 ]
 
 [project.optional-dependencies]

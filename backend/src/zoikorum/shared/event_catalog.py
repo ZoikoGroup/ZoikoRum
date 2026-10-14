@@ -22,6 +22,8 @@ class E:
     EMAIL_CONFIRMED = _t("identity", "identity", "email_confirmed")
     EMAIL_CONFIRMATION_REQUESTED = _t("identity", "identity", "email_confirmation_requested")  # "resend the link"
     MFA_ENROLLED = _t("identity", "identity", "mfa_enrolled")
+    PASSKEY_ADDED = _t("identity", "identity", "passkey_added")
+    PASSKEY_REMOVED = _t("identity", "identity", "passkey_removed")
     MFA_RECOVERY_CODE_USED = _t("identity", "identity", "mfa_recovery_code_used")  # signed in with a one-time recovery code
     MFA_RESET = _t("identity", "identity", "mfa_reset")  # staff removed two-step verification after an identity check
     AUTHENTICATION_SUCCEEDED = _t("identity", "session", "authentication_succeeded")
@@ -51,6 +53,8 @@ class E:
     ORGANIZATION_CREATED = _t("buyer", "organization", "created")
     BUSINESS_UNIT_CREATED = _t("buyer", "business_unit", "created")
     COST_CENTER_CREATED = _t("buyer", "cost_center", "created")
+    LEGAL_ENTITY_CREATED = _t("buyer", "legal_entity", "created")
+    LEGAL_ENTITY_UPDATED = _t("buyer", "legal_entity", "updated")  # details, default, or archived
     ORG_MEMBER_ADDED = _t("buyer", "organization", "member_added")
     BUYER_ROLE_ASSIGNED = _t("buyer", "organization", "role_assigned")
     ORG_MEMBER_REMOVED = _t("buyer", "organization", "member_removed")

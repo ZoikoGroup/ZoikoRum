@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useTwoStepReady } from '../auth/useTwoStep'
 import { Link } from 'react-router-dom'
 import { contractApi, type Contract } from '../api/contracts'
 import { escrowApi, paymentsApi, PAYOUT_STATUS, type Charge, type Earnings, type Escrow, type Invoice } from '../api/escrow'
@@ -18,6 +19,7 @@ import { formatCurrencies } from '../lib/money'
 
 export function EarningsPage() {
   const { user } = useAuth()
+  const twoStepReady = useTwoStepReady()
   const [data, setData] = useState<Earnings | null>(null)
   const [contracts, setContracts] = useState<Contract[]>([])
   const [error, setError] = useState<unknown>(null)
@@ -78,7 +80,7 @@ export function EarningsPage() {
               <strong>No payouts yet.</strong> When a buyer accepts a funded milestone, the money is released and paid out here.
             </EmptyTable>
           ) : (
-            <table className="data"><thead><tr><th>Engagement</th><th>Milestone</th><th>Gross</th><th>Fee</th><th>Net</th><th>Status</th><th>Expected</th></tr></thead>
+            <table className="data"><thead><tr><th>Engagement</th><th>Milestone</th><th>Gross</th><th>Fee</th><th>Net</th><th>Status</th><th>Expected</th><th><span className="sr-only">Statement</span></th></tr></thead>
               <tbody>{(data?.payouts ?? []).map((p) => {
                 const m = ms(p.contractId, p.milestoneId)
                 return (
@@ -90,6 +92,9 @@ export function EarningsPage() {
                       {p.delayReason && <div className="muted small">{p.delayReason}</div>}</td>
                     <td className="small">{p.settledAt ? <>Arrived {new Date(p.settledAt).toLocaleDateString()}</>
                       : p.expectedAt ? <>By {new Date(p.expectedAt).toLocaleDateString()}</> : '—'}</td>
+                    <td><button className="btn btn-ghost btn-sm" title="Payout statement: what was paid to your bank, with the transfer reference"
+                      onClick={() => paymentsApi.payoutPdf(p.id).then((b) => saveBlob(`ZK-PAY-${p.id.slice(0, 8).toUpperCase()}.pdf`, b)).catch(setError)}>
+                      <Icon name="download" /> PDF</button></td>
                   </tr>
                 )
               })}</tbody></table>
@@ -107,8 +112,9 @@ export function EarningsPage() {
                 <dt>Holder</dt><dd>{data.payoutAccount.holderName}</dd>
                 <dt>Currency</dt><dd>{data.payoutAccount.currency} · {data.payoutAccount.country}</dd>
               </dl>
-            ) : !user?.mfaEnabled && !user?.mfaBypass ? (
-              <div className="tip"><Icon name="lock" /><span>Adding a payout account needs two-step verification. <Link to="/app/security">Turn it on</Link>, then come back.</span></div>
+            ) : !twoStepReady ? (
+              <div className="tip"><Icon name="lock" /><span>Adding a payout account needs two-step verification: an authenticator app or
+                a passkey. <Link to="/app/security">Set one up</Link>, then come back.</span></div>
             ) : (
               <form onSubmit={save}>
                 <Field label="Account holder name" id="pa-name"><input id="pa-name" className="input" value={f.holderName} onChange={(e) => setF({ ...f, holderName: e.target.value })} required /></Field>

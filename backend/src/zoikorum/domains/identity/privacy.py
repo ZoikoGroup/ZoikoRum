@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from zoikorum.domains.identity.models import ConsentRecord, DataRequest, Identity, IdentityLink, Session
+from zoikorum.domains.identity.models import ConsentRecord, DataRequest, Identity, IdentityLink, Passkey, Session
 from zoikorum.shared import clock, privacy
 from zoikorum.shared.crypto import decrypt_field
 
@@ -27,6 +27,8 @@ async def export(session: AsyncSession, identity_id: uuid.UUID) -> dict:
         "memberships": await privacy.rows(session, IdentityLink, IdentityLink.identity_id == identity_id),
         "signIns": await privacy.rows(session, Session, Session.identity_id == identity_id,
                                       exclude=("family_id",)),
+        "passkeys": await privacy.rows(session, Passkey, Passkey.identity_id == identity_id,
+                                       exclude=("credential_id", "public_key")),
         "privacyRequests": await privacy.rows(session, DataRequest, DataRequest.identity_id == identity_id,
                                               exclude=("export_key",)),
     }
@@ -50,7 +52,8 @@ async def erase(session: AsyncSession, identity_id: uuid.UUID) -> dict:
     identity.status = "DELETED"
     revoked = (await session.execute(update(Session).where(Session.identity_id == identity_id, Session.revoked_at.is_(None))
                                      .values(revoked_at=now))).rowcount
-    return {"anonymised": True, "sessionsEnded": revoked}
+    removed = (await session.execute(delete(Passkey).where(Passkey.identity_id == identity_id))).rowcount
+    return {"anonymised": True, "sessionsEnded": revoked, "passkeysRemoved": removed}
 
 
 privacy.register("identity", export=export, erase=erase,

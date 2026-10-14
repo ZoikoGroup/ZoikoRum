@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ARRAY, DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import ARRAY, BigInteger, Boolean, DateTime, ForeignKey, Integer, LargeBinary, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -63,6 +63,37 @@ class Session(Base, UUIDPk, CreatedAt):
     rotated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     user_agent: Mapped[str | None] = mapped_column(String(500))
+
+
+class Passkey(Base, UUIDPk, CreatedAt):
+    """A WebAuthn credential (identity/passkeys.py). The public key only: the private key never leaves the device."""
+
+    __tablename__ = "passkeys"
+    __table_args__ = {"schema": SCHEMA}
+
+    identity_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.identities.id"), nullable=False, index=True
+    )
+    credential_id: Mapped[str] = mapped_column(String(1400), unique=True, nullable=False)  # base64url
+    public_key: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)  # COSE key
+    sign_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    transports: Mapped[list[str]] = mapped_column(ARRAY(String(20)), nullable=False, default=list)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    backed_up: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)  # synced (e.g. iCloud Keychain)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PasskeyChallenge(Base, UUIDPk, CreatedAt):
+    """A server-issued WebAuthn challenge: single use, five minutes, for one purpose (and account)."""
+
+    __tablename__ = "passkey_challenges"
+    __table_args__ = {"schema": SCHEMA}
+
+    challenge_sha256: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    purpose: Mapped[str] = mapped_column(String(20), nullable=False)  # register | login | step_up
+    identity_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class IdentityLink(Base, UUIDPk, Timestamps):
