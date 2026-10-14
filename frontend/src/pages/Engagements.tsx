@@ -3,15 +3,14 @@ import { useTwoStepReady } from '../auth/useTwoStep'
 import { EngagementReview } from '../components/EngagementReview'
 import { AIAssistance } from '../components/AIAssistance'
 import { Link, useParams } from 'react-router-dom'
-import { CONTRACT_STATUS, contractApi, MILESTONE_STATUS, deliveredFileUrl, type ChangeOrder, type Contract, type ContractMilestone } from '../api/contracts'
+import { CONTRACT_STATUS, contractApi, MILESTONE_STATUS, type ChangeOrder, type Contract, type ContractMilestone, type Verdict } from '../api/contracts'
+import { DeliveryForm, ReviewPanel, SubmissionView } from '../components/Delivery'
 import { disputeApi, OPEN_PHASES, type Dispute } from '../api/disputes'
 import { escrowApi, type Escrow } from '../api/escrow'
 import { disputableMilestones, RaiseDisputeDialog } from './Disputes'
 import { FundDialog, PaymentsPanel } from '../components/EscrowPanels'
 import { formatMoney } from '../api/orgs'
 import { LABEL } from '../api/professional'
-import { DOC_ACCEPT, toUpload, type Upload } from '../api/files'
-import { FileLinks } from '../components/FileLink'
 import { useAuth } from '../auth/AuthContext'
 import { Icon } from '../components/dashboard'
 import { EmptyTable, PortalHeader, SidePanel, StatCard, Tabs } from '../components/portal'
@@ -151,7 +150,8 @@ export function EngagementDetail({ side }: { side: Side }) {
         {c.canSign && <button className="btn btn-primary" onClick={() => setTab('agreement')}>Review &amp; sign</button>}
       </div>
 
-      {c.status === 'COMPLETED' && <EngagementReview contractId={c.id} canReview={side === 'buyer'} />}
+      {c.status === 'COMPLETED' && <EngagementReview contractId={c.id} canReview={side === 'buyer'} reference={c.reference}
+        professionalName={c.parties.find((p) => p.role === 'PROFESSIONAL')?.name} organizationName={c.parties.find((p) => p.role === 'BUYER')?.name} />}
       {tab === 'agreement' && <AIAssistance purpose="contract-summary" subjectId={c.id} />}
       <Tabs tabs={[{ key: 'overview', label: 'Overview' }, { key: 'agreement', label: 'Agreement' }, { key: 'milestones', label: 'Milestones', count: c.milestones.length },
         { key: 'changes', label: 'Change orders', count: c.changeOrders.length }, { key: 'payments', label: 'Payments' },
@@ -275,9 +275,12 @@ export function EngagementDetail({ side }: { side: Side }) {
             canFund={!!escrow?.canFund && escrow.allocations.some((x) => x.milestoneId === m.id && x.state === 'UNFUNDED')}
             funding={escrow?.allocations.find((x) => x.milestoneId === m.id)?.state === 'FUNDING'}
             onFund={() => setFundFor([m.id])}
-            onSubmit={(note, files) => act(() => contractApi.submit(m.id, note, files), 'Work submitted for review.')}
-            onAccept={() => { if (confirm(`Accept M${m.sequence} "${m.title}"? This releases ${formatMoney(m.amount)} from escrow to the professional (minus the platform fee). It cannot be undone.`)) act(() => contractApi.accept(m.id), 'Milestone accepted. The funds are being released to the professional.').then(refreshSoon) }}
-            onRevise={(reason) => act(() => contractApi.requestRevision(m.id, reason), 'Revision requested.')}
+            onSent={(k) => { setC(k); setError(null); setNotice('Work sent to the buyer for review.') }}
+            onReview={(verdicts) => {
+              const accepting = verdicts.every((v) => v.verdict === 'MET')
+              act(() => contractApi.review(m.id, verdicts), accepting ? 'Milestone accepted. The funds are being released to the professional.'
+                : 'Sent back to the professional with your comments.').then(() => { if (accepting) refreshSoon() })
+            }}
             onOfferPartial={(amount, reason) => act(() => contractApi.offerPartial(m.id, amount, reason), 'Offer sent. The professional must agree before anything is released.')}
             onAnswerPartial={(agree) => act(() => contractApi.answerPartial(m.id, agree), agree ? 'Agreed. The agreed amount is being released and the rest refunded.' : 'Offer declined.').then(refreshSoon)} />)}
         </>
@@ -519,21 +522,17 @@ function RetainerCycles({ c, side, busy, onCancel }: { c: Contract; side: Side; 
   )
 }
 
-function MilestoneCard({ m, c, side, busy, canFund, funding, onFund, onSubmit, onAccept, onRevise, onOfferPartial, onAnswerPartial }: {
+function MilestoneCard({ m, c, side, busy, canFund, funding, onFund, onSent, onReview, onOfferPartial, onAnswerPartial }: {
   m: ContractMilestone; c: Contract; side: Side; busy: boolean; canFund: boolean; funding: boolean; onFund: () => void
-  onSubmit: (note: string, files: Upload[]) => void; onAccept: () => void; onRevise: (reason: string) => void
+  onSent: (c: Contract) => void; onReview: (verdicts: { deliverableKey: string; verdict: Verdict; comment: string }[]) => void
   onOfferPartial: (amountMinor: number, reason: string) => void; onAnswerPartial: (agree: boolean) => void
 }) {
   const [partial, setPartial] = useState(false)
   const [partialAmount, setPartialAmount] = useState('')
   const [partialReason, setPartialReason] = useState('')
   const partialMinor = Math.round(Number(partialAmount || 0) * 100)
-  const [note, setNote] = useState('')
-  const [files, setFiles] = useState<Upload[]>([])
-  const [fileError, setFileError] = useState('')
-  const [reason, setReason] = useState('')
-  const [revising, setRevising] = useState(false)
   const st = MILESTONE_STATUS[m.status]
+  const [latest, ...earlier] = m.submissions
   const delivers = m.deliverableKeys.map((k) => c.terms.deliverables.find((d) => d.key === k)?.title ?? k)
   const canDeliver = side === 'professional' && c.status === 'ACTIVE' && ['IN_PROGRESS', 'REVISION_REQUESTED'].includes(m.status)
   const canReview = side === 'buyer' && c.status === 'ACTIVE' && m.status === 'SUBMITTED'
@@ -557,25 +556,11 @@ function MilestoneCard({ m, c, side, busy, canFund, funding, onFund, onSubmit, o
       {m.status === 'IN_PROGRESS' && side === 'professional' && <p className="ok-text small" style={{ margin: '8px 0 0' }}>✓ Funds secured in escrow — you can start work.</p>}
       {m.status === 'REVISION_REQUESTED' && m.lastRevisionReason && <div className="tip" style={{ marginTop: 10 }}><Icon name="message" /><span><strong>Revision requested:</strong> {m.lastRevisionReason}</span></div>}
 
-      {m.submissions.length > 0 && <ul className="submission-list">{m.submissions.map((s) => (
-        <li key={s.id}><span className="muted small">{new Date(s.submittedAt).toLocaleString()}</span><span>{s.note || <em className="muted">No note</em>}</span>
-          {s.files.length > 0 && <FileLinks files={s.files} url={(f) => deliveredFileUrl(c.id, f.sha256)} />}</li>))}</ul>}
+      {latest && !canReview && <SubmissionView s={latest} c={c} />}
+      {earlier.length > 0 && <details className="earlier-deliveries"><summary className="small">{earlier.length} earlier deliver{earlier.length > 1 ? 'ies' : 'y'}</summary>
+        {earlier.map((s) => <SubmissionView key={s.id} s={s} c={c} />)}</details>}
 
-      {canDeliver && <div className="revise-box">
-        <label className="filter-box grow"><span>What did you deliver?</span>
-          <textarea rows={3} maxLength={2000} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Summary of the work and where to find it" /></label>
-        <div style={{ marginTop: 8 }}>{files.map((f) => <div key={f.sha256} className="file-row"><Icon name="request" /><span>{f.name}</span></div>)}
-          {files.length < 10 && <input type="file" multiple accept={DOC_ACCEPT} onChange={async (e) => {
-            const picked = Array.from(e.target.files ?? []).slice(0, 10 - files.length)
-            e.target.value = ''
-            setFileError('')
-            try { setFiles([...files, ...await Promise.all(picked.map((f) => toUpload(f)))]) } catch (err) { setFileError(err instanceof Error ? err.message : 'That file could not be read') }
-          }} />}
-          <p className="muted small" style={{ margin: '4px 0 0' }}>PDF, Word, Excel, CSV, JPG or PNG · up to 10 MB each, 25 MB together. The buyer can open them; every opening is logged.</p>
-          {fileError && <p className="small" style={{ color: 'var(--zk-danger)', margin: '4px 0 0' }}>{fileError}</p>}</div>
-        <button className="btn btn-primary" style={{ marginTop: 10 }} disabled={busy || (!note.trim() && files.length === 0)}
-          onClick={() => { onSubmit(note.trim(), files); setNote(''); setFiles([]) }}>{m.status === 'REVISION_REQUESTED' ? 'Resubmit for review' : 'Submit for review'}</button>
-      </div>}
+      {canDeliver && <DeliveryForm m={m} onSent={onSent} />}
 
       {m.acceptedRelease && <p className="small muted" style={{ margin: '8px 0 0' }}>Accepted for {formatMoney(m.acceptedRelease)} by agreement;
         {' '}{formatMoney({ amountMinor: m.amount.amountMinor - m.acceptedRelease.amountMinor, currency: m.amount.currency })} was refunded to the buyer.</p>}
@@ -598,17 +583,7 @@ function MilestoneCard({ m, c, side, busy, canFund, funding, onFund, onSubmit, o
           onClick={() => { onOfferPartial(partialMinor, partialReason.trim()); setPartial(false) }}>Send offer</button>
           <button className="btn btn-ghost btn-sm" onClick={() => setPartial(false)}>Cancel</button></div>
       </div>}
-      {canReview && <div className="row card-actions">
-        {revising ? <>
-          <input className="input" style={{ flex: 1 }} placeholder="What needs to change, against the acceptance criteria?" value={reason} maxLength={1000} onChange={(e) => setReason(e.target.value)} />
-          <button className="btn btn-secondary btn-sm" disabled={busy || reason.trim().length < 5} onClick={() => { onRevise(reason.trim()); setRevising(false); setReason('') }}>Send</button>
-          <button className="btn btn-ghost btn-sm" onClick={() => setRevising(false)}>Cancel</button>
-        </> : <>
-          <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => setRevising(true)}>Request revision</button>
-          {!m.partialOffer && <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => setPartial(true)}>Accept for less…</button>}
-          <button className="btn btn-primary" disabled={busy} onClick={onAccept}>Accept milestone</button>
-        </>}
-      </div>}
+      {canReview && !partial && <ReviewPanel key={latest?.id} m={m} c={c} busy={busy} onDecide={onReview} onPartial={() => setPartial(true)} />}
     </section>
   )
 }

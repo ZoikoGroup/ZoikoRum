@@ -9,7 +9,8 @@ from pydantic import BaseModel, Field
 
 from zoikorum.domains.contract import service
 from zoikorum.domains.contract.schemas import (
-    PartialOfferIn, ChangeOrderDecisionIn, ChangeOrderIn, ContractOut, ContractSummaryOut, RevisionIn, SignIn, SubmitIn,
+    PartialOfferIn, ChangeOrderDecisionIn, ChangeOrderIn, ContractOut, ContractSummaryOut, DraftTextIn, EvidenceIn, ReviewIn,
+    RevisionIn, SignIn, SubmissionDraftOut, SubmitIn,
 )
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
@@ -100,9 +101,51 @@ async def reject_change_order(
     )
 
 
+@router.get("/v1/milestones/{milestone_id}/submission-draft", response_model=SubmissionDraftOut)
+async def submission_draft(milestone_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    """Professional: the delivery being prepared, one item per deliverable, with what still blocks sending it."""
+    return await service.get_submission_draft(session, actor, milestone_id)
+
+
+@router.patch("/v1/milestones/{milestone_id}/submission-draft", response_model=SubmissionDraftOut)
+async def save_submission_draft(milestone_id: uuid.UUID, body: DraftTextIn, actor: CurrentActor, session: DbSession):
+    """Autosave of the message to the buyer and the note on each deliverable."""
+    return await service.save_draft_text(session, actor, milestone_id, body)
+
+
+@router.delete("/v1/milestones/{milestone_id}/submission-draft", response_model=SubmissionDraftOut)
+async def discard_submission_draft(milestone_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    return await service.discard_draft(session, actor, milestone_id)
+
+
+@router.post("/v1/milestones/{milestone_id}/submission-draft/items/{key}/evidence", response_model=SubmissionDraftOut)
+async def add_evidence(milestone_id: uuid.UUID, key: str, body: EvidenceIn, actor: CurrentActor, session: DbSession):
+    """Adds a file or a link (website, shared document, code repository) to one deliverable."""
+    return await service.add_evidence(session, actor, milestone_id, key, body)
+
+
+@router.delete("/v1/milestones/{milestone_id}/submission-draft/items/{key}/evidence/{evidence_id}", response_model=SubmissionDraftOut)
+async def remove_evidence(milestone_id: uuid.UUID, key: str, evidence_id: str, actor: CurrentActor, session: DbSession):
+    return await service.remove_evidence(session, actor, milestone_id, key, evidence_id)
+
+
+@router.get("/v1/milestones/{milestone_id}/submission-draft/files/{sha256}")
+async def draft_file(milestone_id: uuid.UUID, sha256: str, actor: CurrentActor, session: DbSession) -> Response:
+    """Professional: opens a file in their own draft."""
+    return file_response(*await service.draft_file(session, actor, milestone_id, sha256))
+
+
 @router.post("/v1/milestones/{milestone_id}/submit", response_model=ContractOut)
-async def submit(milestone_id: uuid.UUID, body: SubmitIn, actor: CurrentActor, session: DbSession):
-    return await service.submit_milestone(session, actor, milestone_id, body)
+async def submit(milestone_id: uuid.UUID, body: SubmitIn, request: Request, actor: CurrentActor, session: DbSession):
+    """Sends the draft for review (or, without a draft, a note and files in one step). Starts the buyer's review window."""
+    ip = request.client.host if request.client else None
+    return await service.submit_milestone(session, actor, milestone_id, body, ip)
+
+
+@router.post("/v1/milestones/{milestone_id}/review", response_model=ContractOut)
+async def review(milestone_id: uuid.UUID, body: ReviewIn, actor: CurrentActor, session: DbSession, idem: IdempotencyKey):
+    """Buyer: a verdict per deliverable. All met accepts the milestone (releasing escrow); otherwise it goes back for changes."""
+    return await idem.run(session, actor, lambda: service.review_submission(session, actor, milestone_id, body))
 
 
 @router.post("/v1/milestones/{milestone_id}/accept", response_model=ContractOut)
