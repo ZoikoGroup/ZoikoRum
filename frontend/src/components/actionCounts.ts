@@ -69,8 +69,11 @@ export function useActionCounts(user: User | null, pathname: string): { byPath: 
     let live = true
     const load = () => collect(user).then((x) => { if (live) setItems(x) })
     load()
+    let timer: number | undefined
+    const changed = () => { window.clearTimeout(timer); timer = window.setTimeout(load, 750) }
     const t = window.setInterval(load, 60_000)
-    return () => { live = false; window.clearInterval(t) }
+    window.addEventListener('zk:activity', changed)
+    return () => { live = false; window.clearInterval(t); window.clearTimeout(timer); window.removeEventListener('zk:activity', changed) }
   }, [user, pathname])
   const shown = items.filter((i) => i.count > 0)
   return { byPath: Object.fromEntries(items.map((i) => [i.to, i.count])), items: shown, total: shown.reduce((s, i) => s + i.count, 0) }

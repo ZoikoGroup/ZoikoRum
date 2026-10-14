@@ -157,7 +157,9 @@ async def test_disagreement_is_resolved_through_a_dispute_with_money_frozen(clie
     await drain()
 
     threads = (await client.get("/v1/threads", headers=buyer.h)).json()["items"]
-    assert all(not t["locked"] for t in threads if t["contextType"] in {"CONTRACT", "PROPOSAL_REQUEST"})
+    # The engagement conversation reopens; the request chat stays archived (read-only) once work is active.
+    assert all(not t["locked"] for t in threads if t["contextType"] == "CONTRACT")
+    assert all(t["locked"] and t["archivedRequest"] for t in threads if t["contextType"] == "PROPOSAL_REQUEST")
 
     # Enforced exactly through escrow: 600k released (minus fee), 400k refunded, case closed, books balanced.
     assert (await client.get(f"{D}/{d['id']}", headers=buyer.h)).json()["status"] == "CLOSED"
