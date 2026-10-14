@@ -4,7 +4,7 @@ import { firmApi } from '../api/orgs'
 import { messagingApi } from '../api/messaging'
 import { notificationApi } from '../api/notifications'
 import { useActionCounts } from '../components/actionCounts'
-import { DASHBOARD_FOR_PERSONA, ROLE_LABEL } from '../api/auth'
+import { DASHBOARD_FOR_PERSONA, PLATFORM_ROLES, ROLE_LABEL } from '../api/auth'
 import { useAuth } from '../auth/AuthContext'
 import { Icon, type IconName } from '../components/dashboard'
 import { GlobalSearch } from '../components/GlobalSearch'
@@ -74,8 +74,11 @@ export default function AppShell() {
   const isOfficer = user.platformRoles.includes('COMPLIANCE_OFFICER')
   const customer = dashboards.has('enterprise') ? 'enterprise' : dashboards.has('buyer') ? 'buyer' : null
   const initials = user.displayName.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase()
+  // Staff: the most senior role (PLATFORM_ROLES runs from Platform Admin down), not the first alphabetically.
+  const staffRoles = PLATFORM_ROLES.filter((r) => user.platformRoles.includes(r))
+  const staffName = staffRoles.length ? ROLE_LABEL[staffRoles[0]] + (staffRoles.length > 1 ? ` +${staffRoles.length - 1} roles` : '') : ''
   const roleName = customer && !user.platformRoles.length && !dashboards.has('professional') && !dashboards.has('firm')
-    ? 'Customer' : ROLE_LABEL[user.primaryPersona ?? ''] ?? ROLE_LABEL[user.platformRoles[0] ?? ''] ?? ''
+    ? 'Customer' : ROLE_LABEL[user.primaryPersona ?? ''] ?? (staffName || '')
 
   // The bell: work waiting for you (red tab counts) plus unread notifications.
   const bellItems = unreadNotifications > 0

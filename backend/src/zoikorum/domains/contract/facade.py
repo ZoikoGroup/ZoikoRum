@@ -42,6 +42,7 @@ class ContractSummary:
     policy_version_id: uuid.UUID | None
     milestones: tuple[MilestoneSummary, ...]
     reference: str = ""  # human reference, e.g. ZK-ENG-1A2B3C4D
+    buyer_legal_entity: dict | None = None  # snapshot at acceptance: legalName, registrationNumber, country, ...
 
 
 def _milestone(m: Milestone) -> MilestoneSummary:
@@ -54,7 +55,7 @@ async def _summary(session: AsyncSession, c: Contract | None) -> ContractSummary
     ms = (await session.scalars(select(Milestone).where(Milestone.contract_id == c.id).order_by(Milestone.sequence))).all()
     return ContractSummary(c.id, c.proposal_id, c.request_id, c.organization_id, c.buyer_identity_id, c.professional_id, c.status,
                            c.currency, c.total_minor, c.terms_hash, c.contract_version, c.policy_version_id, tuple(_milestone(m) for m in ms),
-                           c.reference)
+                           c.reference, (c.parties or {}).get("buyer", {}).get("legalEntity"))
 
 
 async def get_contract(session: AsyncSession, contract_id: uuid.UUID) -> ContractSummary | None:

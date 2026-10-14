@@ -225,3 +225,31 @@ class DuplicateOut(BaseModel):
     otherAccountName: str | None = None
     identityId: uuid.UUID | None = None
     otherIdentityId: uuid.UUID | None = None
+
+
+# ---- Passkeys ----------------------------------------------------------------------------------------------------------
+
+class PasskeyOptionsIn(BaseModel):
+    password: str = Field(min_length=1, max_length=200)  # adding a sign-in method needs the account password
+
+
+class PasskeyRegisterIn(BaseModel):
+    name: str = Field(default="Passkey", max_length=100)  # e.g. "Work laptop"
+    credential: dict  # the browser's PublicKeyCredential, as JSON
+
+
+class PasskeyLoginIn(BaseModel):
+    credential: dict
+    portal: Literal["customer", "staff"] | None = None
+
+
+class PasskeyStepUpIn(BaseModel):
+    credential: dict
+
+
+class PasskeyOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    backedUp: bool
+    createdAt: datetime
+    lastUsedAt: datetime | None

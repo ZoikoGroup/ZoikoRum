@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { ApiError } from '../api/client'
+import { authApi } from '../api/auth'
+import { ApiError, tokens } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
+import { passkeyCancelled, passkeysSupported, signWithPasskey } from '../lib/passkeys'
 import { PASSWORD_LABEL, passwordScore } from '../lib/password'
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
@@ -215,6 +217,20 @@ export function StepUpModal({ open, onDone, onCancel }: { open: boolean; onDone:
   const [busy, setBusy] = useState(false)
   if (!open) return null
 
+  /** Confirm with a passkey on this device instead of the 6-digit code. */
+  async function withPasskey() {
+    setBusy(true)
+    setError(null)
+    try {
+      tokens.set(await authApi.passkeyStepUp(await signWithPasskey(await authApi.passkeyStepUpOptions())))
+      onDone()
+    } catch (err) {
+      if (!passkeyCancelled(err)) setError(err)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function submit(e: FormEvent) {
     e.preventDefault()
     setBusy(true)
@@ -234,13 +250,15 @@ export function StepUpModal({ open, onDone, onCancel }: { open: boolean; onDone:
     <div ref={dialog} className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="stepup-title">
       <form className="card modal" onSubmit={submit}>
         <h2 id="stepup-title">Confirm it's you</h2>
-        <p className="muted">This action needs a fresh confirmation. Enter the 6-digit code from your authenticator app.</p>
+        <p className="muted">This action needs a fresh confirmation. Enter the 6-digit code from your authenticator app, or use
+          a passkey.</p>
         <ErrorAlert error={error} />
         <Field label="Authentication code" id="stepup-code">
           <input id="stepup-code" className="input code-input" inputMode="numeric" autoComplete="one-time-code"
             maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} autoFocus />
         </Field>
         <div className="row" style={{ justifyContent: 'flex-end' }}>
+          {passkeysSupported() && <button type="button" className="btn btn-ghost" disabled={busy} onClick={withPasskey}>Use a passkey</button>}
           <button type="button" className="btn btn-secondary" onClick={onCancel}>Cancel</button>
           <button className="btn btn-primary" disabled={busy || code.length !== 6}>{busy ? 'Checking…' : 'Confirm'}</button>
         </div>

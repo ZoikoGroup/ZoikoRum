@@ -6,6 +6,12 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
+# Which app this image serves (src/portal.ts): customer (default) or staff, plus each app's public address so the two can
+# send people to each other. Build the image twice: once per app, e.g. app.your-domain.com and staff.your-domain.com.
+ARG VITE_PORTAL=customer
+ARG VITE_CUSTOMER_URL=""
+ARG VITE_STAFF_URL=""
+ENV VITE_PORTAL=$VITE_PORTAL VITE_CUSTOMER_URL=$VITE_CUSTOMER_URL VITE_STAFF_URL=$VITE_STAFF_URL
 RUN npm run build
 
 FROM nginx:1.27-alpine

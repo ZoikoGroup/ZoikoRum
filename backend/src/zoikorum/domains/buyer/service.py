@@ -14,12 +14,14 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.config import get_settings
-from zoikorum.domains.buyer.models import BillingContact, BusinessUnit, CostCenter, Invitation, OrgMember, Organization
+from zoikorum.domains.buyer.models import BillingContact, BusinessUnit, CostCenter, Invitation, LegalEntity, OrgMember, Organization
 from zoikorum.domains.buyer.schemas import (
     BillingContactOut,
     BusinessUnitOut,
     CostCenterOut,
     InvitationOut,
+    LegalEntityIn,
+    LegalEntityOut,
     MemberOut,
     OrganizationOut,
 )
@@ -502,3 +504,102 @@ async def set_billing_contacts(session: AsyncSession, actor: Actor, org_id: uuid
     await session.flush()
     _evt(session, E.BILLING_CONTACTS_UPDATED, org, primaryIdentityId=primary, backupIdentityId=backup, updatedBy=actor.identity_id)
     return await billing_contacts(session, actor, org_id)
+
+
+# ---- Legal entities (Engineering Handbook 17.1) ----------------------------------------------------------------------
+
+def _entity_out(e: LegalEntity) -> LegalEntityOut:
+    return LegalEntityOut(id=e.id, legalName=e.legal_name, registrationNumber=e.registration_number, country=e.country,
+                          registeredAddress=e.registered_address, taxId=e.tax_id, isDefault=e.is_default, status=e.status)
+
+
+async def list_legal_entities(session: AsyncSession, actor: Actor, org_id: uuid.UUID) -> list[LegalEntityOut]:
+    await _require_member(session, actor, org_id)
+    rows = (await session.scalars(select(LegalEntity).where(LegalEntity.organization_id == org_id)
+                                  .order_by(LegalEntity.is_default.desc(), LegalEntity.status, LegalEntity.legal_name))).all()
+    return [_entity_out(e) for e in rows]
+
+
+async def _make_default(session: AsyncSession, org_id: uuid.UUID, entity: LegalEntity) -> None:
+    others = (await session.scalars(select(LegalEntity).where(
+        LegalEntity.organization_id == org_id, LegalEntity.id != entity.id, LegalEntity.is_default.is_(True)).with_for_update())).all()
+    for o in others:
+        o.is_default = False
+    entity.is_default = True
+
+
+def _entity_fields(body: LegalEntityIn) -> dict:
+    country = body.country.upper()
+    if not country.isalpha():
+        raise ValidationFailed("Use a two-letter country code", code="INVALID_COUNTRY")
+    clean = lambda v: (v or "").strip() or None  # noqa: E731
+    return {"legal_name": body.legalName.strip(), "registration_number": clean(body.registrationNumber), "country": country,
+            "registered_address": body.registeredAddress.strip(), "tax_id": clean(body.taxId)}
+
+
+async def create_legal_entity(session: AsyncSession, actor: Actor, org_id: uuid.UUID, body: LegalEntityIn) -> LegalEntityOut:
+    await _require_member(session, actor, org_id, OrgRole.ORG_ADMIN)
+    org = await _org(session, org_id, lock=True)
+    fields = _entity_fields(body)
+    if await session.scalar(select(LegalEntity.id).where(LegalEntity.organization_id == org_id,
+                                                         LegalEntity.legal_name == fields["legal_name"])):
+        raise Conflict("A legal entity with this name already exists", code="DUPLICATE_NAME")
+    first = not await session.scalar(select(LegalEntity.id).where(LegalEntity.organization_id == org_id,
+                                                                  LegalEntity.status == "ACTIVE").limit(1))
+    e = LegalEntity(organization_id=org_id, status="ACTIVE", is_default=False, **fields)
+    session.add(e)
+    await session.flush()
+    if first or body.isDefault:  # the first one is the default until another is chosen
+        await _make_default(session, org_id, e)
+    _evt(session, E.LEGAL_ENTITY_CREATED, org, legalEntityId=e.id, legalName=e.legal_name, country=e.country,
+         isDefault=e.is_default)
+    return _entity_out(e)
+
+
+async def _entity(session: AsyncSession, org_id: uuid.UUID, entity_id: uuid.UUID) -> LegalEntity:
+    e = await session.get(LegalEntity, entity_id, with_for_update=True)
+    if e is None or e.organization_id != org_id:
+        raise NotFound("Legal entity not found")
+    return e
+
+
+async def update_legal_entity(session: AsyncSession, actor: Actor, org_id: uuid.UUID, entity_id: uuid.UUID,
+                              body: LegalEntityIn) -> LegalEntityOut:
+    """Details apply to new contracts and invoices; signed contracts keep the details they were signed with."""
+    await _require_member(session, actor, org_id, OrgRole.ORG_ADMIN)
+    org = await _org(session, org_id, lock=True)
+    e = await _entity(session, org_id, entity_id)
+    if e.status != "ACTIVE":
+        raise Conflict("Archived entities cannot be changed", code="ENTITY_ARCHIVED")
+    fields = _entity_fields(body)
+    if fields["legal_name"] != e.legal_name and await session.scalar(select(LegalEntity.id).where(
+            LegalEntity.organization_id == org_id, LegalEntity.legal_name == fields["legal_name"])):
+        raise Conflict("A legal entity with this name already exists", code="DUPLICATE_NAME")
+    for k, v in fields.items():
+        setattr(e, k, v)
+    if body.isDefault and not e.is_default:
+        await _make_default(session, org_id, e)
+    await session.flush()
+    _evt(session, E.LEGAL_ENTITY_UPDATED, org, legalEntityId=e.id, legalName=e.legal_name, isDefault=e.is_default,
+         status=e.status)
+    return _entity_out(e)
+
+
+async def archive_legal_entity(session: AsyncSession, actor: Actor, org_id: uuid.UUID, entity_id: uuid.UUID) -> LegalEntityOut:
+    """No new requests or contracts through it; past contracts and invoices keep it. The default moves to another."""
+    await _require_member(session, actor, org_id, OrgRole.ORG_ADMIN)
+    org = await _org(session, org_id, lock=True)
+    e = await _entity(session, org_id, entity_id)
+    if e.status == "ARCHIVED":
+        return _entity_out(e)
+    e.status = "ARCHIVED"
+    if e.is_default:
+        e.is_default = False
+        nxt = await session.scalar(select(LegalEntity).where(
+            LegalEntity.organization_id == org_id, LegalEntity.status == "ACTIVE", LegalEntity.id != e.id)
+            .order_by(LegalEntity.created_at).limit(1).with_for_update())
+        if nxt is not None:
+            nxt.is_default = True
+    await session.flush()
+    _evt(session, E.LEGAL_ENTITY_UPDATED, org, legalEntityId=e.id, legalName=e.legal_name, isDefault=False, status="ARCHIVED")
+    return _entity_out(e)

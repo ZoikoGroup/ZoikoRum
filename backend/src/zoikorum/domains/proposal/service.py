@@ -213,6 +213,7 @@ async def _requests_out(session: AsyncSession, actor: Actor, rows: list[Proposal
             p = None  # buyers never see a professional's unsent draft
         out.append(RequestOut(
             id=r.id, groupId=r.group_id, organizationId=r.organization_id, costCenterId=r.cost_center_id,
+            legalEntityId=r.legal_entity_id,
             organizationName=orgs[r.organization_id].name if orgs.get(r.organization_id) else None,
             buyerIdentityId=r.buyer_identity_id, buyerName=buyers[r.buyer_identity_id].display_name if r.buyer_identity_id in buyers else None,
             professional=briefs[r.professional_id], offeringId=r.offering_id, service=r.service, specialization=r.specialization,
@@ -312,6 +313,7 @@ async def create_requests(session: AsyncSession, actor: Actor, body: RequestIn) 
             raise NotFound("Cost center not found in this organization")
     if org is None or org.status != "ACTIVE":
         raise Forbidden("This organisation cannot send requests", code="ORGANIZATION_INACTIVE")
+    entity = await buyer_facade.contracting_entity(session, body.organizationId, body.legalEntityId)
     if not body.draft and not body.acknowledged:
         raise ValidationFailed("Confirm that you understand Zoikorum facilitates the engagement but does not provide the "
                                "professional services", code="ACKNOWLEDGEMENT_REQUIRED")
@@ -338,7 +340,7 @@ async def create_requests(session: AsyncSession, actor: Actor, body: RequestIn) 
     for pid in body.professionalIds:
         r = ProposalRequest(
             organization_id=body.organizationId, buyer_identity_id=actor.identity_id, professional_id=pid,
-            cost_center_id=body.costCenterId,
+            cost_center_id=body.costCenterId, legal_entity_id=uuid.UUID(entity["id"]) if entity else None,
             offering_id=body.offeringId, group_id=group, service=body.service.strip(), specialization=body.specialization,
             engagement_type=body.engagementType, business_context=body.businessContext or org.business_context,
             objective=body.objective.strip(), details=body.details.strip(), desired_start_date=body.desiredStartDate,
@@ -767,7 +769,13 @@ async def accept_proposal(session: AsyncSession, actor: Actor, proposal_id: uuid
     p.status, p.decided_at, p.decided_by = "ACCEPTED", clock.now(), actor.identity_id
     await cancel_timer(session, TIMER_EXPIRY, str(p.id))
     _close_request(r, "CLOSED", "PROPOSAL_ACCEPTED")
+    # The buyer's contracting entity as it is now: the contract and its invoices keep exactly these details.
+    try:
+        entity = await buyer_facade.contracting_entity(session, r.organization_id, r.legal_entity_id)
+    except ValidationFailed:  # archived since the request was sent: the organisation's default contracts instead
+        entity = await buyer_facade.contracting_entity(session, r.organization_id, None)
     _prop_evt(session, E.PROPOSAL_ACCEPTED, p, buyerIdentityId=p.buyer_identity_id, engagementType=r.engagement_type,
+              buyerLegalEntity=entity,
               currency=p.currency, totalMinor=p.total_minor, policyVersionId=p.policy_version_id, policyVersionLabel=decision.policy_version_label,
               termsHash=p.terms_hash, terms=terms, service=r.service, ndaRequired=r.nda_required,
               pricingModel=p.pricing_model, summary=p.summary)

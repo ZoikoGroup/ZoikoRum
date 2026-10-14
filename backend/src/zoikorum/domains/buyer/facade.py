@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from zoikorum.domains.buyer.models import BusinessUnit, CostCenter, OrgMember, Organization
+from zoikorum.domains.buyer.models import BusinessUnit, CostCenter, LegalEntity, OrgMember, Organization
 from zoikorum.shared.money import Money
 
 
@@ -90,3 +90,21 @@ async def list_identity_organizations(session: AsyncSession, identity_id: uuid.U
 async def list_business_unit_ids(session: AsyncSession, org_id: uuid.UUID) -> list[uuid.UUID]:
     return list((await session.scalars(select(BusinessUnit.id).where(
         BusinessUnit.organization_id == org_id))).all())
+
+
+async def contracting_entity(session: AsyncSession, org_id: uuid.UUID, entity_id: uuid.UUID | None) -> dict | None:
+    """The legal entity a request goes through: the one chosen (it must be this organisation's and active), otherwise
+    the default; None when the organisation has none. A plain snapshot: contracts and invoices keep these details."""
+    from zoikorum.shared.errors import ValidationFailed
+
+    if entity_id is not None:
+        e = await session.get(LegalEntity, entity_id)
+        if e is None or e.organization_id != org_id or e.status != "ACTIVE":
+            raise ValidationFailed("Choose one of your organisation's active legal entities", code="INVALID_LEGAL_ENTITY")
+    else:
+        e = await session.scalar(select(LegalEntity).where(
+            LegalEntity.organization_id == org_id, LegalEntity.status == "ACTIVE", LegalEntity.is_default.is_(True)))
+    if e is None:
+        return None
+    return {"id": str(e.id), "legalName": e.legal_name, "registrationNumber": e.registration_number, "country": e.country,
+            "registeredAddress": e.registered_address, "taxId": e.tax_id}

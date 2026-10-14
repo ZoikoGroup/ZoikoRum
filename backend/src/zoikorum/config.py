@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     tracing_endpoint: str | None = None  # OpenTelemetry collector (OTLP/HTTP traces URL); needs backend[tracing]
     tracing_sample_ratio: float = Field(default=0.1, ge=0, le=1)  # share of new traces kept
     frontend_url: str = "http://localhost:5173"  # used to build links in invitations / emails
+    # The separate staff web app (frontend VITE_PORTAL=staff). Links in emails to staff use it; empty: frontend_url.
+    staff_frontend_url: str | None = None
+    # Passkeys: the WebAuthn relying party (a domain). Empty: the web app's host name. With separate customer and staff
+    # apps (app.your-domain.com, staff.your-domain.com) set their shared parent domain: your-domain.com.
+    webauthn_rp_id: str | None = None
     database_url: str = "postgresql+asyncpg://zoikorum:zoikorum@localhost:5434/zoikorum"
     db_pool_size: int = 10
 
@@ -90,7 +95,10 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = True
     redis_url: str | None = None  # shared rate limits across API servers, e.g. redis://redis:6379/0
     storage_dir: str = "var/storage"  # LocalDiskStorage root (development); S3 bucket in production
-    storage_provider: str = "local"  # local | s3
+    storage_provider: str = "local"  # local | gcs (Google Cloud Storage) | s3 (Amazon S3)
+    gcs_bucket: str | None = None  # Google Cloud Storage bucket (object versioning on, public access prevented)
+    # Optional customer-managed encryption key: projects/<p>/locations/<l>/keyRings/<r>/cryptoKeys/<k>
+    gcs_kms_key_name: str | None = None
     s3_bucket: str | None = None
     aws_region: str = "us-east-1"
     s3_endpoint_url: str | None = None  # local S3-compatible service; not used for public file access
@@ -145,6 +153,8 @@ class Settings(BaseSettings):
                 raise ValueError(f"ZK_{name.upper()} must be set to a long random value (32+ characters) in {self.env}")
         if not self.frontend_url.startswith("https://"):
             raise ValueError(f"ZK_FRONTEND_URL must be the public https:// address in {self.env} (it is used in email links)")
+        if self.staff_frontend_url and not self.staff_frontend_url.startswith("https://"):
+            raise ValueError(f"ZK_STAFF_FRONTEND_URL must be an https:// address in {self.env}")
         return self
 
 
@@ -154,3 +164,9 @@ DEV_ENVS = ("local", "development")
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+def web_url(staff: bool = False) -> str:
+    """The web app address for links: the staff app for staff (ZK_STAFF_FRONTEND_URL), otherwise ZK_FRONTEND_URL."""
+    s = get_settings()
+    return ((s.staff_frontend_url if staff else None) or s.frontend_url).rstrip("/")

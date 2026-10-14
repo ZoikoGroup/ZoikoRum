@@ -25,7 +25,7 @@ SETTINGS = {
     "ZK_RATE_LIMIT_ENABLED": "false",
     "ZK_STORAGE_PROVIDER": "local",
     "ZK_STORAGE_DIR": tempfile.mkdtemp(prefix="zk-e2e-files-"),
-    "ZK_FRONTEND_URL": os.environ.get("ZK_E2E_WEB_URL", "http://localhost:5174"),
+    "ZK_FRONTEND_URL": os.environ.get("ZK_E2E_WEB_URL", "http://localhost:5199"),
     "ZK_LOG_LEVEL": "WARNING",
 }
 

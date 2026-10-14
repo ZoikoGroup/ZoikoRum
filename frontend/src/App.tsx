@@ -1,5 +1,6 @@
-import { lazy, Suspense } from 'react'
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { lazy, Suspense, useEffect, type ReactNode } from 'react'
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import { elsewhere, PORTAL } from './portal'
 import { PLATFORM_ROLES } from './api/auth'
 import { AuthProvider } from './auth/AuthContext'
 import { GuestOnly, RequireAuth, RequireRole } from './auth/guards'
@@ -76,6 +77,7 @@ export default function App() {
     <AuthProvider>
       <BrowserRouter>
         <Suspense fallback={<p className="muted page-loading">Loading…</p>}>
+        <PortalGate>
         <Routes>
           {/* Entry point is sign-in; signed-in users are sent straight to their role's dashboard. */}
           <Route path="/" element={<Navigate to="/login" replace />} />
@@ -155,8 +157,30 @@ export default function App() {
           </Route>
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
+        </PortalGate>
         </Suspense>
       </BrowserRouter>
     </AuthProvider>
   )
+}
+
+const CUSTOMER_ONLY = /^\/(join|enterprise|invite|professionals)(\/|$)/
+
+/** Staff and customers use separate web apps (portal.ts): each sends the other's pages to the other address. */
+function PortalGate({ children }: { children: ReactNode }) {
+  const { pathname, search, state } = useLocation()
+  if (PORTAL === 'staff') {
+    if (pathname === '/' || pathname === '/login') return <Navigate to={`/staff/login${search}`} replace state={state} />
+    if (CUSTOMER_ONLY.test(pathname)) return <Away to={elsewhere(pathname + search)} />
+  }
+  if (PORTAL === 'customer' && (pathname.startsWith('/staff') || pathname.startsWith('/app/ops'))) {
+    return <Away to={elsewhere(pathname + search)} />
+  }
+  return <>{children}</>
+}
+
+function Away({ to }: { to: string | null }) {
+  useEffect(() => { if (to) window.location.replace(to) }, [to])
+  if (!to) return <Navigate to="/" replace />  // the other address is not configured: stay on this app
+  return <p className="muted page-loading">Redirecting…</p>
 }

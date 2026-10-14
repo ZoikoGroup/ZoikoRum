@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { auditApi, exportAuditCsv, type AuditRecord } from '../../api/audit'
-import { formatMoney, ORG_ROLE_INFO, orgApi, type BillingContact, type Invitation, type Organization, type OrgMember, type OrgRole } from '../../api/orgs'
+import { formatMoney, ORG_ROLE_INFO, orgApi, type BillingContact, type Invitation, type LegalEntity, type LegalEntityInput, type Organization, type OrgMember, type OrgRole } from '../../api/orgs'
 import { useAuth } from '../../auth/AuthContext'
 import { ago, ActivityList } from '../../components/activity'
 import { Avatar, Icon } from '../../components/dashboard'
 import { PortalHeader, SidePanel, StatCard, Tabs } from '../../components/portal'
 import { ErrorAlert, Field } from '../../components/ui'
+import { COUNTRIES } from '../Join'
 import { countryName } from '../ProfessionalPages'
 
-type Tab = 'overview' | 'members' | 'roles' | 'billing' | 'security'
+type Tab = 'overview' | 'members' | 'roles' | 'billing' | 'entities' | 'security'
 const ACCESS: Record<string, string> = {
   ORG_ADMIN: 'Full access', REQUESTER: 'Requests & proposals', APPROVER: 'Approvals', BUDGET_OWNER: 'Budgets & payments',
   LEGAL_REVIEWER: 'Contracts & audit', EXCEPTION_AUTHORITY: 'Policy exceptions',
@@ -90,7 +91,8 @@ export default function OrganisationPage() {
       </div>
 
       <Tabs<Tab> tabs={[{ key: 'overview', label: 'Overview' }, { key: 'members', label: 'Members & access' },
-        { key: 'roles', label: 'Roles & authority' }, { key: 'billing', label: 'Billing contacts' }, { key: 'security', label: 'Security & audit' }]}
+        { key: 'roles', label: 'Roles & authority' }, { key: 'billing', label: 'Billing contacts' }, { key: 'entities', label: 'Legal entities' },
+        { key: 'security', label: 'Security & audit' }]}
         value={tab} onChange={setTab} />
 
       {tab === 'overview' && (
@@ -157,6 +159,8 @@ export default function OrganisationPage() {
           {canBill && <BillingForm org={org} members={members} billing={billing} onSaved={(b) => { setBilling(b); setNotice('Billing contacts saved.') }} />}
         </section>
       )}
+
+      {tab === 'entities' && <LegalEntitiesPanel org={org} canManage={isAdmin} onSaved={setNotice} />}
 
       {tab === 'security' && (
         <section className="card panel">
@@ -308,5 +312,90 @@ function ProfileForm({ org, onDone }: { org: Organization; onDone: (o: Organizat
       <p className="muted small">Primary region: {countryName(org.country)} (set at sign-up).</p>
       <div className="row"><button type="button" className="btn btn-secondary" onClick={() => onDone(null)}>Cancel</button><button className="btn btn-primary">Save profile</button></div>
     </form>
+  )
+}
+
+const NO_ENTITY: LegalEntityInput = { legalName: '', registrationNumber: '', country: 'GB', registeredAddress: '', taxId: '', isDefault: false }
+
+/** Handbook 17.1: the registered companies this organisation contracts and is invoiced through. The chosen (or default)
+    one becomes the buyer party on contracts and the "Billed to" on invoices; signed contracts keep the details they had. */
+function LegalEntitiesPanel({ org, canManage, onSaved }: { org: Organization; canManage: boolean; onSaved: (msg: string) => void }) {
+  const [rows, setRows] = useState<LegalEntity[] | null>(null)
+  const [editing, setEditing] = useState<LegalEntity | 'new' | null>(null)
+  const [f, setF] = useState<LegalEntityInput>(NO_ENTITY)
+  const [error, setError] = useState<unknown>(null)
+  const load = useCallback(() => orgApi.legalEntities(org.id).then(setRows).catch(setError), [org.id])
+  useEffect(() => { load() }, [load])
+
+  function open(e: LegalEntity | 'new') {
+    setError(null)
+    setEditing(e)
+    setF(e === 'new' ? { ...NO_ENTITY, country: org.country, isDefault: !rows?.some((r) => r.status === 'ACTIVE') }
+      : { legalName: e.legalName, registrationNumber: e.registrationNumber ?? '', country: e.country, registeredAddress: e.registeredAddress,
+          taxId: e.taxId ?? '', isDefault: e.isDefault })
+  }
+  async function save(ev: FormEvent) {
+    ev.preventDefault()
+    setError(null)
+    try {
+      if (editing === 'new') await orgApi.createLegalEntity(org.id, f)
+      else if (editing) await orgApi.updateLegalEntity(org.id, editing.id, f)
+      setEditing(null)
+      onSaved(`${f.legalName} saved.`)
+      await load()
+    } catch (err) { setError(err) }
+  }
+  async function archive(e: LegalEntity) {
+    if (!confirm(`Archive ${e.legalName}? New requests can no longer use it; past contracts and invoices keep it.`)) return
+    try { await orgApi.archiveLegalEntity(org.id, e.id); onSaved(`${e.legalName} archived.`); await load() } catch (err) { setError(err) }
+  }
+
+  return (
+    <section className="card panel">
+      <div className="panel-head"><h2>Legal entities</h2>
+        {canManage && !editing && <button className="btn btn-primary btn-sm" onClick={() => open('new')}>Add legal entity</button>}</div>
+      <p className="muted small">The registered companies your organisation contracts through. The one chosen on a request (or the default)
+        is named as the buyer on the contract and as &quot;Billed to&quot; on invoices.{canManage ? '' : ' Org Admins manage this list.'}</p>
+      <ErrorAlert error={error} />
+      {editing && (
+        <form onSubmit={save} style={{ marginBottom: 16 }}>
+          <div className="row">
+            <Field label="Registered name" id="le-name"><input id="le-name" className="input" value={f.legalName} maxLength={200} required
+              onChange={(e) => setF({ ...f, legalName: e.target.value })} /></Field>
+            <Field label="Country of registration" id="le-country"><select id="le-country" className="input" value={f.country}
+              onChange={(e) => setF({ ...f, country: e.target.value })}>{COUNTRIES.map(([c, n]) => <option key={c} value={c}>{n}</option>)}</select></Field>
+          </div>
+          <div className="row">
+            <Field label="Company registration number (optional)" id="le-reg"><input id="le-reg" className="input" value={f.registrationNumber ?? ''} maxLength={100}
+              onChange={(e) => setF({ ...f, registrationNumber: e.target.value })} /></Field>
+            <Field label="Tax ID: VAT, GSTIN, EIN (optional)" id="le-tax"><input id="le-tax" className="input" value={f.taxId ?? ''} maxLength={50}
+              onChange={(e) => setF({ ...f, taxId: e.target.value })} /></Field>
+          </div>
+          <Field label="Registered address" id="le-addr"><textarea id="le-addr" className="input" rows={2} value={f.registeredAddress} maxLength={500} required
+            onChange={(e) => setF({ ...f, registeredAddress: e.target.value })} /></Field>
+          <label className="checkbox"><input type="checkbox" checked={f.isDefault} onChange={(e) => setF({ ...f, isDefault: e.target.checked })} />
+            <span>Default for new requests</span></label>
+          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+            <button className="btn btn-primary">Save</button>
+            <button type="button" className="btn btn-ghost" onClick={() => setEditing(null)}>Cancel</button>
+          </div>
+        </form>
+      )}
+      {rows && rows.length === 0 && !editing && <p className="muted small" style={{ margin: 0 }}>No legal entities yet: contracts and invoices
+        name the organisation itself.</p>}
+      {rows && rows.length > 0 && (
+        <table className="data"><thead><tr><th>Registered name</th><th>Country</th><th>Registration no.</th><th>Tax ID</th><th>Address</th>
+          <th>Status</th>{canManage && <th><span className="sr-only">Actions</span></th>}</tr></thead>
+          <tbody>{rows.map((e) => (
+            <tr key={e.id}>
+              <td><strong>{e.legalName}</strong></td><td>{countryName(e.country)}</td><td>{e.registrationNumber ?? '—'}</td><td>{e.taxId ?? '—'}</td>
+              <td className="small">{e.registeredAddress}</td>
+              <td>{e.status === 'ARCHIVED' ? <span className="badge">Archived</span> : e.isDefault ? <span className="badge green">Default</span> : <span className="badge">Active</span>}</td>
+              {canManage && <td style={{ whiteSpace: 'nowrap' }}>{e.status === 'ACTIVE' && <>
+                <button className="btn btn-ghost btn-sm" onClick={() => open(e)}>Edit</button>
+                <button className="btn btn-ghost btn-sm" onClick={() => archive(e)}>Archive</button></>}</td>}
+            </tr>))}</tbody></table>
+      )}
+    </section>
   )
 }

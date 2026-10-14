@@ -426,6 +426,17 @@ async def _viewer(session: AsyncSession, actor: Actor, c: Contract) -> str:
 
 # ---- Generation ---------------------------------------------------------------------------
 
+def _buyer_line(buyer: dict) -> str:
+    """The contracting party: the organisation's legal entity with its registration details when it has one."""
+    e = buyer.get("legalEntity")
+    if not e:
+        return f"Buyer: {buyer['name']}, represented by {buyer['signatory']}."
+    details = ", ".join(x for x in (f"registration no. {e['registrationNumber']}" if e.get("registrationNumber") else None,
+                                    f"tax ID {e['taxId']}" if e.get("taxId") else None, e.get("registeredAddress"),
+                                    e.get("country")) if x)
+    return f"Buyer: {e['legalName']} ({details}), part of {buyer['name']}, represented by {buyer['signatory']}."
+
+
 def render_document(c: Contract, milestones: list[Milestone]) -> str:
     """Plain-language agreement from the accepted terms and the platform template (Agreement Finalization s.10)."""
     t, p = c.terms, c.parties
@@ -434,7 +445,7 @@ def render_document(c: Contract, milestones: list[Milestone]) -> str:
         f"ENGAGEMENT AGREEMENT {c.reference} (version {c.contract_version})",
         "",
         "1. PARTIES",
-        f"Buyer: {p['buyer']['name']}, represented by {p['buyer']['signatory']}.",
+        _buyer_line(p["buyer"]),
         f"Professional: {p['professional']['name']}" + (f", practising with {p['professional']['firm']}" if p["professional"].get("firm") else "") + ".",
         "Zoikorum provides the marketplace, verification, contracting and payment-protection infrastructure. It is not a party "
         "to the professional services and does not guarantee outcomes.",
@@ -524,7 +535,7 @@ async def generate_from_proposal(session: AsyncSession, payload: dict) -> None:
         pricing_model=payload.get("pricingModel"), status="PENDING_SIGNATURE", currency=payload["currency"],
         total_minor=int(payload["totalMinor"]), terms=terms, terms_hash=payload["termsHash"],
         parties={"buyer": {"name": org.name if org else "Buyer", "signatory": buyer.display_name if buyer else "Buyer",
-                           "country": org.country if org else None},
+                           "country": org.country if org else None, "legalEntity": payload.get("buyerLegalEntity")},
                  "professional": {"name": pro.display_name if pro else "Professional",
                                   "firm": (firm.trading_name or firm.legal_name) if firm else None,
                                   "country": pro.country if pro else None}},
@@ -637,7 +648,7 @@ async def _out(session: AsyncSession, actor: Actor, c: Contract, viewer: str) ->
         status=c.status, pendingChangeOrderId=c.pending_change_order_id,
         total=MoneyDTO(amountMinor=c.total_minor, currency=c.currency), termsHash=c.terms_hash,
         contractVersion=c.contract_version,
-        parties=[PartyOut(role="BUYER", name=p["buyer"]["name"], detail=f"Signatory: {p['buyer']['signatory']}"),
+        parties=[_buyer_party(p["buyer"]),
                  PartyOut(role="PROFESSIONAL", name=p["professional"]["name"], detail=firm_line)],
         terms=c.terms, ndaRequired=c.nda_required, documentSha256=c.document_sha256, policyVersionLabel=c.policy_version_label,
         signatureDeadline=c.signature_deadline, activatedAt=c.activated_at, completedAt=c.completed_at,
@@ -1293,3 +1304,12 @@ async def request_revision(session: AsyncSession, actor: Actor, milestone_id: uu
     _evt(session, E.MILESTONE_REVISION_REQUESTED, c, milestoneId=m.id, reason=m.last_revision_reason, revisionCount=m.revision_count)
     await session.flush()
     return await _out(session, actor, c, viewer)
+
+
+def _buyer_party(buyer: dict) -> PartyOut:
+    """The contracting legal entity when the organisation has one, with the organisation and signatory below it."""
+    e = buyer.get("legalEntity")
+    if not e:
+        return PartyOut(role="BUYER", name=buyer["name"], detail=f"Signatory: {buyer['signatory']}")
+    reg = f" · Reg. no. {e['registrationNumber']}" if e.get("registrationNumber") else ""
+    return PartyOut(role="BUYER", name=e["legalName"], detail=f"{buyer['name']}{reg} · Signatory: {buyer['signatory']}")

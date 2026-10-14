@@ -92,3 +92,14 @@ export function SidePanel({ title, children, action }: { title: string; children
     </section>
   )
 }
+
+/** Professional pages that need a profile: the next step, instead of an error. */
+export function NoProfileYet({ children }: { children: ReactNode }) {
+  return (
+    <section className="card panel" role="status">
+      <h2>Create your professional profile first</h2>
+      <p className="muted">{children}</p>
+      <Link className="btn btn-primary" to="/app/professional/profile">Create your profile</Link>
+    </section>
+  )
+}
