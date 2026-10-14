@@ -47,13 +47,48 @@ export default function AppShell() {
     return () => { active = false }
   }, [user?.id])
 
-  // Unread notifications: poll every 15s while signed in.
+  // Update immediately after local reads, then reconcile against the server.
   useEffect(() => {
     let active = true
-    const load = () => notificationApi.count().then((r) => { if (active) setUnreadNotifications(r.unread) }).catch(() => {})
+    let revision = 0
+    const pendingReads = new Set<string>()
+    let followUp: number | undefined
+    const load = () => {
+      const request = ++revision
+      notificationApi.count().then(r => {
+        if (active && request === revision && pendingReads.size === 0) setUnreadNotifications(r.unread)
+      }).catch(() => {})
+    }
+    const changed = () => {
+      load()
+      window.clearTimeout(followUp)
+      followUp = window.setTimeout(load, 1500) // worker-produced notifications
+    }
+    const read = (event: Event) => {
+      const { id, phase } = (event as CustomEvent<{ id: string; phase: 'start' | 'complete' | 'rollback' }>).detail
+      revision++ // polling must not undo a read while its request is pending
+      if (phase === 'start') {
+        if (pendingReads.has(id)) return
+        pendingReads.add(id)
+        setUnreadNotifications(count => Math.max(0, count - 1))
+      } else if (pendingReads.delete(id)) {
+        if (phase === 'rollback') setUnreadNotifications(count => count + 1)
+        if (pendingReads.size === 0) load()
+      }
+    }
     load()
     const timer = window.setInterval(load, 15000)
-    return () => { active = false; window.clearInterval(timer) }
+    window.addEventListener('zk:activity', changed)
+    window.addEventListener('zk:notification-read', read)
+    window.addEventListener('focus', load)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+      window.clearTimeout(followUp)
+      window.removeEventListener('zk:activity', changed)
+      window.removeEventListener('zk:notification-read', read)
+      window.removeEventListener('focus', load)
+    }
   }, [user?.id])
 
   // Unread message threads: poll every 12s for accounts that can message.
@@ -64,7 +99,9 @@ export default function AppShell() {
     const load = () => { messagingApi.summary().then((summary) => { if (active) setUnreadMessages(summary.unreadThreads) }).catch(() => { if (active) setUnreadMessages(0) }) }
     load()
     const timer = window.setInterval(load, 12000)
-    return () => { active = false; window.clearInterval(timer) }
+    window.addEventListener('zk:message-read', load)
+    window.addEventListener('zk:activity', load)
+    return () => { active = false; window.clearInterval(timer); window.removeEventListener('zk:message-read', load); window.removeEventListener('zk:activity', load) }
   }, [user?.id, canMessage])
   if (!user) return null
 

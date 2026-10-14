@@ -160,9 +160,14 @@ class Actor:
     def require_step_up(self, max_age_seconds: int | None = None) -> None:
         if get_settings().mfa_bypass:
             return  # development only: authenticator codes are switched off (ZK_DEV_SKIP_MFA)
-        max_age = max_age_seconds or get_settings().step_up_max_age_seconds
         if self.auth_strength not in AuthStrength.ELEVATED or self.auth_time is None:
             raise StepUpRequired("Confirm with MFA or a passkey to continue")
+        # Staff confirm MFA at sign-in; the validated session retains that assurance
+        # through token refresh until logout, revocation or session expiry.
+        # An explicitly requested freshness limit still takes precedence.
+        if max_age_seconds is None and self.session_id is not None and self.platform_roles.intersection(PlatformRole.ALL):
+            return
+        max_age = get_settings().step_up_max_age_seconds if max_age_seconds is None else max_age_seconds
         if (clock.now() - self.auth_time).total_seconds() > max_age:
             raise StepUpRequired("Your elevated session expired; confirm with MFA again")
 

@@ -98,8 +98,8 @@ async def subject_cases(subject_type: Literal["PROFESSIONAL", "FIRM"], subject_i
 @router.get("/review-queue", response_model=Page[QueueItemOut])
 async def review_queue(actor: CurrentActor, session: DbSession, cursor: str | None = None,
                        limit: int | None = Query(default=None, ge=1, le=100),
-                       status_: Literal["PENDING", "IN_REVIEW", "NEEDS_INFO", "VERIFIED"] | None = Query(default=None, alias="status")):
-    """Compliance officers: open checks, newest first. Each item shows whether its SLA is overdue."""
+                       status_: Literal["ALL", "PENDING", "IN_REVIEW", "NEEDS_INFO", "VERIFIED", "FAILED", "EXPIRED", "REVOKED"] | None = Query(default=None, alias="status")):
+    """Compliance officers: open checks by default, or filtered verification history. Each item includes its subject and SLA."""
     return await service.review_queue(session, actor, cursor, limit, status_)
 
 
