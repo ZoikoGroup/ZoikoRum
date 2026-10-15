@@ -56,6 +56,7 @@ class ProposalRequest(Base, UUIDPk, Timestamps, Versioned):
     attachments: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)  # [{name, sha256, size, contentType, key}]: the files themselves live in blob storage
     # Scope builder (RFP wireframe s.6-7): deliverables checklist, dependencies, commercial preferences.
     deliverables: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)  # titles, from templates or custom
+    custom_deliverables: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)  # the buyer's own wording: flagged
     dependencies: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)  # BUYER_DATA | THIRD_PARTY_ACCESS | INTERNAL_APPROVALS
     pricing_preferences: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)  # HOURLY | FIXED | RETAINER | OPEN
     payment_cadence: Mapped[str | None] = mapped_column(String(20))  # MILESTONE | MONTHLY | COMPLETION

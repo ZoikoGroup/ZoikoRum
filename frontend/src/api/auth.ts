@@ -6,7 +6,7 @@ export type Dashboard = 'buyer' | 'professional' | 'firm' | 'enterprise' | 'ops'
 
 export const PLATFORM_ROLES = [
   'PLATFORM_ADMIN', 'TS_ANALYST', 'COMPLIANCE_OFFICER', 'RISK_LEAD', 'LEGAL',
-  'MEDIATOR', 'FINANCIAL_OPS', 'EXECUTIVE', 'AI_SAFETY_REVIEWER',
+  'MEDIATOR', 'FINANCIAL_OPS', 'EXECUTIVE', 'AI_SAFETY_REVIEWER', 'SUPPORT_AGENT',
 ] as const
 export type PlatformRole = (typeof PLATFORM_ROLES)[number]
 
@@ -131,6 +131,7 @@ export const ROLE_LABEL: Record<string, string> = {
   FINANCIAL_OPS: 'Financial Ops',
   EXECUTIVE: 'Executive',
   AI_SAFETY_REVIEWER: 'AI Safety Reviewer',
+  SUPPORT_AGENT: 'Support Agent',
 }
 
 export const DASHBOARD_FOR_PERSONA: Record<Persona, Dashboard> = {

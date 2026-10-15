@@ -6,12 +6,13 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-ContextType = Literal["PROPOSAL_REQUEST", "CONTRACT", "DISPUTE"]
+ContextType = Literal["PROPOSAL_REQUEST", "CONTRACT", "DISPUTE", "INQUIRY"]
 
 
 class ThreadIn(BaseModel):
     contextType: ContextType
-    contextId: uuid.UUID
+    contextId: uuid.UUID  # for INQUIRY: the professional profile id
+    organizationId: uuid.UUID | None = None  # INQUIRY: the buyer organisation asking
 
 
 class UploadIn(BaseModel):

@@ -12,7 +12,7 @@ import { Avatar, Icon } from '../components/dashboard'
 import { EmptyTable, PortalHeader, SidePanel, StatCard, Tabs } from '../components/portal'
 import { FileLink } from '../components/FileLink'
 import { DOC_ACCEPT, toUpload } from '../api/files'
-import { ErrorAlert, Field } from '../components/ui'
+import { ErrorAlert, Field, Loading } from '../components/ui'
 
 /* Professional side of Step 6 (Professional Dashboard doc s.7–8): incoming requests, NDA, the structured proposal
    builder, revisions, decline with a reason. Professionals do not browse jobs: buyers choose them and send requests. */
@@ -162,7 +162,7 @@ export function ProfessionalRequestDetail() {
   }, [id])
   useEffect(() => { load() }, [load])
 
-  if (!req || !form) return error ? <ErrorAlert error={error} /> : <p className="muted">Loading…</p>
+  if (!req || !form) return error ? <ErrorAlert error={error} /> : <Loading />
   // Service alignment indicator (Professional Dashboard s.8): does this request match one of your structured services?
   const matched = offerings.find((o) => o.id === req.offeringId)
     ?? offerings.find((o) => o.status === 'ACTIVE' && (o.specialization === req.specialization || o.title.toLowerCase() === req.service.toLowerCase()))
@@ -385,6 +385,8 @@ export function ProfessionalRequestDetail() {
               <dt>Delivery</dt><dd>{LABEL[req.deliveryMode]}{req.location ? ` · ${req.location}` : ''}</dd>
               <dt>Budget</dt><dd>{budgetText(req.budget)}</dd>
               {req.groupSize > 1 && <><dt>Competition</dt><dd>Sent to {req.groupSize} professionals</dd></>}
+              {req.status === 'OPEN' && req.respondBy && <><dt>Answer by</dt><dd><strong>{new Date(req.respondBy).toLocaleString()}</strong>
+                <span className="muted small"> · send a proposal, or decline so the buyer can look elsewhere</span></dd></>}
               {req.pricingPreferences.length > 0 && <><dt>Prefers</dt><dd>{req.pricingPreferences.map((p) => PRICING_PREFS.find(([v]) => v === p)?.[1]).join(' / ')}</dd></>}
               {req.paymentCadence && <><dt>Payments</dt><dd>{CADENCES.find(([v]) => v === req.paymentCadence)?.[1]}</dd></>}
             </dl>
@@ -392,7 +394,8 @@ export function ProfessionalRequestDetail() {
               An engagement cannot be agreed unless you serve it. Update <Link to="/app/professional/profile?step=jurisdictions">your jurisdictions</Link> if you can.</span></div>}
             {alignment && <div className={`tip ${alignment.ok ? '' : 'muted'}`} style={{ marginTop: 12 }}><Icon name="check" /><span>{alignment.text}</span></div>}
             {!req.detailsHidden && req.deliverables.length > 0 && <><h3 style={{ margin: '12px 0 4px' }}>Deliverables requested</h3>
-              <ul className="why" style={{ margin: 0 }}>{req.deliverables.map((d) => <li key={d}>{d}</li>)}</ul></>}
+              <ul className="why" style={{ margin: 0 }}>{req.deliverables.map((d) => <li key={d}>{d}
+                {req.customDeliverables?.includes(d) && <span className="badge warn" style={{ marginLeft: 6 }} title="Written by the buyer, not from a service template">Buyer's own wording: confirm what is meant</span>}</li>)}</ul></>}
             {!req.detailsHidden && req.dependencies.length > 0 && <p className="muted small" style={{ marginTop: 8 }}>
               Depends on: {req.dependencies.map((d) => DEPENDENCIES.find(([v]) => v === d)?.[1]).join(', ')}</p>}
             {!req.detailsHidden && req.details && <p className="small" style={{ whiteSpace: 'pre-wrap', marginTop: 12 }}>{req.details}</p>}

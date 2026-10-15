@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
+import { PORTAL } from '../portal'
 import { authApi } from '../api/auth'
 import { ApiError, tokens } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
@@ -88,10 +89,13 @@ export function SiteFooter() {
       <div className="inner">
         <nav aria-label="Footer">
           <Link to="/professionals">Find professionals</Link>
+          <Link to="/categories/finance-and-accounting">Finance &amp; Accounting</Link>
           <Link to="/join?type=PROFESSIONAL">Join as a professional</Link>
           <Link to="/enterprise">Enterprise</Link>
           <Link to="/legal/terms">Terms</Link>
           <Link to="/legal/privacy">Privacy</Link>
+          <Link to="/legal/trust-and-safety">Trust &amp; Safety Charter</Link>
+          <Link to="/legal/ethics">Ethics Code</Link>
         </nav>
         <p className="small">
           Zoikorum provides marketplace infrastructure, verification, contracting facilitation and payment protection.
@@ -149,6 +153,18 @@ export function ErrorAlert({ error }: { error: unknown }) {
           subjectType: String(error.extra?.subjectType || ''), subjectId: String(error.extra?.subjectId || ''),
           action: String(error.extra?.action || '') })}`}>View policy authorisation</Link>}
       {ref && <span className="ref">Reference: {ref}</span>}
+      {ref && PORTAL !== 'staff' && <Link className="ref" to={`/app/help?${new URLSearchParams({ ref, from: window.location.pathname })}`}>Get help with this</Link>}
+      {!ref && PORTAL !== 'staff' && <Link className="ref" to={`/app/help?${new URLSearchParams({ from: window.location.pathname })}`}>Contact support</Link>}
+    </div>
+  )
+}
+
+/** Placeholder while a page or panel loads: grey lines in the shape of content, announced to screen readers. */
+export function Loading({ lines = 3 }: { lines?: number }) {
+  return (
+    <div className="loading-skeleton" role="status" aria-busy="true">
+      <span className="sr-only">Loading…</span>
+      {Array.from({ length: lines }, (_, i) => <div key={i} className="skeleton skeleton-line" style={{ width: `${Math.max(40, 92 - i * 17)}%` }} />)}
     </div>
   )
 }

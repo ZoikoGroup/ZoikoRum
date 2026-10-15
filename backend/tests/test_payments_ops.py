@@ -181,3 +181,46 @@ async def test_reconciliation_runs_itself_every_night(client, make_user, drain, 
         assert await s.scalar(text("SELECT count(*) FROM payments.reconciliation_batches WHERE status = 'MATCHED'")) == 1
         assert await s.scalar(text("SELECT count(*) FROM platform.timers WHERE kind = 'payments.daily_reconciliation' "
                                    "AND fired_at IS NULL AND cancelled_at IS NULL")) == 1  # re-armed for tomorrow
+
+
+# ---- Financial Operations worklist ------------------------------------------------------------------------------
+
+async def test_money_problems_reach_financial_operations_who_retry_or_close_them(client, make_user, drain, sf):
+    pro_user, buyer, c = await funded(client, make_user, drain, both=True)
+    m1, m2 = (m["id"] for m in c["milestones"])
+    for m in (m1, m2):
+        await client.post(f"/v1/milestones/{m}/submit", headers=pro_user.h, json={"note": "Delivered"})
+        await client.post(f"/v1/milestones/{m}/accept", headers=buyer.idem())
+    await drain()
+    await client.put("/v1/payout-accounts/me", headers=pro_user.h, json=BANK)
+    async with sf() as s:
+        payout_ref = await s.scalar(text("SELECT provider_ref FROM payments.payouts ORDER BY created_at LIMIT 1"))
+    await post_event(client, {"id": "evt_po_ops", "type": "payout.failed", "data": {"ref": payout_ref, "message": "Account closed"}})
+    await post_event(client, {"id": "evt_cb_ops", "type": "charge.dispute.created", "data": {"ref": await charge_ref(sf, c["id"])}})
+    await drain()
+
+    assert (await client.get("/v1/payments/ops/worklist", headers=buyer.h)).status_code == 403
+    ops = await staff(make_user, "fin", "FINANCIAL_OPS")
+    work = (await client.get("/v1/payments/ops/worklist", headers=ops.h)).json()
+    kinds = {i["kind"]: i for i in work["items"]}
+    assert set(kinds) == {"PAYOUT", "CHARGEBACK_LOSS"} and work["open"] == 2
+    assert kinds["PAYOUT"]["problem"].startswith("Account closed") and kinds["PAYOUT"]["canRetry"] is True
+    assert kinds["CHARGEBACK_LOSS"]["engagement"] == c["reference"] and kinds["CHARGEBACK_LOSS"]["canRetry"] is False
+
+    # Retrying the payout sends it again (the account is active); it leaves the list.
+    work = (await client.post(f"/v1/payments/ops/PAYOUT/{kinds['PAYOUT']['id']}/retry", headers=ops.h)).json()
+    assert [i["kind"] for i in work["items"]] == ["CHARGEBACK_LOSS"]
+
+    # The loss is closed with a recorded outcome; it stays visible in the history.
+    loss = kinds["CHARGEBACK_LOSS"]["id"]
+    r = await client.post(f"/v1/payments/ops/CHARGEBACK_LOSS/{loss}/resolve", headers=ops.h,
+                          json={"outcome": "WRITTEN_OFF", "note": "Card issuer ruled for the buyer; under the threshold."})
+    assert r.status_code == 200 and r.json()["open"] == 0
+    again = await client.post(f"/v1/payments/ops/CHARGEBACK_LOSS/{loss}/resolve", headers=ops.h,
+                              json={"outcome": "RECOVERED", "note": "Changing my mind later."})
+    assert again.json()["code"] == "ALREADY_RESOLVED"
+    history = (await client.get("/v1/payments/ops/worklist", headers=ops.h, params={"includeResolved": "true"})).json()
+    assert history["items"][0]["resolution"].startswith("WRITTEN_OFF")
+    await drain()
+    async with sf() as s:
+        assert await s.scalar(text("SELECT count(*) FROM audit.audit_records WHERE action LIKE 'payments.ops.%'")) == 2

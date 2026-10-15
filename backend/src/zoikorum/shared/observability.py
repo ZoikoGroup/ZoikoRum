@@ -29,12 +29,24 @@ def _correlation_id() -> str | None:
     return ctx.correlation_id if ctx else None
 
 
+def _chain() -> dict:
+    """Who and what this line belongs to (Handbook: correlation, causation, actor, tenant on every log line)."""
+    ctx = context._ctx.get()
+    if ctx is None:
+        return {}
+    out = {"correlationId": ctx.correlation_id, "causationId": ctx.causation_id, "actorId": ctx.actor_id,
+           "actorType": ctx.actor_type, "tenantId": ctx.tenant_id}
+    return {k: v for k, v in out.items() if v}
+
+
 class JsonFormatter(logging.Formatter):
+    """One JSON object per line in the shape Google Cloud Logging (and most shippers) read: ``severity``,
+    ``message`` and ``time`` are recognised, so errors show as errors and lines sort by when they happened."""
+
     def format(self, record: logging.LogRecord) -> str:
-        body = {"ts": datetime.fromtimestamp(record.created, timezone.utc).isoformat(timespec="milliseconds"),
-                "level": record.levelname, "logger": record.name, "msg": record.getMessage()}
-        if cid := _correlation_id():
-            body["correlationId"] = cid
+        body = {"time": datetime.fromtimestamp(record.created, timezone.utc).isoformat(timespec="milliseconds"),
+                "severity": record.levelname, "logger": record.name, "message": record.getMessage()}
+        body.update(_chain())
         body.update(getattr(record, "fields", None) or {})
         if record.exc_info:
             body["exc"] = self.formatException(record.exc_info)

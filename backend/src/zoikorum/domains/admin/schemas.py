@@ -2,6 +2,8 @@ import uuid
 from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
+from zoikorum.shared.uploads import UploadIn
+
 
 class CaseIn(BaseModel):
     subjectType: Literal["IDENTITY", "PROFESSIONAL", "ORGANIZATION"]
@@ -31,9 +33,12 @@ class NoticeIn(BaseModel):
 
 
 class ActionIn(BaseModel):
-    action: Literal["WARNING", "VISIBILITY_REDUCTION", "ENGAGEMENT_SUSPENSION", "CREDENTIAL_ENFORCEMENT", "VERIFICATION_RESET", "SUSPEND_ACCOUNT", "OFFBOARD"]
+    action: Literal["WARNING", "VISIBILITY_REDUCTION", "DISPUTE_ACCESS_RESTRICTION", "ENGAGEMENT_SUSPENSION",
+                    "CREDENTIAL_ENFORCEMENT", "VERIFICATION_RESET", "SUSPEND_ACCOUNT", "OFFBOARD"]
     notice: NoticeIn
     durationDays: int | None = Field(default=None, ge=1, le=365)
+    # Mandatory remediation (Level 2): what the person must do; tracked to completion.
+    remediation: list[str] = Field(default_factory=list, max_length=10)
 
 
 class ReasonIn(BaseModel):
@@ -42,3 +47,29 @@ class ReasonIn(BaseModel):
 
 class AppealDecisionIn(ReasonIn):
     upheld: bool
+
+
+class ReportIn(BaseModel):
+    subjectType: Literal["PROFESSIONAL", "IDENTITY", "ORGANIZATION", "REVIEW", "MESSAGE"]
+    subjectId: uuid.UUID
+    category: Literal["MISCONDUCT", "FRAUD_OR_SCAM", "MISREPRESENTATION", "HARASSMENT_OR_ABUSE", "OFF_PLATFORM_PAYMENT",
+                      "UNSAFE_OR_ILLEGAL", "FAKE_REVIEW", "OTHER"]
+    description: str = Field(min_length=20, max_length=2000)
+    confidential: bool = False
+
+
+class CloseCaseIn(BaseModel):
+    reason: str = Field(min_length=5, max_length=1000)
+
+
+class AppealIn(BaseModel):
+    reason: str = Field(min_length=20, max_length=4000)
+    evidence: list[UploadIn] = Field(default_factory=list, max_length=5)
+
+
+class RemediationDoneIn(BaseModel):
+    note: str = Field(min_length=5, max_length=1000)
+
+
+class OverrideIn(BaseModel):
+    reason: str = Field(min_length=20, max_length=4000)

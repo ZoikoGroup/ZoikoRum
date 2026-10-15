@@ -43,6 +43,8 @@ EXPECTED_SHORT = {
     "FIRM_REGISTRATION": "your firm's company registration certificate",
     "INSURANCE": "your professional indemnity insurance certificate",
     "JURISDICTION": "proof of your right to practise in that jurisdiction",
+    "BACKGROUND": "the background-check report or the provider's confirmation",
+    "BENEFICIAL_OWNERSHIP": "a register of shareholders or persons with significant control",
 }
 
 

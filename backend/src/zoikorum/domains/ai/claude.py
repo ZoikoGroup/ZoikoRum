@@ -74,9 +74,13 @@ def input_hash(*parts: Any) -> str:
 
 async def parse(prompt: BuiltInPrompt, output_format: type[BaseModel], *, input_sha256: str, timeout: float,
                 session: AsyncSession | None = None, subject_id: uuid.UUID | None = None,
-                requested_by: uuid.UUID | None = None, **request: Any) -> BaseModel | None:
+                requested_by: uuid.UUID | None = None, inference_log: list[dict] | None = None,
+                **request: Any) -> BaseModel | None:
     """``messages.parse`` for a registered prompt. Returns the parsed answer, or None when the feature must fall back
-    (switched off, no key, package missing, outage, open circuit, refusal, no usable answer). Never raises."""
+    (switched off, no key, package missing, outage, open circuit, refusal, no usable answer). Never raises.
+
+    Without a session (slow work outside a transaction), pass ``inference_log``: the record is appended to it and the
+    caller stores it with ``save_inference_logs`` in its own transaction, so every call is still logged."""
     if not available(prompt):
         return None
     if session is not None:
@@ -106,11 +110,18 @@ async def parse(prompt: BuiltInPrompt, output_format: type[BaseModel], *, input_
     latency = round((time.monotonic() - started) * 1000)
     AI_CALLS.labels(prompt.key, outcome.split(":")[0]).inc()
     log.info("ai call prompt=%s model=%s outcome=%s latency_ms=%d", prompt.label, s.ai_model, outcome, latency)
+    record = dict(prompt_version=prompt.version, model=s.ai_model, input_sha256=input_sha256, purpose=prompt.key,
+                  output=answer.model_dump_json() if answer is not None else f"[{outcome}]",
+                  subject_id=subject_id, requested_by=requested_by, latency_ms=latency, fallback_used=answer is None)
     if session is not None:
-        from zoikorum.domains.ai.models import InferenceLog
-
-        session.add(InferenceLog(
-            prompt_version=prompt.version, model=s.ai_model, input_sha256=input_sha256, purpose=prompt.key,
-            output=answer.model_dump_json() if answer is not None else f"[{outcome}]",
-            subject_id=subject_id, requested_by=requested_by, latency_ms=latency, fallback_used=answer is None))
+        save_inference_logs(session, [record])
+    elif inference_log is not None:
+        inference_log.append(record)
     return answer
+
+
+def save_inference_logs(session: AsyncSession, records: list[dict]) -> None:
+    from zoikorum.domains.ai.models import InferenceLog
+
+    for record in records:
+        session.add(InferenceLog(**record))

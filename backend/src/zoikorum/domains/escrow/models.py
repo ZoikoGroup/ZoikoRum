@@ -37,6 +37,10 @@ class EscrowAccount(Base, UUIDPk, Timestamps, Versioned):
     released_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     refunded_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     fees_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    # Retainer auto-funding: a saved payment method and the member whose authority funds each new cycle.
+    auto_fund_token: Mapped[str | None] = mapped_column(String(120))
+    auto_fund_identity_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    auto_fund_enabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Platform fee fixed when the contract activates, so a later fee change never alters a signed engagement.
     fee_bps: Mapped[int | None] = mapped_column(Integer)
 

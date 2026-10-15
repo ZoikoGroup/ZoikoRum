@@ -260,3 +260,111 @@ async def test_weekly_hours_and_served_countries_are_visible(client, make_user, 
     assert (await client.get(f"/v1/professionals/{pro['id']}")).json()["weeklyHours"] == 20
     item = (await client.get("/v1/search/professionals", params={"q": "Tax adviser"})).json()["items"][0]
     assert item["servedJurisdictions"] == ["US"] and "licensedJurisdictions" in item
+
+
+async def test_a_retainer_can_be_paused_and_resumed(client, make_user, drain, sf):
+    pro_user, buyer, c = await retainer_contract(client, make_user, drain)
+    esc = await escrow_of(client, buyer, c)
+    assert (await client.post(f"{C}/{c['id']}/pause", headers=pro_user.h, json={})).status_code == 403  # the buyer decides
+    r = await client.post(f"{C}/{c['id']}/pause", headers=buyer.h, json={"reason": "Quiet quarter"})
+    assert r.status_code == 200 and r.json()["pausedAt"] and r.json()["pauseReason"] == "Quiet quarter"
+    assert (await escrow_of(client, buyer, c))["canFund"] is False
+    blocked = await client.post(f"/v1/escrow/{esc['id']}/fund", headers=buyer.idem(),
+                                json={"milestoneIds": [c["milestones"][0]["id"]], "paymentMethodToken": "tok_visa"})
+    assert blocked.json()["code"] == "RETAINER_PAUSED"
+    clock.advance(timedelta(days=24))  # no funding reminder while paused
+    await drain()
+    clock.set_now(None)
+    async with sf() as s:
+        assert await s.scalar(text("SELECT count(*) FROM platform.outbox WHERE event_type LIKE '%milestone.funding_reminder%'")) == 0
+    r = await client.post(f"{C}/{c['id']}/resume", headers=buyer.h)
+    assert r.json()["pausedAt"] is None and (await escrow_of(client, buyer, c))["canFund"] is True
+    await drain()
+    assert "Retainer paused" in [n["title"] for n in (await client.get("/v1/notifications", headers=pro_user.h)).json()["items"]]
+
+
+async def test_professionals_see_their_own_performance(client, make_user, drain):
+    from test_proposal import tier_b
+
+    pro_user, pro = await tier_b(client, make_user, drain, "insight-pro")
+    r = await client.get("/v1/professionals/me/insights", headers=pro_user.h)
+    assert r.status_code == 200, r.text
+    data = r.json()
+    keys = {m["key"] for m in data["metrics"]}
+    assert keys == {"responseRate", "acceptanceRate", "onTimeRate", "firstPassRate", "disputeRate"}
+    assert all(m["value"] is None for m in data["metrics"])  # no records yet: no misleading percentages
+    buyer = await make_user("insight-buyer")
+    assert (await client.get("/v1/professionals/me/insights", headers=buyer.h)).json()["code"] == "PROFILE_NOT_FOUND"
+
+
+async def test_public_profile_shows_checks_in_progress_report_and_counts_views(client, make_user, drain):
+    from test_proposal import tier_b
+
+    pro_user, pro = await tier_b(client, make_user, drain, "report-pro")
+    await client.post("/v1/verification/cases", headers=pro_user.h, json={"verificationType": "INSURANCE", "subjectType": "PROFESSIONAL", "subjectId": pro["id"]})
+    p = (await client.get(f"/v1/professionals/{pro['id']}")).json()
+    assert "Professional indemnity insurance" in p["verificationInProgress"]
+    assert any(r["check"] == "Identity" and r["status"] == "VERIFIED" for r in p["verificationReport"])
+    assert not any("restrictions" in r["check"].lower() for r in p["verificationReport"])  # screening stays private
+
+    viewer = await make_user("report-viewer")
+    for _ in range(3):
+        await client.get(f"/v1/professionals/{pro['id']}", headers=viewer.h)  # one signed-in viewer counts once a day
+    await client.get(f"/v1/professionals/{pro['id']}", headers=pro_user.h)  # the owner's own views never count
+    await drain()
+    assert (await client.get("/v1/professionals/me/insights", headers=pro_user.h)).json()["profileViews30d"] == 2  # + the anonymous view above
+    assert not [n for n in (await client.get("/v1/notifications", headers=pro_user.h)).json()["items"] if "view" in n["title"].lower()]
+
+
+async def test_enterprise_payments_overview_and_bulk_funding(client, make_user, drain):
+    import uuid as _uuid
+
+    from test_contract import signed_contract
+    from test_escrow import escrow_of
+
+    pro_user, pro, buyer, c = await signed_contract(client, make_user, drain)
+    org_id = c["organizationId"]
+    over = (await client.get(f"/v1/escrow/organization/{org_id}/overview", headers=buyer.h)).json()
+    assert len(over["awaitingFunding"]) == len(c["milestones"]) and over["totals"][0]["heldMinor"] == 0
+    assert over["vendors"][0]["engagements"] == 1
+    assert (await client.get(f"/v1/escrow/organization/{org_id}/overview", headers=pro_user.h)).status_code == 404  # buyer side only
+
+    esc = await escrow_of(client, buyer, c)
+    first = c["milestones"][0]
+    r = (await client.post("/v1/escrow/bulk-fund", headers=buyer.idem(), json={"paymentMethodToken": "tok_visa", "items": [
+        {"accountId": esc["id"], "milestoneIds": [first["id"]]},
+        {"accountId": str(_uuid.uuid4()), "milestoneIds": [first["id"]]}]})).json()
+    assert r["funded"] == 1 and r["failed"] == 1 and r["results"][1]["code"] == "NOT_FOUND"
+    await drain()
+    over = (await client.get(f"/v1/escrow/organization/{org_id}/overview", headers=buyer.h)).json()
+    assert over["totals"][0]["heldMinor"] == first["amount"]["amountMinor"]
+    assert over["releaseTimeline"][0]["milestone"].startswith("M1") and len(over["awaitingFunding"]) == len(c["milestones"]) - 1
+
+
+async def test_retainer_cycles_can_be_funded_automatically_with_every_usual_check(client, make_user, drain, sf):
+    from zoikorum.domains.escrow import service as escrow_service
+
+    pro_user, buyer, c = await retainer_contract(client, make_user, drain)
+    esc = await escrow_of(client, buyer, c)
+    url = f"/v1/escrow/{esc['id']}/auto-funding"
+    assert (await client.put(url, headers=buyer.h, json={"paymentMethodToken": "hosted_checkout"})).json()["code"] == "SAVED_METHOD_REQUIRED"
+    assert (await client.put(url, headers=pro_user.h, json={"paymentMethodToken": "tok_visa"})).status_code == 403
+    on = (await client.put(url, headers=buyer.h, json={"paymentMethodToken": "tok_visa"})).json()
+    assert on["autoFundingEnabledAt"]
+
+    m1, m2 = c["milestones"][0]["id"], c["milestones"][1]["id"]
+    async with sf() as s, s.begin():  # what the cycle's funding reminder triggers
+        await escrow_service.auto_fund_cycle(s, {"contractId": c["id"], "milestoneId": m1})
+    await drain()
+    assert [x["state"] for x in (await escrow_of(client, buyer, c))["allocations"]][:2] == ["HELD", "UNFUNDED"]
+
+    async with sf() as s, s.begin():  # the person who turned it on can now spend less than a cycle costs
+        await s.execute(text("UPDATE buyer.members SET spend_limit_minor = 100, spend_limit_currency = 'USD' WHERE identity_id = :i"), {"i": buyer.id})
+    async with sf() as s, s.begin():
+        await escrow_service.auto_fund_cycle(s, {"contractId": c["id"], "milestoneId": m2})
+    await drain()
+    assert (await escrow_of(client, buyer, c))["allocations"][1]["state"] == "UNFUNDED"
+    titles = [n["title"] for n in (await client.get("/v1/notifications", headers=buyer.h)).json()["items"]]
+    assert "Automatic funding failed" in titles
+    off = (await client.put(url, headers=buyer.h, json={"paymentMethodToken": None})).json()
+    assert off["autoFundingEnabledAt"] is None

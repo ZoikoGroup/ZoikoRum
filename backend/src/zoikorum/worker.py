@@ -29,11 +29,25 @@ async def _bootstrap_timers() -> None:
         from zoikorum.shared import housekeeping  # daily at 02:30 UTC, re-arms itself
 
         await housekeeping.bootstrap(s)
+        from zoikorum.domains.marketplace import service as marketplace  # daily at 07:00 UTC: saved-search alerts
+
+        await marketplace.bootstrap_alerts(s)
+        from zoikorum.domains.trust import service as trust  # daily at 03:00 UTC: scores fade with their half-life
+
+        await trust.bootstrap_decay(s)
+        from zoikorum.domains.audit import archive  # daily at 04:00 UTC: audit records older than 90 days to locked storage
+
+        await archive.bootstrap(s)
+        from zoikorum.domains.notification import service as notifications  # daily at 06:00 UTC: email digests
+
+        await notifications.bootstrap_digests(s)
 
 
 async def run(poll_seconds: float = 0.5) -> None:
     load_domains()
+    from zoikorum.config_check import refuse_incomplete_production
     from zoikorum.shared.schema_guard import ensure_schema_current
+    refuse_incomplete_production()
     await ensure_schema_current()
     await _bootstrap_timers()
     sf = session_factory()

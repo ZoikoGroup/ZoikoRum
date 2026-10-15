@@ -48,6 +48,44 @@ async def get_by_contract(session: AsyncSession, contract_id: uuid.UUID) -> Escr
                          tuple(AllocationSummary(x.milestone_id, x.amount_minor, x.state, x.released_minor, x.refunded_minor) for x in allocs))
 
 
+@dataclass(frozen=True)
+class ChargebackLoss:
+    reference_id: uuid.UUID  # the reversed payment
+    contract_id: uuid.UUID
+    organization_id: uuid.UUID
+    professional_id: uuid.UUID
+    amount_minor: int
+    currency: str
+    booked_at: datetime
+
+
+async def chargeback_losses(session: AsyncSession) -> list[ChargebackLoss]:
+    """Chargebacks on money already released: the platform carried the loss (ledger PLATFORM_CHARGEBACK_LOSS)."""
+    from sqlalchemy import func
+
+    from zoikorum.domains.escrow.models import LedgerEntry
+
+    rows = (await session.execute(
+        select(LedgerEntry.reference_id, EscrowAccount.contract_id, EscrowAccount.organization_id,
+               EscrowAccount.professional_id, func.sum(LedgerEntry.debit_minor), LedgerEntry.currency,
+               func.min(LedgerEntry.created_at))
+        .join(EscrowAccount, EscrowAccount.id == LedgerEntry.account_id)
+        .where(LedgerEntry.ledger_account == "PLATFORM_CHARGEBACK_LOSS", LedgerEntry.debit_minor > 0)
+        .group_by(LedgerEntry.reference_id, EscrowAccount.contract_id, EscrowAccount.organization_id,
+                  EscrowAccount.professional_id, LedgerEntry.currency))).all()
+    return [ChargebackLoss(*r) for r in rows]
+
+
+IN_ESCROW = ("FUNDING", "HELD", "ON_HOLD", "RELEASE_PENDING_APPROVAL")
+
+
+async def money_in_escrow(session: AsyncSession, contract_id: uuid.UUID) -> bool:
+    """True while any milestone's money is being paid in, held, frozen or waiting for release approval."""
+    return bool(await session.scalar(
+        select(Allocation.id).join(EscrowAccount, EscrowAccount.id == Allocation.account_id)
+        .where(EscrowAccount.contract_id == contract_id, Allocation.state.in_(IN_ESCROW)).limit(1)))
+
+
 async def get_allocation_states_for_amendment(
     session: AsyncSession, contract_id: uuid.UUID, milestone_ids: set[uuid.UUID]
 ) -> dict[uuid.UUID, str] | None:
@@ -86,3 +124,45 @@ async def ledger_totals(session: AsyncSession, since: datetime, until: datetime)
     from zoikorum.domains.escrow.service import totals
 
     return await totals(session, since, until)
+
+
+async def ledger_for_contract(session: AsyncSession, contract_id: uuid.UUID) -> list[dict]:
+    """The engagement's escrow ledger lines, oldest first (append-only, double-entry)."""
+    from zoikorum.domains.escrow.models import LedgerEntry
+
+    account = await session.scalar(select(EscrowAccount).where(EscrowAccount.contract_id == contract_id))
+    if account is None:
+        return []
+    rows = (await session.scalars(select(LedgerEntry).where(LedgerEntry.account_id == account.id)
+                                  .order_by(LedgerEntry.created_at))).all()
+    return [{"at": r.created_at.isoformat(), "type": r.entry_type, "account": r.ledger_account, "debitMinor": r.debit_minor,
+             "creditMinor": r.credit_minor, "currency": r.currency, "memo": r.memo} for r in rows]
+
+
+async def account_id_for_contract(session: AsyncSession, contract_id: uuid.UUID) -> uuid.UUID | None:
+    return await session.scalar(select(EscrowAccount.id).where(EscrowAccount.contract_id == contract_id))
+
+
+async def kpis(session: AsyncSession, since, until) -> dict:
+    """Money through escrow in the period (funded, released, fees, refunded) and held now, per currency."""
+    from sqlalchemy import func
+
+    from zoikorum.domains.escrow.models import Funding, Release
+
+    out: dict[str, dict] = {}
+
+    def row(ccy: str) -> dict:
+        return out.setdefault(ccy, {"currency": ccy, "fundedMinor": 0, "releasedMinor": 0, "feesMinor": 0, "heldNowMinor": 0,
+                                    "frozenNowMinor": 0})
+    for ccy, total in (await session.execute(select(Funding.currency, func.sum(Funding.amount_minor)).where(
+            Funding.status == "CAPTURED", Funding.captured_at >= since, Funding.captured_at < until).group_by(Funding.currency))).all():
+        row(ccy)["fundedMinor"] = int(total or 0)
+    for ccy, gross, fee in (await session.execute(select(Release.currency, func.sum(Release.gross_minor), func.sum(Release.fee_minor)).where(
+            Release.created_at >= since, Release.created_at < until).group_by(Release.currency))).all():
+        row(ccy)["releasedMinor"], row(ccy)["feesMinor"] = int(gross or 0), int(fee or 0)
+    for ccy, held, frozen in (await session.execute(select(EscrowAccount.currency, func.sum(EscrowAccount.held_minor),
+                                                           func.sum(EscrowAccount.on_hold_minor)).group_by(EscrowAccount.currency))).all():
+        row(ccy)["heldNowMinor"], row(ccy)["frozenNowMinor"] = int(held or 0), int(frozen or 0)
+    for r in out.values():
+        r["takeRateBps"] = round(10000 * r["feesMinor"] / r["releasedMinor"]) if r["releasedMinor"] else None
+    return {"byCurrency": sorted(out.values(), key=lambda r: r["currency"])}

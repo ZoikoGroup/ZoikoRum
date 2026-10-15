@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import getpass
 import os
 
@@ -72,6 +73,48 @@ async def _reconcile(day: str | None) -> None:
               f"  provider={c['provider'] if c['provider'] is not None else '-'}")
 
 
+async def _db_grants(role: str | None) -> None:
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from zoikorum.config import get_settings
+    from zoikorum.shared import db_grants
+
+    s = get_settings()
+    role = role or s.db_app_role
+    if not role:
+        print("No ZK_DB_APP_ROLE: the app uses the owner account (development). Nothing to do.")
+        return
+    engine = create_async_engine(s.migration_database_url or s.database_url)
+    try:
+        async with engine.begin() as conn:
+            count = await db_grants.apply(conn, role)
+    finally:
+        await engine.dispose()
+    print(f"Privileges set for {role}: {count} statements (append-only tables: read and insert only).")
+
+
+async def _rotate_field_keys() -> None:
+    """Re-encrypt every stored sensitive value that is not yet on the active key, in small transactions."""
+    from sqlalchemy import column as sql_column, select, table as sql_table, update
+
+    from zoikorum.shared.crypto import ENCRYPTED_COLUMNS, active_key_id, decrypt_field, encrypt_field, key_id_of
+
+    target = active_key_id()
+    async with session_factory()() as session:
+        for table, column in ENCRYPTED_COLUMNS:
+            schema, name = table.split(".")
+            t = sql_table(name, sql_column("id"), sql_column(column), schema=schema)  # identifiers quoted by SQLAlchemy
+            rows = (await session.execute(select(t.c.id, t.c[column]).where(t.c[column].is_not(None)))).all()
+            changed = 0
+            for row_id, value in rows:
+                if key_id_of(value) == target and value.startswith("v2:"):
+                    continue
+                await session.execute(update(t).where(t.c.id == row_id).values({column: encrypt_field(decrypt_field(value))}))
+                changed += 1
+            await session.commit()
+            print(f"{table}.{column}: {changed} re-encrypted, {len(rows) - changed} already on key {target}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="zoikorum")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -83,8 +126,16 @@ def main() -> None:
     sub.add_parser("reindex-search", help="rebuild the search projection")
     sd = sub.add_parser("schema-doc", help="write the database schema as Markdown")
     sd.add_argument("--out", default="docs/DATABASE_SCHEMA.md")
+    ac = sub.add_parser("api-contract", help="write the API models and their fields for the web app's contract test")
+    ac.add_argument("--out", default="../frontend/src/api/contract.json")
     rc = sub.add_parser("reconcile", help="reconcile escrow ledger, payments and provider for one day")
     rc.add_argument("--day", help="YYYY-MM-DD (UTC); default yesterday")
+    nk = sub.add_parser("new-field-key", help="make a field encryption data key wrapped by Cloud KMS (prints only the wrapped key)")
+    nk.add_argument("--id", required=True, help="a name for the key, e.g. 2026-10")
+    sub.add_parser("new-push-keys", help="print a VAPID key pair for browser push notifications (ZK_VAPID_PUBLIC_KEY / PRIVATE_KEY)")
+    sub.add_parser("rotate-field-keys", help="re-encrypt stored sensitive fields with ZK_FIELD_ACTIVE_KEY")
+    dg = sub.add_parser("db-grants", help="give the app database user its privileges (append-only tables: read and insert)")
+    dg.add_argument("--role", help="the app user (default ZK_DB_APP_ROLE)")
     cc = sub.add_parser("check-config", help="report missing or unreachable services for this environment")
     cc.add_argument("--connect", action="store_true", help="also try the database, Redis, S3 and the email server")
     args = parser.parse_args()
@@ -92,14 +143,43 @@ def main() -> None:
         from zoikorum.config_check import run
 
         raise SystemExit(run(args.connect))
+    if args.cmd == "new-field-key":
+        from zoikorum.shared.crypto import new_wrapped_key
+
+        wrapped = new_wrapped_key(args.id)
+        print("Add to ZK_FIELD_DATA_KEYS (keep the existing entries), then set ZK_FIELD_ACTIVE_KEY to use it:")
+        print(json.dumps({args.id: wrapped}))
+    if args.cmd == "new-push-keys":
+        import base64
+
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import ec
+
+        key = ec.generate_private_key(ec.SECP256R1())
+        public = key.public_key().public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
+        private = key.private_numbers().private_value.to_bytes(32, "big")
+        b64 = lambda b: base64.urlsafe_b64encode(b).rstrip(b"=").decode()  # noqa: E731
+        print("Store the private key as a secret; the public key is safe to share.")
+        print(f"ZK_VAPID_PUBLIC_KEY={b64(public)}")
+        print(f"ZK_VAPID_PRIVATE_KEY={b64(private)}")
+    if args.cmd == "rotate-field-keys":
+        asyncio.run(_rotate_field_keys())
+    if args.cmd == "db-grants":
+        asyncio.run(_db_grants(args.role))
     if args.cmd == "reconcile":
         asyncio.run(_reconcile(args.day))
     if args.cmd == "reindex-search":
         asyncio.run(_reindex_search())
+    if args.cmd == "api-contract":
+        from zoikorum.api_contract import render as render_contract
+
+        with open(args.out, "w", encoding="utf-8", newline=chr(10)) as f:
+            f.write(render_contract())
+        print(f"Wrote {args.out}")
     if args.cmd == "schema-doc":
         from zoikorum.schema_doc import render
 
-        with open(args.out, "w", encoding="utf-8") as f:
+        with open(args.out, "w", encoding="utf-8", newline="\n") as f:
             f.write(render())
         print(f"Wrote {args.out}")
     if args.cmd == "create-admin":

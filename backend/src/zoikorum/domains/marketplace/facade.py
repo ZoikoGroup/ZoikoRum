@@ -103,3 +103,27 @@ async def pending_specialization_names(session: AsyncSession, professional_id: u
     from zoikorum.domains.marketplace.service import pending_names
 
     return await pending_names(session, professional_id)
+
+
+async def search_specializations(session: AsyncSession, q: str, limit: int = 6) -> list[dict]:
+    """Active specializations whose name contains the text (autocomplete), names starting with it first."""
+    from sqlalchemy import case
+
+    like = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    rows = (await session.execute(select(TaxonomyNode.slug, TaxonomyNode.name).where(
+        TaxonomyNode.level == "SPECIALIZATION", TaxonomyNode.status == "ACTIVE", TaxonomyNode.name.ilike(like, escape="\\"))
+        .order_by(case((TaxonomyNode.name.ilike(q + "%"), 0), else_=1), TaxonomyNode.name).limit(limit))).all()
+    return [{"slug": slug, "name": name} for slug, name in rows]
+
+
+async def category_specializations(session: AsyncSession, category_slug: str) -> list[str]:
+    rows = (await session.scalars(select(TaxonomyNode.slug).where(
+        TaxonomyNode.category_slug == category_slug, TaxonomyNode.level == "SPECIALIZATION", TaxonomyNode.status == "ACTIVE"))).all()
+    return list(rows)
+
+
+async def all_specializations(session: AsyncSession) -> list[dict]:
+    """Every active specialization (slug, name), for search's concept matching."""
+    rows = (await session.execute(select(TaxonomyNode.slug, TaxonomyNode.name).where(
+        TaxonomyNode.level == "SPECIALIZATION", TaxonomyNode.status == "ACTIVE"))).all()
+    return [{"slug": s, "name": n} for s, n in rows]

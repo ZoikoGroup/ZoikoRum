@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { formatMoney, orgApi, type Organization } from '../../api/orgs'
 import { LABEL, taxonomyApi, type TaxonomyCategory } from '../../api/professional'
@@ -14,6 +14,10 @@ import { COUNTRIES } from '../Join'
 import { countryName } from '../ProfessionalPages'
 import { useSavedIds } from '../SavedPage'
 import { savedApi } from '../../api/saved'
+import { SearchBox } from '../../components/SearchBox'
+
+const INDUSTRIES = ['Professional Services', 'Financial Services', 'Technology', 'Healthcare', 'Manufacturing', 'Retail & Consumer',
+  'Energy & Utilities', 'Public Sector', 'Education', 'Real Estate', 'Other']
 
 const PAGE = 20
 const MAX_COMPARE = 3
@@ -113,7 +117,6 @@ export default function FindProfessionals() {
     setItems([...items, ...r.items])
     setOffset(next)
   }
-  function submit(e: FormEvent) { e.preventDefault(); set('q', q.trim() || null) }
   /** A described need replaces the filters (keeping whose policy applies and the sort), like starting a new search. */
   function applyIntent(f: IntentFilters) {
     const next = new URLSearchParams()
@@ -143,7 +146,9 @@ export default function FindProfessionals() {
     q: (v) => `“${v}”`, spec: (v) => v.split(',').map((s) => specName[s] ?? s).join(', '), tier: (v) => `Tier ${v.replace(',', ' or ')}`,
     verified: (v) => `Verified: ${v.replace(/,/g, ', ')}`, jurisdiction: (v) => `Serves ${countryName(v)}`, experience: (v) => `${v} years`,
     engagementType: (v) => LABEL[v] ?? v, delivery: (v) => LABEL[v] ?? v, availability: (v) => LABEL[v] ?? v, pricingModel: (v) => LABEL[v] ?? v,
-    credential: (v) => `Credential: ${v}`,
+    credential: (v) => `Credential: ${v}`, industry: (v) => `Industry: ${v}`, crossBorder: () => 'Cross-border',
+    budgetMaxMinor: (v) => `Up to ${formatMoney({ amountMinor: Number(v), currency: params.get('budgetCurrency') ?? 'USD' })}`,
+    language: (v) => `Speaks ${v}`, enterpriseReady: () => 'Enterprise Ready', specMatch: () => 'Match all expertise',
   }
   const active: [string, string][] = [...params.entries()].filter(([k]) => k in NAMES).map(([k, v]) => [k, NAMES[k](v)])
   const relaxable = active.some(([k]) => !['q', 'spec'].includes(k))
@@ -217,14 +222,18 @@ export default function FindProfessionals() {
         </div>} />
 
       <section className="card panel search-panel">
-        <form className="search-bar" onSubmit={submit} role="search">
-          <input className="input" aria-label="Search professionals" value={q} onChange={(e) => setQ(e.target.value)}
-            placeholder="Search by profession, expertise, service or keyword (e.g. fractional CFO, transfer pricing, SOX)" />
-          <button className="btn btn-primary"><Icon name="search" /> Search</button>
-        </form>
+        <SearchBox value={q} onChange={setQ} onSearch={(v) => set('q', v || null)} profileBase="/professionals"
+          onPickSpecialization={(slug) => { if (!inList('spec', slug)) toggleList('spec', slug) }}
+          placeholder="Search by profession, expertise, service or keyword (e.g. fractional CFO, transfer pricing, SOX)" />
         <DescribeNeed onApply={applyIntent} />
         <div className="filter-row">
-          {select('spec', 'Expertise', groups.flatMap((g) => g.specializations.map((s) => [s.slug, s.name] as [string, string])), 'Any expertise')}
+          <label className="filter-box">
+            <span>Expertise (add several)</span>
+            <select value="" onChange={(e) => { if (e.target.value && !inList('spec', e.target.value)) toggleList('spec', e.target.value) }}>
+              <option value="">{params.get('spec') ? 'Add another…' : 'Any expertise'}</option>
+              {groups.flatMap((g) => g.specializations).filter((s) => !inList('spec', s.slug)).map((s) => <option key={s.slug} value={s.slug}>{s.name}</option>)}
+            </select>
+          </label>
           {select('jurisdiction', 'Jurisdiction', COUNTRIES, 'Global')}
           {select('tier', 'Verification', [['A', 'Tier A — Fully verified'], ['B', 'Tier B — Verified identity'], ['A,B', 'Tier A or B']], 'Any status')}
           {select('pricingModel', 'Engagement model', PRICING, 'Any model')}
@@ -252,6 +261,36 @@ export default function FindProfessionals() {
             <label key={t} className="checkbox small"><input type="checkbox" checked={inList('tier', t)} onChange={() => toggleList('tier', t)} />
               <span>Tier {t} <span className="muted">({data?.facets.tier?.find((f) => f.value === t)?.count ?? 0})</span></span></label>
           ))}
+          {(params.get('spec') ?? '').split(',').filter(Boolean).length > 1 && <>
+            <div className="filter-label">Expertise</div>
+            <label className="checkbox small"><input type="checkbox" checked={params.get('specMatch') === 'all'}
+              onChange={(e) => set('specMatch', e.target.checked ? 'all' : null)} /><span>Must have all selected expertise</span></label>
+          </>}
+          <details className="advanced-filters">
+            <summary className="filter-label">More filters</summary>
+            <label className="filter-label" htmlFor="f-ind">Industry experience</label>
+            <select id="f-ind" className="input" value={params.get('industry') ?? ''} onChange={(e) => set('industry', e.target.value || null)}>
+              <option value="">Any</option>{INDUSTRIES.map((i) => <option key={i}>{i}</option>)}</select>
+            <label className="checkbox small"><input type="checkbox" checked={params.get('enterpriseReady') === 'true'}
+              onChange={(e) => set('enterpriseReady', e.target.checked ? 'true' : null)} /><span>Enterprise Ready only</span></label>
+            <label className="checkbox small"><input type="checkbox" checked={params.get('crossBorder') === 'true'}
+              onChange={(e) => set('crossBorder', e.target.checked ? 'true' : null)} /><span>Works across borders</span></label>
+            <label className="filter-label" htmlFor="f-budget">Starting price up to</label>
+            <span className="row" style={{ flexWrap: 'nowrap' }}>
+              <input id="f-budget" className="input" type="number" min={0} placeholder="Any"
+                defaultValue={params.get('budgetMaxMinor') ? Number(params.get('budgetMaxMinor')) / 100 : ''} key={params.get('budgetMaxMinor') ?? ''}
+                onBlur={(e) => set('budgetMaxMinor', e.target.value ? String(Math.round(Number(e.target.value) * 100)) : null)} />
+              <select className="input" aria-label="Budget currency" value={params.get('budgetCurrency') ?? 'USD'} onChange={(e) => set('budgetCurrency', e.target.value)}>
+                {['USD', 'EUR', 'GBP', 'INR'].map((c) => <option key={c}>{c}</option>)}</select>
+            </span>
+            <span className="muted small">Professionals who quote on request still show.</span>
+            <label className="filter-label" htmlFor="f-cred">Credential</label>
+            <input id="f-cred" className="input" placeholder="e.g. CPA, ACCA" defaultValue={params.get('credential') ?? ''} key={`c${params.get('credential') ?? ''}`}
+              onBlur={(e) => set('credential', e.target.value.trim() || null)} />
+            <label className="filter-label" htmlFor="f-lang">Language</label>
+            <input id="f-lang" className="input" placeholder="e.g. German" defaultValue={params.get('language') ?? ''} key={`l${params.get('language') ?? ''}`}
+              onBlur={(e) => set('language', e.target.value.trim() || null)} />
+          </details>
         </aside>
 
         <section className="card panel results-panel">

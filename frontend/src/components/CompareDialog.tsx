@@ -6,7 +6,7 @@ import { savedApi, type CompareItem } from '../api/saved'
 import { DIMENSION_VALUE, DIMENSIONS } from '../api/verification'
 import { Avatar } from './dashboard'
 import { TierBadge } from './portal'
-import { ErrorAlert, useDialog } from './ui'
+import { ErrorAlert, useDialog, Loading } from './ui'
 
 /** Shareable link to the same comparison (Category doc s.7.2: "shareable comparison link (signed-in)"). */
 export const compareLink = (ids: string[]) => `${window.location.origin}/app/compare?ids=${ids.join(',')}`
@@ -43,7 +43,7 @@ export function CompareTable({ ids }: { ids: string[] }) {
   return (
     <>
         <ErrorAlert error={error} />
-        {!items ? <p className="muted">Loading…</p> : (
+        {!items ? <Loading /> : (
           <div className="compare-scroll">
             <table className="data compare-table">
               <thead><tr><th><span className="sr-only">Detail</span></th>{items.map((c) => (

@@ -117,6 +117,21 @@ class Refund(Base, UUIDPk, Timestamps):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="INITIATED")  # INITIATED | SETTLED | FAILED
     provider_ref: Mapped[str | None] = mapped_column(String(100))
     settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failure_message: Mapped[str | None] = mapped_column(String(300))  # why the provider could not return it
+
+
+class OpsResolution(Base, UUIDPk, CreatedAt):
+    """Financial Operations closing a money problem by hand (append-only): a failed payout or refund settled outside
+    the platform, or a chargeback loss recovered or written off. Who, when, what and why."""
+
+    __tablename__ = "ops_resolutions"
+    __table_args__ = (UniqueConstraint("item_kind", "item_id"), {"schema": SCHEMA})
+
+    item_kind: Mapped[str] = mapped_column(String(30), nullable=False)  # PAYOUT | REFUND | CHARGEBACK_LOSS
+    item_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(30), nullable=False)  # RECOVERED | WRITTEN_OFF | SETTLED_OUTSIDE
+    note: Mapped[str] = mapped_column(String(1000), nullable=False)
+    resolved_by: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
 
 
 class WebhookEvent(Base, UUIDPk, CreatedAt):

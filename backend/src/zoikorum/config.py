@@ -24,6 +24,15 @@ class Settings(BaseSettings):
     tracing_endpoint: str | None = None  # OpenTelemetry collector (OTLP/HTTP traces URL); needs backend[tracing]
     tracing_sample_ratio: float = Field(default=0.1, ge=0, le=1)  # share of new traces kept
     frontend_url: str = "http://localhost:5173"  # used to build links in invitations / emails
+    # Sign in with Google / Microsoft (OpenID Connect apps registered with each; empty: the button is not shown).
+    google_client_id: str | None = None
+    # Browser push notifications (Web Push): a VAPID key pair (python -m zoikorum.cli new-push-keys) and a contact address.
+    vapid_public_key: str | None = None
+    vapid_private_key: str | None = None
+    vapid_subject: str = "mailto:security@example.com"
+    google_client_secret: str | None = None
+    microsoft_client_id: str | None = None
+    microsoft_client_secret: str | None = None
     # The separate staff web app (frontend VITE_PORTAL=staff). Links in emails to staff use it; empty: frontend_url.
     staff_frontend_url: str | None = None
     # Passkeys: the WebAuthn relying party (a domain). Empty: the web app's host name. With separate customer and staff
@@ -31,9 +40,23 @@ class Settings(BaseSettings):
     webauthn_rp_id: str | None = None
     database_url: str = "postgresql+asyncpg://zoikorum:zoikorum@localhost:5434/zoikorum"
     db_pool_size: int = 10
+    # Separate analytics store (optional): reports and dashboards read from this database, normally a read replica of
+    # the main one, so heavy reporting never slows down the platform. Empty: they read the main database.
+    analytics_database_url: str | None = None
+    # Production: two database users. Migrations run as the owner (ZK_MIGRATION_DATABASE_URL); the API and worker use
+    # ZK_DATABASE_URL as ZK_DB_APP_ROLE, which may add to append-only tables (audit trail, ledger, evidence, signatures)
+    # but never change or delete them, and cannot switch their protective triggers off (cli db-grants).
+    migration_database_url: str | None = None
+    db_app_role: str | None = None
 
     jwt_secret: str = Field(default="dev-only-secret-change-me-32-bytes-minimum!!")
     field_encryption_key: str = Field(default="dev-only-field-key-change-me")
+    # Envelope encryption (production): data keys wrapped by a Cloud KMS key; only KMS can unwrap them.
+    # field_data_keys = {"<key id>": "<wrapped key, base64>"} (python -m zoikorum.cli new-field-key makes one);
+    # field_active_key is the id new values are encrypted with. Older ids stay listed so existing values decrypt.
+    field_kms_key_name: str | None = None  # projects/<p>/locations/<l>/keyRings/<r>/cryptoKeys/<k>
+    field_data_keys: dict[str, str] = Field(default_factory=dict)
+    field_active_key: str | None = None
     jwt_issuer: str = "zoikorum"
     access_token_ttl_seconds: int = 900
     refresh_token_ttl_seconds: int = 14 * 24 * 3600
@@ -97,6 +120,9 @@ class Settings(BaseSettings):
     storage_dir: str = "var/storage"  # LocalDiskStorage root (development); S3 bucket in production
     storage_provider: str = "local"  # local | gcs (Google Cloud Storage) | s3 (Amazon S3)
     gcs_bucket: str | None = None  # Google Cloud Storage bucket (object versioning on, public access prevented)
+    malware_scanner: str = "none"  # clamav (production) | none (development only): every upload is scanned first
+    clamav_host: str = "clamav"
+    clamav_port: int = 3310
     # Optional customer-managed encryption key: projects/<p>/locations/<l>/keyRings/<r>/cryptoKeys/<k>
     gcs_kms_key_name: str | None = None
     s3_bucket: str | None = None
@@ -108,16 +134,30 @@ class Settings(BaseSettings):
 
     # Contracts (Step 7). Platform defaults until enterprise policy profiles can override them.
     signature_deadline_days: int = 7  # unsigned contracts escalate after this
+    request_response_hours: int = 72  # professionals are asked to answer a request within this; reminded a day before
+    termination_response_days: int = 7  # a request to end an engagement by agreement lapses if not answered
     acceptance_window_days: int = 5  # buyer's review window after a milestone is submitted
     funding_reminder_days: int = 7  # remind the buyer this many days before an unfunded milestone / retainer cycle is due
 
     # Disputes (Step 9). Direct resolution default is from the Dispute Resolution doc s.10; the evidence window is not
     # stated in the documents (management to confirm).
     dispute_evidence_days: int = 3
+    dispute_retention_years: int = 7  # closed dispute records are kept at least this long (longer where policy or law says)
     erasure_cooling_off_days: int = 14  # account deletion can be cancelled until then
     data_export_days: int = 7  # how long a data export can be downloaded
-    verification_appeal_days: int = 14  # time to appeal a failed or revoked verification (Governance playbook s.11)
+    # Ethics code: no approval without human oversight. This share (0-100) of checks a partner approved automatically
+    # gets a compliance officer's second look (confirm, or overturn with a reason).
+    verification_second_look_pct: int = Field(default=10, ge=0, le=100)
+    verification_appeal_days: int = 14
+    enforcement_triage_hours: int = 48  # a new safety case is looked at within this (overdue cases show first)
+    enforcement_appeal_days: int = 14  # time to appeal an enforcement action after it is applied
+    enforcement_policy_version: str = "trust-safety-playbook@2026.1"  # recorded with every enforcement decision  # time to appeal a failed or revoked verification (Governance playbook s.11)
     dispute_direct_resolution_business_days: int = 5
+    # Invoice tax by the buyer's country (their contracting legal entity, else the organisation). Amounts are tax-inclusive:
+    # the invoice shows "of which <label> <rate>%" and the money moved does not change. Finance sets the rules, e.g.
+    # {"IN": {"label": "GST", "rateBps": 1800, "basis": "FEE"}, "GB": {"label": "VAT", "rateBps": 2000, "basis": "TOTAL"}}
+    # basis FEE: tax on Zoikorum's platform fee only; TOTAL: on the whole amount. Empty: invoices show no tax.
+    tax_rules: dict[str, dict] = Field(default_factory=dict)
     # Days after acceptance in which accepted work may still be disputed. 0 until management sets one (not enforced yet).
     dispute_challenge_window_days: int = 0
 

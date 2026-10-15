@@ -22,6 +22,7 @@ from zoikorum.domains.contract import facade as contract_facade
 from zoikorum.domains.escrow import facade as escrow_facade
 from zoikorum.domains.payments.models import INVOICE_NUMBER_SEQ, Invoice, PaymentIntent, Payout, PayoutAccount, Refund
 from zoikorum.domains.payments.providers import get_provider
+from zoikorum.domains.payments.tax import included_tax
 from zoikorum.domains.payments.schemas import ChargeOut, EarningsOut, InvoiceOut, PayoutAccountIn, PayoutAccountOut, PayoutOut, RefundOut
 from zoikorum.domains.professional import facade as professional_facade
 from zoikorum.domains.trust import facade as trust_facade
@@ -138,10 +139,17 @@ async def on_released(session: AsyncSession, payload: dict) -> None:
     contract = await contract_facade.get_contract(session, contract_id)
 
     number = f"ZK-INV-{await session.scalar(INVOICE_NUMBER_SEQ.next_value().select()):06d}"
-    # Tax via the TaxCalculator seam: 0 until tax rules per jurisdiction are configured.
-    inv = Invoice(number=number, release_id=release_id, organization_id=uuid.UUID(str(payload["organizationId"])), contract_id=contract_id,
-                  milestone_id=milestone_id, lines=[{"description": f"M{m.sequence} {m.title}" if m else "Accepted work", "amountMinor": gross}],
-                  tax_minor=0, total_minor=gross, currency=ccy, issued_at=clock.now())
+    org_id = uuid.UUID(str(payload["organizationId"]))
+    entity = contract.buyer_legal_entity if contract else None
+    org = await buyer_facade.get_organization(session, org_id)
+    tax = included_tax((entity or {}).get("country") or (org.country if org else None), gross, fee)
+    lines = [{"description": f"M{m.sequence} {m.title}" if m else "Accepted work", "amountMinor": gross}]
+    if tax:  # tax-inclusive: shown, never added (the total is what was paid)
+        lines.append({"description": tax.description, "amountMinor": 0, "taxMinor": tax.amount_minor, "included": True,
+                      "taxLabel": tax.label, "rateBps": tax.rate_bps, "basis": tax.basis})
+    inv = Invoice(number=number, release_id=release_id, organization_id=org_id, contract_id=contract_id,
+                  milestone_id=milestone_id, lines=lines, tax_minor=tax.amount_minor if tax else 0, total_minor=gross,
+                  currency=ccy, issued_at=clock.now())
     session.add(inv)
     await session.flush()
     record_event(session, E.INVOICE_ISSUED, aggregate_type="Invoice", aggregate_id=inv.id, tenant_id=inv.organization_id,
@@ -268,8 +276,10 @@ async def invoice_pdf(session: AsyncSession, actor: Actor, invoice_id: uuid.UUID
     content = json.dumps({"number": inv.number, "lines": inv.lines, "taxMinor": inv.tax_minor, "totalMinor": inv.total_minor,
                           "currency": inv.currency, "issuedAt": inv.issued_at.isoformat()}, sort_keys=True, separators=(",", ":"))
     fingerprint = hashlib.sha256(content.encode()).hexdigest()
-    items = [(str(line.get("description", "")), pdf.money(int(line.get("amountMinor", 0)), inv.currency)) for line in inv.lines]
-    if inv.tax_minor:
+    items = [(str(line.get("description", "")),
+              pdf.money(int(line.get("taxMinor" if line.get("included") else "amountMinor", 0)), inv.currency))
+             for line in inv.lines]
+    if inv.tax_minor and not any(line.get("included") for line in inv.lines):
         items.append(("Tax", pdf.money(inv.tax_minor, inv.currency)))
     doc = pdf.PdfDocument(
         title="Invoice", reference=inv.number, issued=inv.issued_at, fingerprint=fingerprint,
@@ -398,6 +408,7 @@ async def on_refunded(session: AsyncSession, payload: dict) -> None:
 
 def refund_failed(session: AsyncSession, r: Refund, message: str | None) -> None:
     r.status = "FAILED"
+    r.failure_message = (message or "The payment provider could not return the money")[:300]
     record_event(session, E.REFUND_FAILED, aggregate_type="Refund", aggregate_id=r.id, tenant_id=r.organization_id,
                  payload={"refundId": r.id, "organizationId": r.organization_id, "contractId": r.contract_id,
                           "amountMinor": r.amount_minor, "currency": r.currency,
@@ -434,7 +445,8 @@ async def refunds(session: AsyncSession, actor: Actor, organization_id: uuid.UUI
     stmt, lim = paginate(select(Refund).where(Refund.organization_id == organization_id), Refund, cursor, limit)
     return page_of((await session.scalars(stmt)).all(), lim, lambda r: RefundOut(
         id=r.id, contractId=r.contract_id, milestoneId=r.milestone_id, disputeId=r.dispute_id,
-        amount=_m(r.amount_minor, r.currency), status=r.status, createdAt=r.created_at, settledAt=r.settled_at))
+        amount=_m(r.amount_minor, r.currency), status=r.status, failureMessage=r.failure_message, createdAt=r.created_at,
+        settledAt=r.settled_at))
 
 
 async def resume_payout(session: AsyncSession, payout_id: uuid.UUID) -> None:

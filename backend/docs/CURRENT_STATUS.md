@@ -34,7 +34,7 @@ Migration `f1360ce42a96` joins `e0259bc31d85` (integration changes) and `41e8636
 
 - Stripe hosted checkout, Connect onboarding, signed callbacks, transfers and payouts have adapter/UI code in `domains/payments/` and the payments panels. Selecting Stripe requires `ZK_PAYMENT_PROVIDER=stripe`, secret key, webhook secret, approved funds-flow configuration and enabled operating countries. Credentials alone do not establish regulated escrow, partner approval, or successful live transactions.
 - Persona hosted identity code lives in `domains/verification/integration.py` and `providers.py`, with `HostedVerification` frontend controls. Configure `ZK_VERIFICATION_PROVIDER=persona`, API key, template ID and webhook secret. Other checks still require human review or separate live providers.
-- S3 versioned storage and optional Object Lock code lives in `shared/storage.py`; install `backend[cloud]` and configure bucket, region, AWS identity, encryption and agreed retention settings. Full archival/legal-hold operations and deployment compliance are not established by the adapter.
+- File storage: Google Cloud Storage (`ZK_STORAGE_PROVIDER=gcs`, default for production) or Amazon S3, both in `shared/storage.py`; see [DEPLOYMENT.md](DEPLOYMENT.md).
 - SMTP and optional Anthropic assistance are configurable; real delivery, provider outcomes and model availability were not verified in this merge. Search remains PostgreSQL full-text; OpenSearch/vector search is not implemented.
 - Enterprise SSO/SCIM/passkeys, authorised retainer auto-funding, and agreed post-settlement recovery rules remain gaps. See the [product decisions and limits](STEPS_12_18_IMPLEMENTATION.md#product-document-decisions-and-limits).
 

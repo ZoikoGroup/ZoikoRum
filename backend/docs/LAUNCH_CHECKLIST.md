@@ -14,8 +14,10 @@ Each needs a company account, a contract or terms accepted, and keys stored in t
 
 | ✓ | Service | What it is for | Owner | Setting(s) |
 |---|---|---|---|---|
-| ☐ | Cloud hosting (servers, PostgreSQL with backups, S3) | Running the platform, files | Engineering lead | `ZK_DATABASE_URL`, `ZK_S3_BUCKET`, `ZK_AWS_REGION` |
-| ☐ | Domain name and TLS certificate | `https://` address customers use | Engineering lead | `ZK_FRONTEND_URL` |
+| ☐ | Google Cloud project: VM, Cloud SQL with backups and two database users, GCS bucket, Cloud KMS key, Artifact Registry, Secret Manager ([DEPLOYMENT.md](DEPLOYMENT.md#google-cloud-setup-once-per-environment)) | Running the platform, files, keys | Engineering lead | `ZK_DATABASE_URL`, `ZK_MIGRATION_DATABASE_URL`, `ZK_DB_APP_ROLE`, `ZK_GCS_BUCKET`, `ZK_FIELD_KMS_KEY_NAME`, `ZK_FIELD_DATA_KEYS` |
+| ☐ | HTTPS load balancer with managed certificates for the app and staff domains; Identity-Aware Proxy on the staff app | Public addresses; only staff reach the staff app | Engineering lead | `ZK_FRONTEND_URL`, `ZK_STAFF_FRONTEND_URL`, `ZK_WEBAUTHN_RP_ID`, `ZK_LB_IP` |
+| ☐ | GitHub: `production` environment with required reviewers, release variables, Workload Identity Federation | Approved releases ([release workflow](../../.github/workflows/release.yml)) | Engineering lead | — |
+| ☐ | Domain names (app and staff) | `https://` addresses customers and staff use | Engineering lead | DNS records to the load balancer |
 | ☐ | Email sending (e.g. AWS SES), with SPF/DKIM/DMARC on the domain | Confirmations, password resets, notices | Engineering lead | `ZK_EMAIL_PROVIDER=smtp`, `ZK_SMTP_*`, `ZK_EMAIL_FROM` |
 | ☐ | Veriff (identity checks) | Verifying professionals' identity documents | Compliance + management (contract) | `ZK_VERIFICATION_PROVIDER=veriff`, `ZK_VERIFF_API_KEY`, `ZK_VERIFF_SHARED_SECRET`; webhook URL in Veriff's dashboard |
 | ☐ | Stripe (payments, Connect payouts) | Funding escrow, paying professionals | Finance + management | `ZK_PAYMENT_PROVIDER=stripe`, Stripe keys, `ZK_PAYMENT_FLOW_APPROVED` only after Stripe approves the funds flow |
@@ -85,8 +87,18 @@ mistakes. A browser test checks the dialog keyboard behaviour.
 ## 6. Known limits at launch (agreed, not bugs)
 
 - Search is PostgreSQL full-text with ranking by trust, availability and track record; no semantic/vector search.
-- Enterprise single sign-on (SAML/SCIM) and passkeys are not built.
+- Passkeys are built. Enterprise single sign-on (SAML/OIDC) and SCIM provisioning are not built yet.
 - Retainers are funded cycle by cycle by the buyer; there is no automatic card charging.
 - Recovery of money after a dispute has settled and been paid out follows a manual process (no automated clawback).
 - Live behaviour of Stripe, Veriff, SES and Anthropic has been tested only with their test modes or simulations in
   development; the staging run in section 4 is the first real check.
+
+## 7. Added on 2026-10-14
+
+| ✓ | Item | Owner |
+|---|---|---|
+| ☐ | Tax rules per country for invoices (`ZK_TAX_RULES`, tax-inclusive) decided and entered | Finance |
+| ☐ | Support agents named and given the Support Agent role; first-answer target (one business day) agreed | Operations |
+| ☐ | Alertmanager receivers filled in (paging tool, email) and a test alert received | Engineering lead |
+| ☐ | Trust & Safety staff briefed on user reports (Safety cases → "Show the reports", "Close: no action needed") | Operations |
+| ☐ | Financial Operations briefed on Money Problems (retry, close with outcome) | Financial Operations |

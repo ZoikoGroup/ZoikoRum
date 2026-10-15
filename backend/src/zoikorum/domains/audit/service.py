@@ -214,3 +214,13 @@ async def get_export(session: AsyncSession, actor: Actor, export_id: uuid.UUID) 
                  details={"by": str(actor.identity_id)}, evidence_hash=job.content_sha256,
                  tenant_id=job.scope.get("tenantId"))
     return job
+
+
+async def chain_health(session: AsyncSession) -> list[tuple[str, str, float]]:
+    """Metrics (shared/metrics.py): how many times the hourly check has found the audit hash chain broken. Any value
+    above 0 is a P0 (tampering or corruption); it stays until the chain is investigated and the alert acknowledged.
+    A check that stops running shows in zk_timers_oldest_overdue_seconds."""
+    from sqlalchemy import func
+
+    breaks = await session.scalar(select(func.count()).select_from(AuditRecord).where(AuditRecord.action == E.HASH_CHAIN_BROKEN))
+    return [("zk_audit_chain_breaks", "Times the audit hash-chain check found tampering (must be 0)", float(breaks or 0))]

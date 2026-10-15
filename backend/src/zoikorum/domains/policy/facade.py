@@ -143,6 +143,10 @@ class ProfileSettings:
     auto_dispute_missed_deadline: bool = False
     auto_dispute_rejection_count: int | None = None
     auto_dispute_compliance_flag: bool = False
+    dispute_mediation_above_minor: int | None = None  # direct settlements above this go to a mediator
+    dispute_legal_review_above_minor: int | None = None  # the buyer's settlement above this needs a Legal Reviewer
+    dispute_escalation_roles: tuple[str, ...] | None = None
+    dispute_retention_years: int | None = None  # org roles that may escalate; None => any dispute decider
 
 
 @dataclass(frozen=True)
@@ -212,7 +216,9 @@ async def require_allowed(session: AsyncSession, ctx: PolicyContext) -> PolicyDe
         "policyVersionLabel": result.policy_version_label}
     error = {Decision.BLOCK: PolicyBlocked, Decision.REQUIRE_APPROVAL: ApprovalRequired,
         Decision.REQUIRE_EXCEPTION: ExceptionRequired}[result.decision]
-    raise error(reason.message if reason else "Organization policy requires authorization", extra=extra)
+    # A block says which rule it was (e.g. POLICY_BLOCKED_MINIMUM_TRUST_TIER), so screens can say what to do next.
+    code = reason.code if reason and result.decision == Decision.BLOCK and reason.code.startswith("POLICY_BLOCKED") else None
+    raise error(reason.message if reason else "Organization policy requires authorization", code=code, extra=extra)
 
 
 async def contract_terms(session: AsyncSession, org_id: uuid.UUID, version_id: uuid.UUID) -> dict:
@@ -234,3 +240,9 @@ async def continuation_actor(session, payload):
     if not account or account.status != "ACTIVE" or set(await admin.active_restrictions(session, "IDENTITY", iid)).intersection({"SUSPEND_ACCOUNT", "OFFBOARD"}):
         return None
     return Actor(identity_id=iid, session_id=None, email=account.email)
+
+
+async def preview(session: AsyncSession, ctx: PolicyContext) -> PolicyDecision:
+    """What the policy would decide, without creating approval requests (a dry run, recorded as such)."""
+    from zoikorum.domains.policy import service
+    return await service.evaluate(session, ctx, dry_run=True)

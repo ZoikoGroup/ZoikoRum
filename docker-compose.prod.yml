@@ -1,17 +1,26 @@
 # Single-host deployment (staging or a small production): migrations, API, worker and the web app.
-# PostgreSQL is a managed service (ZK_DATABASE_URL); files go to S3 (ZK_STORAGE_PROVIDER=s3).
-# Configuration: backend/.env.production (git-ignored; start from backend/.env.example). See backend/docs/DEPLOYMENT.md.
+# PostgreSQL is a managed service (Cloud SQL, ZK_DATABASE_URL); files go to Google Cloud Storage (ZK_STORAGE_PROVIDER=gcs).
+# Configuration: backend/.env.production (git-ignored; start from backend/.env.production.example). See backend/docs/DEPLOYMENT.md.
+# Pass it with --env-file on every command: the web app addresses and ZK_RELEASE (the image tag) are read from it.
 #
-#   docker compose --env-file backend/.env.production -f docker-compose.prod.yml build   # the web apps need the addresses
-#   docker compose -f docker-compose.prod.yml run --rm migrate
-#   docker compose -f docker-compose.prod.yml up -d api worker web web-staff
+#   docker compose --env-file backend/.env.production -f docker-compose.prod.yml build
+#   docker compose --env-file backend/.env.production -f docker-compose.prod.yml run --rm migrate
+#   docker compose --env-file backend/.env.production -f docker-compose.prod.yml up -d api worker clamav web web-staff
 #
+# Only Google's load balancer may reach ports 8080/8081 (firewall: 35.191.0.0/16 and 130.211.0.0/22); the web image
+# trusts X-Forwarded-For from those ranges (set TRUSTED_LB_IP to the load balancer's own address).
 # Two web apps: web (customers, app.your-domain.com, :8080) and web-staff (staff only, staff.your-domain.com, :8081).
+
+# Logs: JSON lines on stdout (Cloud Logging reads severity/message); rotated so a disk never fills up.
+x-logging: &logging
+  driver: json-file
+  options: {max-size: "20m", max-file: "5"}
 
 x-backend: &backend
   build: ./backend
-  image: zoikorum-backend:${ZK_RELEASE:-latest}
+  image: ${ZK_REGISTRY:-}zoikorum-backend:${ZK_RELEASE:-latest}
   env_file: ./backend/.env.production
+  logging: *logging
   environment:
     ZK_RELEASE: ${ZK_RELEASE:-latest}
     ZK_REDIS_URL: ${ZK_REDIS_URL:-redis://redis:6379/0}  # shared rate limits; point at a managed Redis if you have one
@@ -20,16 +29,24 @@ x-backend: &backend
 services:
   migrate:  # one-off: apply database migrations before starting a new release
     <<: *backend
-    command: ["alembic", "upgrade", "head"]
+    command: ["sh", "-c", "alembic upgrade head && python -m zoikorum.cli db-grants"]  # owner: migrate, then app-user rights
     restart: "no"
     profiles: ["migrate"]
 
   api:
     <<: *backend
     expose: ["8000"]
-    depends_on: [redis]
+    depends_on: [redis, clamav]
+
+  clamav:  # virus scanning of every upload (ZK_MALWARE_SCANNER=clamav); updates its signatures itself (freshclam)
+    logging: *logging
+    image: clamav/clamav:1.4
+    expose: ["3310"]
+    volumes: ["clamav-db:/var/lib/clamav"]
+    restart: unless-stopped
 
   redis:  # rate-limit counters only (no business data); losing it is harmless
+    logging: *logging
     image: redis:7-alpine
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     restart: unless-stopped
@@ -41,23 +58,54 @@ services:
       disable: true
 
   web:  # customers, professionals, firms and enterprise teams (/login)
+    logging: *logging
     build:
       context: ./frontend
       args: {VITE_PORTAL: customer, VITE_CUSTOMER_URL: "${ZK_FRONTEND_URL}", VITE_STAFF_URL: "${ZK_STAFF_FRONTEND_URL}"}
-    image: zoikorum-web:${ZK_RELEASE:-latest}
+    image: ${ZK_REGISTRY:-}zoikorum-web:${ZK_RELEASE:-latest}
     environment:
       API_UPSTREAM: http://api:8000
+      TRUSTED_LB_IP: ${ZK_LB_IP:-127.0.0.1}  # the HTTPS load balancer's public address
     ports: ["8080:8080"]  # put the TLS load balancer in front of this port (app.your-domain.com)
     depends_on: [api]
     restart: unless-stopped
 
   web-staff:  # Zoikorum staff only (/staff/login); restrict who can reach it (VPN, IP allow-list or identity-aware proxy)
+    logging: *logging
     build:
       context: ./frontend
       args: {VITE_PORTAL: staff, VITE_CUSTOMER_URL: "${ZK_FRONTEND_URL}", VITE_STAFF_URL: "${ZK_STAFF_FRONTEND_URL}"}
-    image: zoikorum-web-staff:${ZK_RELEASE:-latest}
+    image: ${ZK_REGISTRY:-}zoikorum-web-staff:${ZK_RELEASE:-latest}
     environment:
       API_UPSTREAM: http://api:8000
+      TRUSTED_LB_IP: ${ZK_LB_IP:-127.0.0.1}
     ports: ["8081:8080"]  # staff.your-domain.com
     depends_on: [api]
     restart: unless-stopped
+
+  # Monitoring (optional, or use Google Cloud Managed Service for Prometheus with the same files):
+  #   printf %s "$ZK_METRICS_TOKEN" > backend/deploy/monitoring/metrics_token   (git-ignored; same value as in .env.production)
+  #   $DC --profile monitoring up -d prometheus alertmanager
+  prometheus:
+    image: prom/prometheus:v2.53.2
+    profiles: ["monitoring"]
+    volumes:
+      - ./backend/deploy/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./backend/deploy/monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - ./backend/deploy/monitoring/metrics_token:/etc/prometheus/metrics_token:ro
+      - prometheus-data:/prometheus
+    expose: ["9090"]
+    logging: *logging
+    restart: unless-stopped
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    profiles: ["monitoring"]
+    volumes: ["./backend/deploy/monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro"]
+    expose: ["9093"]
+    logging: *logging
+    restart: unless-stopped
+
+volumes:
+  clamav-db:
+  prometheus-data:

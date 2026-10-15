@@ -93,7 +93,8 @@ export async function proposalRequest(buyer: Account, org: { id: string }, proId
   const [req] = await call(buyer, 'POST', '/v1/proposal-requests', {
     organizationId: org.id, professionalIds: [proId], service: 'Churn prediction model', engagementType: 'PROJECT',
     objective: 'Predict customer churn from product usage', details: 'Two years of usage events in Postgres.',
-    desiredStartDate: day(10), estimatedDuration: 'THREE_SIX_WEEKS', budget: { maxMinor: 2_000_000, currency: 'USD' }, acknowledged: true,
+    desiredStartDate: day(10), estimatedDuration: 'THREE_SIX_WEEKS', budget: { maxMinor: 2_000_000, currency: 'USD' },
+    deliverables: ['Churn model', 'Model documentation'], acknowledged: true,
   }, true)
   return req
 }

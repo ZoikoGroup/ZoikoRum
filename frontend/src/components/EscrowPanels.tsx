@@ -5,7 +5,7 @@ import { ALLOCATION_STATE, escrowApi, paymentsApi, TEST_CARDS, type Escrow, type
 import { formatMoney } from '../api/orgs'
 import { Icon } from './dashboard'
 import { StatCard } from './portal'
-import { ErrorAlert, useDialog } from './ui'
+import { ErrorAlert, useDialog, useStepUp } from './ui'
 
 /* Escrow UI for an engagement (Payments & Escrow doc s.7-14): funding confirmation and the payments tab. */
 
@@ -33,6 +33,8 @@ export function FundDialog({ escrow, preselect, onClose, onFunded }: {
       <div className="card modal fund-modal" onClick={(e) => e.stopPropagation()}>
         <h2 id="fund-title">Fund protected payment</h2>
         <ErrorAlert error={error} />
+        {error !== null && <div className="tip" style={{ marginBottom: 12 }}><Icon name="help" /><span>Nothing was taken and your choices are kept.
+          Try again, choose another payment method below, or <Link to="/app/help?from=funding">ask us for help</Link>.</span></div>}
         <ul className="fund-list">{open.map((x) => (
           <li key={x.milestoneId}>
             <label className="checkbox"><input type="checkbox" checked={picked.includes(x.milestoneId)}
@@ -44,7 +46,7 @@ export function FundDialog({ escrow, preselect, onClose, onFunded }: {
           <dt>You pay now</dt><dd><strong>{money(amount)}</strong></dd>
           <dt>Held until</dt><dd>You accept each milestone</dd>
           <dt>Professional receives</dt><dd>{money(amount - fee)} after the {feeText(escrow.feeBps)} platform fee</dd>
-          <dt>Taxes</dt><dd>None added</dd>
+          <dt>Taxes</dt><dd>Included in the price where they apply (shown on the invoice)</dd>
         </dl>
         {configuration?.hostedCheckout ? <p>You will enter payment details on the partner’s secure checkout page. Funding is confirmed after payment completes.</p> :
           configuration?.configured ? <label className="filter-box" style={{ marginTop: 14 }}><span>Payment method (test mode: no real money moves)</span>
@@ -65,7 +67,8 @@ export function FundDialog({ escrow, preselect, onClose, onFunded }: {
   )
 }
 
-export function PaymentsPanel({ c, escrow, side, onFund }: { c: Contract; escrow: Escrow | null; side: 'buyer' | 'professional'; onFund: (ids: string[]) => void }) {
+export function PaymentsPanel({ c, escrow, side, onFund, fundBlocked }: { c: Contract; escrow: Escrow | null; side: 'buyer' | 'professional'
+  onFund: (ids: string[]) => void; fundBlocked?: string }) {
   const [ledger, setLedger] = useState<LedgerLine[] | null>(null)
   const [paymentError, setPaymentError] = useState<unknown>(null)
   const [hosted, setHosted] = useState(false)
@@ -85,10 +88,18 @@ export function PaymentsPanel({ c, escrow, side, onFund }: { c: Contract; escrow
         <StatCard icon="clock" tone="violet" value={escrow.status.replace(/_/g, ' ').toLowerCase()} label="Escrow status" sub={`Platform fee ${feeText(escrow.feeBps)}`} />
       </div>
       {pending.length > 0 && <div className="tip" style={{ marginBottom: 16 }}><Icon name="clock" /><span>A payment of {formatMoney(pending[0].amount)} is being processed.</span></div>}
+      {side === 'buyer' && (c.engagementType === 'RETAINER' || c.pricingModel === 'RETAINER') && c.status === 'ACTIVE' &&
+        <AutoFunding escrow={escrow} hosted={hosted} />}
       <section className="card panel">
         <div className="panel-head"><h2>Milestones in escrow</h2>
-          {escrow.canFund && <button className="btn btn-primary btn-sm" onClick={() => onFund([])}><Icon name="lock" /> Fund remaining</button>}</div>
-        <table className="data"><thead><tr><th>Milestone</th><th>Amount</th><th>Status</th><th>Funded</th><th>Released (net)</th><th>Fee</th></tr></thead>
+          {escrow.canFund && <button className="btn btn-primary btn-sm" disabled={!!fundBlocked} title={fundBlocked} onClick={() => onFund([])}><Icon name="lock" /> Fund remaining</button>}</div>
+        {fundBlocked && <p className="small warn-text" role="note">{fundBlocked}</p>}
+        <div className="payment-frame small">
+          <span><Icon name="shield" /> <strong>Who releases:</strong> the buyer accepts each milestone; their organisation's approvers agree where its policy asks.</span>
+          <span><Icon name="clock" /> <strong>What happens next:</strong> {escrow.held.amountMinor > 0 ? 'money held now is released when its milestone is accepted, or stays frozen if a dispute is opened.'
+            : escrow.unfunded.amountMinor > 0 ? 'the next milestone is funded before its work starts.' : 'nothing is waiting: every milestone is settled.'}</span>
+        </div>
+        <table className="data"><thead><tr><th>Milestone</th><th>Amount</th><th>Status</th><th>Funded</th><th>Released (net)</th><th>Fee</th><th>Release reference</th></tr></thead>
           <tbody>{escrow.allocations.map((x) => (
             <tr key={x.milestoneId}>
               <td>M{x.sequence} {x.title}</td><td>{formatMoney(x.amount)}</td>
@@ -96,6 +107,7 @@ export function PaymentsPanel({ c, escrow, side, onFund }: { c: Contract; escrow
               <td className="small">{fmtDate(x.fundedAt)}</td>
               <td>{x.state === 'RELEASED' ? formatMoney(x.released) : '—'}</td>
               <td className="small">{x.state === 'RELEASED' ? formatMoney(x.fee) : '—'}</td>
+              <td className="small">{x.releaseReference ? <><code>{x.releaseReference}</code><br /><span className="muted">{fmtDate(x.releasedAt)}</span></> : '—'}</td>
             </tr>))}</tbody></table>
         {side === 'professional' && <p className="muted small" style={{ marginBottom: 0 }}>Released money is paid out to your bank account. See <Link to="/app/professional/earnings">Earnings</Link>.</p>}
       </section>
@@ -123,5 +135,32 @@ export function PaymentsPanel({ c, escrow, side, onFund }: { c: Contract; escrow
         )}
       </section>
     </>
+  )
+}
+
+
+/** Retainer auto-funding: each new cycle is funded from a saved payment method before it is due, with the same role,
+    spend-limit and policy checks as funding by hand. */
+function AutoFunding({ escrow, hosted }: { escrow: Escrow; hosted: boolean }) {
+  const [state, setState] = useState(escrow.autoFundingEnabledAt ?? null)
+  const [token, setToken] = useState(hosted ? '' : TEST_CARDS[0][0])
+  const [error, setError] = useState<unknown>(null)
+  const { run, modal } = useStepUp(setError)
+  const save = (value: string | null) => run(async () => setState((await escrowApi.autoFunding(escrow.id, value)).autoFundingEnabledAt ?? null))
+  return (
+    <section className="card panel">
+      {modal}
+      <div className="panel-head"><h2>Automatic funding</h2>
+        <span className={`badge ${state ? 'green' : ''}`}>{state ? `On since ${new Date(state).toLocaleDateString()}` : 'Off'}</span></div>
+      <ErrorAlert error={error} />
+      <p className="small muted">Each new cycle is funded a few days before it is due. Your role, your spend limit and your organisation's
+        policy are checked every time; if a check fails you are told and the cycle waits for you to fund it.</p>
+      {state ? <button className="btn btn-ghost btn-sm" onClick={() => save(null)}>Turn off</button> : <div className="row">
+        {hosted ? <input className="input" aria-label="Saved payment method" placeholder="Saved payment method ID (pm_…)" value={token} onChange={(e) => setToken(e.target.value.trim())} />
+          : <select className="input" aria-label="Payment method" value={token} onChange={(e) => setToken(e.target.value)}>
+            {TEST_CARDS.map(([t, l]) => <option key={t} value={t}>{l}</option>)}</select>}
+        <button className="btn btn-secondary btn-sm" disabled={token.length < 3} onClick={() => save(token)}>Turn on</button>
+      </div>}
+    </section>
   )
 }

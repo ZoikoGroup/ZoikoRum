@@ -277,6 +277,67 @@ async def test_evidence_files_are_stored_checked_and_viewable(client, make_user,
     assert viewed == 2
 
 
+async def test_document_first_look_runs_outside_the_transaction_and_is_still_logged(client, make_user, drain, sf, monkeypatch):
+    """The model call (up to 30 s) happens before the consumer's transaction; its hint and inference record are stored."""
+    from zoikorum.domains.ai import facade as ai_facade
+    from zoikorum.domains.verification import service as verification_service
+
+    calls = []
+
+    async def looks_unrelated(data, content_type, expected, *, subject_id=None, requested_by=None, inference_log=None, **_):
+        async with sf() as s:  # nothing of this delivery is locked or open: the inbox row is not written yet
+            calls.append(await s.scalar(text("SELECT count(*) FROM platform.inbox WHERE consumer = 'verification.document_check'")))
+        inference_log.append(dict(prompt_version=None, model="test-model", input_sha256=hashlib.sha256(data).hexdigest(),
+                                  purpose="document-check", output='{"verdict":"UNRELATED"}', subject_id=subject_id,
+                                  requested_by=requested_by, latency_ms=5, fallback_used=False))
+        return ai_facade.DocumentCheck("UNRELATED", "a holiday photo", "This is not an identity document.", "ai:test")
+
+    monkeypatch.setattr(verification_service.ai_facade, "assess_document", looks_unrelated)
+    u, pro = await new_pro(client, make_user, drain)
+    case = (await client.post("/v1/verification/cases", headers=u.h, json={
+        "verificationType": "IDENTITY", "subjectType": "PROFESSIONAL", "subjectId": pro["id"]})).json()
+    await client.post(f"/v1/verification/cases/{case['id']}/evidence", headers=u.h,
+                      json={"evidenceType": "ID_DOCUMENT", "items": [PASSPORT]})
+    await drain()
+    await drain()  # a second delivery attempt changes nothing
+    assert calls == [0]
+    o = await officer(make_user)
+    (ev,) = (await client.get(f"/v1/verification/cases/{case['id']}", headers=o.h)).json()["evidence"]
+    assert ev["automaticCheck"]["verdict"] == "UNRELATED" and ev["automaticCheck"]["seen"] == "a holiday photo"
+    async with sf() as s:
+        assert await s.scalar(text("SELECT count(*) FROM ai.inference_logs WHERE purpose = 'document-check'")) == 1
+    from zoikorum.shared.event_catalog import E
+    assert len(await outbox(sf, E.VERIFICATION_EVIDENCE_FLAGGED)) == 1
+
+
+async def test_automatic_approvals_get_a_human_second_look(client, make_user, drain, monkeypatch):
+    """Ethics code: no approval without human oversight. A share of partner approvals waits for a compliance officer,
+    who confirms it or overturns it with a reason (the check is revoked and the person can appeal)."""
+    from zoikorum.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "verification_second_look_pct", 100)
+    u, pro = await new_pro(client, make_user, drain)
+    screening = await case_of(client, u, pro, "RESTRICTIONS")
+    assert screening["status"] == "VERIFIED" and screening.get("secondLook") is None  # not shown to the person
+    v, pro2 = await new_pro(client, make_user, drain, name="vic")
+
+    o = await officer(make_user)
+    waiting = (await client.get("/v1/verification/second-looks", headers=o.h)).json()
+    assert {w["subjectId"] for w in waiting} == {pro["id"], pro2["id"]} and {w["secondLook"] for w in waiting} == {"SAMPLED"}
+
+    first = next(w for w in waiting if w["subjectId"] == pro["id"])
+    r = await client.post(f"/v1/verification/cases/{first['id']}/second-look", headers=o.h, json={"confirm": True})
+    assert r.status_code == 200 and r.json()["secondLook"] == "CONFIRMED" and r.json()["status"] == "VERIFIED"
+
+    second = next(w for w in waiting if w["subjectId"] == pro2["id"])
+    r = await client.post(f"/v1/verification/cases/{second['id']}/second-look", headers=o.h, json={"confirm": False})
+    assert r.json()["code"] == "REASON_REQUIRED"
+    r = await client.post(f"/v1/verification/cases/{second['id']}/second-look", headers=o.h, json={
+        "confirm": False, "reasonCode": "SCREENING_MATCH", "publicReason": "A possible match needs a closer check."})
+    assert r.json()["status"] == "REVOKED" and r.json()["secondLook"] == "OVERTURNED"
+    assert (await client.get("/v1/verification/second-looks", headers=o.h)).json() == []
+
+
 async def test_open_review_queue_keeps_needs_info_cases_visible(client, make_user, drain):
     user, profile = await new_pro(client, make_user, drain, name="waiting-on-evidence")
     reviewer = await officer(make_user)

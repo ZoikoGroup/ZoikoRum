@@ -5,11 +5,13 @@ import { formatMoney } from '../../api/orgs'
 import { LABEL } from '../../api/professional'
 import {
   attachmentUrl, budgetText, proposalFileUrl, CADENCES, DEPENDENCIES, DURATION_LABEL, PRICING_PREFS, PROPOSAL_STATUS, proposalApi, requestStatus, type Proposal, type ProposalRequest,
+  BUYER_DECLINE_REASONS, type BuyerDeclineReason,
 } from '../../api/proposals'
 import { Avatar, Icon } from '../../components/dashboard'
 import { EmptyTable, PortalHeader, SidePanel, StatCard, Tabs, TierBadge } from '../../components/portal'
 import { FileLink } from '../../components/FileLink'
-import { ErrorAlert } from '../../components/ui'
+import { ErrorAlert, Loading } from '../../components/ui'
+import { ApiError } from '../../api/client'
 
 /* Customer side of Step 6: requests (one requirement sent to 1–3 professionals), the proposals that come back,
    side-by-side comparison, revision requests and acceptance. */
@@ -201,7 +203,7 @@ export function RequestDetailPage() {
     try { await fn(); setNotice(msg); await load() } catch (err) { setError(err) } finally { setBusy(false) }
   }
 
-  if (!req) return error ? <ErrorAlert error={error} /> : <p className="muted">Loading…</p>
+  if (!req) return error ? <ErrorAlert error={error} /> : <Loading />
   const group: Group = { id: req.groupId, first: req, members: members.length ? members : [req] }
   const state = groupState(group)
   const isDraft = group.members.every((m) => m.status === 'DRAFT')
@@ -222,6 +224,10 @@ export function RequestDetailPage() {
         </>} />
       {notice && <div className="alert alert-success" role="status">{notice}</div>}
       <ErrorAlert error={error} />
+      {error instanceof ApiError && error.code.startsWith('POLICY_BLOCKED') && <div className="tip" style={{ marginBottom: 12 }}><Icon name="search" />
+        <span>Your organisation's policy does not allow this professional for this engagement. {error.code === 'POLICY_BLOCKED_MINIMUM_TRUST_TIER'
+          ? <Link to="/app/find?tier=A">Find Tier A professionals</Link> : <Link to="/app/find">Find professionals your policy allows</Link>}
+          {' '}(search already hides the ones it does not allow), or ask your Exception Authority for an exception.</span></div>}
       {accepted && <div className="attention-banner ok"><span className="kpi-icon green"><Icon name="check" /></span>
         <div><strong>You accepted {accepted.professional.displayName}'s proposal ({formatMoney(accepted.total)}).</strong>
           <div className="muted small">The terms are locked (reference {accepted.termsHash?.slice(0, 12)}…). Next: sign the contract generated from it.</div></div>
@@ -232,9 +238,10 @@ export function RequestDetailPage() {
           {proposals.length >= 2 && <CompareProposals proposals={proposals} />}
           {group.members.map((m) => {
             const p = byRequest.get(m.id)
-            return p ? <ProposalCard key={m.id} p={p} busy={busy} canDecide={!accepted}
+            const best = !accepted ? bestMatch(proposals) : null
+            return p ? <ProposalCard key={m.id} p={p} busy={busy} canDecide={!accepted} best={best?.id === p.id ? best.reasons : null}
               onAccept={() => { if (confirm(`Accept ${p.professional.displayName}'s proposal for ${formatMoney(p.total)}?${group.members.length > 1 ? ' The other proposals for this request will be closed.' : ''}`)) act(() => proposalApi.accept(p.id), 'Proposal accepted.') }}
-              onReject={(note) => act(() => proposalApi.reject(p.id, note), 'Proposal declined.')}
+              onReject={(reason, note) => act(() => proposalApi.reject(p.id, reason, note), 'Proposal declined.')}
               onRevise={(changes, note) => act(() => proposalApi.requestRevision(p.id, changes, note), 'Revision requested. The professional has been notified.')} />
               : <section key={m.id} className="card panel waiting-card">
                 <div className="name-row"><Avatar name={m.professional.displayName} photoUrl={m.professional.photoUrl} size={44} />
@@ -242,7 +249,7 @@ export function RequestDetailPage() {
                     <span className="muted small">{m.professional.headline}</span></span>
                   <span className={`badge ${requestStatus(m).tone}`} style={{ marginLeft: 'auto' }}>{requestStatus(m).label}</span></div>
                 {m.status === 'DECLINED' && <p className="muted small" style={{ margin: '10px 0 0' }}>Declined{m.reasonCode ? `: ${m.reasonCode.replace(/_/g, ' ').toLowerCase()}` : ''}{m.reasonNote ? ` — “${m.reasonNote}”` : ''}</p>}
-                {['OPEN'].includes(m.status) && <p className="muted small" style={{ margin: '10px 0 0' }}>No proposal yet.{m.professional.tier === 'C' ? ' This professional must verify their identity before they can send one.' : ''}</p>}
+                {['OPEN'].includes(m.status) && <p className="muted small" style={{ margin: '10px 0 0' }}>No proposal yet.{m.respondBy ? ` Asked to answer by ${new Date(m.respondBy).toLocaleString()}.` : ''}{m.professional.tier === 'C' ? ' This professional must verify their identity before they can send one.' : ''}</p>}
                 {m.jurisdictionConflict && <p className="small warn-text" style={{ margin: '10px 0 0' }}>This professional does not serve your country, so an engagement cannot be agreed.
                   {' '}<Link to="/app/find">Find professionals who serve you</Link></p>}
                 {['DECLINED', 'CANCELLED', 'CLOSED'].includes(m.status) && !accepted && <div className="row card-actions" style={{ justifyContent: 'flex-start' }}>
@@ -309,11 +316,31 @@ function CompareProposals({ proposals }: { proposals: Proposal[] }) {
   )
 }
 
-function ProposalCard({ p, busy, canDecide, onAccept, onReject, onRevise }: {
-  p: Proposal; busy: boolean; canDecide: boolean; onAccept: () => void; onReject: (note?: string) => void
+/** Which open proposal fits the request best, and why, in plain words (a suggestion; the buyer decides). */
+function bestMatch(proposals: Proposal[]): { id: string; reasons: string[] } | null {
+  const open = proposals.filter((p) => ['SUBMITTED', 'UNDER_REVIEW'].includes(p.status) && !p.expired)
+  if (open.length < 2) return null
+  const tierRank = { A: 2, B: 1, C: 0 } as const
+  const fit = (p: Proposal) => p.deltas.filter((d) => ['MATCH', 'WITHIN'].includes(d.status)).length
+  const sameCurrency = new Set(open.map((p) => p.total.currency)).size === 1
+  const ranked = [...open].sort((a, b) => fit(b) - fit(a) || tierRank[b.professional.tier] - tierRank[a.professional.tier]
+    || (sameCurrency ? a.total.amountMinor - b.total.amountMinor : 0))
+  const best = ranked[0]
+  const reasons = [`Matches ${fit(best)} of ${best.deltas.length} of your terms`]
+  if (open.every((p) => tierRank[best.professional.tier] >= tierRank[p.professional.tier])) reasons.push(`Trust Tier ${best.professional.tier}`)
+  if (sameCurrency && open.every((p) => best.total.amountMinor <= p.total.amountMinor)) reasons.push('Lowest price')
+  return { id: best.id, reasons }
+}
+
+function ProposalCard({ p, busy, canDecide, best, onAccept, onReject, onRevise }: {
+  p: Proposal; busy: boolean; canDecide: boolean; best: string[] | null; onAccept: () => void
+  onReject: (reason: BuyerDeclineReason, note?: string) => void
   onRevise: (changes: { field: string; requested: string }[], note?: string) => void
 }) {
   const [open, setOpen] = useState(false)
+  const [declining, setDeclining] = useState(false)
+  const [declineReason, setDeclineReason] = useState<BuyerDeclineReason>('NOT_SELECTED')
+  const [declineNote, setDeclineNote] = useState('')
   const [revising, setRevising] = useState(false)
   const [field, setField] = useState('price')
   const [text, setText] = useState('')
@@ -325,6 +352,8 @@ function ProposalCard({ p, busy, canDecide, onAccept, onReject, onRevise }: {
         <span><strong>{p.professional.displayName}</strong> <TierBadge tier={p.professional.tier} /><br /><span className="muted small">{p.professional.headline}</span></span>
         <span style={{ marginLeft: 'auto', textAlign: 'right' }}><strong className="big-price">{formatMoney(p.total)}</strong><br />
           <span className={`badge ${st.tone}`}>{st.label}</span></span></div>
+      {best && <p className="best-match" title={best.join(' · ')}><span className="badge green">Best match</span>
+        <span className="small">Why this proposal matches: {best.join(' · ')}</span></p>}
       <p style={{ margin: '14px 0 10px' }}>{p.summary}</p>
       <div className="delta-row">{p.deltas.map((d) => (
         <span key={d.field} className={`delta ${['MATCH', 'WITHIN'].includes(d.status) ? 'ok' : 'diff'}`} title={`You asked: ${d.requested}`}>
@@ -356,11 +385,23 @@ function ProposalCard({ p, busy, canDecide, onAccept, onReject, onRevise }: {
           onClick={() => { onRevise([{ field, requested: text.trim() }]); setRevising(false); setText('') }}>Send revision request</button>
           <button className="btn btn-ghost btn-sm" onClick={() => setRevising(false)}>Cancel</button></div>
       </div>}
+      {declining && <div className="revise-box">
+        <div className="row">
+          <label className="filter-box"><span>Why are you declining?</span><select value={declineReason} onChange={(e) => setDeclineReason(e.target.value as BuyerDeclineReason)}>
+            {BUYER_DECLINE_REASONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>
+          <label className="filter-box grow"><span>Note for the professional (optional, private)</span>
+            <input value={declineNote} maxLength={500} onChange={(e) => setDeclineNote(e.target.value)} /></label>
+        </div>
+        <div className="row" style={{ marginTop: 8 }}><button className="btn btn-danger btn-sm" disabled={busy}
+          onClick={() => { onReject(declineReason, declineNote.trim() || undefined); setDeclining(false) }}>Decline proposal</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => setDeclining(false)}>Cancel</button></div>
+      </div>}
       <div className="row card-actions">
         <button className="btn btn-ghost btn-sm" onClick={() => setOpen(!open)}>{open ? 'Hide details' : 'View details'}</button>
+        <Link className="btn btn-ghost btn-sm" to={`/app/messages?contextType=PROPOSAL_REQUEST&contextId=${p.requestId}`}><Icon name="message" /> Ask a question</Link>
         {decidable && <>
           <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => setRevising(true)}>Request revision</button>
-          <button className="btn btn-ghost btn-sm danger-text" disabled={busy} onClick={() => { const note = prompt('Optional: tell them why (kept respectful and private)') ?? undefined; onReject(note) }}>Decline</button>
+          <button className="btn btn-ghost btn-sm danger-text" disabled={busy} onClick={() => setDeclining(true)}>Decline</button>
           <button className="btn btn-primary" disabled={busy} onClick={onAccept}>Accept proposal</button>
         </>}
         {p.expired && <span className="muted small">This proposal expired on {fmtDate(p.validUntil)}.</span>}

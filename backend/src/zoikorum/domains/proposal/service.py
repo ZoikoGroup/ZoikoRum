@@ -18,6 +18,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from zoikorum.config import get_settings
 from zoikorum.domains.admin import facade as admin_facade
 from zoikorum.domains.buyer import facade as buyer_facade
 from zoikorum.domains.identity import facade as identity_facade
@@ -64,6 +65,8 @@ LIVE_PROPOSAL = ("SUBMITTED", "UNDER_REVIEW", "REVISION_REQUESTED", "PENDING_APP
 DECIDERS = (OrgRole.REQUESTER, OrgRole.APPROVER)
 POLICY_LABEL = "platform-default@1"
 TIMER_EXPIRY = "proposal.expiry"
+TIMER_REQUEST_REMINDER = "proposal.request_reminder"  # a day before the answer is due
+TIMER_REQUEST_DUE = "proposal.request_due"  # the time to answer passed with no proposal
 DURATION_DAYS = {"ONE_TWO_WEEKS": (7, 14), "THREE_SIX_WEEKS": (15, 42), "TWO_THREE_MONTHS": (43, 92),
                  "THREE_SIX_MONTHS": (93, 183), "ONGOING": (1, 100_000)}
 DURATION_LABEL = {"ONE_TWO_WEEKS": "1–2 weeks", "THREE_SIX_WEEKS": "3–6 weeks", "TWO_THREE_MONTHS": "2–3 months",
@@ -78,6 +81,35 @@ def _today() -> date:
 
 def _money(minor: int, currency: str) -> str:
     return f"{currency} {minor / 100:,.0f}" if minor % 100 == 0 else f"{currency} {minor / 100:,.2f}"
+
+
+def respond_by(r: ProposalRequest):
+    return r.sent_at + timedelta(hours=get_settings().request_response_hours) if r.sent_at else None
+
+
+async def _schedule_answer_timers(session: AsyncSession, r: ProposalRequest) -> None:
+    due = respond_by(r)
+    if due - timedelta(hours=24) > clock.now():
+        await schedule_timer(session, TIMER_REQUEST_REMINDER, str(r.id), due - timedelta(hours=24), {"requestId": str(r.id)})
+    await schedule_timer(session, TIMER_REQUEST_DUE, str(r.id), due, {"requestId": str(r.id)})
+
+
+async def request_reminder(session: AsyncSession, payload: dict) -> None:
+    r = await session.get(ProposalRequest, uuid.UUID(payload["requestId"]))
+    if r is not None and r.status == "OPEN":
+        _req_evt(session, E.PROPOSAL_REQUEST_REMINDER, r, audience="PROFESSIONAL", respondBy=respond_by(r),
+                 message=f"Please answer by {respond_by(r):%d %b %Y %H:%M} UTC: send a proposal, or decline so the buyer "
+                         "can look elsewhere.")
+
+
+async def request_due(session: AsyncSession, payload: dict) -> None:
+    r = await session.get(ProposalRequest, uuid.UUID(payload["requestId"]))
+    if r is not None and r.status == "OPEN":
+        pro = await professional_facade.get_professional(session, r.professional_id)
+        name = pro.display_name if pro else "The professional"
+        _req_evt(session, E.PROPOSAL_REQUEST_UNANSWERED, r, audience="BUYER",
+                 message=f"{name} has not answered your request yet. You can wait, send a message, or ask similar "
+                         "professionals from Find professionals.")
 
 
 def _req_evt(session: AsyncSession, event_type: str, r: ProposalRequest, **extra) -> None:
@@ -151,11 +183,35 @@ def _check_requestable(pro: professional_facade.ProfessionalSummary, trust: trus
                             code="POLICY_BLOCKED_RESTRICTIONS")
 
 
+async def nudge_verification(professional_id: uuid.UUID, identity_id: uuid.UUID, needed: str, request_id: uuid.UUID) -> None:
+    """Recorded on its own, because the refused action itself is rolled back."""
+    from zoikorum.shared.db import session_factory
+
+    async with session_factory()() as s, s.begin():
+        record_event(s, E.TRUST_TIER_NUDGE, aggregate_type="Professional", aggregate_id=professional_id,
+                     payload={"identityId": identity_id, "professionalId": professional_id, "requiredTier": needed,
+                              "requestId": request_id, "audience": "PROFESSIONAL",
+                              "message": f"This buyer needs Trust Tier {needed} before a proposal can be sent. Complete the "
+                                         "missing checks under Verification; your proposal stays saved as a draft."})
+
+
 def _check_tier(trust: trust_facade.TrustSnapshot, who: str) -> None:
     if _restricted(trust):
         raise PolicyBlocked(f"{who} cannot be engaged while a restriction is under review", code="POLICY_BLOCKED_RESTRICTIONS")
     if trust.tier == "C":
         raise PolicyBlocked(f"{who} must reach Trust Tier B (verified identity) before a proposal can be sent or accepted",
+                            code="POLICY_BLOCKED_MINIMUM_TRUST_TIER")
+
+
+async def _check_regulated(session: AsyncSession, r, trust: trust_facade.TrustSnapshot, who: str) -> None:
+    """Regulated work (audit, tax filing, regulatory reporting...) needs Trust Tier A, whatever the buyer's own policy says."""
+    from zoikorum.domains.marketplace import facade as marketplace_facade
+
+    if not r.specialization or trust.tier == "A":
+        return
+    info = (await marketplace_facade.get_specializations(session, [r.specialization])).get(r.specialization)
+    if info and info.regulated:
+        raise PolicyBlocked(f"{who} must reach Trust Tier A before taking regulated work ({info.name})",
                             code="POLICY_BLOCKED_MINIMUM_TRUST_TIER")
 
 
@@ -222,10 +278,12 @@ async def _requests_out(session: AsyncSession, actor: Actor, rows: list[Proposal
             location=None if hidden else r.location, attachments=[] if hidden else [file_out(a) for a in r.attachments],
             desiredStartDate=r.desired_start_date, estimatedDuration=r.estimated_duration, budget=_budget(r),
             deliveryMode=r.delivery_mode, ndaRequired=r.nda_required, ndaAccepted=r.nda_accepted_at is not None,
-            status=r.status, sentAt=r.sent_at, closedAt=r.closed_at, reasonCode=r.reason_code, reasonNote=r.reason_note,
+            status=r.status, sentAt=r.sent_at, respondBy=respond_by(r), closedAt=r.closed_at, reasonCode=r.reason_code,
+            reasonNote=r.reason_note,
             proposal=ProposalBrief(id=p.id, status="EXPIRED" if _expired(p) else p.status, total=_total(p),
                                    submittedAt=p.submitted_at, validUntil=p.valid_until) if p else None,
-            groupSize=sizes.get(r.group_id, 1), deliverables=[] if hidden else r.deliverables, dependencies=[] if hidden else r.dependencies,
+            groupSize=sizes.get(r.group_id, 1), deliverables=[] if hidden else r.deliverables,
+            customDeliverables=[] if hidden else (r.custom_deliverables or []), dependencies=[] if hidden else r.dependencies,
             pricingPreferences=r.pricing_preferences, paymentCadence=r.payment_cadence,
             jurisdictionConflict=_conflict(served.get(r.professional_id, set()), orgs.get(r.organization_id)),
             viewerRole=role, createdAt=r.created_at, version=r.version,
@@ -303,6 +361,9 @@ async def _end_proposal(session: AsyncSession, p: Proposal, status: str, reason:
 
 # ---- Buyer: requests -------------------------------------------------------------
 
+NEED_DELIVERABLE = "Add at least one deliverable: what you expect to receive (e.g. \"Audited financial statements\")."
+
+
 async def create_requests(session: AsyncSession, actor: Actor, body: RequestIn) -> list[RequestOut]:
     await admin_facade.require_on(session, "NEW_REQUESTS")
     await _require_buyer(session, actor, body.organizationId, OrgRole.REQUESTER)
@@ -317,6 +378,8 @@ async def create_requests(session: AsyncSession, actor: Actor, body: RequestIn) 
     if not body.draft and not body.acknowledged:
         raise ValidationFailed("Confirm that you understand Zoikorum facilitates the engagement but does not provide the "
                                "professional services", code="ACKNOWLEDGEMENT_REQUIRED")
+    if not body.draft and not body.deliverables:
+        raise ValidationFailed(NEED_DELIVERABLE, code="DELIVERABLES_REQUIRED")
     if body.desiredStartDate < _today():
         raise ValidationFailed("The desired start date cannot be in the past", code="START_DATE_IN_PAST")
 
@@ -350,7 +413,8 @@ async def create_requests(session: AsyncSession, actor: Actor, body: RequestIn) 
             budget_currency=body.budget.currency if body.budget else None,
             delivery_mode=body.deliveryMode, location=(body.location or "").strip() or None, nda_required=body.ndaRequired,
             attachments=attachments,
-            deliverables=body.deliverables, dependencies=list(body.dependencies), pricing_preferences=list(body.pricingPreferences),
+            deliverables=body.deliverables, custom_deliverables=body.customDeliverables, dependencies=list(body.dependencies),
+            pricing_preferences=list(body.pricingPreferences),
             payment_cadence=body.paymentCadence,
             status="DRAFT" if body.draft else "OPEN", sent_at=None if body.draft else now,
         )
@@ -362,6 +426,7 @@ async def create_requests(session: AsyncSession, actor: Actor, body: RequestIn) 
             await _request_policy(session, actor, r)
             _req_evt(session, E.PROPOSAL_REQUESTED, r, offeringId=r.offering_id, engagementType=r.engagement_type,
                      ndaRequired=r.nda_required)
+            await _schedule_answer_timers(session, r)
     return await _requests_out(session, actor, rows, viewer="BUYER")
 
 
@@ -375,6 +440,8 @@ async def send_drafts(session: AsyncSession, actor: Actor, request_id: uuid.UUID
         ProposalRequest.group_id == first.group_id, ProposalRequest.status == "DRAFT").with_for_update())).all()
     if not rows:
         raise Conflict("This request has already been sent", code="NOT_A_DRAFT")
+    if not first.deliverables:
+        raise ValidationFailed(NEED_DELIVERABLE, code="DELIVERABLES_REQUIRED")
     if first.desired_start_date < _today():
         raise ValidationFailed("The desired start date is now in the past; cancel this draft and create a new request",
                                code="START_DATE_IN_PAST")
@@ -391,6 +458,7 @@ async def send_drafts(session: AsyncSession, actor: Actor, request_id: uuid.UUID
         r.status, r.sent_at = "OPEN", now
         _req_evt(session, E.PROPOSAL_REQUESTED, r, offeringId=r.offering_id, engagementType=r.engagement_type,
                  ndaRequired=r.nda_required)
+        await _schedule_answer_timers(session, r)
     await session.flush()
     return await _requests_out(session, actor, list(rows), viewer="BUYER")
 
@@ -608,13 +676,20 @@ async def submit_proposal(session: AsyncSession, actor: Actor, proposal_id: uuid
     missing = _completeness(p)
     if missing:
         raise ValidationFailed("Before sending, add " + "; ".join(missing), code="PROPOSAL_INCOMPLETE", extra={"missing": missing})
-    _check_tier(await trust_facade.get_trust(session, p.professional_id), "You")
-    await policy_facade.require_allowed(session, await policy_facade.commercial_context(session,
-        org_id=p.organization_id, professional_id=p.professional_id, action=policy_facade.PolicyAction.PROPOSAL_SUBMIT,
-        subject_type="Proposal", subject_id=p.id, actor_identity_id=actor.identity_id,
-        amount=p.total_minor, currency=p.currency, engagement_type=r.engagement_type, specialization=r.specialization,
-        cost_center_id=r.cost_center_id,
-        extra={"proposal.termsDigest": hashlib.sha256(json.dumps(_terms(r, p), sort_keys=True, default=str).encode()).hexdigest()}))
+    try:
+        _check_tier(await trust_facade.get_trust(session, p.professional_id), "You")
+        await _check_regulated(session, r, await trust_facade.get_trust(session, p.professional_id), "You")
+        await policy_facade.require_allowed(session, await policy_facade.commercial_context(session,
+            org_id=p.organization_id, professional_id=p.professional_id, action=policy_facade.PolicyAction.PROPOSAL_SUBMIT,
+            subject_type="Proposal", subject_id=p.id, actor_identity_id=actor.identity_id,
+            amount=p.total_minor, currency=p.currency, engagement_type=r.engagement_type, specialization=r.specialization,
+            cost_center_id=r.cost_center_id,
+            extra={"proposal.termsDigest": hashlib.sha256(json.dumps(_terms(r, p), sort_keys=True, default=str).encode()).hexdigest()}))
+    except PolicyBlocked as blocked:
+        if blocked.code == "POLICY_BLOCKED_MINIMUM_TRUST_TIER":
+            needed = "A" if "Tier A" in blocked.detail else "B"
+            await nudge_verification(p.professional_id, actor.identity_id, needed, r.id)
+        raise
     revised = p.status == "REVISION_REQUESTED"
     PROPOSAL_STATES.assert_can(p.status, "SUBMITTED")
     p.status, p.submitted_at = "SUBMITTED", clock.now()
@@ -724,6 +799,8 @@ async def accept_proposal(session: AsyncSession, actor: Actor, proposal_id: uuid
     if _expired(p):
         raise Conflict("This proposal has expired and can no longer be accepted", code="PROPOSAL_EXPIRED")
     _check_tier(await trust_facade.get_trust(session, p.professional_id), "This professional")
+    await _check_regulated(session, await _request(session, p.request_id), await trust_facade.get_trust(session, p.professional_id),
+                           "This professional")
     org = await buyer_facade.get_organization(session, p.organization_id)
     pro = await professional_facade.get_professional(session, p.professional_id)
     if pro is not None and pro.availability == "AT_CAPACITY" and p.capacity_confirmed_at is None:

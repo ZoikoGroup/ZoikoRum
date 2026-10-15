@@ -68,12 +68,35 @@ def test_review_of_a_complete_production_configuration():
                  smtp_password="secret-password", payment_provider="stripe", stripe_secret_key="sk_test_123",
                  stripe_webhook_secret="whsec_123", payment_flow_approved=True, payment_operating_countries=["GB"],
                  verification_provider="veriff", veriff_api_key="k", veriff_shared_secret="s", storage_provider="s3",
-                 s3_bucket="files", redis_url="redis://cache:6379/0")
+                 s3_bucket="files", redis_url="redis://cache:6379/0",
+                 database_url="postgresql+asyncpg://app:pw@db.internal:5432/zoikorum", malware_scanner="clamav",
+                 field_kms_key_name="projects/p/locations/l/keyRings/r/cryptoKeys/k", field_data_keys={"k1": "d3JhcHBlZA=="},
+                 field_active_key="k1", migration_database_url="postgresql+asyncpg://owner:pw@db.internal:5432/zoikorum",
+                 db_app_role="zoikorum_app")
     rows = config_check.review(s)
     assert not [r for r in rows if r[0] == config_check.MISSING]
     assert ("WARN", "Payments", "production is using a Stripe TEST key") in rows
     text = " ".join(" ".join(r) for r in rows)
     assert "secret-password" not in text and "smtp.example.com" not in text and "whsec_123" not in text
+
+
+@pytest.mark.unit
+def test_production_does_not_start_with_test_services_but_staging_may():
+    with pytest.raises(RuntimeError) as refused:
+        config_check.refuse_incomplete_production(Settings(_env_file=None, **PRODUCTION,
+                                                           database_url=Settings.model_fields["database_url"].default))
+    for area in ("Email", "Payments", "File storage", "Identity checks", "Database"):
+        assert area in str(refused.value)
+    config_check.refuse_incomplete_production(Settings(_env_file=None, **{**PRODUCTION, "env": "staging"}))
+
+
+@pytest.mark.unit
+def test_separate_staff_domain_needs_a_shared_passkey_domain():
+    split = {**PRODUCTION, "frontend_url": "https://app.zoikorum.test", "staff_frontend_url": "https://staff.zoikorum.test"}
+    rows = {area: status for status, area, _ in config_check.review(Settings(_env_file=None, **split))}
+    assert rows["Passkeys"] == "MISSING"
+    rows = {area: status for status, area, _ in config_check.review(Settings(_env_file=None, **split, webauthn_rp_id="zoikorum.test"))}
+    assert rows["Passkeys"] == "OK"
 
 
 @pytest.mark.unit

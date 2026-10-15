@@ -32,3 +32,9 @@ async def require_on(session: AsyncSession, key: str) -> None:
     """Refuses with 503 FEATURE_PAUSED while the switch is paused."""
     from zoikorum.domains.admin import switches
     await switches.require_on(session, key)
+
+
+async def flag_enabled(session: AsyncSession, key: str, identity_id: uuid.UUID | None = None, org_id: uuid.UUID | None = None) -> bool:
+    """Whether a feature flag (admin/flags.py) is on for this organisation or person."""
+    from zoikorum.domains.admin import flags
+    return await flags.enabled(session, key, identity_id, org_id)

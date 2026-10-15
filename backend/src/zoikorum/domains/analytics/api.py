@@ -9,7 +9,7 @@ from zoikorum.domains.analytics import service
 from zoikorum.domains.buyer import facade as buyer
 from zoikorum.domains.professional import facade as professional
 from zoikorum.shared.auth import CurrentActor, PlatformRole
-from zoikorum.shared.db import DbSession
+from zoikorum.shared.db import AnalyticsSession, DbSession
 from zoikorum.shared.errors import NotFound, ValidationFailed
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_audit
@@ -48,28 +48,12 @@ async def professional_dashboard(actor: CurrentActor, session: DbSession):
 
 
 @router.get("/v1/analytics/marketplace-health")
-async def marketplace_health(actor: CurrentActor, session: DbSession, since: datetime | None = Query(None, alias="from"), until: datetime | None = Query(None, alias="to")):
+async def marketplace_health(actor: CurrentActor, session: AnalyticsSession, since: datetime | None = Query(None, alias="from"), until: datetime | None = Query(None, alias="to")):
+    """Platform health from the analytics projection. Totals are computed in the database, so the cost does not grow
+    with the number of events kept."""
     actor.require_platform_role(*PlatformRole.ALL)
     validate_dates(since, until)
-    rows = await service.facts(session, since=since, until=until)
-    counts = Counter(r.event_type for r in rows)
-    tiers = {}
-    funded_at, release_latencies = {}, []
-    for r in await service.facts(session):
-        if r.event_type == E.ESCROW_FUNDED:
-            for mid in r.payload.get("milestoneIds", []): funded_at[str(mid)] = r.occurred_at
-    for r in rows:
-        if r.event_type == E.ESCROW_RELEASED and str(r.payload.get("milestoneId")) in funded_at:
-            release_latencies.append(max(0, (r.occurred_at - funded_at[str(r.payload["milestoneId"])]).total_seconds()))
-    from statistics import median
-    for r in await service.facts(session):
-        if r.event_type in (E.TRUST_TIER_CHANGED, E.TRUST_SCORE_RECOMPUTED) and r.professional_id:
-            tiers[str(r.professional_id)] = r.payload.get("tier", r.payload.get("toTier"))
-    return {"eventCounts": dict(counts), "activations": counts[E.CONTRACT_ACTIVATED], "disputesOpened": counts[E.DISPUTE_INITIATED],
-            "disputesResolved": counts[E.DISPUTE_RESOLVED], "zeroResultSearches": counts[E.SEARCH_ZERO_RESULT],
-            "proposalContractConversionBps": round(10000 * counts[E.CONTRACT_GENERATED] / counts[E.PROPOSAL_SUBMITTED]) if counts[E.PROPOSAL_SUBMITTED] else None,
-            "medianReleaseLatencySeconds": median(release_latencies) if release_latencies else None,
-            "trustTierDistribution": dict(Counter(v for v in tiers.values() if v)), "lastEventAt": max((r.occurred_at for r in rows), default=None)}
+    return await service.marketplace_health(session, since, until)
 
 
 @router.post("/v1/admin/analytics/rebuild")

@@ -19,7 +19,8 @@ from zoikorum.shared.db import DOMAIN_SCHEMAS, Base
 
 load_domains()
 config = context.config
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+# Migrations run as the database owner when a separate owner URL is configured (the app itself uses a restricted user).
+config.set_main_option("sqlalchemy.url", get_settings().migration_database_url or get_settings().database_url)
 target_metadata = Base.metadata
 
 

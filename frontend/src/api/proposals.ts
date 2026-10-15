@@ -25,6 +25,7 @@ export interface Attachment { name: string; sha256: string; size: number }
 export interface ProfessionalBrief { id: string; displayName: string; headline: string | null; photoUrl: string | null; tier: 'A' | 'B' | 'C'; country: string | null }
 
 export interface ProposalRequest {
+  respondBy?: string | null  // the professional is asked to answer by then
   id: string
   groupId: string
   organizationId: string
@@ -56,6 +57,7 @@ export interface ProposalRequest {
   proposal: { id: string; status: ProposalStatus; total: Money; submittedAt: string | null; validUntil: string | null } | null
   groupSize: number
   deliverables: string[]
+  customDeliverables?: string[]
   dependencies: Dependency[]
   pricingPreferences: PricingPreference[]
   paymentCadence: PaymentCadence | null
@@ -85,6 +87,7 @@ export interface RequestInput {
   ndaRequired: boolean
   attachments: Upload[]
   deliverables: string[]
+  customDeliverables?: string[]
   dependencies: Dependency[]
   pricingPreferences: PricingPreference[]
   paymentCadence: PaymentCadence | null
@@ -168,9 +171,17 @@ export const proposalApi = {
   withdraw: (id: string) => api<Proposal>(`${P}/${id}/withdraw`, { method: 'POST' }),
   requestRevision: (id: string, changes: { field: string; requested: string }[], note?: string) =>
     api<Proposal>(`${P}/${id}/request-revision`, { method: 'POST', body: { changes, note: note || null } }),
-  reject: (id: string, note?: string) => api<Proposal>(`${P}/${id}/reject`, { method: 'POST', body: { reasonCode: 'NOT_SELECTED', note: note || null } }),
+  reject: (id: string, reasonCode: BuyerDeclineReason, note?: string) =>
+    api<Proposal>(`${P}/${id}/reject`, { method: 'POST', body: { reasonCode, note: note || null } }),
   accept: (id: string) => api<Proposal>(`${P}/${id}/accept`, { method: 'POST', headers: idem() }),
 }
+
+export type BuyerDeclineReason = 'NOT_SELECTED' | 'PRICE_TOO_HIGH' | 'TIMELINE_DOES_NOT_FIT' | 'SCOPE_MISMATCH' | 'NEED_CHANGED' | 'OTHER'
+export const BUYER_DECLINE_REASONS: [BuyerDeclineReason, string][] = [
+  ['NOT_SELECTED', 'I chose another proposal'], ['PRICE_TOO_HIGH', 'The price is too high'],
+  ['TIMELINE_DOES_NOT_FIT', 'The timeline does not fit'], ['SCOPE_MISMATCH', 'The scope does not match what I need'],
+  ['NEED_CHANGED', 'Our need has changed'], ['OTHER', 'Another reason'],
+]
 
 export const DURATIONS: [Duration, string][] = [
   ['ONE_TWO_WEEKS', '1–2 weeks'], ['THREE_SIX_WEEKS', '3–6 weeks'], ['TWO_THREE_MONTHS', '2–3 months'],

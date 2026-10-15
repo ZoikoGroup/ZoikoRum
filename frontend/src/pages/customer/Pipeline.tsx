@@ -8,6 +8,7 @@ import { useAuth } from '../../auth/AuthContext'
 import { Icon } from '../../components/dashboard'
 import { PortalHeader } from '../../components/portal'
 import { useDialog } from '../../components/ui'
+import { ReportButton } from '../../components/ReportButton'
 
 type Tab = 'All' | 'Engagements' | 'Requests' | 'Professionals' | 'System'
 type StartOption = { key: string; contextType: MessageContextType; contextId: string; title: string; counterpart: string }
@@ -35,7 +36,10 @@ function mergeThreads(current: MessageThread[], incoming: MessageThread[]) {
     .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
 }
 
+const CONTEXT_LABEL = { PROPOSAL_REQUEST: 'Request', CONTRACT: 'Engagement', DISPUTE: 'Dispute', INQUIRY: 'Enquiry' } as const
+
 function contextUrl(thread: MessageThread, professional: boolean) {
+  if (thread.contextType === 'INQUIRY') return professional ? null : `/professionals/${thread.professionalId}`
   if (thread.contextType === 'PROPOSAL_REQUEST') {
     return professional ? `/app/professional/requests/${thread.contextId}` : `/app/requests/${thread.contextId}`
   }
@@ -443,12 +447,12 @@ export function MessagesPage() {
               </span>
               <div className="message-participant">
                 <h2>{selected.counterpartName}</h2>
-                <p>{selected.headline || (selected.contextType === 'CONTRACT' ? 'Engagement conversation' : 'Request conversation')}</p>
+                <p>{selected.headline || `${CONTEXT_LABEL[selected.contextType]} conversation`}</p>
               </div>
               <span className={`message-status ${selected.locked ? 'locked' : 'open'}`}>{selected.locked ? 'Read-only' : 'On Zoikorum'}</span>
             </header>
             <div className="message-context-strip">
-              <span><strong>{selected.contextType === 'CONTRACT' ? 'Engagement' : selected.contextType === 'DISPUTE' ? 'Dispute' : 'Request'}</strong> · {selected.title}</span>
+              <span><strong>{CONTEXT_LABEL[selected.contextType]}</strong> · {selected.title}</span>
               {targetUrl && <Link to={targetUrl}>View details <span aria-hidden>→</span></Link>}
             </div>
             {selected.relatedThreadId && <div className="message-context-strip message-related">
@@ -476,6 +480,7 @@ export function MessagesPage() {
                         </button>
                       ))}
                       <time>{timeLabel(message.sentAt)}</time>
+                      {!own && !system && <ReportButton subjectType="MESSAGE" subjectId={message.id} what="this message" className="link-button small" />}
                     </div>
                     {own && <span className="message-avatar small own-avatar">{initials(user?.displayName || 'You')}</span>}
                   </article>
@@ -518,10 +523,10 @@ export function MessagesPage() {
             <div className="message-detail-group">
               <h3>Conversation context</h3>
               <dl className="facts">
-                <dt>Type</dt><dd>{selected.contextType === 'CONTRACT' ? 'Engagement' : selected.contextType === 'DISPUTE' ? 'Dispute' : 'Request'}</dd>
+                <dt>Type</dt><dd>{CONTEXT_LABEL[selected.contextType]}</dd>
                 <dt>Status</dt><dd>{selected.locked ? 'Read-only' : 'Open'}</dd>
               </dl>
-              {targetUrl && <Link className="message-detail-link" to={targetUrl}>Open {selected.contextType === 'CONTRACT' ? 'engagement' : 'request'} details <span aria-hidden>→</span></Link>}
+              {targetUrl && <Link className="message-detail-link" to={targetUrl}>{selected.contextType === 'INQUIRY' ? 'View profile' : `Open ${CONTEXT_LABEL[selected.contextType].toLowerCase()} details`} <span aria-hidden>→</span></Link>}
             </div>
             <div className="message-detail-group">
               <h3>Quick actions</h3>

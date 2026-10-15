@@ -2,7 +2,8 @@ import { allPages, api } from './client'
 import type { Upload } from './files'
 
 export type SubjectType = 'PROFESSIONAL' | 'FIRM'
-export type SelfServiceType = 'IDENTITY' | 'JURISDICTION' | 'INSURANCE' | 'FIRM_REGISTRATION'
+export type SelfServiceType = 'IDENTITY' | 'JURISDICTION' | 'INSURANCE' | 'FIRM_REGISTRATION' | 'BACKGROUND' | 'BENEFICIAL_OWNERSHIP'
+export interface BeneficialOwner { name: string; country: string; percent: number; control: boolean }
 export type EvidenceType = 'ID_DOCUMENT' | 'PROOF_OF_ADDRESS' | 'LICENSE' | 'CERTIFICATE' | 'INSURANCE_POLICY' | 'REGISTRATION_DOCUMENT' | 'OTHER'
 
 /** Automatic first look at a file (staff view only): a hint for the reviewer, never a decision. */
@@ -20,6 +21,7 @@ export interface EvidenceUploadItem { name: string; sha256: string; size: number
 
 export interface VerificationCase {
   id: string
+  secondLook?: 'SAMPLED' | 'CONFIRMED' | 'OVERTURNED' | null  // staff: human look at an automatic approval
   subjectType: SubjectType
   subjectId: string
   verificationType: string
@@ -101,12 +103,16 @@ export interface TrustHistory {
 
 const V = '/v1/verification'
 export const verificationApi = {
+  secondLooks: () => api<VerificationCase[]>('/v1/verification/second-looks'),
+  decideSecondLook: (id: string, body: { confirm: boolean; reasonCode?: string; publicReason?: string }) =>
+    api<VerificationCase>(`/v1/verification/cases/${id}/second-look`, { method: 'POST', body }),
   configuration: () => api<{ provider: string; hostedIdentity: boolean; configured: boolean; partnerName: string | null }>(`${V}/configuration`),
   hosted: (id: string) => api<{ url: string | null; status: string; provider: string }>(`${V}/cases/${id}/hosted-session`, { method: 'POST' }),
   hostedRefresh: (id: string) => api<VerificationCase>(`${V}/cases/${id}/hosted-refresh`, { method: 'POST' }),
   hostedSimulate: (id: string, status: 'approved' | 'declined' | 'needs_review' | 'resubmission_requested') =>
     api<VerificationCase>(`${V}/cases/${id}/hosted-simulate`, { method: 'POST', body: { status } }),
-  start: (body: { verificationType: SelfServiceType; subjectType: SubjectType; subjectId: string; jurisdiction?: string }) =>
+  start: (body: { verificationType: SelfServiceType; subjectType: SubjectType; subjectId: string; jurisdiction?: string
+    consent?: boolean; owners?: BeneficialOwner[] }) =>
     api<VerificationCase>(`${V}/cases`, { method: 'POST', body }),
   get: (id: string) => api<VerificationCase>(`${V}/cases/${id}`),
   forSubject: (type: SubjectType, id: string) => api<VerificationCase[]>(`${V}/subjects/${type}/${id}`),

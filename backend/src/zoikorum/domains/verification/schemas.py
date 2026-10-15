@@ -9,7 +9,16 @@ from pydantic import BaseModel, Field
 SubjectType = Literal["PROFESSIONAL", "FIRM"]
 # Types a subject owner may start themselves. CREDENTIAL cases open from credential claims and
 # RESTRICTIONS (sanctions screening) opens automatically at registration.
-SelfServiceType = Literal["IDENTITY", "JURISDICTION", "INSURANCE", "FIRM_REGISTRATION"]
+SelfServiceType = Literal["IDENTITY", "JURISDICTION", "INSURANCE", "FIRM_REGISTRATION", "BACKGROUND", "BENEFICIAL_OWNERSHIP"]
+BACKGROUND_CONSENT_VERSION = "2026-10"  # the consent text shown in the app; bump when it changes
+
+
+class OwnerIn(BaseModel):
+    """A person who owns or controls 25% or more of a firm (beneficial ownership declaration)."""
+    name: str = Field(min_length=2, max_length=200)
+    country: str = Field(pattern="^[A-Z]{2}$")
+    percent: float = Field(gt=0, le=100)
+    control: bool = False  # controls the firm without (or beyond) its shareholding
 
 
 class CaseIn(BaseModel):
@@ -18,6 +27,8 @@ class CaseIn(BaseModel):
     subjectId: uuid.UUID
     jurisdiction: str | None = Field(default=None, pattern="^[A-Za-z]{2}$")
     details: dict = Field(default_factory=dict)
+    consent: bool = False  # BACKGROUND: the professional agrees to the check (consent text BACKGROUND_CONSENT_VERSION)
+    owners: list[OwnerIn] = Field(default_factory=list, max_length=20)  # BENEFICIAL_OWNERSHIP
 
 
 EvidenceContentType = Literal["application/pdf", "image/jpeg", "image/png"]
@@ -99,6 +110,7 @@ class CaseOut(BaseModel):
     # Staff view only: what to compare the documents against.
     details: dict | None = None  # e.g. issuing body, registration number, dates entered for a credential
     subjectLegalName: str | None = None  # name as on ID (professionals); never shown publicly
+    secondLook: str | None = None  # staff: SAMPLED | CONFIRMED | OVERTURNED (automatic approvals)
 
 
 class QueueItemOut(BaseModel):
@@ -160,3 +172,10 @@ class AppealQueueItemOut(BaseModel):
 
 class HostedSimulateIn(BaseModel):
     status: Literal["approved", "declined", "needs_review", "resubmission_requested"]
+
+
+class SecondLookIn(BaseModel):
+    """A compliance officer's second look at an approval the partner made automatically."""
+    confirm: bool
+    reasonCode: str | None = Field(default=None, max_length=60)
+    publicReason: str | None = Field(default=None, max_length=500)

@@ -162,3 +162,17 @@ test('an organisation adds its legal entity and the contract names it as the buy
   const document = await buyer.api.get(`/v1/contracts/${contract.id}/document`, { headers: { Authorization: `Bearer ${buyer.token}` } })
   expect(await document.text()).toContain('Buyer: Lennox Analytics Ltd (registration no. 09876543, tax ID GB987654321')
 })
+
+test('an organisation sets up its first policy from a template and reviews it before activating', async ({ page }) => {
+  const { account } = await buyerWithOrganisation('Pia Policy')
+  await signIn(page, account.email)
+  await page.goto('/app/policies')
+  await expect(page.getByRole('heading', { name: 'Set up your first policy' })).toBeVisible()
+  await page.getByRole('button', { name: 'Use this template' }).nth(2).click()  // Cross-border
+  await expect(page.getByRole('heading', { name: 'Cross-border policy' })).toBeVisible()
+  await expect(page.getByLabel('Minimum trust tier')).toHaveValue('B')
+  await expect(page.getByText('Professional in another country is yes')).toBeVisible()  // the template's rule, in words
+  await expect(page.getByText('Before you activate')).toBeVisible()
+  await page.getByRole('tab', { name: 'Dashboard' }).click()
+  await expect(page.getByRole('heading', { name: 'Policy dashboard' })).toBeVisible()
+})

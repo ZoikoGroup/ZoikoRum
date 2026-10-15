@@ -352,3 +352,55 @@ async def test_unsigned_contract_escalates_after_the_deadline(client, make_user,
         escalated = await s.scalar(text("SELECT envelope->'payload'->'waitingFor' FROM platform.outbox "
                                         "WHERE event_type LIKE '%signature_deadline_escalated%' AND aggregate_id = :c"), {"c": c["id"]})
     assert escalated == ["BUYER", "PROFESSIONAL"]
+
+
+async def test_a_change_can_be_agreed_before_signing_and_both_sign_the_new_version(client, make_user, drain):
+    pro_user, pro, buyer, org, accepted, c = await accepted_contract(client, make_user, drain)
+    await buyer.step_up()
+    signed_old = await client.post(f"{C}/{c['id']}/sign", headers=buyer.idem(), json={"termsHash": c["termsHash"]})
+    assert signed_old.status_code == 200  # the buyer signed version 1, then the professional asks for a change
+    r = await client.post(f"{C}/{c['id']}/change-orders", headers=pro_user.idem(), json={
+        "type": "EXTEND_TIMELINE", "delta": {"endDate": "2030-03-31"}, "impact": "Board meeting moved"})
+    assert r.status_code == 200, r.text
+    order = r.json()["changeOrders"][0]
+    approved = await client.post(f"/v1/change-orders/{order['id']}/approve", headers=buyer.idem())
+    assert approved.status_code == 200, approved.text
+    v2 = approved.json()
+    assert v2["status"] == "PENDING_SIGNATURE" and v2["contractVersion"] == 2 and v2["terms"]["endDate"] == "2030-03-31"
+    assert v2["canSign"] is True  # the buyer's signature on version 1 does not carry over
+    await client.post(f"{C}/{c['id']}/sign", headers=buyer.idem(), json={"termsHash": v2["termsHash"]})
+    await pro_user.step_up()
+    final = await client.post(f"{C}/{c['id']}/sign", headers=pro_user.idem(), json={"termsHash": v2["termsHash"]})
+    assert final.status_code == 200 and final.json()["status"] == "ACTIVE"
+    doc = (await client.get(f"{C}/{c['id']}/document", headers=buyer.h)).text
+    assert "DATA HANDLING" in doc and "2030-03-31" in doc
+
+
+async def test_the_engagement_record_activity_files_and_evidence_pack(client, make_user, drain, sf):
+    import json as _json
+
+    pro_user, pro, buyer, c = await signed_contract(client, make_user, drain)
+    m1 = c["milestones"][0]
+    await fund(sf, drain, c, [m1["id"]])
+    file = upload("master-file.pdf", b"master")
+    await client.post(f"/v1/milestones/{m1['id']}/submit", headers=pro_user.h, json={"note": "Master file attached", "files": [file]})
+    await drain()
+
+    activity = (await client.get(f"{C}/{c['id']}/activity", headers=buyer.h)).json()
+    whats = [a["what"] for a in activity]
+    assert "Contract signed" in whats and "Milestone submitted" in whats and all(len(a["hash"]) == 64 for a in activity)
+
+    files = (await client.get(f"{C}/{c['id']}/all-files", headers=pro_user.h)).json()
+    (delivered,) = [f for f in files if f["source"].startswith("Delivered work")]
+    assert delivered["name"] == "master-file.pdf" and delivered["url"].endswith(file["sha256"])
+
+    r = await client.get(f"{C}/{c['id']}/evidence-pack", headers=buyer.h, params={"format": "json"})
+    pack = r.json()
+    body = _json.dumps(pack["record"], sort_keys=True, separators=(",", ":"), default=str)
+    import hashlib as _hashlib
+    assert _hashlib.sha256(body.encode()).hexdigest() == pack["fingerprintSha256"]  # the record can be checked
+    assert pack["record"]["engagement"]["reference"] == c["reference"] and pack["record"]["signatures"]
+    pdf_r = await client.get(f"{C}/{c['id']}/evidence-pack", headers=buyer.h)
+    assert pdf_r.status_code == 200 and pdf_r.content.startswith(b"%PDF-") and "evidence-pack.pdf" in pdf_r.headers["content-disposition"]
+    stranger = await make_user("sam")
+    assert (await client.get(f"{C}/{c['id']}/evidence-pack", headers=stranger.h)).status_code == 404

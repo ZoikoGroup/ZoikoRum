@@ -55,3 +55,17 @@ class ExportJob(Base, UUIDPk, Timestamps):
     content: Mapped[str | None] = mapped_column(Text)  # moves to S3 Object Lock in production
     content_sha256: Mapped[str | None] = mapped_column(String(64))
     chain_head_hash: Mapped[str | None] = mapped_column(String(64))
+
+
+class AuditArchive(Base, UUIDPk, CreatedAt):
+    """A batch of audit records copied to write-once storage (audit/archive.py). The database rows stay."""
+    __tablename__ = "archives"
+    __table_args__ = {"schema": SCHEMA}
+    from_seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    to_seq: Mapped[int] = mapped_column(BigInteger, nullable=False, unique=True)
+    record_count: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    object_key: Mapped[str] = mapped_column(String(300), nullable=False)
+    version_id: Mapped[str | None] = mapped_column(String(200))
+    locked: Mapped[bool] = mapped_column(nullable=False, default=False)
+    last_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

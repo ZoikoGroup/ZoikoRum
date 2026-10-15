@@ -36,7 +36,7 @@ def request_body(org, *pros, **over):
             "engagementType": "PROJECT", "objective": "Prepare transfer pricing documentation for FY2026",
             "details": "Two subsidiaries; intercompany services.", "desiredStartDate": _day(10),
             "estimatedDuration": "THREE_SIX_WEEKS", "budget": {"maxMinor": 2_000_000, "currency": "USD"},
-            "acknowledged": True}
+            "deliverables": ["Master file", "Local files"], "acknowledged": True}
     return {**body, **over}
 
 
@@ -231,3 +231,51 @@ async def test_proposals_expire_after_their_validity_date(client, make_user, dra
     assert r.status_code == 409
     assert (await client.get(f"{R}/{req['id']}", headers=buyer.h)).json()["status"] == "CLOSED"
     assert date.fromisoformat(got["validUntil"]) < clock.now().date()
+
+
+async def test_a_request_needs_a_deliverable_and_the_buyers_own_wording_is_flagged(client, make_user, drain):
+    pro_user, pro = await tier_b(client, make_user, drain, "ann")
+    buyer, org = await buyer_org(client, make_user, drain)
+    r = await client.post(R, headers=buyer.idem(), json=request_body(org, pro, deliverables=[]))
+    assert r.status_code == 422 and r.json()["code"] == "DELIVERABLES_REQUIRED"
+    draft = (await client.post(R, headers=buyer.idem(), json=request_body(org, pro, deliverables=[], draft=True))).json()[0]
+    assert (await client.post(f"{R}/{draft['id']}/send", headers=buyer.idem(), json={"acknowledged": True})).json()["code"] \
+        == "DELIVERABLES_REQUIRED"  # a draft cannot be sent without one either
+
+    sent = (await client.post(R, headers=buyer.idem(), json=request_body(
+        org, pro, deliverables=["Master file", "Board-ready summary"], customDeliverables=["Board-ready summary", "Not listed"]))).json()[0]
+    seen = (await client.get(f"{R}/{sent['id']}", headers=pro_user.h)).json()
+    assert seen["deliverables"] == ["Master file", "Board-ready summary"] and seen["customDeliverables"] == ["Board-ready summary"]
+
+
+async def test_professionals_are_reminded_and_buyers_told_when_a_request_goes_unanswered(client, make_user, drain):
+    from datetime import timedelta
+
+    from zoikorum.shared import clock
+
+    pro_user, pro = await tier_b(client, make_user, drain, "ann")
+    buyer, org = await buyer_org(client, make_user, drain)
+    (req,) = (await client.post(R, headers=buyer.idem(), json=request_body(org, pro))).json()
+    assert req["respondBy"]
+    await drain()
+    clock.advance(timedelta(hours=50))  # a day before the 72-hour deadline
+    await drain()
+    clock.advance(timedelta(hours=23))  # the deadline passed with no proposal
+    await drain()
+    clock.set_now(None)
+    pro_titles = [n["title"] for n in (await client.get("/v1/notifications", headers=pro_user.h)).json()["items"]]
+    buyer_titles = [n["title"] for n in (await client.get("/v1/notifications", headers=buyer.h)).json()["items"]]
+    assert "A request is waiting for your answer" in pro_titles and "No proposal yet" not in pro_titles
+    assert "No proposal yet" in buyer_titles and "A request is waiting for your answer" not in buyer_titles
+
+
+async def test_a_professional_blocked_by_tier_is_told_what_to_verify(client, make_user, drain, sf):
+    c_user, c = await publish(client, make_user, drain, "cara", headline="Bookkeeper", primary="transfer-pricing")  # Tier C
+    buyer, org = await buyer_org(client, make_user, drain)
+    req = (await client.post(R, headers=buyer.idem(), json=request_body(org, c))).json()[0]
+    p = (await client.post(f"{R}/{req['id']}/proposals", headers=c_user.h, json=proposal_body())).json()
+    assert (await client.post(f"{P}/{p['id']}/submit", headers=c_user.idem())).status_code == 403
+    await drain()
+    notes = [n for n in (await client.get("/v1/notifications", headers=c_user.h)).json()["items"] if n["title"] == "Verify to work with this buyer"]
+    assert len(notes) == 1 and "Trust Tier B" in notes[0]["body"] and "Verification" in notes[0]["body"]
+    assert not [n for n in (await client.get("/v1/notifications", headers=buyer.h)).json()["items"] if n["title"] == "Verify to work with this buyer"]

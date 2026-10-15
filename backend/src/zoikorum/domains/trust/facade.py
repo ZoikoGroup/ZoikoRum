@@ -56,3 +56,16 @@ async def get_trust_many(session: AsyncSession, ids: list[uuid.UUID]) -> dict[uu
                                   dispute_rate_bps=round(disputes["resolvedDisputedContracts"] * 10000 / denominator) if denominator else None,
                                   updated_at=p.recomputed_at) if p else TrustSnapshot(pid, "C", 0))
     return out
+
+
+async def tier_kpis(session: AsyncSession, since, until) -> dict:
+    """Professionals per trust tier now, and tier moves in the period (verification throughput)."""
+    from sqlalchemy import func
+
+    from zoikorum.domains.trust.models import TierHistory
+
+    now = dict((await session.execute(select(TrustProfile.tier, func.count()).group_by(TrustProfile.tier))).all())
+    moves = (await session.execute(select(TierHistory.from_tier, TierHistory.to_tier, func.count()).where(
+        TierHistory.created_at >= since, TierHistory.created_at < until).group_by(TierHistory.from_tier, TierHistory.to_tier))).all()
+    return {"tiersNow": now, "reachedB": sum(n for f, t, n in moves if t == "B" and f == "C"),
+            "reachedA": sum(n for f, t, n in moves if t == "A"), "downgrades": sum(n for f, t, n in moves if (f, t) in (("A", "B"), ("A", "C"), ("B", "C")))}
