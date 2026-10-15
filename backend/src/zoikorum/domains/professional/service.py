@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 import re
 import uuid
 
@@ -44,7 +45,7 @@ from zoikorum.domains.professional.schemas import (
 )
 from zoikorum.shared import clock
 from zoikorum.shared.auth import Actor, Persona
-from zoikorum.shared.errors import Conflict, Forbidden, NotFound, ValidationFailed, VersionConflict
+from zoikorum.shared.errors import Conflict, DomainError, Forbidden, NotFound, ValidationFailed, VersionConflict
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_audit, record_event
 from zoikorum.shared.money import MoneyDTO
@@ -63,6 +64,7 @@ OFFERING_STATES = StateMachine("Offering", {
     "PAUSED": {"ACTIVE"},  # paused != deleted
 })
 
+log = logging.getLogger("zoikorum.professional")
 MAX_OFFERINGS = 20
 MAX_CREDENTIALS = 20
 MAX_BIO_WORDS = 300  # Onboarding s.7 (150-250 words recommended on the public profile)
@@ -392,7 +394,7 @@ async def set_photo(session: AsyncSession, actor: Actor, body: PhotoIn) -> Profi
     get_storage().put(key, data)
     pro.photo_key, pro.photo_content_type, pro.photo_sha256 = key, body.contentType, digest
     if old and old != key:
-        get_storage().delete(old)
+        _discard_photo(old)
     _evt(session, E.PROFILE_UPDATED, pro, changes=["photo"])
     await session.flush()
     return await _profile_out(session, pro)
@@ -401,7 +403,7 @@ async def set_photo(session: AsyncSession, actor: Actor, body: PhotoIn) -> Profi
 async def remove_photo(session: AsyncSession, actor: Actor) -> ProfileOut:
     pro = await _mine(session, actor, lock=True)
     if pro.photo_key:
-        get_storage().delete(pro.photo_key)
+        _discard_photo(pro.photo_key)
         pro.photo_key = pro.photo_content_type = pro.photo_sha256 = None
         _evt(session, E.PROFILE_UPDATED, pro, changes=["photo"])
         await session.flush()
@@ -736,3 +738,12 @@ async def suggestion_resolved(session: AsyncSession, payload: dict) -> None:
     else:
         return  # no room: it stays available to pick by hand
     _evt(session, E.PROFILE_UPDATED, pro, changes=["specializations"], specializations=specializations_of(pro))
+
+
+def _discard_photo(key: str) -> None:
+    """Delete a replaced or removed profile photo. Best effort: a bucket retention policy may keep it for a while,
+    which must not stop the professional changing their photo (it is no longer shown either way)."""
+    try:
+        get_storage().delete(key)
+    except DomainError as exc:
+        log.warning("old profile photo kept in storage (%s)", exc.code)

@@ -15,8 +15,45 @@ class SignIn(BaseModel):
 
 
 class SubmitIn(BaseModel):
+    """Sends the saved draft (confirmed + optional lateReason). Without a draft, note and files are sent in one step."""
+
     note: str = Field(default="", max_length=2000)
     files: list[UploadIn] = Field(default_factory=list, max_length=10)
+    confirmed: bool = False  # the professional confirmed the declaration shown with the draft
+    lateReason: str | None = Field(default=None, max_length=500)
+
+
+class DraftTextIn(BaseModel):
+    """Autosave of the draft's text: the message to the buyer and/or the note on any deliverable."""
+
+    note: str | None = Field(default=None, max_length=2000)
+    itemNotes: dict[str, str] = Field(default_factory=dict, max_length=50)
+
+    @field_validator("itemNotes")
+    @classmethod
+    def short_notes(cls, value: dict[str, str]) -> dict[str, str]:
+        if any(len(v) > 2000 for v in value.values()):
+            raise ValueError("each note must be 2000 characters or fewer")
+        return value
+
+
+class EvidenceIn(BaseModel):
+    """One piece of evidence for a deliverable: a file, or a link (website, shared document or code repository)."""
+
+    file: UploadIn | None = None
+    url: str | None = Field(default=None, max_length=2000)
+    label: str | None = Field(default=None, max_length=200)
+    version: str | None = Field(default=None, max_length=100)  # commit, tag or release the link points at
+
+
+class VerdictIn(BaseModel):
+    deliverableKey: str = Field(min_length=1, max_length=100)
+    verdict: Literal["MET", "CHANGES_REQUESTED"]
+    comment: str = Field(default="", max_length=1000)
+
+
+class ReviewIn(BaseModel):
+    verdicts: list[VerdictIn] = Field(min_length=1, max_length=50)
 
 
 class PartialOfferIn(BaseModel):
@@ -114,11 +151,77 @@ class SignatureOut(BaseModel):
     signedAt: datetime
 
 
+class EvidenceOut(BaseModel):
+    id: str
+    type: Literal["FILE", "LINK"]
+    file: StoredFileOut | None = None
+    url: str | None = None
+    host: str | None = None
+    provider: str | None = None  # GOOGLE_SHEET, GITHUB, WEBSITE, ...
+    kind: str | None = None  # DOCUMENT | REPOSITORY | WEBSITE
+    label: str = ""
+    version: str = ""
+
+
+class SubmissionItemOut(BaseModel):
+    deliverableKey: str
+    title: str
+    acceptanceCriteria: str
+    note: str
+    evidence: list[EvidenceOut]
+    carriedOver: bool = False  # unchanged since the previous delivery
+
+
+class VerdictOut(BaseModel):
+    deliverableKey: str
+    verdict: Literal["MET", "CHANGES_REQUESTED"]
+    comment: str
+
+
+class SubmissionReviewOut(BaseModel):
+    verdicts: list[VerdictOut]
+    outcome: Literal["ACCEPTED", "REVISION_REQUESTED"]
+    reviewedAt: datetime
+
+
 class SubmissionOut(BaseModel):
     id: uuid.UUID
     note: str
     files: list[StoredFileOut]
     submittedAt: datetime
+    revisionNumber: int = 0
+    items: list[SubmissionItemOut] = Field(default_factory=list)  # empty for one-step deliveries (note + files)
+    declaredAt: datetime | None = None
+    lateReason: str | None = None
+    review: SubmissionReviewOut | None = None  # the buyer's verdict per deliverable, when given that way
+
+
+class IssueOut(BaseModel):
+    code: str
+    message: str
+    deliverableKey: str | None = None
+
+
+class DraftItemOut(BaseModel):
+    deliverableKey: str
+    title: str
+    acceptanceCriteria: str
+    note: str
+    evidence: list[EvidenceOut]
+    ready: bool  # has at least one piece of evidence
+    changesRequested: str | None = None  # the buyer's comment on this item in the last review
+
+
+class SubmissionDraftOut(BaseModel):
+    milestoneId: uuid.UUID
+    revisionNumber: int  # what this delivery will be when sent
+    note: str
+    items: list[DraftItemOut]
+    blockers: list[IssueOut]
+    warnings: list[IssueOut]
+    canSubmit: bool
+    declaration: str  # the text the professional confirms when sending
+    savedAt: datetime | None  # None until the first change is saved
 
 
 class MilestoneOut(BaseModel):

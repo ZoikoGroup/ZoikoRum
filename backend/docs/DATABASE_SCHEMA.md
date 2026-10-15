@@ -11,14 +11,14 @@ Migrations: `backend/alembic/versions/` (`alembic upgrade head`).
 ## Contents
 
 - [platform](#schema-platform) — 5 tables
-- [identity](#schema-identity) — 6 tables
-- [buyer](#schema-buyer) — 6 tables
+- [identity](#schema-identity) — 8 tables
+- [buyer](#schema-buyer) — 7 tables
 - [firm](#schema-firm) — 3 tables
 - [professional](#schema-professional) — 4 tables
 - [marketplace](#schema-marketplace) — 6 tables
 - [search](#schema-search) — 1 tables
 - [proposal](#schema-proposal) — 2 tables
-- [contract](#schema-contract) — 6 tables
+- [contract](#schema-contract) — 8 tables
 - [escrow](#schema-escrow) — 5 tables
 - [payments](#schema-payments) — 7 tables
 - [verification](#schema-verification) — 6 tables
@@ -219,6 +219,37 @@ Projection of the actor's memberships in other domains, built from their events.
 
 Unique together: (identity_id, link_type, target_id)
 
+### `identity.passkey_challenges`
+
+A server-issued WebAuthn challenge: single use, five minutes, for one purpose (and account).
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `challenge_sha256` | varchar(64) | no | unique |
+| `purpose` | varchar(20) | no |  |
+| `identity_id` | UUID | yes |  |
+| `expires_at` | DATETIME | no | indexed |
+| `used_at` | DATETIME | yes |  |
+| `id` | UUID | no | PK |
+| `created_at` | DATETIME | no |  |
+
+### `identity.passkeys`
+
+A WebAuthn credential (identity/passkeys.py). The public key only: the private key never leaves the device.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `identity_id` | UUID | no | FK → identity.identities.id, indexed |
+| `credential_id` | varchar(1400) | no | unique |
+| `public_key` | BLOB | no |  |
+| `sign_count` | BIGINT | no |  |
+| `transports` | ARRAY | no |  |
+| `name` | varchar(100) | no |  |
+| `backed_up` | BOOLEAN | no |  |
+| `last_used_at` | DATETIME | yes |  |
+| `id` | UUID | no | PK |
+| `created_at` | DATETIME | no |  |
+
 ### `identity.sessions`
 
 Refresh-token session. Refresh tokens rotate; reuse revokes the family.
@@ -308,6 +339,26 @@ Base class used for declarative class definitions.  The :class:`_orm.Declarative
 | `id` | UUID | no | PK |
 | `updated_at` | DATETIME | no |  |
 | `created_at` | DATETIME | no |  |
+
+### `buyer.legal_entities`
+
+A registered company the organisation contracts and is invoiced through (Engineering Handbook 17.1), e.g. a group with "Acme Ltd" (UK) and "Acme Inc" (US). One is the default; archived ones stay for past contracts.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `organization_id` | UUID | no | FK → buyer.organizations.id, indexed |
+| `legal_name` | varchar(200) | no |  |
+| `registration_number` | varchar(100) | yes |  |
+| `country` | varchar(2) | no |  |
+| `registered_address` | varchar(500) | no |  |
+| `tax_id` | varchar(50) | yes |  |
+| `is_default` | BOOLEAN | no |  |
+| `status` | varchar(20) | no |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+
+Unique together: (organization_id, legal_name)
 
 ### `buyer.members`
 
@@ -723,6 +774,7 @@ DRAFT -> OPEN -> PROPOSAL_RECEIVED -> CLOSED; OPEN -> DECLINED; any open state -
 |---|---|---|---|
 | `organization_id` | UUID | no |  |
 | `cost_center_id` | UUID | yes |  |
+| `legal_entity_id` | UUID | yes |  |
 | `buyer_identity_id` | UUID | no |  |
 | `professional_id` | UUID | no |  |
 | `offering_id` | UUID | yes |  |
@@ -894,9 +946,38 @@ Append-only receipt: who signed which version and terms, how strongly authentica
 
 Unique together: (contract_id, contract_version, party)
 
-### `contract.submissions`
+### `contract.submission_drafts`
 
-A professional's delivery for a milestone: a note plus file fingerprints. Never edited; resubmitting adds a row.
+Work being prepared for a milestone, saved as the professional goes. Only the professional sees it; sending turns it into a Submission and removes the draft. One per milestone.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `milestone_id` | UUID | no | FK → contract.milestones.id, unique |
+| `professional_identity_id` | UUID | no |  |
+| `note` | varchar(2000) | no |  |
+| `items` | JSONB | no |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+| `version` | BIGINT | no |  |
+
+### `contract.submission_reviews` — append-only
+
+The buyer's verdict on each deliverable of one submission, and what followed (accepted or sent back). Append-only.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `submission_id` | UUID | no | FK → contract.submissions.id, indexed |
+| `milestone_id` | UUID | no | FK → contract.milestones.id, indexed |
+| `reviewer_identity_id` | UUID | no |  |
+| `verdicts` | JSONB | no |  |
+| `outcome` | varchar(30) | no |  |
+| `id` | UUID | no | PK |
+| `created_at` | DATETIME | no |  |
+
+### `contract.submissions` — append-only
+
+A professional's delivery for a milestone, item by item against the contract's deliverables. Append-only (database trigger): resubmitting adds a row with the next revision number.
 
 | Column | Type | Null | Keys / index |
 |---|---|---|---|
@@ -904,6 +985,10 @@ A professional's delivery for a milestone: a note plus file fingerprints. Never 
 | `submitted_by` | UUID | no |  |
 | `note` | varchar(2000) | no |  |
 | `files` | JSONB | no |  |
+| `revision_number` | INTEGER | no |  |
+| `items` | JSONB | no |  |
+| `declaration` | JSONB | yes |  |
+| `late_reason` | varchar(500) | yes |  |
 | `id` | UUID | no | PK |
 | `created_at` | DATETIME | no |  |
 

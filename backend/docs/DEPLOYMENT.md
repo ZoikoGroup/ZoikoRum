@@ -10,7 +10,7 @@ built into an image or committed to git.
 
 ```
 browser ──HTTPS──> load balancer (TLS) ──> web :8080 ──/v1──> api :8000 ──> PostgreSQL (managed)
-                                                               worker ────┘     S3 (files), SMTP, partners
+                                                               worker ────┘     GCS bucket (files), SMTP, partners
 ```
 
 ## Configuration
@@ -27,7 +27,7 @@ if anything required is missing, so a pipeline can stop):
 
 ```
 docker compose -f docker-compose.prod.yml run --rm api python -m zoikorum.cli check-config            # settings only
-docker compose -f docker-compose.prod.yml run --rm api python -m zoikorum.cli check-config --connect  # also tries DB, Redis, S3, SMTP
+docker compose -f docker-compose.prod.yml run --rm api python -m zoikorum.cli check-config --connect  # also tries DB, Redis, the bucket, SMTP
 ```
 
 ## Services needed
@@ -35,7 +35,8 @@ docker compose -f docker-compose.prod.yml run --rm api python -m zoikorum.cli ch
 | Service | Setting(s) | Notes |
 |---|---|---|
 | PostgreSQL 16 | `ZK_DATABASE_URL` (`postgresql+asyncpg://…`) | Managed, with backups and point-in-time recovery |
-| S3 bucket | `ZK_STORAGE_PROVIDER=s3`, `ZK_S3_BUCKET`, `ZK_AWS_REGION`, optional `ZK_S3_KMS_KEY_ID`, Object Lock settings | Versioned; the container's IAM role grants access (no keys in env where possible) |
+| Google Cloud Storage bucket | `ZK_STORAGE_PROVIDER=gcs`, `ZK_GCS_BUCKET`, optional `ZK_GCS_KMS_KEY_NAME` | Versioned, private; the service account the app runs as grants access (no key file). See "File storage on Google Cloud" below |
+| or Amazon S3 bucket | `ZK_STORAGE_PROVIDER=s3`, `ZK_S3_BUCKET`, `ZK_AWS_REGION`, optional `ZK_S3_KMS_KEY_ID`, Object Lock settings | Alternative to GCS. Versioned; the container's IAM role grants access |
 | Email (SMTP) | `ZK_EMAIL_PROVIDER=smtp`, `ZK_SMTP_HOST/PORT/USERNAME/PASSWORD`, `ZK_EMAIL_FROM` | e.g. AWS SES SMTP |
 | Payments | `ZK_PAYMENT_PROVIDER=stripe` and the Stripe settings | Only after partner approval (`ZK_PAYMENT_FLOW_APPROVED`) |
 | Identity partner | `ZK_VERIFICATION_PROVIDER=veriff` + `ZK_VERIFF_API_KEY`, `ZK_VERIFF_SHARED_SECRET` (or the Persona settings) | Webhook URL in the partner dashboard: `https://<host>/v1/verification/webhooks/veriff` |
@@ -47,6 +48,39 @@ Required for every non-local environment: `ZK_ENV` (`staging` or `production`), 
 `ZK_FIELD_ENCRYPTION_KEY` (long random values, different per environment, kept in the secret manager),
 `ZK_WEBHOOK_SECRET`, `ZK_FRONTEND_URL` (the public https address; used in email links).
 Development-only switches are refused outside local development: `ZK_DEV_SKIP_MFA`, `ZK_VERIFICATION_PROVIDER=simulated`.
+
+## File storage on Google Cloud
+
+Uploaded files (verification documents, profile photos, request and proposal attachments, delivered work, dispute
+evidence, message files, data exports) go to one private bucket. The app writes each file once (never overwrites it),
+keeps every version, and only ever deletes replaced profile photos.
+
+```
+PROJECT=<project-id>  REGION=<asia-south1>  BUCKET=<zoikorum-prod-files>
+SA=<zoikorum-api@PROJECT.iam.gserviceaccount.com>   # the service account the API and worker run as
+
+gcloud storage buckets create gs://$BUCKET --project=$PROJECT --location=$REGION     --uniform-bucket-level-access --public-access-prevention
+gcloud storage buckets update gs://$BUCKET --versioning
+# Old versions of replaced profile photos: remove after 30 days.
+gcloud storage buckets update gs://$BUCKET --lifecycle-file=- <<'EOF'
+{"rule": [{"action": {"type": "Delete"}, "condition": {"isLive": false, "daysSinceNoncurrentTime": 30,
+           "matchesPrefix": ["professionals/"]}}]}
+EOF
+gcloud storage buckets add-iam-policy-binding gs://$BUCKET --member=serviceAccount:$SA --role=roles/storage.objectAdmin
+gcloud storage buckets add-iam-policy-binding gs://$BUCKET --member=serviceAccount:$SA --role=roles/storage.legacyBucketReader
+```
+
+Then `ZK_STORAGE_PROVIDER=gcs` and `ZK_GCS_BUCKET=$BUCKET`. The image already contains the Google client (`gcs` extra).
+
+- **Encryption with your own key (optional):** create a Cloud KMS key in the bucket's region, let the Cloud Storage
+  service agent use it (`roles/cloudkms.cryptoKeyEncrypterDecrypter`), and set `ZK_GCS_KMS_KEY_NAME`.
+- **Keeping evidence for a fixed period (optional, legal decision):** use a bucket retention policy *instead of*
+  versioning (Cloud Storage does not allow both on one bucket; the app accepts either):
+  `gcloud storage buckets update gs://$BUCKET --no-versioning --retention-period=<7y>`. Nothing can then be deleted or
+  replaced early, including replaced profile photos (the app keeps them quietly). Locking the policy
+  (`--lock-retention-period`) is permanent: only with Legal's sign-off.
+- **Legal holds** on single files use Cloud Storage temporary holds.
+- **Check:** `python -m zoikorum.cli check-config --connect` reports whether the bucket is reachable and versioned.
 
 ## Releasing a version
 

@@ -67,6 +67,7 @@ export interface ProposalRequest {
 
 export interface RequestInput {
   costCenterId?: string | null
+  legalEntityId?: string | null  // the organisation's contracting entity; empty: its default
   organizationId: string
   professionalIds: string[]
   offeringId?: string | null

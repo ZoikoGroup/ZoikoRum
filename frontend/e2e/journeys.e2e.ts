@@ -7,7 +7,7 @@ test('staff and customers each sign in on their own page', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Zoikorum staff sign-in' })).toBeVisible()
   await page.getByLabel('Work email').fill(buyer.email)
   await page.getByLabel('Password', { exact: true }).fill(PASSWORD)
-  await page.getByRole('button', { name: 'Sign in' }).click()
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
   await expect(page.getByText(/for Zoikorum staff only/)).toBeVisible()  // a customer account is refused here
   await page.getByRole('link', { name: 'Sign in here' }).click()
   await expect(page).toHaveURL(/\/login$/)
@@ -29,7 +29,9 @@ test('a new customer signs up, confirms their email and signs back in', async ({
   await expect(page.getByRole('button', { name: 'Resend confirmation email' })).toBeVisible()
   // Development mode shows the confirmation link that the email would carry.
   await page.getByRole('link', { name: 'confirm now' }).click()
-  await expect(page.getByText(/confirmed/i).first()).toBeVisible()
+  // The exact success message: /confirmed/i would also match the "Not confirmed" badge and move on before the
+  // confirmation request finishes (leaving the page then cancels it).
+  await expect(page.getByText('Your email is confirmed.')).toBeVisible()
 
   await page.goto('/app/account')
   await expect(page.getByText('Confirmed', { exact: true })).toBeVisible()
@@ -61,8 +63,8 @@ test('a customer accepts delivered work and downloads the invoice PDF', async ({
   await signIn(page, buyer.email)
   await page.goto(`/app/engagements/${contract.id}`)
   await page.getByRole('tab', { name: /Milestones/ }).click()
-  page.once('dialog', (d) => d.accept())  // "Accept M1 …? This releases … from escrow"
-  await page.getByRole('button', { name: 'Accept milestone' }).first().click()
+  await page.getByRole('button', { name: /^Accept all & release/ }).first().click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Accept and release' }).click()  // "This releases … from escrow"
   await expect(page.getByText(/Milestone accepted/)).toBeVisible()
 
   await page.getByRole('tab', { name: 'Agreement' }).click()
@@ -76,4 +78,29 @@ test('a customer accepts delivered work and downloads the invoice PDF', async ({
   const invoice = page.waitForEvent('download')
   await page.getByRole('button', { name: 'PDF' }).first().click()
   expect((await invoice).suggestedFilename()).toMatch(/^ZK-INV-\d{6}\.pdf$/)
+})
+
+test('a customer adds a passkey and signs in with it, no password or code', async ({ page }) => {
+  // Chromium's virtual authenticator: a platform passkey that answers with a "fingerprint" automatically.
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send('WebAuthn.enable')
+  await cdp.send('WebAuthn.addVirtualAuthenticator', { options: {
+    protocol: 'ctap2', transport: 'internal', hasResidentKey: true, hasUserVerification: true, isUserVerified: true,
+    automaticPresenceSimulation: true } })
+  const { account: buyer } = await buyerWithOrganisation('Lennox Passkey')
+  await signIn(page, buyer.email)
+
+  await page.goto('/app/security')
+  await page.getByRole('button', { name: 'Add a passkey' }).click()
+  await page.getByLabel('Name for this passkey (optional)').fill('Test laptop')
+  await page.getByLabel('Your password').fill(PASSWORD)
+  await page.getByRole('button', { name: 'Create passkey' }).click()
+  await expect(page.getByText('Passkey added.')).toBeVisible()
+  await expect(page.getByRole('row').filter({ hasText: 'Test laptop' })).toBeVisible()
+
+  await page.locator('.user-menu-pop summary').click()
+  await page.getByRole('button', { name: 'Sign out' }).click()
+  await expect(page).toHaveURL(/\/login/)
+  await page.getByRole('button', { name: 'Sign in with a passkey' }).click()
+  await expect(page).toHaveURL(/\/app\/buyer/)  // signed in: no email, password or code typed
 })

@@ -18,10 +18,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from zoikorum.config import get_settings
 from zoikorum.domains.buyer import facade as buyer_facade
 from zoikorum.domains.policy import facade as policy_facade
-from zoikorum.domains.contract.models import ChangeOrder, Contract, ContractRevision, Milestone, Signature, Submission
+from zoikorum.domains.contract import delivery
+from zoikorum.domains.contract.models import (
+    ChangeOrder, Contract, ContractRevision, Milestone, Signature, Submission, SubmissionDraft, SubmissionReview,
+)
 from zoikorum.domains.contract.schemas import (
     PartialOfferIn, PartialOfferOut, ChangeOrderIn, ChangePreviewOut, ContractOut, ContractRevisionOut, ContractSummaryOut, MilestoneOut,
-    PartyOut, RevisionIn, SignatureOut, SignIn, SubmissionOut, SubmitIn,
+    DraftItemOut, DraftTextIn, EvidenceIn, EvidenceOut, IssueOut, PartyOut, ReviewIn, RevisionIn, SignatureOut, SignIn,
+    SubmissionDraftOut, SubmissionItemOut, SubmissionOut, SubmissionReviewOut, SubmitIn,
 )
 from zoikorum.domains.escrow import facade as escrow_facade
 from zoikorum.domains.firm import facade as firm_facade
@@ -426,6 +430,17 @@ async def _viewer(session: AsyncSession, actor: Actor, c: Contract) -> str:
 
 # ---- Generation ---------------------------------------------------------------------------
 
+def _buyer_line(buyer: dict) -> str:
+    """The contracting party: the organisation's legal entity with its registration details when it has one."""
+    e = buyer.get("legalEntity")
+    if not e:
+        return f"Buyer: {buyer['name']}, represented by {buyer['signatory']}."
+    details = ", ".join(x for x in (f"registration no. {e['registrationNumber']}" if e.get("registrationNumber") else None,
+                                    f"tax ID {e['taxId']}" if e.get("taxId") else None, e.get("registeredAddress"),
+                                    e.get("country")) if x)
+    return f"Buyer: {e['legalName']} ({details}), part of {buyer['name']}, represented by {buyer['signatory']}."
+
+
 def render_document(c: Contract, milestones: list[Milestone]) -> str:
     """Plain-language agreement from the accepted terms and the platform template (Agreement Finalization s.10)."""
     t, p = c.terms, c.parties
@@ -434,7 +449,7 @@ def render_document(c: Contract, milestones: list[Milestone]) -> str:
         f"ENGAGEMENT AGREEMENT {c.reference} (version {c.contract_version})",
         "",
         "1. PARTIES",
-        f"Buyer: {p['buyer']['name']}, represented by {p['buyer']['signatory']}.",
+        _buyer_line(p["buyer"]),
         f"Professional: {p['professional']['name']}" + (f", practising with {p['professional']['firm']}" if p["professional"].get("firm") else "") + ".",
         "Zoikorum provides the marketplace, verification, contracting and payment-protection infrastructure. It is not a party "
         "to the professional services and does not guarantee outcomes.",
@@ -524,7 +539,7 @@ async def generate_from_proposal(session: AsyncSession, payload: dict) -> None:
         pricing_model=payload.get("pricingModel"), status="PENDING_SIGNATURE", currency=payload["currency"],
         total_minor=int(payload["totalMinor"]), terms=terms, terms_hash=payload["termsHash"],
         parties={"buyer": {"name": org.name if org else "Buyer", "signatory": buyer.display_name if buyer else "Buyer",
-                           "country": org.country if org else None},
+                           "country": org.country if org else None, "legalEntity": payload.get("buyerLegalEntity")},
                  "professional": {"name": pro.display_name if pro else "Professional",
                                   "firm": (firm.trading_name or firm.legal_name) if firm else None,
                                   "country": pro.country if pro else None}},
@@ -609,6 +624,23 @@ def _next_action(c: Contract, ms: list[Milestone], signed: set[str], viewer: str
     return "In progress"
 
 
+def _evidence_out(e: dict) -> EvidenceOut:
+    if e["type"] == "FILE":
+        return EvidenceOut(id=e["id"], type="FILE", file=file_out(e))
+    return EvidenceOut(id=e["id"], type="LINK", url=e["url"], host=e.get("host"), provider=e.get("provider"), kind=e.get("kind"),
+                       label=e.get("label", ""), version=e.get("version", ""))
+
+
+def _submission_out(s: Submission, review: SubmissionReview | None) -> SubmissionOut:
+    return SubmissionOut(
+        id=s.id, note=s.note, files=[file_out(f) for f in s.files], submittedAt=s.created_at, revisionNumber=s.revision_number,
+        items=[SubmissionItemOut(deliverableKey=i["deliverableKey"], title=i["title"], acceptanceCriteria=i["acceptanceCriteria"],
+                                 note=i["note"], evidence=[_evidence_out(e) for e in i["evidence"]], carriedOver=i.get("carriedOver", False))
+               for i in s.items],
+        declaredAt=s.declaration.get("confirmedAt") if s.declaration else None, lateReason=s.late_reason,
+        review=SubmissionReviewOut(verdicts=review.verdicts, outcome=review.outcome, reviewedAt=review.created_at) if review else None)
+
+
 async def _out(session: AsyncSession, actor: Actor, c: Contract, viewer: str) -> ContractOut:
     ms = await _milestones(session, c.id)
     sigs = list((await session.scalars(select(Signature).where(Signature.contract_id == c.id).order_by(Signature.signed_at))).all())
@@ -621,6 +653,8 @@ async def _out(session: AsyncSession, actor: Actor, c: Contract, viewer: str) ->
     revisions_by_version = {revision.contract_version: revision for revision in revisions}
     subs = list((await session.scalars(select(Submission).where(Submission.milestone_id.in_([m.id for m in ms]))
                                        .order_by(Submission.created_at.desc()))).all()) if ms else []
+    reviews = {r.submission_id: r for r in (await session.scalars(select(SubmissionReview).where(
+        SubmissionReview.submission_id.in_([s.id for s in subs])))).all()} if subs else {}
     signed = {s.party for s in sigs if s.contract_version == c.contract_version}
     can_sign = False
     if c.status == "PENDING_SIGNATURE":
@@ -637,7 +671,7 @@ async def _out(session: AsyncSession, actor: Actor, c: Contract, viewer: str) ->
         status=c.status, pendingChangeOrderId=c.pending_change_order_id,
         total=MoneyDTO(amountMinor=c.total_minor, currency=c.currency), termsHash=c.terms_hash,
         contractVersion=c.contract_version,
-        parties=[PartyOut(role="BUYER", name=p["buyer"]["name"], detail=f"Signatory: {p['buyer']['signatory']}"),
+        parties=[_buyer_party(p["buyer"]),
                  PartyOut(role="PROFESSIONAL", name=p["professional"]["name"], detail=firm_line)],
         terms=c.terms, ndaRequired=c.nda_required, documentSha256=c.document_sha256, policyVersionLabel=c.policy_version_label,
         signatureDeadline=c.signature_deadline, activatedAt=c.activated_at, completedAt=c.completed_at,
@@ -672,8 +706,7 @@ async def _out(session: AsyncSession, actor: Actor, c: Contract, viewer: str) ->
                                          reason=m.partial_offer_reason or "", offeredAt=m.partial_offered_at)
             if m.partial_offer_minor is not None and m.partial_offered_at is not None else None,
             acceptedRelease=MoneyDTO(amountMinor=m.accepted_release_minor, currency=m.currency) if m.accepted_release_minor is not None else None,
-            submissions=[SubmissionOut(id=s.id, note=s.note, files=[file_out(f) for f in s.files], submittedAt=s.created_at)
-                         for s in subs if s.milestone_id == m.id],
+            submissions=[_submission_out(s, reviews.get(s.id)) for s in subs if s.milestone_id == m.id],
         ) for m in ms],
         viewerRole=viewer, nextAction=_next_action(c, ms, signed, viewer, p["professional"]["name"]), canSign=can_sign,
         acceptedAmount=MoneyDTO(amountMinor=accepted, currency=c.currency), createdAt=c.created_at, version=c.version,
@@ -1108,25 +1141,201 @@ async def submission_file(session: AsyncSession, actor: Actor, contract_id: uuid
     return data, rec.get("contentType"), rec["name"]
 
 
-async def submit_milestone(session: AsyncSession, actor: Actor, milestone_id: uuid.UUID, body: SubmitIn) -> ContractOut:
-    m, c, viewer = await _milestone_ctx(session, actor, milestone_id)
-    if viewer != "PROFESSIONAL":
-        raise Forbidden("Only the professional submits work")
+# ---- Delivering work: a draft per milestone, item by item against the contract's deliverables -------------------------
+
+async def _latest_submission(session: AsyncSession, milestone_id: uuid.UUID) -> Submission | None:
+    return await session.scalar(select(Submission).where(Submission.milestone_id == milestone_id)
+                                .order_by(Submission.created_at.desc()).limit(1))
+
+
+def _deliverables(c: Contract, m: Milestone) -> list[dict]:
+    return delivery.deliverables_for(c.terms, m.deliverable_keys, m.title, m.description)
+
+
+def _previous_items(previous: Submission | None) -> list[dict] | None:
+    return previous.items if previous is not None and previous.items else None
+
+
+def _require_open_for_delivery(m: Milestone) -> None:
     if m.status == "PENDING_FUNDING":
         raise Conflict("This milestone is not funded yet; work starts after funding", code="NOT_FUNDED")
     if m.status not in ("IN_PROGRESS", "REVISION_REQUESTED"):
         raise Conflict("This milestone is not open for submission", code="MILESTONE_NOT_OPEN")
-    if not body.note.strip() and not body.files:
-        raise Conflict("Add a note or at least one file describing what you delivered", code="EMPTY_SUBMISSION")
+
+
+async def _delivery_ctx(session: AsyncSession, actor: Actor, milestone_id: uuid.UUID) -> tuple[Milestone, Contract]:
+    m, c, viewer = await _milestone_ctx(session, actor, milestone_id)
+    if viewer != "PROFESSIONAL":
+        raise Forbidden("Only the professional prepares a delivery")
+    return m, c
+
+
+async def _find_draft(session: AsyncSession, milestone_id: uuid.UUID) -> SubmissionDraft | None:
+    return await session.scalar(select(SubmissionDraft).where(SubmissionDraft.milestone_id == milestone_id).with_for_update())
+
+
+async def _editable_draft(session: AsyncSession, actor: Actor, milestone_id: uuid.UUID) -> tuple[Milestone, Contract, SubmissionDraft]:
+    """The draft to change, created on the first change. After the buyer asked for changes it starts from the last delivery."""
+    m, c = await _delivery_ctx(session, actor, milestone_id)
+    _require_open_for_delivery(m)
+    d = await _find_draft(session, m.id)
+    if d is None:
+        previous = _previous_items(await _latest_submission(session, m.id))
+        d = SubmissionDraft(milestone_id=m.id, professional_identity_id=actor.identity_id, note="",
+                            items=delivery.seed_from(previous) if previous else {})
+        session.add(d)
+        await session.flush()
+    return m, c, d
+
+
+def _require_deliverable(c: Contract, m: Milestone, key: str) -> dict:
+    found = next((d for d in _deliverables(c, m) if d["key"] == key), None)
+    if found is None:
+        raise ValidationFailed("This milestone has no such deliverable", code="UNKNOWN_DELIVERABLE")
+    return found
+
+
+async def _draft_out(session: AsyncSession, m: Milestone, c: Contract, d: SubmissionDraft | None) -> SubmissionDraftOut:
+    previous = await _latest_submission(session, m.id)
+    prev_items = _previous_items(previous)
+    items = d.items if d is not None else (delivery.seed_from(prev_items) if prev_items else {})
+    deliverables = _deliverables(c, m)
+    blockers, warnings = delivery.check(deliverables, items, m.due_date, clock.now().date(), prev_items)
+    asked: dict[str, str] = {}
+    if previous is not None and m.status == "REVISION_REQUESTED":
+        review = await session.scalar(select(SubmissionReview).where(SubmissionReview.submission_id == previous.id))
+        asked = {v["deliverableKey"]: v["comment"] for v in (review.verdicts if review else []) if v["verdict"] == "CHANGES_REQUESTED"}
+    count = await session.scalar(select(func.count()).select_from(Submission).where(Submission.milestone_id == m.id)) or 0
+    return SubmissionDraftOut(
+        milestoneId=m.id, revisionNumber=count, note=d.note if d is not None else "",
+        items=[DraftItemOut(deliverableKey=x["key"], title=x["title"], acceptanceCriteria=x["acceptanceCriteria"],
+                            note=(items.get(x["key"]) or {}).get("note", ""),
+                            evidence=[_evidence_out(e) for e in (items.get(x["key"]) or {}).get("evidence", [])],
+                            ready=bool((items.get(x["key"]) or {}).get("evidence")), changesRequested=asked.get(x["key"]))
+               for x in deliverables],
+        blockers=[IssueOut(**b) for b in blockers], warnings=[IssueOut(**w) for w in warnings], canSubmit=not blockers,
+        declaration=delivery.DECLARATION, savedAt=d.updated_at if d is not None else None)
+
+
+async def get_submission_draft(session: AsyncSession, actor: Actor, milestone_id: uuid.UUID) -> SubmissionDraftOut:
+    m, c = await _delivery_ctx(session, actor, milestone_id)
+    return await _draft_out(session, m, c, await _find_draft(session, m.id))
+
+
+async def save_draft_text(session: AsyncSession, actor: Actor, milestone_id: uuid.UUID, body: DraftTextIn) -> SubmissionDraftOut:
+    m, c, d = await _editable_draft(session, actor, milestone_id)
+    items = {k: dict(v) for k, v in d.items.items()}
+    for key, note in body.itemNotes.items():
+        _require_deliverable(c, m, key)
+        items[key] = {"evidence": [], **items.get(key, {}), "note": note.strip()}
+    d.items = items
+    if body.note is not None:
+        d.note = body.note.strip()
+    d.updated_at = clock.now()
+    await session.flush()
+    return await _draft_out(session, m, c, d)
+
+
+async def add_evidence(session: AsyncSession, actor: Actor, milestone_id: uuid.UUID, key: str, body: EvidenceIn) -> SubmissionDraftOut:
+    """A file (stored at once, checked like every upload) or a link, recognised from its address. Never fetched."""
+    if (body.file is None) == (not (body.url or "").strip()):
+        raise ValidationFailed("Add either a file or a link", code="EVIDENCE_REQUIRED")
+    m, c, d = await _editable_draft(session, actor, milestone_id)
+    _require_deliverable(c, m, key)
+    items = {k: dict(v) for k, v in d.items.items()}
+    item = {"note": "", **items.get(key, {})}
+    evidence = list(item.get("evidence", []))
+    if len(evidence) >= delivery.MAX_EVIDENCE_PER_ITEM:
+        raise Conflict(f"Up to {delivery.MAX_EVIDENCE_PER_ITEM} files or links per deliverable", code="TOO_MUCH_EVIDENCE")
     now = clock.now()
-    sub = Submission(milestone_id=m.id, submitted_by=actor.identity_id, note=body.note.strip(),
-                     files=store_uploads(f"contracts/{c.id}/{m.id}", body.files))
+    if body.file is not None:
+        if any(e["type"] == "FILE" and e["sha256"] == body.file.sha256 for e in evidence):
+            return await _draft_out(session, m, c, d)  # the same file again: nothing to add
+        evidence.append(delivery.file_record(store_uploads(f"contracts/{c.id}/{m.id}", [body.file])[0], now))
+    else:
+        link = delivery.link_record(body.url or "", body.label, body.version, now)
+        if any(e["type"] == "LINK" and e["url"] == link["url"] and e.get("version") == link["version"] for e in evidence):
+            return await _draft_out(session, m, c, d)
+        evidence.append(link)
+    items[key] = {**item, "evidence": evidence}
+    d.items, d.updated_at = items, now
+    await session.flush()
+    return await _draft_out(session, m, c, d)
+
+
+async def remove_evidence(session: AsyncSession, actor: Actor, milestone_id: uuid.UUID, key: str, evidence_id: str) -> SubmissionDraftOut:
+    m, c, d = await _editable_draft(session, actor, milestone_id)
+    items = {k: dict(v) for k, v in d.items.items()}
+    evidence = (items.get(key) or {}).get("evidence", [])
+    if not any(e["id"] == evidence_id for e in evidence):
+        raise NotFound("That file or link is not in this delivery")
+    items[key] = {**items[key], "evidence": [e for e in evidence if e["id"] != evidence_id]}
+    d.items, d.updated_at = items, clock.now()
+    await session.flush()
+    return await _draft_out(session, m, c, d)
+
+
+async def discard_draft(session: AsyncSession, actor: Actor, milestone_id: uuid.UUID) -> SubmissionDraftOut:
+    m, c = await _delivery_ctx(session, actor, milestone_id)
+    d = await _find_draft(session, m.id)
+    if d is not None:
+        await session.delete(d)
+        await session.flush()
+    return await _draft_out(session, m, c, None)
+
+
+async def draft_file(session: AsyncSession, actor: Actor, milestone_id: uuid.UUID, sha256: str) -> tuple[bytes, str | None, str]:
+    """A file in the professional's own draft. The buyer never sees a draft."""
+    m, _ = await _delivery_ctx(session, actor, milestone_id)
+    d = await _find_draft(session, m.id)
+    files = [e for item in (d.items.values() if d else []) for e in item.get("evidence", []) if e["type"] == "FILE"]
+    rec = find_file(files, sha256)
+    return read_file(rec), rec.get("contentType"), rec["name"]
+
+
+def _stored(e: dict) -> dict:
+    return {k: e[k] for k in ("name", "sha256", "size", "contentType", "key", "versionId") if k in e}
+
+
+async def submit_milestone(session: AsyncSession, actor: Actor, milestone_id: uuid.UUID, body: SubmitIn, ip: str | None = None) -> ContractOut:
+    """Sends the saved draft (every deliverable needs evidence, and the professional confirms the declaration). Without a
+    draft, a note and files are still accepted in one step for the whole milestone."""
+    m, c, viewer = await _milestone_ctx(session, actor, milestone_id)
+    if viewer != "PROFESSIONAL":
+        raise Forbidden("Only the professional submits work")
+    _require_open_for_delivery(m)
+    now = clock.now()
+    draft = await _find_draft(session, m.id)
+    previous = await _latest_submission(session, m.id)
+    revision = await session.scalar(select(func.count()).select_from(Submission).where(Submission.milestone_id == m.id)) or 0
+    late_reason = (body.lateReason or "").strip() or None
+    if draft is not None:
+        if body.note.strip() or body.files:
+            raise Conflict("You have a delivery in progress. Send it, or discard it first.", code="DRAFT_IN_PROGRESS")
+        deliverables, prev_items = _deliverables(c, m), _previous_items(previous)
+        blockers, _ = delivery.check(deliverables, draft.items, m.due_date, now.date(), prev_items)
+        if blockers:
+            raise Conflict(" · ".join(b["message"] for b in blockers), code="DELIVERY_INCOMPLETE", extra={"blockers": blockers})
+        if not body.confirmed:
+            raise Conflict("Confirm that the work meets the agreed acceptance criteria before sending", code="DECLARATION_REQUIRED")
+        items = delivery.frozen_items(deliverables, draft.items, prev_items)
+        files = list({e["sha256"]: _stored(e) for i in items for e in i["evidence"] if e["type"] == "FILE"}.values())
+        sub = Submission(milestone_id=m.id, submitted_by=actor.identity_id, note=draft.note.strip(), files=files, items=items,
+                         revision_number=revision, late_reason=late_reason,
+                         declaration={"text": delivery.DECLARATION, "confirmedAt": now.isoformat(), "ip": ip})
+        await session.delete(draft)
+    else:
+        if not body.note.strip() and not body.files:
+            raise Conflict("Add a note or at least one file describing what you delivered", code="EMPTY_SUBMISSION")
+        sub = Submission(milestone_id=m.id, submitted_by=actor.identity_id, note=body.note.strip(), revision_number=revision,
+                         late_reason=late_reason, files=store_uploads(f"contracts/{c.id}/{m.id}", body.files))
     session.add(sub)
     await session.flush()
     MILESTONE_STATES.assert_can(m.status, "SUBMITTED")
     m.status, m.submitted_at = "SUBMITTED", now
     m.acceptance_due_at = now + timedelta(days=c.terms.get("policySettings", {}).get("acceptanceWindowDays", get_settings().acceptance_window_days))
-    _evt(session, E.MILESTONE_SUBMITTED, c, milestoneId=m.id, submissionId=sub.id, acceptanceDueAt=m.acceptance_due_at)
+    _evt(session, E.MILESTONE_SUBMITTED, c, milestoneId=m.id, submissionId=sub.id, acceptanceDueAt=m.acceptance_due_at,
+         revisionNumber=revision, itemCount=len(sub.items))
     # Acceptance timer (Payments & Escrow s.10). Keyed per submission, so a resubmission starts a fresh window.
     timer = {"milestoneId": str(m.id), "submissionId": str(sub.id)}
     if m.acceptance_due_at - timedelta(days=1) > now:
@@ -1237,6 +1446,12 @@ async def accept_milestone(session: AsyncSession, actor: Actor, milestone_id: uu
     await _require_decider(session, actor, c, viewer)
     if m.status != "SUBMITTED":
         raise Conflict("Only submitted work can be accepted", code="MILESTONE_NOT_SUBMITTED")
+    await _accept_as_buyer(session, actor, m, c)
+    return await _out(session, actor, c, viewer)
+
+
+async def _accept_as_buyer(session: AsyncSession, actor: Actor, m: Milestone, c: Contract) -> None:
+    """The organisation's policy decides first (it may need an approval); then the milestone is accepted."""
     await policy_facade.require_allowed(session, await policy_facade.commercial_context(session,
         org_id=c.organization_id, professional_id=c.professional_id, action=policy_facade.PolicyAction.MILESTONE_ACCEPT,
         subject_type="Milestone", subject_id=m.id, actor_identity_id=actor.identity_id,
@@ -1245,7 +1460,6 @@ async def accept_milestone(session: AsyncSession, actor: Actor, milestone_id: uu
         extra={"contract.termsHash": c.terms_hash, "contract.version": c.contract_version,
             "milestone.submissionId": str(await session.scalar(select(Submission.id).where(Submission.milestone_id == m.id).order_by(Submission.created_at.desc()).limit(1)))}))
     await _accept(session, m, c, actor.identity_id)
-    return await _out(session, actor, c, viewer)
 
 
 async def offer_partial_acceptance(session: AsyncSession, actor: Actor, milestone_id: uuid.UUID, body: PartialOfferIn) -> ContractOut:
@@ -1286,10 +1500,58 @@ async def request_revision(session: AsyncSession, actor: Actor, milestone_id: uu
     await _require_decider(session, actor, c, viewer)
     if m.status != "SUBMITTED":
         raise Conflict("Only submitted work can be sent back for revision", code="MILESTONE_NOT_SUBMITTED")
+    await _send_back(session, m, c, body.reason.strip())
+    return await _out(session, actor, c, viewer)
+
+
+async def _send_back(session: AsyncSession, m: Milestone, c: Contract, reason: str) -> None:
     MILESTONE_STATES.assert_can(m.status, "REVISION_REQUESTED")
-    m.status, m.last_revision_reason = "REVISION_REQUESTED", body.reason.strip()
+    m.status, m.last_revision_reason = "REVISION_REQUESTED", reason
     m.partial_offer_minor = m.partial_offer_reason = m.partial_offered_at = None
     m.revision_count += 1
     _evt(session, E.MILESTONE_REVISION_REQUESTED, c, milestoneId=m.id, reason=m.last_revision_reason, revisionCount=m.revision_count)
     await session.flush()
+
+
+async def review_submission(session: AsyncSession, actor: Actor, milestone_id: uuid.UUID, body: ReviewIn) -> ContractOut:
+    """Buyer: a verdict on each deliverable of the latest delivery. All met: the milestone is accepted (the organisation's
+    policy still decides first). Anything not met: it goes back to the professional with one comment per item."""
+    m, c, viewer = await _milestone_ctx(session, actor, milestone_id)
+    await _require_decider(session, actor, c, viewer)
+    if m.status != "SUBMITTED":
+        raise Conflict("Only submitted work can be reviewed", code="MILESTONE_NOT_SUBMITTED")
+    sub = await _latest_submission(session, m.id)
+    if sub is None:
+        raise Conflict("Nothing has been delivered yet", code="MILESTONE_NOT_SUBMITTED")
+    titles = {i["deliverableKey"]: i["title"] for i in sub.items} or {d["key"]: d["title"] for d in _deliverables(c, m)}
+    given = [v.deliverableKey for v in body.verdicts]
+    if sorted(given) != sorted(titles) or len(set(given)) != len(given):
+        raise ValidationFailed("Give one verdict for each deliverable in this delivery", code="VERDICTS_INCOMPLETE")
+    if any(v.verdict == "CHANGES_REQUESTED" and len(v.comment.strip()) < 5 for v in body.verdicts):
+        raise ValidationFailed("Say what needs to change for each item you send back", code="COMMENT_REQUIRED")
+    if await session.scalar(select(SubmissionReview.id).where(SubmissionReview.submission_id == sub.id)):
+        raise Conflict("This delivery has already been reviewed", code="ALREADY_REVIEWED")
+    verdicts = [{"deliverableKey": v.deliverableKey, "verdict": v.verdict, "comment": v.comment.strip()} for v in body.verdicts]
+    changes = [v for v in verdicts if v["verdict"] == "CHANGES_REQUESTED"]
+    outcome = "REVISION_REQUESTED" if changes else "ACCEPTED"
+    if changes:
+        await _send_back(session, m, c, "; ".join(f"{titles[v['deliverableKey']]}: {v['comment']}" for v in changes)[:1000])
+    else:
+        await _accept_as_buyer(session, actor, m, c)
+    session.add(SubmissionReview(submission_id=sub.id, milestone_id=m.id, reviewer_identity_id=actor.identity_id,
+                                 verdicts=verdicts, outcome=outcome))
+    record_audit(session, "contract.submission.reviewed", object_type="Milestone", object_id=m.id, tenant_id=c.organization_id,
+                 policy_version=c.policy_version_label,
+                 details={"contractId": str(c.id), "submissionId": str(sub.id), "outcome": outcome,
+                          "met": len(verdicts) - len(changes), "changesRequested": len(changes)})
+    await session.flush()
     return await _out(session, actor, c, viewer)
+
+
+def _buyer_party(buyer: dict) -> PartyOut:
+    """The contracting legal entity when the organisation has one, with the organisation and signatory below it."""
+    e = buyer.get("legalEntity")
+    if not e:
+        return PartyOut(role="BUYER", name=buyer["name"], detail=f"Signatory: {buyer['signatory']}")
+    reg = f" · Reg. no. {e['registrationNumber']}" if e.get("registrationNumber") else ""
+    return PartyOut(role="BUYER", name=e["legalName"], detail=f"{buyer['name']}{reg} · Signatory: {buyer['signatory']}")

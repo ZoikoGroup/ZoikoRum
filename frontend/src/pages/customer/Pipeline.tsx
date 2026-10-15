@@ -14,7 +14,7 @@ type StartOption = { key: string; contextType: MessageContextType; contextId: st
 
 const TABS: Tab[] = ['All', 'Engagements', 'Requests', 'Professionals', 'System']
 const ACCEPTED_FILE_TYPES = '.pdf,.png,.jpg,.jpeg,.docx,.xlsx,.csv,.txt'
-const MAX_FILE_SIZE = 10 * 1024 * 1024
+const MAX_FILE_SIZE = 50 * 1024 * 1024
 
 function initials(name: string) {
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || '?'
@@ -107,6 +107,7 @@ export function MessagesPage() {
   const [queuedFiles, setQueuedFiles] = useState<File[]>([])
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState('')
   const [error, setError] = useState('')
   const [showStart, setShowStart] = useState(false)
   const startDialog = useDialog<HTMLElement>(() => setShowStart(false), showStart)
@@ -119,6 +120,7 @@ export function MessagesPage() {
   useEffect(() => { activeThreadRef.current = selectedId }, [selectedId])
   const cursorRef = useRef<string | null>(null)
   const historyInitializedRef = useRef(false)
+  const readThroughRef = useRef(new Map<string, number>())
   const threadsCursorRef = useRef<string | null>(null)
   const threadPagesInitializedRef = useRef(false)
   const selected = threads.find((thread) => thread.id === selectedId) ?? null
@@ -211,8 +213,10 @@ export function MessagesPage() {
           setEarlierCursor(page.nextCursor)
         }
         const through = ordered.at(-1)?.sequence
-        if (through && document.visibilityState === 'visible') {
+        if (through && through > (readThroughRef.current.get(selectedId) ?? 0) && document.visibilityState === 'visible') {
           await messagingApi.markRead(selectedId, through)
+          readThroughRef.current.set(selectedId, through)
+          window.dispatchEvent(new Event('zk:message-read'))
           if (!active) return
           setThreads((current) => current.map((thread) => thread.id === selectedId ? { ...thread, unreadCount: 0 } : thread))
         }
@@ -320,7 +324,7 @@ export function MessagesPage() {
     event.target.value = ''
     const tooLarge = incoming.find((file) => file.size > MAX_FILE_SIZE)
     if (tooLarge) {
-      setError(`${tooLarge.name} is larger than the 10 MB file limit.`)
+      setError(`${tooLarge.name} is larger than the 50 MB file limit.`)
       return
     }
     if (queuedFiles.length + incoming.length > 5) {
@@ -339,14 +343,17 @@ export function MessagesPage() {
     setSending(true)
     setError('')
     try {
-      const uploaded = await Promise.all(queuedFiles.map(async (file) => {
+      const uploaded: { id: string }[] = []
+      for (const file of queuedFiles) {
         const existing = uploadedRef.current.get(file)
-        if (existing) return { id: existing }
+        if (existing) { uploaded.push({ id: existing }); continue }
+        setUploadProgress(`Uploading ${uploaded.length + 1} of ${queuedFiles.length}: ${file.name}`)
         const data = await readAsBase64(file)
         const result = await messagingApi.upload(selected.id, file.name, data)
         uploadedRef.current.set(file, result.id)
-        return result
-      }))
+        uploaded.push(result)
+      }
+      setUploadProgress('Sending message…')
       const attachmentIds = uploaded.map((file) => file.id)
       const payload = JSON.stringify({ thread: selected.id, body, attachmentIds })
       if (retryRef.current?.payload !== payload) retryRef.current = { payload, key: crypto.randomUUID() }
@@ -362,6 +369,7 @@ export function MessagesPage() {
       setError(cause instanceof Error ? cause.message : 'Message could not be sent.')
     } finally {
       setSending(false)
+      setUploadProgress('')
     }
   }
 
@@ -377,6 +385,15 @@ export function MessagesPage() {
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'File could not be downloaded.')
     }
+  }
+
+  async function openRelated(id: string) {
+    try {
+      const thread = await messagingApi.get(id)
+      setThreads(current => mergeThreads(current, [thread]))
+      selectThread(id)
+      setSearchParams({}, { replace: true })
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not open related conversation.') }
   }
 
   const targetUrl = selected ? contextUrl(selected, selected.viewerRole === 'PROFESSIONAL') : null
@@ -408,7 +425,7 @@ export function MessagesPage() {
                   </span>
                   <span className="message-thread-copy">
                     <span className="message-thread-top"><strong>{thread.counterpartName}</strong><time>{timeLabel(thread.updatedAt)}</time></span>
-                    <span className="message-thread-title">{thread.title}</span>
+                    <span className="message-thread-title">{thread.archivedRequest ? 'Request history · ' : thread.contextType === 'CONTRACT' ? 'Engagement · ' : 'Request · '}{thread.title}</span>
                     <span className="message-thread-preview">{thread.lastMessageFromSystem && <span className="system-tag">System</span>}{thread.lastMessage}</span>
                   </span>
                   {thread.unreadCount > 0 && <span className="message-unread" aria-label={`${thread.unreadCount} unread messages`}>{thread.unreadCount}</span>}
@@ -434,6 +451,10 @@ export function MessagesPage() {
               <span><strong>{selected.contextType === 'CONTRACT' ? 'Engagement' : selected.contextType === 'DISPUTE' ? 'Dispute' : 'Request'}</strong> · {selected.title}</span>
               {targetUrl && <Link to={targetUrl}>View details <span aria-hidden>→</span></Link>}
             </div>
+            {selected.relatedThreadId && <div className="message-context-strip message-related">
+              <span>{selected.archivedRequest ? 'This is the original request history. Replies continue in the engagement.' : 'The original request and proposal messages are preserved separately.'}</span>
+              <button type="button" className="btn btn-secondary btn-sm" disabled={sending} onClick={() => void openRelated(selected.relatedThreadId!)}>{selected.contextType === 'CONTRACT' ? 'View request history' : 'Continue in engagement'}</button>
+            </div>}
             <div className="message-history" aria-live="polite">
               <div className="message-tabs" role="tablist" aria-label="Conversation sections">{(['Messages', 'Files', 'Audit Trail'] as const).map(section => <button key={section} role="tab" aria-selected={conversationTab === section} className={conversationTab === section ? 'active' : ''} onClick={() => setConversationTab(section)}>{section}</button>)}</div>
               {earlierCursor && <button className="message-load-earlier" onClick={() => void loadEarlier()} disabled={loadingEarlier}>{loadingEarlier ? 'Loading…' : 'Load earlier messages'}</button>}
@@ -462,7 +483,9 @@ export function MessagesPage() {
               }) : <div className="message-history-empty"><Icon name="message" /><p>No messages yet. Start the conversation.</p></div>)}
             </div>
             <form className="message-composer" onSubmit={(event) => void sendMessage(event)}>
-              {selected.locked ? <div className="message-read-only"><Icon name="shield" /><span>{selected.lockReason || 'Messaging is paused while this conversation is read-only.'} Use the dispute workspace for dispute communication.</span></div> : <>
+              {sending && <p role="status">{uploadProgress || 'Preparing attachments…'}</p>}
+              <p className="muted small">PDF, DOCX, XLSX, PNG, JPEG, TXT or CSV · up to 50 MB per file · five files per message.</p>
+              {selected.locked ? <div className="message-read-only"><Icon name="shield" /><span>{selected.lockReason || 'Messaging is paused while this conversation is read-only.'} {selected.contextType === 'DISPUTE' || selected.lockReason?.toLowerCase().includes('disput') ? 'Use the dispute workspace for dispute communication.' : ''}</span></div> : <>
                 {queuedFiles.length > 0 && <div className="message-queued-files">{queuedFiles.map((file, index) => (
                   <span key={`${file.name}-${index}`}>{file.name}<button type="button" aria-label={`Remove ${file.name}`} onClick={() => setQueuedFiles((current) => current.filter((_, i) => i !== index))}>×</button></span>
                 ))}</div>}

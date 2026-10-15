@@ -75,6 +75,13 @@ async def test_staff_see_the_name_and_details_to_compare_and_insurance_needs_an_
     reasons = (await client.get(f"{V}/decision-reasons", headers=o.h, params={"verificationType": "INSURANCE"})).json()
     unrelated = next(x for x in reasons if x["code"] == "DOCUMENT_UNRELATED")
     assert "indemnity insurance certificate" in unrelated["message"] and "FAILED" in unrelated["decisions"]
+    codes = {x["code"] for x in reasons}  # only reasons that fit an insurance check
+    assert "DOCUMENT_MATCH" in codes and not codes & {"PARTNER_VERIFIED", "REGISTRY_MATCH", "NOT_IN_REGISTER"}
+    missing = next(x for x in reasons if x["code"] == "NO_DOCUMENT")  # nothing uploaded yet: ask for it
+    assert missing["decisions"] == ["NEEDS_INFO"] and "indemnity insurance certificate" in missing["message"]
+    identity = {x["code"] for x in (await client.get(f"{V}/decision-reasons", headers=o.h,
+                                                     params={"verificationType": "IDENTITY"})).json()}
+    assert "PARTNER_VERIFIED" in identity and "REGISTRY_MATCH" not in identity
 
 
 async def test_a_legal_name_change_means_identity_is_verified_again(client, make_user, drain, sf):
@@ -164,3 +171,16 @@ async def test_staff_and_customers_each_sign_in_on_their_own_page(client, make_u
     assert (await sign_in(staff, "staff")).status_code == 200
     wrong = await client.post("/v1/auth/login", json={"email": staff.email, "password": "not-the-password", "portal": "customer"})
     assert wrong.json()["code"] != "USE_STAFF_SIGN_IN"  # the page check runs only after the password: no hint who is staff
+
+
+async def test_locally_a_quick_second_resend_still_gives_the_development_link(client, make_user, monkeypatch):
+    from zoikorum.config import Settings
+    from zoikorum.domains.identity import api as identity_api
+
+    u = await make_user("quick")
+    monkeypatch.setattr(identity_api, "get_settings", lambda: Settings(_env_file=None, env="local"))
+    await client.post("/v1/me/email-confirmation", headers=u.h)  # a link was just sent (sign-up counts too)
+    again = await client.post("/v1/me/email-confirmation", headers=u.h)
+    assert again.status_code == 200 and again.json()["emailConfirmationToken"]  # no 60-second wait without an inbox
+    confirmed = await client.post("/v1/auth/confirm-email", json={"token": again.json()["emailConfirmationToken"]})
+    assert confirmed.status_code == 200 and confirmed.json()["emailConfirmed"] is True

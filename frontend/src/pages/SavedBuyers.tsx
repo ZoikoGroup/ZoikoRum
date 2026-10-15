@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { proApi, type BuyerCandidate, type SavedBuyer } from '../api/professional'
-import { EmptyTable, PortalHeader } from '../components/portal'
+import { isNoProfile } from '../api/client'
+import { EmptyTable, NoProfileYet, PortalHeader } from '../components/portal'
 import { ErrorAlert } from '../components/ui'
 
 const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString() : '—')
@@ -39,6 +40,13 @@ export default function SavedBuyersPage() {
       setError(err)
     }
   }
+
+  if (isNoProfile(error)) return (
+    <>
+      <PortalHeader eyebrow="Clients" title="Saved buyers" subtitle="Organisations that have worked with you or sent you requests." />
+      <NoProfileYet>Buyers who send you requests can be saved here once you have a published profile.</NoProfileYet>
+    </>
+  )
 
   return (
     <>

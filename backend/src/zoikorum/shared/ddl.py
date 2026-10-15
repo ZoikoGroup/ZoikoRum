@@ -15,6 +15,8 @@ APPEND_ONLY_TABLES: tuple[str, ...] = (
     "verification.provider_events",
     "contract.signatures",
     "contract.contract_revisions",
+    "contract.submissions",
+    "contract.submission_reviews",
     "messaging.messages",
     "messaging.attachments",
     "policy.policy_evaluations",

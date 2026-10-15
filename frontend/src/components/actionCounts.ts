@@ -41,9 +41,11 @@ async function collect(user: User): Promise<ActionItem[]> {
   // Professional
   if (user.personas.includes('PROFESSIONAL')) {
     add('/app/professional/requests', 'New requests to answer', async () => (await proposalApi.summary('professional')).requests.OPEN ?? 0)
-    add('/app/professional/engagements', 'Engagements needing you', async () => (await contractApi.list('professional')).filter((c) => c.canSign
+    const engagements = contractApi.list('professional')
+    add('/app/professional/engagements', 'Engagements needing you', async () => (await engagements).filter((c) => c.canSign
       || c.milestones.some((m) => m.status === 'REVISION_REQUESTED' || (m.status === 'SUBMITTED' && m.partialOffer))).length)
-    add('/app/professional/earnings', 'Payouts needing attention', async () =>
+    // Payouts only exist after engagements: no call (and no "no profile yet" error) before the first one.
+    add('/app/professional/earnings', 'Payouts needing attention', async () => (await engagements).length === 0 ? 0 :
       (await paymentsApi.earnings()).payouts.filter((p) => p.status === 'QUEUED' || p.status === 'FAILED').length)
     add('/app/professional/disputes', 'Open disputes', async () =>
       (await disputeApi.list('professional')).filter((d) => OPEN_PHASES.includes(d.status)).length)
@@ -67,8 +69,11 @@ export function useActionCounts(user: User | null, pathname: string): { byPath: 
     let live = true
     const load = () => collect(user).then((x) => { if (live) setItems(x) })
     load()
+    let timer: number | undefined
+    const changed = () => { window.clearTimeout(timer); timer = window.setTimeout(load, 750) }
     const t = window.setInterval(load, 60_000)
-    return () => { live = false; window.clearInterval(t) }
+    window.addEventListener('zk:activity', changed)
+    return () => { live = false; window.clearInterval(t); window.clearTimeout(timer); window.removeEventListener('zk:activity', changed) }
   }, [user, pathname])
   const shown = items.filter((i) => i.count > 0)
   return { byPath: Object.fromEntries(items.map((i) => [i.to, i.count])), items: shown, total: shown.reduce((s, i) => s + i.count, 0) }

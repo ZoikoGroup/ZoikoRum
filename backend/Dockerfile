@@ -12,10 +12,11 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Pinned versions first (cached layer).
 COPY requirements.txt ./
 RUN pip install -r requirements.txt
-# Optional integrations: cloud = S3 storage, monitoring = error reporting, tracing = OpenTelemetry, ai = Claude.
+# Optional integrations: gcs = Google Cloud Storage, cloud = Amazon S3, monitoring = error reporting,
+# tracing = OpenTelemetry, ai = Claude.
 # Only their dependencies are installed here: the application runs from /app/src (next to /app/alembic, which the
 # startup schema check reads), so the package itself is removed again.
-ARG EXTRAS="cloud,monitoring,tracing,ai"
+ARG EXTRAS="gcs,cloud,monitoring,tracing,ai"
 COPY pyproject.toml ./
 COPY src ./src
 RUN if [ -n "$EXTRAS" ]; then pip install ".[${EXTRAS}]" && pip uninstall -y zoikorum; fi

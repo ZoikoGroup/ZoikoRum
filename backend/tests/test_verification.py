@@ -275,3 +275,23 @@ async def test_evidence_files_are_stored_checked_and_viewable(client, make_user,
     async with sf() as s:
         viewed = await s.scalar(text("SELECT count(*) FROM audit.audit_records WHERE action LIKE '%verification.evidence.viewed%'"))
     assert viewed == 2
+
+
+async def test_open_review_queue_keeps_needs_info_cases_visible(client, make_user, drain):
+    user, profile = await new_pro(client, make_user, drain, name="waiting-on-evidence")
+    reviewer = await officer(make_user)
+    response = await client.post("/v1/verification/cases", headers=user.h, json={
+        "subjectType": "PROFESSIONAL", "subjectId": profile["id"], "verificationType": "IDENTITY"})
+    assert response.status_code in (200, 201), response.text
+    case = response.json()
+    result = await client.post(f"/v1/verification/cases/{case['id']}/decision", headers=reviewer.h, json={
+        "decision": "NEEDS_INFO", "reasonCode": "BLURRY", "publicReason": "Please upload a readable ID."})
+    assert result.status_code == 200, result.text
+    page = (await client.get("/v1/verification/review-queue", headers=reviewer.h)).json()
+    assert any(row["id"] == case["id"] and row["status"] == "NEEDS_INFO" for row in page["items"])
+
+    history = (await client.get("/v1/verification/review-queue", headers=reviewer.h, params={"status": "ALL"})).json()["items"]
+    assert any(row["id"] == case["id"] for row in history)
+    assert any(row["status"] == "VERIFIED" for row in history)
+    verified = (await client.get("/v1/verification/review-queue", headers=reviewer.h, params={"status": "VERIFIED"})).json()["items"]
+    assert verified and all(row["status"] == "VERIFIED" for row in verified)

@@ -33,6 +33,7 @@ class ProposalRequest(Base, UUIDPk, Timestamps, Versioned):
 
     organization_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     cost_center_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    legal_entity_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))  # buyer's contracting entity
     buyer_identity_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     professional_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     offering_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))

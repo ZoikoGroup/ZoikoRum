@@ -274,14 +274,71 @@ async def invoice_pdf(session: AsyncSession, actor: Actor, invoice_id: uuid.UUID
     doc = pdf.PdfDocument(
         title="Invoice", reference=inv.number, issued=inv.issued_at, fingerprint=fingerprint,
         subtitle=f"For engagement {engagement.reference}" if engagement else None,
-        sections=[pdf.Section("Billed to", rows=[("Organisation", org.name if org else "—"),
-                                                 ("Professional", pro.display_name if pro else "—")]),
+        sections=[pdf.Section("Billed to", rows=_billed_to(org, engagement.buyer_legal_entity if engagement else None)
+                              + [("Professional", pro.display_name if pro else "—")]),
                   pdf.Section("Items", table=items, total=("Total paid", pdf.money(inv.total_minor, inv.currency))),
                   pdf.Section(text="Funds were held in escrow and released for accepted work. Zoikorum provides the marketplace "
                                    "and payment protection; the services were provided by the professional named above.")])
     record_audit(session, "payments.invoice.pdf_downloaded", object_type="Invoice", object_id=inv.id,
                  tenant_id=inv.organization_id, evidence_hash=fingerprint)
     return pdf.render(doc), f"{inv.number}.pdf"
+
+
+_PAYOUT_STATUS = {"QUEUED": "Waiting for a payout account", "INITIATED": "Sent to your bank",
+                  "SETTLED": "Paid to your bank", "FAILED": "Failed"}
+
+
+async def payout_statement_pdf(session: AsyncSession, actor: Actor, payout_id: uuid.UUID) -> tuple[bytes, str]:
+    """The professional's statement for one payout: what the client paid, the platform fee, what was paid to the bank,
+    when, and the transfer reference. Only the professional it was paid to can download it. The footer carries the
+    SHA-256 of the recorded payout, so a copy can be checked. Audited."""
+    pro = await _my_professional(session, actor)
+    p = await session.get(Payout, payout_id)
+    if p is None or p.professional_id != pro.id:
+        raise NotFound("Payout not found")
+    engagement = await contract_facade.get_contract(session, p.contract_id)
+    milestone = await contract_facade.get_milestone(session, p.milestone_id) if p.milestone_id else None
+    org = await buyer_facade.get_organization(session, engagement.organization_id) if engagement else None
+    invoice = await session.scalar(select(Invoice).where(Invoice.release_id == p.release_id))
+    account = await session.scalar(select(PayoutAccount).where(PayoutAccount.professional_id == pro.id))
+    reference = f"ZK-PAY-{str(p.id)[:8].upper()}"
+    content = json.dumps({"payoutId": str(p.id), "releaseId": str(p.release_id), "grossMinor": p.gross_minor,
+                          "feeMinor": p.fee_minor, "netMinor": p.amount_minor, "currency": p.currency, "status": p.status,
+                          "transferRef": p.transfer_ref or p.provider_ref,
+                          "settledAt": p.settled_at.isoformat() if p.settled_at else None},
+                         sort_keys=True, separators=(",", ":"))
+    fingerprint = hashlib.sha256(content.encode()).hexdigest()
+    fee_pct = f"{p.fee_minor * 100 / p.gross_minor:g}%" if p.gross_minor else ""
+    when = lambda d: d.strftime("%d %b %Y") if d else "—"  # noqa: E731
+    paid_to = [("Professional", (await professional_facade.legal_name(session, pro.id)) or pro.display_name)]
+    if account:
+        paid_to += [("Account holder", account.holder_name), ("Bank account", f"•••• {account.last4} ({account.country}, {account.currency})")]
+    work = [("Engagement", engagement.reference if engagement else "—"),
+            ("Milestone", milestone.title if milestone else "Whole engagement"),
+            ("Client", (engagement.buyer_legal_entity or {}).get("legalName") if engagement and engagement.buyer_legal_entity
+             else (org.name if org else "—"))]
+    if invoice:
+        work.append(("Client invoice", invoice.number))
+    payment = [("Status", _PAYOUT_STATUS.get(p.status, p.status)), ("Started", when(p.created_at)),
+               ("Paid", when(p.settled_at)) if p.settled_at else ("Expected in your bank", when(p.expected_at)),
+               ("Transfer reference", p.transfer_ref or p.provider_ref or "—")]
+    if p.status == "FAILED" and p.failure_message:
+        payment.append(("Reason", p.failure_message))
+    doc = pdf.PdfDocument(
+        title="Payout statement", reference=reference, issued=p.settled_at or p.created_at, fingerprint=fingerprint,
+        subtitle=f"For engagement {engagement.reference}" if engagement else None,
+        sections=[pdf.Section("Paid to", rows=paid_to),
+                  pdf.Section("Work", rows=work),
+                  pdf.Section("Amounts", table=[("Released from escrow for accepted work", pdf.money(p.gross_minor, p.currency)),
+                                                (f"Zoikorum platform fee {fee_pct}".strip(), "- " + pdf.money(p.fee_minor, p.currency))],
+                              total=("Paid to you", pdf.money(p.amount_minor, p.currency))),
+                  pdf.Section("Payment", rows=payment),
+                  pdf.Section(text="The client paid into escrow. When the work was accepted, the money was released: the platform "
+                                   "fee went to Zoikorum and the rest was sent to the bank account above. Use the transfer "
+                                   "reference to find this payment on your bank statement.")])
+    record_audit(session, "payments.payout.statement_downloaded", object_type="Payout", object_id=p.id,
+                 evidence_hash=fingerprint)
+    return pdf.render(doc), f"{reference}.pdf"
 
 
 async def charges(session: AsyncSession, actor: Actor, organization_id: uuid.UUID, cursor: str | None = None,
@@ -389,3 +446,14 @@ async def resume_payout(session: AsyncSession, payout_id: uuid.UUID) -> None:
                                                                PayoutAccount.status == "ACTIVE"))
     if account is not None:
         await _send_payout(session, p, account)
+
+
+def _billed_to(org, entity: dict | None) -> list[tuple[str, str]]:
+    """The buyer's legal entity on the invoice (as on the contract), or the organisation when it has none."""
+    if not entity:
+        return [("Organisation", org.name if org else "—")]
+    rows = [("Legal entity", entity["legalName"]), ("Organisation", org.name if org else "—")]
+    for label, key in (("Registration no.", "registrationNumber"), ("Tax ID", "taxId"), ("Registered address", "registeredAddress")):
+        if entity.get(key):
+            rows.append((label, f"{entity[key]}, {entity['country']}" if key == "registeredAddress" else entity[key]))
+    return rows

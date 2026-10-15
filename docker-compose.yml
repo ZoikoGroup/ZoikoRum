@@ -1,6 +1,8 @@
 # Local development infrastructure for the Zoikorum backend.
 # Postgres hosts every domain schema (one schema per bounded context).
 # Redis is used for caches / rate limits only - never as a source of truth.
+# Keep the project stable across checkouts because container names and host ports are shared.
+name: zoikorum
 services:
   postgres:
     image: postgres:16-alpine

@@ -64,6 +64,7 @@ export const paymentsApi = {
   invoices: (organizationId: string) => allPages<Invoice>('/v1/payments/invoices', { organizationId }),
   /** The invoice as a PDF (members of the buyer organisation; audited). */
   invoicePdf: (id: string) => api<Blob>(`/v1/payments/invoices/${id}/pdf`, { blob: true }),
+  payoutPdf: (id: string) => api<Blob>(`/v1/payments/payouts/${id}/pdf`, { blob: true }),
   charges: (organizationId: string) => allPages<Charge>('/v1/payments/charges', { organizationId }),
   reconciliations: () => api<Reconciliation[]>('/v1/payments/reconciliations'),
   reconcile: (day: string) => api<Reconciliation>('/v1/payments/reconciliations', { method: 'POST', body: { day } }),

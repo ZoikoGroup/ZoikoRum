@@ -24,7 +24,7 @@ from zoikorum.shared.errors import Forbidden, NotFound, Conflict, ValidationFail
 from zoikorum.shared.http import paginate, page_of
 from zoikorum.shared.relay import schedule_timer
 from zoikorum.shared.retry import exponential
-from zoikorum.config import get_settings
+from zoikorum.config import get_settings, web_url
 
 EMAIL_TIMER = 'notification.email_delivery'
 WEBHOOK_TIMER = 'notification.webhook_delivery'
@@ -34,6 +34,7 @@ EVENT_TITLES = {
     E.DATA_REQUEST_CREATED: 'Privacy request received', E.DATA_REQUEST_COMPLETED: 'Your privacy request is complete',
     E.DATA_REQUEST_BLOCKED: 'Account deletion on hold', E.DATA_REQUEST_CANCELLED: 'Account deletion cancelled',
     E.MFA_ENROLLED: 'Two-step verification enabled', E.PASSWORD_CHANGED: 'Your password changed',
+    E.PASSKEY_ADDED: 'A passkey was added to your account', E.PASSKEY_REMOVED: 'A passkey was removed from your account',
     E.MFA_RECOVERY_CODE_USED: 'A recovery code was used to sign in', E.MFA_RESET: 'Two-step verification was reset',
     E.AUTHENTICATION_FAILED: 'Account security alert', E.IDENTITY_SUSPENDED: 'Account restricted',
     E.IDENTITY_REINSTATED: 'Account restored',
@@ -214,7 +215,7 @@ async def deliver_email(session, key):
     if not row.mandatory and prefs and not prefs.email:
         row.email_status = 'DISABLED'
         return
-    url = get_settings().frontend_url.rstrip('/') + row.url
+    url = web_url(staff=recipient.staff) + row.url  # staff open links in the staff web app
     if row.event_type in {E.IDENTITY_CREATED, E.EMAIL_CONFIRMATION_REQUESTED, E.PASSWORD_RESET_REQUESTED}:
         purpose = 'password_reset' if row.event_type == E.PASSWORD_RESET_REQUESTED else 'email_confirm'
         url = await identity.notification_account_link(session, row.identity_id, purpose, requested_at=row.created_at)

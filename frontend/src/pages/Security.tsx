@@ -1,7 +1,8 @@
 import QRCode from 'qrcode'
 import { useEffect, useState, type FormEvent } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { authApi } from '../api/auth'
+import { authApi, type Passkey } from '../api/auth'
+import { createPasskey, passkeyCancelled, passkeysSupported } from '../lib/passkeys'
 import { useAuth } from '../auth/AuthContext'
 import { ErrorAlert, Field, useStepUp } from '../components/ui'
 
@@ -119,6 +120,81 @@ export default function Security() {
           </form>
         )}
       </section>
+      <PasskeysSection />
     </>
+  )
+}
+
+/** Passkeys: sign in with this device's fingerprint, face or PIN. Adding one needs your password. */
+function PasskeysSection() {
+  const [rows, setRows] = useState<Passkey[] | null>(null)
+  const [adding, setAdding] = useState(false)
+  const [password, setPassword] = useState('')
+  const [name, setName] = useState('')
+  const [notice, setNotice] = useState<string | null>(null)
+  const [error, setError] = useState<unknown>(null)
+  const [busy, setBusy] = useState(false)
+  const load = () => authApi.passkeys().then(setRows).catch(setError)
+  useEffect(() => { load() }, [])
+  const supported = passkeysSupported()
+
+  async function add(e: FormEvent) {
+    e.preventDefault()
+    setBusy(true)
+    setError(null)
+    setNotice(null)
+    try {
+      const options = await authApi.passkeyOptions(password)
+      const credential = await createPasskey(options)
+      await authApi.addPasskey(name.trim() || 'Passkey', credential)
+      setAdding(false)
+      setPassword('')
+      setName('')
+      setNotice('Passkey added. Next time, choose "Sign in with a passkey".')
+      await load()
+    } catch (err) {
+      if (!passkeyCancelled(err)) setError(err)
+    } finally {
+      setBusy(false)
+    }
+  }
+  async function remove(pk: Passkey) {
+    if (!confirm(`Remove the passkey "${pk.name}"? You will not be able to sign in with it any more.`)) return
+    try { await authApi.removePasskey(pk.id); setNotice(`Passkey "${pk.name}" removed.`); await load() } catch (err) { setError(err) }
+  }
+
+  return (
+    <section className="card panel" style={{ maxWidth: 640 }}>
+      <h2>Passkeys</h2>
+      <p className="muted">Sign in with your fingerprint, face or device PIN instead of your password and code. A passkey only
+        works on Zoikorum, so it cannot be phished. It also confirms sensitive actions.</p>
+      {notice && <div className="alert alert-success" role="status">{notice}</div>}
+      <ErrorAlert error={error} />
+      {rows && rows.length > 0 && (
+        <table className="data"><thead><tr><th>Name</th><th>Added</th><th>Last used</th><th><span className="sr-only">Actions</span></th></tr></thead>
+          <tbody>{rows.map((pk) => (
+            <tr key={pk.id}>
+              <td><strong>{pk.name}</strong>{pk.backedUp && <div className="muted small">Synced to your other devices</div>}</td>
+              <td className="small">{new Date(pk.createdAt).toLocaleDateString()}</td>
+              <td className="small">{pk.lastUsedAt ? new Date(pk.lastUsedAt).toLocaleString() : 'Not yet'}</td>
+              <td><button className="btn btn-ghost btn-sm" onClick={() => remove(pk)}>Remove</button></td>
+            </tr>))}</tbody></table>
+      )}
+      {!supported ? <p className="muted small">This browser does not support passkeys.</p> : adding ? (
+        <form onSubmit={add} style={{ marginTop: 12 }}>
+          <Field label="Name for this passkey (optional)" id="pk-name" hint="So you can tell them apart, e.g. Work laptop">
+            <input id="pk-name" className="input" maxLength={100} value={name} onChange={(e) => setName(e.target.value)} />
+          </Field>
+          <Field label="Your password" id="pk-password" hint="Adding a way to sign in needs your password.">
+            <input id="pk-password" className="input" type="password" autoComplete="current-password" value={password}
+              onChange={(e) => setPassword(e.target.value)} required />
+          </Field>
+          <div className="row">
+            <button className="btn btn-primary" disabled={busy || !password}>{busy ? 'Waiting for your device…' : 'Create passkey'}</button>
+            <button type="button" className="btn btn-ghost" onClick={() => { setAdding(false); setPassword('') }}>Cancel</button>
+          </div>
+        </form>
+      ) : <button className="btn btn-secondary" style={{ marginTop: 12 }} onClick={() => setAdding(true)}>Add a passkey</button>}
+    </section>
   )
 }

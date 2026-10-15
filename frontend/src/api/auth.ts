@@ -28,6 +28,8 @@ export interface User {
   createdAt: string
 }
 
+export interface Passkey { id: string; name: string; backedUp: boolean; createdAt: string; lastUsedAt: string | null }
+
 export interface AuthResult {
   tokens: TokenPair
   user: User
@@ -89,6 +91,16 @@ export const authApi = {
   newRecoveryCodes: () => api<{ recoveryCodes: string[] }>('/v1/auth/mfa/recovery-codes', { method: 'POST' }),
   resetMfa: (id: string, reason: string) => api<User>(`/v1/admin/identities/${id}/mfa-reset`, { method: 'POST', body: { reason } }),
   stepUp: (totpCode: string) => api<TokenPair>('/v1/auth/step-up', { method: 'POST', body: { totpCode } }),
+  // Passkeys (WebAuthn): options come from the server, the answer is signed on this device (lib/passkeys.ts).
+  passkeys: () => api<Passkey[]>('/v1/me/passkeys'),
+  passkeyOptions: (password: string) => api<Record<string, unknown>>('/v1/me/passkeys/options', { method: 'POST', body: { password } }),
+  addPasskey: (name: string, credential: Record<string, unknown>) => api<Passkey>('/v1/me/passkeys', { method: 'POST', body: { name, credential } }),
+  removePasskey: (id: string) => api<void>(`/v1/me/passkeys/${id}`, { method: 'DELETE' }),
+  passkeyLoginOptions: () => api<Record<string, unknown>>('/v1/auth/passkey/options', { method: 'POST', auth: false }),
+  passkeyLogin: (credential: Record<string, unknown>, portal?: 'customer' | 'staff') =>
+    api<AuthResult>('/v1/auth/passkey', { method: 'POST', body: { credential, portal }, auth: false }),
+  passkeyStepUpOptions: () => api<Record<string, unknown>>('/v1/auth/step-up/passkey/options', { method: 'POST' }),
+  passkeyStepUp: (credential: Record<string, unknown>) => api<TokenPair>('/v1/auth/step-up/passkey', { method: 'POST', body: { credential } }),
   addAccountType: (accountType: 'BUYER' | 'PROFESSIONAL') =>
     api<AuthResult>('/v1/me/account-types', { method: 'POST', body: { accountType } }),
 

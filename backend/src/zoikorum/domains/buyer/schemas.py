@@ -112,3 +112,23 @@ class BillingContactOut(BaseModel):
     displayName: str
     email: str
     isPrimary: bool
+
+
+class LegalEntityIn(BaseModel):
+    legalName: str = Field(min_length=2, max_length=200)
+    registrationNumber: str | None = Field(default=None, max_length=100)
+    country: str = Field(min_length=2, max_length=2, description="ISO 3166-1 alpha-2")
+    registeredAddress: str = Field(min_length=5, max_length=500)
+    taxId: str | None = Field(default=None, max_length=50, description="VAT, GSTIN, EIN ...")
+    isDefault: bool = False
+
+
+class LegalEntityOut(BaseModel):
+    id: uuid.UUID
+    legalName: str
+    registrationNumber: str | None
+    country: str
+    registeredAddress: str
+    taxId: str | None
+    isDefault: bool
+    status: str

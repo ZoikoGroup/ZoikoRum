@@ -5,8 +5,8 @@ server {
     root /usr/share/nginx/html;
     server_tokens off;
 
-    # Uploads are base64 JSON: 25 MB of files per request is about 34 MB on the wire.
-    client_max_body_size 40m;
+    # Message attachments are uploaded one at a time: 50 MB is about 67 MB of base64 JSON.
+    client_max_body_size 80m;
 
     location ~ ^/(v1/|health$|ready$) {
         proxy_pass ${API_UPSTREAM};

@@ -12,6 +12,8 @@ from zoikorum.domains.buyer.schemas import (
     BusinessUnitIn,
     BusinessUnitOut,
     CostCenterIn,
+    LegalEntityIn,
+    LegalEntityOut,
     CostCenterOut,
     InvitationOut,
     InviteIn,
@@ -117,6 +119,31 @@ async def business_units(org_id: uuid.UUID, actor: CurrentActor, session: DbSess
 @router.post("/{org_id}/business-units", response_model=BusinessUnitOut, status_code=status.HTTP_201_CREATED)
 async def create_business_unit(org_id: uuid.UUID, body: BusinessUnitIn, actor: CurrentActor, session: DbSession):
     return await service.create_business_unit(session, actor, org_id, body.name, body.parentId)
+
+
+@router.get("/{org_id}/legal-entities", response_model=list[LegalEntityOut])
+async def legal_entities(org_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    """The registered companies this organisation contracts and is invoiced through (any member can see them)."""
+    return await service.list_legal_entities(session, actor, org_id)
+
+
+@router.post("/{org_id}/legal-entities", response_model=LegalEntityOut, status_code=status.HTTP_201_CREATED)
+async def create_legal_entity(org_id: uuid.UUID, body: LegalEntityIn, actor: CurrentActor, session: DbSession):
+    """Organisation admin. The first entity becomes the default."""
+    return await service.create_legal_entity(session, actor, org_id, body)
+
+
+@router.put("/{org_id}/legal-entities/{entity_id}", response_model=LegalEntityOut)
+async def update_legal_entity(org_id: uuid.UUID, entity_id: uuid.UUID, body: LegalEntityIn, actor: CurrentActor,
+                              session: DbSession):
+    """Organisation admin. Applies to new contracts and invoices; signed contracts keep their details."""
+    return await service.update_legal_entity(session, actor, org_id, entity_id, body)
+
+
+@router.post("/{org_id}/legal-entities/{entity_id}/archive", response_model=LegalEntityOut)
+async def archive_legal_entity(org_id: uuid.UUID, entity_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    """Organisation admin. No new requests through it; past contracts and invoices keep it."""
+    return await service.archive_legal_entity(session, actor, org_id, entity_id)
 
 
 @router.get("/{org_id}/cost-centers", response_model=list[CostCenterOut])
