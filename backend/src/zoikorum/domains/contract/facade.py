@@ -120,3 +120,80 @@ async def engagements_by_organization(session: AsyncSession, professional_id: uu
         Contract.organization_id, func.count(), func.count().filter(Contract.status == "COMPLETED"), func.max(Contract.updated_at))
         .where(Contract.professional_id == professional_id).group_by(Contract.organization_id))).all()
     return {org: {"engagements": n, "completed": done, "lastEngagementAt": last} for org, n, done, last in rows}
+
+
+async def disputed_between(session: AsyncSession, professional_id: uuid.UUID, organization_ids: list[uuid.UUID]) -> bool:
+    """Is any engagement between this professional and one of these organisations in a dispute right now?"""
+    if not organization_ids:
+        return False
+    return bool(await session.scalar(select(Contract.id).where(
+        Contract.professional_id == professional_id, Contract.organization_id.in_(organization_ids),
+        Contract.status == "DISPUTED").limit(1)))
+
+
+async def retainer_paused(session: AsyncSession, contract_id: uuid.UUID) -> bool:
+    c = await session.get(Contract, contract_id)
+    return bool(c and c.paused_at)
+
+
+async def first_pass_stats(session: AsyncSession, professional_id: uuid.UUID) -> dict[str, int]:
+    """Accepted milestones and how many were accepted without a revision request (own performance insights)."""
+    from sqlalchemy import func
+
+    total, first = (await session.execute(select(func.count(), func.count().filter(Milestone.revision_count == 0))
+        .select_from(Milestone).join(Contract, Contract.id == Milestone.contract_id)
+        .where(Contract.professional_id == professional_id, Milestone.status == "ACCEPTED"))).one()
+    return {"accepted": total or 0, "firstPass": first or 0}
+
+
+async def activity_kpis(session: AsyncSession, since, until) -> dict:
+    """Engagements started and completed in the period, buyers and professionals active, engagements running now."""
+    from sqlalchemy import distinct, func
+
+    started = (await session.execute(select(func.count(), func.count(distinct(Contract.organization_id)),
+                                            func.count(distinct(Contract.professional_id))).where(
+        Contract.activated_at >= since, Contract.activated_at < until))).one()
+    completed = await session.scalar(select(func.count()).select_from(Contract).where(
+        Contract.completed_at >= since, Contract.completed_at < until)) or 0
+    running = await session.scalar(select(func.count()).select_from(Contract).where(Contract.status.in_(("ACTIVE", "DISPUTED")))) or 0
+    return {"engagementsStarted": started[0], "activeBuyerOrganisations": started[1], "activeProfessionals": started[2],
+            "engagementsCompleted": completed, "runningNow": running}
+
+
+async def is_retainer(session: AsyncSession, contract_id: uuid.UUID) -> bool:
+    c = await session.get(Contract, contract_id)
+    return bool(c) and "RETAINER" in (c.engagement_type, c.pricing_model)
+
+
+async def upcoming_dates(session: AsyncSession, org_ids: list[uuid.UUID], professional_id: uuid.UUID | None, days: int = 180) -> list[dict]:
+    """Dated milestones still open and contracts waiting for signature, for a person's calendar feed."""
+    from datetime import timedelta
+
+    from sqlalchemy import or_
+
+    from zoikorum.shared import clock
+
+    who = []
+    if org_ids:
+        who.append(Contract.organization_id.in_(org_ids))
+    if professional_id:
+        who.append(Contract.professional_id == professional_id)
+    if not who:
+        return []
+    today = clock.now().date()
+    out = []
+    rows = (await session.execute(select(Milestone, Contract).join(Contract, Contract.id == Milestone.contract_id).where(
+        or_(*who), Contract.status.in_(("ACTIVE", "PENDING_SIGNATURE", "DISPUTED")), Milestone.due_date.is_not(None),
+        Milestone.due_date >= today - timedelta(days=30), Milestone.due_date <= today + timedelta(days=days),
+        Milestone.status.not_in(("ACCEPTED", "CANCELLED"))))).all()
+    for m, c in rows:
+        side = "professional" if professional_id and c.professional_id == professional_id else "buyer"
+        path = f"/app/professional/engagements/{c.id}" if side == "professional" else f"/app/engagements/{c.id}"
+        out.append({"uid": f"milestone-{m.id}", "date": m.due_date, "title": f"Due: M{m.sequence} {m.title} ({c.reference})",
+                    "detail": f"Milestone due on engagement {c.reference}.", "path": path})
+    for c in (await session.scalars(select(Contract).where(or_(*who), Contract.status == "PENDING_SIGNATURE"))).all():
+        side = "professional" if professional_id and c.professional_id == professional_id else "buyer"
+        path = f"/app/professional/engagements/{c.id}" if side == "professional" else f"/app/engagements/{c.id}"
+        out.append({"uid": f"sign-{c.id}-{c.contract_version}", "date": c.signature_deadline.date(), "title": f"Sign by: {c.reference}",
+                    "detail": "The contract must be signed by both parties by this date.", "path": path})
+    return sorted(out, key=lambda x: x["date"])

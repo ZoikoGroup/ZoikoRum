@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import base64
 import hashlib
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal
 
 from fastapi import Response
 from pydantic import BaseModel, Field
 
 from zoikorum.shared.errors import NotFound, ValidationFailed
+from zoikorum.shared import scanning
 from zoikorum.shared.storage import get_storage
 
 MAX_FILE_BYTES = 10 * 1024 * 1024
@@ -82,6 +85,8 @@ def store_uploads(prefix: str, files: list[UploadIn]) -> list[dict]:
     checked = [(f, checked_bytes(f)) for f in files]
     if sum(len(d) for _, d in checked) > MAX_TOTAL_BYTES:
         raise ValidationFailed("Files sent together must add up to less than 25 MB", code="UPLOAD_TOO_LARGE")
+    for f, data in checked:  # every file is scanned before any is stored
+        scanning.scan(data, f.name)
     out = []
     for f, data in checked:
         key = f"{prefix}/{f.sha256}"
@@ -120,3 +125,14 @@ def file_response(data: bytes, content_type: str | None, name: str) -> Response:
     return Response(data, media_type=content_type or "application/octet-stream", headers={
         "Content-Disposition": f'inline; filename="{safe}"', "Cache-Control": "no-store",
         "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox"})
+
+
+@dataclass(frozen=True)
+class FileRef:
+    """One stored file, wherever it was uploaded (for the engagement's Files tab and evidence pack)."""
+    source: str  # Request | Proposal | Delivered work | Messages | Dispute evidence
+    name: str
+    sha256: str
+    size: int
+    uploaded_at: datetime | None
+    url: str  # the download address (each one checks the viewer's access and is audited)

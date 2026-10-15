@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import secrets
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import timedelta
@@ -110,6 +111,8 @@ async def _start_session(
     s = get_settings()
     now = clock.now()
     refresh, refresh_hash = tokens.new_refresh_token()
+    if family_id is None:  # a fresh sign-in (not a refresh or a step-up): tell the person if the device is new to us
+        await _announce_new_device(session, identity, user_agent)
     sess = Session(
         identity_id=identity.id,
         family_id=family_id or uuid.uuid4(),
@@ -126,6 +129,27 @@ async def _start_session(
         session_id=sess.id, auth_strength=strength, auth_time=sess.auth_time,
     )
     return TokenPair(accessToken=access, refreshToken=refresh, expiresIn=ttl)
+
+
+def _device(user_agent: str | None) -> str:
+    """A readable name for a browser/device from its User-Agent, e.g. "Chrome on Windows"."""
+    ua = user_agent or ""
+    browser = next((name for key, name in (("Edg/", "Edge"), ("OPR/", "Opera"), ("Firefox/", "Firefox"), ("Chrome/", "Chrome"),
+                                             ("Safari/", "Safari")) if key in ua), "A browser")
+    system = next((name for key, name in (("Windows", "Windows"), ("Android", "Android"), ("iPhone", "iPhone"), ("iPad", "iPad"),
+                                            ("Mac OS X", "macOS"), ("Linux", "Linux")) if key in ua), "an unknown device")
+    return f"{browser} on {system}"
+
+
+async def _announce_new_device(session: AsyncSession, identity: Identity, user_agent: str | None) -> None:
+    """Handbook / onboarding: security alert on a sign-in from a device not seen before (first sign-in excluded)."""
+    seen = (await session.scalars(select(Session.user_agent).where(Session.identity_id == identity.id).distinct())).all()
+    if not seen or (user_agent or "")[:500] in seen:
+        return
+    when = clock.now()
+    _evt(session, E.SESSION_CREATED, identity, newDevice=True, device=_device(user_agent),
+         message=f"Your account was signed in from {_device(user_agent)} on {when:%d %b %Y at %H:%M} UTC. If this was not "
+                 "you, change your password and sign out of other sessions under Security now.")
 
 
 async def register(session: AsyncSession, data: RegisterIn, user_agent: str | None):
@@ -231,6 +255,30 @@ def _new_recovery_codes(identity: Identity) -> list[str]:
     return codes
 
 
+def _totp_time() -> float:
+    """Wall-clock seconds for authenticator codes (the phone app uses real time, not the domain clock)."""
+    return time.time()
+
+
+TOTP_REUSED = "That code was already used. Wait for the next code in your authenticator app."
+
+
+async def _accept_totp(session: AsyncSession, identity: Identity, code: str) -> str | None:
+    """Checks an authenticator code (the current 30-second step, or one either side for clock drift) and uses it up:
+    each step is accepted once, so a code seen over someone's shoulder or replayed cannot sign in again. Returns None
+    when accepted, otherwise the message to show."""
+    totp = pyotp.TOTP(decrypt_field(identity.mfa_secret_enc))
+    current = int(_totp_time()) // totp.interval
+    step = next((s for s in (current - 1, current, current + 1) if hmac.compare_digest(totp.generate_otp(s), str(code))), None)
+    if step is None:
+        return "Authentication code is incorrect"
+    # One conditional update, so two requests racing with the same code cannot both pass.
+    used = await session.execute(update(Identity).where(
+        Identity.id == identity.id, or_(Identity.mfa_totp_last_step.is_(None), Identity.mfa_totp_last_step < step),
+    ).values(mfa_totp_last_step=step).execution_options(synchronize_session="fetch"))
+    return None if used.rowcount == 1 else TOTP_REUSED
+
+
 def _use_recovery_code(identity: Identity, code: str) -> bool:
     h = _recovery_hash(code)
     if h not in (identity.mfa_recovery_hashes or []):
@@ -264,6 +312,9 @@ async def login(
         return LoginFailure("Email or password is incorrect")
 
     # Checked only after the password is right, so a stranger cannot learn which emails belong to staff.
+    from zoikorum.domains.identity import sso
+    if await sso.sso_required(session, identity):
+        return LoginFailure("Your organisation signs in with single sign-on. Use “Sign in with SSO”.", "SSO_REQUIRED")
     staff = bool(identity.platform_roles)
     if portal == "staff" and not staff:
         return LoginFailure("This sign-in is for Zoikorum staff only. Customers and professionals sign in on the main "
@@ -282,10 +333,11 @@ async def login(
         else:
             if not totp:
                 raise Unauthenticated("Enter the 6-digit code from your authenticator", code="MFA_REQUIRED")
-            if not pyotp.TOTP(decrypt_field(identity.mfa_secret_enc)).verify(totp, valid_window=1):
+            if problem := await _accept_totp(session, identity, totp):
                 _count_failure(identity)
-                _evt(session, E.AUTHENTICATION_FAILED, identity, reason="BAD_TOTP", lockedUntil=identity.locked_until)
-                return LoginFailure("Authentication code is incorrect", "MFA_INVALID")
+                _evt(session, E.AUTHENTICATION_FAILED, identity, reason="REUSED_TOTP" if problem == TOTP_REUSED else "BAD_TOTP",
+                     lockedUntil=identity.locked_until)
+                return LoginFailure(problem, "MFA_INVALID")
         strength = AuthStrength.MFA
 
     identity.failed_login_count = 0
@@ -349,8 +401,8 @@ async def verify_mfa(session: AsyncSession, actor: Actor, code: str) -> list[str
     identity = await _get_for_update(session, actor.identity_id)
     if not identity.mfa_secret_enc:
         raise Conflict("Start MFA enrollment first", code="MFA_NOT_ENROLLING")
-    if not pyotp.TOTP(decrypt_field(identity.mfa_secret_enc)).verify(code, valid_window=1):
-        raise ValidationFailed("Authentication code is incorrect", code="MFA_INVALID")
+    if problem := await _accept_totp(session, identity, code):
+        raise ValidationFailed(problem, code="MFA_INVALID")
     if identity.mfa_enabled_at is not None:
         return []
     identity.mfa_enabled_at = clock.now()
@@ -393,10 +445,11 @@ async def step_up(session: AsyncSession, actor: Actor, code: str, user_agent: st
         raise Forbidden("Enable MFA before performing sensitive operations", code="MFA_NOT_ENABLED")
     if identity.locked_until and identity.locked_until > clock.now():
         raise Unauthenticated("Too many wrong codes. Try again in a few minutes.", code="ACCOUNT_LOCKED")
-    if not pyotp.TOTP(decrypt_field(identity.mfa_secret_enc)).verify(code, valid_window=1):
+    if problem := await _accept_totp(session, identity, code):
         _count_failure(identity)
-        _evt(session, E.AUTHENTICATION_FAILED, identity, reason="BAD_TOTP_STEP_UP", lockedUntil=identity.locked_until)
-        return LoginFailure("Authentication code is incorrect", "MFA_INVALID")
+        _evt(session, E.AUTHENTICATION_FAILED, identity,
+             reason="REUSED_TOTP_STEP_UP" if problem == TOTP_REUSED else "BAD_TOTP_STEP_UP", lockedUntil=identity.locked_until)
+        return LoginFailure(problem, "MFA_INVALID")
     identity.failed_login_count = 0
     family = None
     if actor.session_id:

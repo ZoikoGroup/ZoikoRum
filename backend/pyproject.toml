@@ -28,8 +28,9 @@ dev = ["pytest>=8", "pytest-asyncio>=0.24", "psycopg[binary]>=3.2"]
 kafka = ["aiokafka>=0.11"]
 ai = ["anthropic>=1,<2"]  # messages.parse(output_format=...) for the built-in prompts
 cloud = ["boto3>=1.35"]  # Amazon S3 storage
-gcs = ["google-cloud-storage>=2.18,<4"]  # Google Cloud Storage
+gcs = ["google-cloud-storage>=2.18,<4", "google-cloud-kms>=3,<4"]  # Google Cloud Storage + KMS field-key wrapping
 monitoring = ["sentry-sdk>=2.0"]
+push = ["pywebpush>=2.0,<3"]  # browser push notifications (Web Push with VAPID keys)
 tracing = ["opentelemetry-sdk>=1.30", "opentelemetry-exporter-otlp-proto-http>=1.30",
            "opentelemetry-instrumentation-fastapi>=0.51b0", "opentelemetry-instrumentation-sqlalchemy>=0.51b0",
            "opentelemetry-instrumentation-httpx>=0.51b0"]
@@ -56,3 +57,12 @@ markers = [
     "integration: one feature through the API and a real database",
     "regression: end-to-end business flows across Steps 1-9 (run before every merge)",
 ]
+
+[tool.coverage.run]
+source = ["src/zoikorum"]
+branch = true
+concurrency = ["greenlet", "thread"]
+
+[tool.coverage.report]
+skip_empty = true
+show_missing = false

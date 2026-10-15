@@ -3,9 +3,10 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
+from pydantic import BaseModel, Field
 from fastapi import APIRouter, Header, Response, status
 
-from zoikorum.domains.professional import saved_buyers, service
+from zoikorum.domains.professional import enterprise, insights, saved_buyers, service
 from zoikorum.domains.professional.schemas import (
     BuyerCandidateOut, SavedBuyerIn, SavedBuyerOut, SavedBuyerPatch,
     AvailabilityIn,
@@ -186,3 +187,40 @@ async def update_saved_buyer(saved_id: uuid.UUID, body: SavedBuyerPatch, actor: 
 async def remove_saved_buyer(saved_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> Response:
     await saved_buyers.remove(session, actor, saved_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/me/insights")
+async def my_insights(actor: CurrentActor, session: DbSession) -> dict:
+    """Your own performance from platform records: response, acceptance, on-time delivery, revisions, disputes."""
+    return await insights.mine(session, actor)
+
+
+class EnterpriseApplyIn(BaseModel):
+    attestation: dict[str, bool]
+
+
+class EnterpriseDecisionIn(BaseModel):
+    approve: bool
+    reason: str = Field(min_length=5, max_length=500)
+
+
+@router.get("/me/enterprise")
+async def my_enterprise_readiness(actor: CurrentActor, session: DbSession) -> dict:
+    """Your Enterprise Ready status, the requirements and the security statements."""
+    return await enterprise.mine(session, actor)
+
+
+@router.post("/me/enterprise/apply")
+async def apply_enterprise_readiness(body: EnterpriseApplyIn, actor: CurrentActor, session: DbSession) -> dict:
+    return await enterprise.apply(session, actor, body.attestation)
+
+
+@router.get("/admin/enterprise-applications")
+async def enterprise_applications(actor: CurrentActor, session: DbSession) -> list[dict]:
+    """Compliance: pending Enterprise Ready applications."""
+    return await enterprise.queue(session, actor)
+
+
+@router.post("/{professional_id}/enterprise/decision")
+async def decide_enterprise_readiness(professional_id: uuid.UUID, body: EnterpriseDecisionIn, actor: CurrentActor, session: DbSession) -> dict:
+    return await enterprise.decide(session, actor, professional_id, body.approve, body.reason)

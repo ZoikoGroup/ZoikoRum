@@ -156,7 +156,8 @@ def request(buyer: User, org: dict, pro: dict, service: str, objective: str) -> 
     (req,) = buyer.call("POST", "/v1/proposal-requests", {
         "organizationId": org["id"], "professionalIds": [pro["id"]], "service": service, "engagementType": "PROJECT",
         "objective": objective, "details": "Data lives in Postgres; we deploy on AWS.", "desiredStartDate": day(7),
-        "estimatedDuration": "THREE_SIX_WEEKS", "budget": {"maxMinor": 2_500_000, "currency": "USD"}, "acknowledged": True}, idem=True)
+        "estimatedDuration": "THREE_SIX_WEEKS", "budget": {"maxMinor": 2_500_000, "currency": "USD"},
+        "deliverables": [service], "acknowledged": True}, idem=True)
     return req
 
 

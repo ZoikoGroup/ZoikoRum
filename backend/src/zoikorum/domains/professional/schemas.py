@@ -16,6 +16,11 @@ ExperienceBand = Literal["0-2", "3-5", "6-10", "11-15", "16+"]
 Country = str
 
 
+# Industries a professional has served; the same list organisations choose their own industry from.
+Industry = Literal["Professional Services", "Financial Services", "Technology", "Healthcare", "Manufacturing", "Retail & Consumer",
+                   "Energy & Utilities", "Public Sector", "Education", "Real Estate", "Other"]
+
+
 class ProfilePatch(BaseModel):
     displayName: str | None = Field(default=None, min_length=1, max_length=200)
     legalName: str | None = Field(default=None, max_length=200)
@@ -23,6 +28,7 @@ class ProfilePatch(BaseModel):
     yearsExperienceBand: ExperienceBand | None = None
     bio: str | None = Field(default=None, max_length=3000)
     languages: list[str] | None = Field(default=None, max_length=10)
+    industries: list[Industry] | None = Field(default=None, max_length=8)
     city: str | None = Field(default=None, max_length=100)
     country: str | None = Field(default=None, pattern="^[A-Z]{2}$")
     website: str | None = Field(default=None, max_length=300, pattern=r"^(https://.+)?$")
@@ -32,6 +38,8 @@ class ProfilePatch(BaseModel):
     indicativeRate: MoneyDTO | None = None
     rateUnit: Literal["HOUR", "DAY", "MONTH", "PROJECT"] | None = None
     clearRate: bool = False
+    # Attests to controls for regulated data (confidential financial, personal or client-money records); audited.
+    handlesRegulatedData: bool | None = None
 
 
 class RegisterIn(BaseModel):
@@ -83,6 +91,7 @@ class ProfileOut(BaseModel):
     yearsExperienceBand: str | None
     bio: str | None
     languages: list[str]
+    industries: list[str] = []
     country: str
     city: str | None
     website: str | None
@@ -99,6 +108,7 @@ class ProfileOut(BaseModel):
     weeklyHours: int | None = None
     servedJurisdictions: list[str]
     licensedJurisdictions: list[str]
+    handlesRegulatedData: bool = False
     crossBorderAcknowledged: bool
     publishedAt: datetime | None
     version: int
@@ -229,6 +239,7 @@ class PublicProfileOut(BaseModel):
     yearsExperienceBand: str | None
     bio: str | None
     languages: list[str]
+    industries: list[str] = []
     country: str
     city: str | None
     primaryCategory: str | None
@@ -243,6 +254,7 @@ class PublicProfileOut(BaseModel):
     weeklyHours: int | None = None
     servedJurisdictions: list[str]
     licensedJurisdictions: list[str]
+    handlesRegulatedData: bool = False
     verifiedJurisdictions: list[str]  # licensed jurisdictions backed by a verified check
     credentials: list[PublicCredentialOut]
     offerings: list[OfferingOut]
@@ -252,6 +264,9 @@ class PublicProfileOut(BaseModel):
     firm: PublicFirmOut | None = None
     history: HistoryOut | None = None
     pendingSpecializations: list[str] = []  # shown as "Custom (under review)"
+    verificationInProgress: list[str] = []  # checks under review now, e.g. "Identity", "CPA (California)"
+    verificationReport: list[dict] = []  # completed checks: {check, status, verifiedAt, expiresAt}
+    enterprise: dict = {}  # Enterprise Signals: {enterpriseReady, signals: [...]}
 
 
 # ---- Saved buyers (Professional Dashboard s.17) ----------------------------------

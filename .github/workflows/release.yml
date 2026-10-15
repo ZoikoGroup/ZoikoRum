@@ -1,0 +1,64 @@
+# Release: build the three images, push them to Google Artifact Registry and deploy to the production VM.
+# Started by hand (Actions → Release → Run workflow) with a version tag. It never pushes to git.
+#
+# One-time setup (see backend/docs/DEPLOYMENT.md, "Google Cloud"):
+#   repository variables: GCP_PROJECT, GCP_REGION, GCP_REGISTRY (e.g. asia-south1-docker.pkg.dev/<project>/zoikorum),
+#     GCP_VM, GCP_ZONE, GCP_WIF_PROVIDER, GCP_DEPLOY_SA, ZK_FRONTEND_URL, ZK_STAFF_FRONTEND_URL
+#   Workload Identity Federation: GitHub signs in to Google without a stored key.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag for the images, e.g. 2026.10.14-1"
+        required: true
+
+permissions:
+  contents: read
+  id-token: write  # Workload Identity Federation
+
+concurrency:
+  group: release-production
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: production  # protection rules: required reviewers before it runs
+    env:
+      VERSION: ${{ inputs.version }}
+      REGISTRY: ${{ vars.GCP_REGISTRY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build images
+        run: |
+          docker build -t "$REGISTRY/zoikorum-backend:$VERSION" ./backend
+          docker build -t "$REGISTRY/zoikorum-web:$VERSION" --build-arg VITE_PORTAL=customer \
+            --build-arg VITE_CUSTOMER_URL="${{ vars.ZK_FRONTEND_URL }}" --build-arg VITE_STAFF_URL="${{ vars.ZK_STAFF_FRONTEND_URL }}" ./frontend
+          docker build -t "$REGISTRY/zoikorum-web-staff:$VERSION" --build-arg VITE_PORTAL=staff \
+            --build-arg VITE_CUSTOMER_URL="${{ vars.ZK_FRONTEND_URL }}" --build-arg VITE_STAFF_URL="${{ vars.ZK_STAFF_FRONTEND_URL }}" ./frontend
+
+      - name: Scan images (fixable HIGH and CRITICAL stop the release)
+        run: |
+          for image in zoikorum-backend zoikorum-web zoikorum-web-staff; do
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.56.2 image \
+              --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --no-progress "$REGISTRY/$image:$VERSION"
+          done
+
+      - name: Push to Artifact Registry
+        run: |
+          gcloud auth configure-docker "${REGISTRY%%/*}" --quiet
+          for image in zoikorum-backend zoikorum-web zoikorum-web-staff; do docker push "$REGISTRY/$image:$VERSION"; done
+
+      - name: Deploy on the VM (secrets from Secret Manager, settings check, migrations, restart)
+        run: |
+          gcloud compute ssh "${{ vars.GCP_VM }}" --zone "${{ vars.GCP_ZONE }}" --project "${{ vars.GCP_PROJECT }}" --tunnel-through-iap \
+            --command "cd /opt/zoikorum && sudo ZK_RELEASE=$VERSION ZK_REGISTRY=$REGISTRY/ ./backend/deploy/gcp/deploy.sh"

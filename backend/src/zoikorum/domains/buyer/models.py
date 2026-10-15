@@ -129,3 +129,19 @@ class BillingContact(Base, UUIDPk, Timestamps):
     )
     identity_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     is_primary: Mapped[bool] = mapped_column(nullable=False, default=False)
+
+
+class ApiKey(Base, UUIDPk, Timestamps):
+    """An organisation's API key (buyer/api_keys.py). Only a SHA-256 fingerprint of the key is kept."""
+    __tablename__ = "api_keys"
+    __table_args__ = {"schema": SCHEMA}
+    organization_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.organizations.id"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    prefix: Mapped[str] = mapped_column(String(16), nullable=False, unique=True)  # shown in lists, e.g. zk_7f3a9c2e
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    scope: Mapped[str] = mapped_column(String(10), nullable=False, default="READ")  # READ | WRITE
+    tier: Mapped[str] = mapped_column(String(12), nullable=False, default="STANDARD")  # STANDARD | ENTERPRISE (rate budget)
+    created_by: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)  # the key acts as this member
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

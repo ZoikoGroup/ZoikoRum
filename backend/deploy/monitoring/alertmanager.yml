@@ -1,0 +1,15 @@
+# Where alerts go. Replace the receivers with your paging tool (PagerDuty, Opsgenie) and email/Slack; keep the
+# routing: severity=page wakes the on-call engineer, team=financial-operations also goes to Financial Operations.
+route:
+  receiver: tickets
+  group_by: [alertname]
+  routes:
+    - matchers: [team="financial-operations"]
+      receiver: financial-operations
+      continue: true
+    - matchers: [severity="page"]
+      receiver: on-call
+receivers:
+  - name: on-call        # e.g. pagerduty_configs: [{routing_key_file: /etc/alertmanager/pagerduty_key}]
+  - name: financial-operations
+  - name: tickets        # e.g. email_configs or slack_configs

@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Query, status
+from pydantic import BaseModel
 
 from zoikorum.domains.marketplace import service
 from zoikorum.domains.marketplace.schemas import (
@@ -158,3 +159,24 @@ async def search_viewed(search_id: uuid.UUID, actor: CurrentActor, session: DbSe
 @router.delete("/v1/saved/searches/{search_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_search(search_id: uuid.UUID, actor: CurrentActor, session: DbSession):
     await service.delete_search(session, actor, search_id)
+
+
+
+class AlertsIn(BaseModel):
+    on: bool
+
+
+@router.post("/v1/saved/searches/{search_id}/alerts", response_model=SavedSearchOut)
+async def search_alerts(search_id: uuid.UUID, body: AlertsIn, actor: CurrentActor, session: DbSession):
+    """Turn the daily "new matches" notice for a saved search on or off."""
+    return await service.set_search_alerts(session, actor, search_id, body.on)
+
+
+@router.get("/v1/pricing/estimate")
+async def pricing_estimate(actor: CurrentActor, session: DbSession, specialization: str = Query(max_length=120),
+                           currency: str = Query(default="USD", pattern="^[A-Z]{3}$"), engagementType: str | None = Query(default=None, max_length=20)) -> dict:
+    """Signed-in: typical engagement values and published rates for a specialization (middle half of the range, from at
+    least five data points; the whole category when the specialization has too few)."""
+    from zoikorum.domains.marketplace import pricing
+
+    return await pricing.estimate(session, specialization, currency, engagementType)

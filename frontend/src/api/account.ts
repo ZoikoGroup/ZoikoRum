@@ -9,7 +9,7 @@ export interface DataRequest {
   id: string; requestType: 'ACCESS' | 'ERASURE'; status: string; createdAt: string; completedAt: string | null
   scheduledFor: string | null; expiresAt: string | null; downloadable: boolean; reasons: string[]; retained: Record<string, string>
 }
-export interface NotificationPreferences { email: boolean; inApp: boolean; sms: boolean; marketing: boolean; mandatoryNotice?: string }
+export interface NotificationPreferences { email: boolean; inApp: boolean; sms: boolean; marketing: boolean; digest?: 'OFF' | 'DAILY' | 'WEEKLY'; mandatoryNotice?: string }
 export type ProfileDetails = User & { phone: string | null; language: string; timeZone: string | null }
 
 export const accountApi = {
@@ -23,6 +23,7 @@ export const accountApi = {
   cancelDeletion: (id: string) => api<DataRequest>(`/v1/me/data-requests/${id}/cancel`, { method: 'POST' }),
   downloadData: (id: string) => api<Blob>(`/v1/me/data-requests/${id}/download`, { blob: true }),
   notifications: () => api<NotificationPreferences>('/v1/notification-preferences'),
+  calendarLink: (enabled: boolean) => api<{ url: string | null; note?: string }>('/v1/calendar/link', { method: 'PUT', body: { enabled } }),
   setNotifications: (body: NotificationPreferences) =>
     api<NotificationPreferences>('/v1/notification-preferences', { method: 'PUT', body }),
 }

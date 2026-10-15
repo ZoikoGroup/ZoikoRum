@@ -135,12 +135,22 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         kind, identifier = caller_key(request)
         rate_per_min, burst = self.LIMITS[kind]
+        auth = request.headers.get("Authorization") or ""
+        lookup = getattr(request.app.state, "api_key_budget", None)
+        if auth.startswith("Bearer zk_") and lookup:  # a valid key has its own budget (its client rate tier)
+            found = await lookup(auth[7:])
+            if found:
+                kind, identifier = "apikey", found[0]
+                rate_per_min, burst = found[1]
         if not await ratelimit.get_buckets().take(ratelimit.bucket_key(kind, identifier), rate_per_min, burst):
             return problem(RateLimited())
         return await call_next(request)
 
 
 def install(app: FastAPI) -> None:
+    from zoikorum.shared.idempotency import IdempotencyMiddleware
+
+    app.add_middleware(IdempotencyMiddleware)  # inside the rate limit: a replay still counts as a request
     app.add_middleware(RateLimitMiddleware)
     app.add_middleware(CorrelationMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)  # outermost: also covers rate-limit and error responses

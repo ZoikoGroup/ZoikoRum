@@ -7,9 +7,17 @@ import { policyApi, type Approval, type ExceptionRequest, type PolicyProfile, ty
 import { ErrorAlert, Field, useStepUp } from '../components/ui'
 import { EmptyTable, PortalHeader, StatCard, Tabs } from '../components/portal'
 import { Icon } from '../components/dashboard'
-import AutomaticDisputeControls from '../components/AutomaticDisputeControls'
+import AutomaticDisputeControls, { DisputeSettlementControls } from '../components/AutomaticDisputeControls'
+import { PolicyChecksPanel, PolicyDashboardView, PolicySettingsForm, RuleBuilder } from '../components/PolicyBuilder'
 
-type PolicyTab = 'profiles' | 'approvals' | 'exceptions'
+type PolicyTab = 'profiles' | 'approvals' | 'exceptions' | 'dashboard'
+
+const TEMPLATE_CARDS: [string, string, string][] = [
+  ['ENTERPRISE_STANDARD', 'Enterprise standard', 'Verified identity; an approver signs off each payment release.'],
+  ['REGULATED', 'Regulated work', 'Tier A only, all checks complete; finance and a budget owner approve releases.'],
+  ['CROSS_BORDER', 'Cross-border', 'Right to practise and screening verified; Legal approves engagements abroad.'],
+  ['GROWTH_ADVISORY', 'Growth advisory', 'Verified identity; an approver only for engagements above 25,000.'],
+]
 
 export default function PoliciesPage() {
   const [params, setParams] = useSearchParams()
@@ -27,6 +35,7 @@ export default function PoliciesPage() {
   const [selected, setSelected] = useState<PolicyProfile | null>(null)
   const [settings, setSettings] = useState('{}')
   const [rules, setRules] = useState('[]')
+  const [loaded, setLoaded] = useState({ settings: '{}', rules: '[]' })
   const [impact, setImpact] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
   const { run, modal } = useStepUp(setError)
@@ -82,6 +91,11 @@ export default function PoliciesPage() {
     const v = p.versions.find((v) => v.id === (p.draftVersionId || p.activeVersionId)) || p.versions[0]
     setSettings(JSON.stringify(v.settings, null, 2))
     setRules(JSON.stringify(v.rules, null, 2))
+    setLoaded({ settings: JSON.stringify(v.settings, null, 2), rules: JSON.stringify(v.rules, null, 2) })
+  }
+
+  async function startFromTemplate(template: string, name: string) {
+    await action(async () => choose(await policyApi.create({ orgId, name, description: '', template })))
   }
 
   async function action(work: () => Promise<unknown>) {
@@ -133,6 +147,7 @@ export default function PoliciesPage() {
         justification: String(f.get('justification')),
         documents,
         expiresAt: new Date(String(f.get('expiresAt'))).toISOString(),
+        emergency: f.get('emergency') === 'on',
       })
     })
   }
@@ -203,6 +218,7 @@ export default function PoliciesPage() {
               Organisation Scope:
             </span>
             <select
+              aria-label="Organisation scope"
               id="policy-org"
               className="input"
               style={{ maxWidth: 360 }}
@@ -241,10 +257,25 @@ export default function PoliciesPage() {
           { key: 'profiles', label: 'Policy Profiles', count: profiles.length },
           { key: 'approvals', label: 'Approval Requests', count: pendingApprovals.length },
           { key: 'exceptions', label: 'Exceptions & Waivers', count: exceptions.length },
+          { key: 'dashboard', label: 'Dashboard' },
         ]}
         value={tab}
         onChange={setTab}
       />
+
+      {tab === 'dashboard' && orgId && <PolicyDashboardView orgId={orgId} />}
+
+      {tab === 'profiles' && profiles.length === 0 && admin && (
+        <section className="card panel" style={{ marginBottom: 16 }}>
+          <h2>Set up your first policy</h2>
+          <p className="muted small">Start from a template and adjust it. Nothing applies until you activate it, and engagements already
+            agreed keep the rules they started with.</p>
+          <div className="stat-row four">{TEMPLATE_CARDS.map(([key, name, text]) => (
+            <div key={key} className="card panel"><h3 style={{ marginTop: 0 }}>{name}</h3><p className="small muted">{text}</p>
+              <button type="button" className="btn btn-secondary btn-sm" disabled={busy} onClick={() => startFromTemplate(key, `${name} policy`)}>Use this template</button></div>))}
+          </div>
+        </section>
+      )}
 
       {tab === 'profiles' && (
         <div className="home-grid wide">
@@ -466,6 +497,8 @@ export default function PoliciesPage() {
                   Active policy versions are immutable once enabled. Engagements retain their agreed version for the contract lifetime. Escrow is mandated by the platform baseline.
                 </div>
 
+                <PolicySettingsForm settings={settings} onChange={setSettings} disabled={!admin || !selected.draftVersionId} />
+                <details style={{ margin: '8px 0' }}><summary className="small">Advanced: settings as JSON</summary>
                 <Field label="Profile Settings (JSON)" id="policy-settings">
                   <textarea
                     id="policy-settings"
@@ -477,13 +510,21 @@ export default function PoliciesPage() {
                     onChange={(e) => setSettings(e.target.value)}
                   />
                 </Field>
+                </details>
 
                 <AutomaticDisputeControls
                   settings={settings}
                   onChange={setSettings}
                   disabled={!admin || !selected.draftVersionId}
                 />
+                <DisputeSettlementControls
+                  settings={settings}
+                  onChange={setSettings}
+                  disabled={!admin || !selected.draftVersionId}
+                />
 
+                <RuleBuilder rules={rules} onChange={setRules} disabled={!admin || !selected.draftVersionId} />
+                <details style={{ margin: '8px 0' }}><summary className="small">Advanced: rules as JSON</summary>
                 <Field label="Custom Rules (JSON)" id="policy-rules">
                   <textarea
                     id="policy-rules"
@@ -495,6 +536,9 @@ export default function PoliciesPage() {
                     onChange={(e) => setRules(e.target.value)}
                   />
                 </Field>
+                </details>
+                <PolicyChecksPanel profileId={selected.id} refreshKey={`${selected.version}-${selected.draftVersionId}`}
+                  hasDraft={!!selected.draftVersionId} saved={settings === loaded.settings && rules === loaded.rules} />
                 <p className="muted small">
                   Conditions support all/any groups or field/op/value. Approval modes: SINGLE, SEQUENTIAL, PARALLEL. Decisions: REQUIRE_APPROVAL, REQUIRE_EXCEPTION, BLOCK.
                 </p>
@@ -925,6 +969,11 @@ export default function PoliciesPage() {
                 />
               </div>
 
+              <label className="checkbox small" style={{ marginBottom: 12 }}>
+                <input type="checkbox" name="emergency" />
+                <span><strong>Emergency</strong>: work that cannot wait (a regulator deadline, an incident). Lasts 72 hours at most,
+                  needs a fuller reason, and every Exception Authority is told at once.</span>
+              </label>
               <button type="submit" className="btn btn-primary btn-block" disabled={busy}>
                 Submit Exception Request
               </button>

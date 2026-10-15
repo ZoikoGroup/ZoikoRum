@@ -6,6 +6,8 @@ from typing import Literal
 from fastapi import APIRouter, Query, Request, Response, status
 
 from zoikorum.config import get_settings
+from zoikorum.shared.errors import ValidationFailed
+from pydantic import BaseModel, Field
 from zoikorum.domains.identity import duplicates, passkeys, privacy_requests, service
 from zoikorum.domains.identity.schemas import (
     DataRequestIn,
@@ -54,16 +56,39 @@ def _ua(request: Request) -> str | None:
     return request.headers.get("User-Agent")
 
 
+# The web app keeps its refresh token in an HttpOnly cookie that page scripts cannot read, so an injected script cannot
+# steal a long-lived sign-in (Handbook: session security). The browser marks its requests with X-Zk-Client: web; when
+# the cookie is used the refresh token is never put in a response body. Other API clients keep the token in the body.
+REFRESH_COOKIE = "zk_refresh"
+
+
+def _cookie_mode(request: Request) -> bool:
+    return request.headers.get("X-Zk-Client") == "web" or REFRESH_COOKIE in request.cookies
+
+
+def _issue(request: Request, response: Response, pair: TokenPair) -> TokenPair:
+    if not _cookie_mode(request):
+        return pair
+    s = get_settings()
+    response.set_cookie(REFRESH_COOKIE, pair.refreshToken, max_age=s.refresh_token_ttl_seconds, path="/v1/auth",
+                        httponly=True, samesite="strict", secure=s.env not in ("local", "development", "test"))
+    return pair.model_copy(update={"refreshToken": ""})
+
+
+def _forget(response: Response) -> None:
+    response.delete_cookie(REFRESH_COOKIE, path="/v1/auth")
+
+
 def _expose_dev_tokens() -> bool:
     # Local development and tests only: everywhere else (staging included) links arrive by email, never in a response.
     return get_settings().env in ("local", "development", "test")
 
 
 @router.post("/auth/register", response_model=RegisterOut, status_code=status.HTTP_201_CREATED)
-async def register(body: RegisterIn, request: Request, session: DbSession) -> RegisterOut:
+async def register(body: RegisterIn, request: Request, response: Response, session: DbSession) -> RegisterOut:
     identity, pair, confirm = await service.register(session, body, _ua(request))
     return RegisterOut(
-        tokens=pair,
+        tokens=_issue(request, response, pair),
         user=service.to_out(identity, []),
         emailConfirmationToken=confirm if _expose_dev_tokens() else None,
     )
@@ -76,7 +101,7 @@ async def confirm_email(body: ConfirmEmailIn, session: DbSession) -> IdentityOut
 
 
 @router.post("/auth/login", response_model=AuthOut)
-async def login(body: LoginIn, request: Request) -> AuthOut:
+async def login(body: LoginIn, request: Request, response: Response) -> AuthOut:
     await enforce_budget("login-email", body.email.lower(), 10, 10, "Too many sign-in attempts for this account. Wait a minute and try again.")
     # Own transaction: a failed attempt must still commit its lockout counter.
     async with session_factory()() as session:
@@ -85,23 +110,27 @@ async def login(body: LoginIn, request: Request) -> AuthOut:
                                          body.portal)
     if isinstance(result, service.LoginFailure):
         raise Unauthenticated(result.detail, code=result.code)
-    return result
+    return result.model_copy(update={"tokens": _issue(request, response, result.tokens)})
 
 
 @router.post("/auth/refresh", response_model=TokenPair)
-async def refresh(body: RefreshIn, request: Request) -> TokenPair:
+async def refresh(body: RefreshIn, request: Request, response: Response) -> TokenPair:
+    token = body.refreshToken or request.cookies.get(REFRESH_COOKIE)
+    if not token:
+        raise Unauthenticated("Please sign in again", code="SESSION_EXPIRED")
     # Own transaction: refresh-token reuse must revoke the family even though we reject.
     async with session_factory()() as session:
         async with session.begin():
-            result = await service.refresh(session, body.refreshToken, _ua(request))
+            result = await service.refresh(session, token, _ua(request))
     if isinstance(result, service.LoginFailure):
         raise Unauthenticated(result.detail, code=result.code)
-    return result
+    return _issue(request, response, result)
 
 
 @router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(actor: CurrentActor, session: DbSession) -> None:
+async def logout(actor: CurrentActor, session: DbSession, response: Response) -> None:
     await service.logout(session, actor)
+    _forget(response)
 
 
 @router.post("/auth/password/forgot", response_model=ForgotPasswordOut, status_code=status.HTTP_202_ACCEPTED)
@@ -137,14 +166,14 @@ async def mfa_recovery_codes(actor: CurrentActor, session: DbSession) -> Recover
 
 
 @router.post("/auth/step-up", response_model=TokenPair)
-async def step_up(body: StepUpIn, request: Request, actor: CurrentActor) -> TokenPair:
+async def step_up(body: StepUpIn, request: Request, response: Response, actor: CurrentActor) -> TokenPair:
     # Own transaction: a wrong code must still commit its lockout counter.
     async with session_factory()() as session:
         async with session.begin():
             result = await service.step_up(session, actor, body.totpCode, _ua(request))
     if isinstance(result, service.LoginFailure):
         raise Unauthenticated(result.detail, code=result.code)
-    return result
+    return _issue(request, response, result)
 
 
 # ---- Passkeys ----------------------------------------------------------------------------------------------------------
@@ -156,14 +185,14 @@ async def passkey_login_options(session: DbSession) -> dict:
 
 
 @router.post("/auth/passkey", response_model=AuthOut)
-async def passkey_login(body: PasskeyLoginIn, request: Request) -> AuthOut:
+async def passkey_login(body: PasskeyLoginIn, request: Request, response: Response) -> AuthOut:
     # Own transaction: a failed attempt must still commit its lockout counter and use up the challenge.
     async with session_factory()() as session:
         async with session.begin():
             result = await passkeys.login(session, body.credential, _ua(request), body.portal)
     if isinstance(result, service.LoginFailure):
         raise Unauthenticated(result.detail, code=result.code)
-    return result
+    return result.model_copy(update={"tokens": _issue(request, response, result.tokens)})
 
 
 @router.post("/auth/step-up/passkey/options")
@@ -172,14 +201,14 @@ async def passkey_step_up_options(actor: CurrentActor, session: DbSession) -> di
 
 
 @router.post("/auth/step-up/passkey", response_model=TokenPair)
-async def passkey_step_up(body: PasskeyStepUpIn, request: Request, actor: CurrentActor) -> TokenPair:
+async def passkey_step_up(body: PasskeyStepUpIn, request: Request, response: Response, actor: CurrentActor) -> TokenPair:
     """Confirm a sensitive action with a passkey instead of the 6-digit code."""
     async with session_factory()() as session:
         async with session.begin():
             result = await passkeys.step_up(session, actor, body.credential, _ua(request))
     if isinstance(result, service.LoginFailure):
         raise Unauthenticated(result.detail, code=result.code)
-    return result
+    return _issue(request, response, result)
 
 
 @router.get("/me/passkeys", response_model=list[PasskeyOut])
@@ -266,9 +295,11 @@ async def data_requests(actor: CurrentActor, session: DbSession):
 
 
 @router.post("/me/account-types", response_model=AuthOut)
-async def add_account_type(body: AddPersonaIn, request: Request, actor: CurrentActor, session: DbSession) -> AuthOut:
+async def add_account_type(body: AddPersonaIn, request: Request, response: Response, actor: CurrentActor,
+                           session: DbSession) -> AuthOut:
     """Add Buyer or Professional to an existing account; returns fresh tokens with the new role."""
-    return await service.add_persona(session, actor, body.accountType, _ua(request))
+    result = await service.add_persona(session, actor, body.accountType, _ua(request))
+    return result.model_copy(update={"tokens": _issue(request, response, result.tokens)})
 
 
 # ---- Platform staff administration (Platform Admin, MFA + step-up) -------------
@@ -334,3 +365,123 @@ async def duplicate_queue(actor: CurrentActor, session: DbSession, cursor: str |
 async def resolve_duplicate(suspicion_id: uuid.UUID, body: DuplicateResolveIn, actor: CurrentActor, session: DbSession):
     """Support decision (step-up): MERGED closes the duplicate and keeps the chosen account; NOT_DUPLICATE dismisses."""
     return await duplicates.resolve(session, actor, suspicion_id, body)
+
+
+# ---- Single sign-on and SCIM (identity/sso.py, identity/scim.py) ---------------------------------------------------------
+
+class SsoStartIn(BaseModel):
+    email: str | None = Field(default=None, max_length=320)
+    provider: Literal["google", "microsoft"] | None = None
+
+
+class SsoCallbackIn(BaseModel):
+    code: str = Field(min_length=1, max_length=4000)
+    state: str = Field(min_length=1, max_length=100)
+
+
+class SsoConnectionIn(BaseModel):
+    issuer: str = Field(min_length=8, max_length=500, pattern=r"^https://")
+    clientId: str = Field(min_length=1, max_length=300)
+    clientSecret: str | None = Field(default=None, max_length=2000)  # empty on update: keep the stored one
+    emailDomains: list[str] = Field(min_length=1, max_length=20)
+    enforce: bool = False
+    justInTime: bool = True
+    defaultRoles: list[Literal["REQUESTER", "APPROVER", "BUDGET_OWNER", "LEGAL_REVIEWER", "EXCEPTION_AUTHORITY"]] = ["REQUESTER"]
+    enabled: bool = True
+
+
+@router.get("/auth/sso/providers")
+async def sso_providers() -> dict:
+    """Which of Google and Microsoft sign-in this installation offers."""
+    from zoikorum.domains.identity import sso
+    return sso.providers()
+
+
+@router.post("/auth/sso/start")
+async def sso_start(body: SsoStartIn, session: DbSession) -> dict:
+    """Where to send the browser: the organisation's identity provider (by email domain), Google or Microsoft."""
+    from zoikorum.domains.identity import sso
+    await enforce_budget("sso-start", body.email or body.provider or "", 20, 20, "Too many sign-in attempts. Wait a minute and try again.")
+    return await sso.start(session, email=body.email, provider=body.provider)
+
+
+@router.post("/auth/sso/link")
+async def sso_link(body: SsoStartIn, actor: CurrentActor, session: DbSession) -> dict:
+    """Signed in: connect Google or Microsoft to this account (needs a fresh two-step check)."""
+    from zoikorum.domains.identity import sso
+    if not body.provider:
+        raise ValidationFailed("Choose Google or Microsoft")
+    actor.require_step_up()
+    return await sso.start(session, provider=body.provider, link_actor=actor)
+
+
+@router.post("/auth/sso/callback", response_model=AuthOut)
+async def sso_callback(body: SsoCallbackIn, request: Request, response: Response) -> AuthOut:
+    from zoikorum.domains.identity import sso
+    async with session_factory()() as session:
+        async with session.begin():
+            result = await sso.callback(session, body.code, body.state, _ua(request))
+    return result.model_copy(update={"tokens": _issue(request, response, result.tokens)})
+
+
+@router.get("/organizations/{org_id}/sso")
+async def get_sso(org_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> dict:
+    from zoikorum.domains.identity import sso
+    return await sso.get_connection(session, actor, org_id)
+
+
+@router.put("/organizations/{org_id}/sso")
+async def set_sso(org_id: uuid.UUID, body: SsoConnectionIn, actor: CurrentActor, session: DbSession) -> dict:
+    """Organisation Admin: connect the organisation's OpenID Connect identity provider (Okta, Entra ID, Google Workspace...)."""
+    from zoikorum.domains.identity import sso
+    return await sso.set_connection(session, actor, org_id, body)
+
+
+@router.post("/organizations/{org_id}/sso/scim-token")
+async def scim_token(org_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> dict:
+    """Organisation Admin: a new SCIM token for automatic provisioning (shown once; the old one stops working)."""
+    from zoikorum.domains.identity import sso
+    return await sso.rotate_scim_token(session, actor, org_id)
+
+
+@router.get("/scim/v2/ServiceProviderConfig")
+async def scim_config() -> dict:
+    from zoikorum.domains.identity import scim
+    return scim.SERVICE_PROVIDER_CONFIG
+
+
+@router.get("/scim/v2/Users")
+async def scim_list(request: Request, session: DbSession, filter: str | None = None, startIndex: int = 1, count: int = 100) -> dict:
+    from zoikorum.domains.identity import scim
+    c = await scim.connection_for(session, request.headers.get("Authorization"))
+    return await scim.list_users(session, c, filter, max(1, startIndex), max(0, min(count, 200)))
+
+
+@router.post("/scim/v2/Users", status_code=status.HTTP_201_CREATED)
+async def scim_create(body: dict, request: Request, session: DbSession) -> dict:
+    from zoikorum.domains.identity import scim
+    c = await scim.connection_for(session, request.headers.get("Authorization"))
+    return await scim.create_user(session, c, body)
+
+
+@router.get("/scim/v2/Users/{user_id}")
+async def scim_get(user_id: str, request: Request, session: DbSession) -> dict:
+    from zoikorum.domains.identity import scim
+    c = await scim.connection_for(session, request.headers.get("Authorization"))
+    return await scim.get_user(session, c, user_id)
+
+
+@router.put("/scim/v2/Users/{user_id}")
+@router.patch("/scim/v2/Users/{user_id}")
+async def scim_update(user_id: str, body: dict, request: Request, session: DbSession) -> dict:
+    from zoikorum.domains.identity import scim
+    c = await scim.connection_for(session, request.headers.get("Authorization"))
+    return await scim.update_user(session, c, user_id, body)
+
+
+@router.delete("/scim/v2/Users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def scim_delete(user_id: str, request: Request, session: DbSession) -> Response:
+    from zoikorum.domains.identity import scim
+    c = await scim.connection_for(session, request.headers.get("Authorization"))
+    await scim.delete_user(session, c, user_id)
+    return Response(status_code=204)

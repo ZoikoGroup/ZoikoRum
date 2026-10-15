@@ -31,7 +31,7 @@ from zoikorum.shared.auth import Actor, AuthStrength, OrgRole
 from zoikorum.shared.crypto import sha256_hex
 from zoikorum.shared.errors import Conflict, Forbidden, NotFound, StepUpRequired, ValidationFailed
 from zoikorum.shared.event_catalog import E
-from zoikorum.shared.events import record_event
+from zoikorum.shared.events import record_audit, record_event
 from zoikorum.shared.http import expect_version
 from zoikorum.shared.money import Money, MoneyDTO
 
@@ -603,3 +603,48 @@ async def archive_legal_entity(session: AsyncSession, actor: Actor, org_id: uuid
     await session.flush()
     _evt(session, E.LEGAL_ENTITY_UPDATED, org, legalEntityId=e.id, legalName=e.legal_name, isDefault=False, status="ARCHIVED")
     return _entity_out(e)
+
+
+
+async def merge_business_units(session: AsyncSession, actor: Actor, org_id: uuid.UUID, source_id: uuid.UUID,
+                               target_id: uuid.UUID) -> list[BusinessUnitOut]:
+    """Fold one business unit into another (a reorganisation): its sub-units, cost centres, members and pending
+    invitations move to the target, policies that named it now name the target, and the old unit is removed."""
+    from sqlalchemy import delete, update
+
+    from zoikorum.domains.buyer.models import Invitation, OrgMember
+
+    await _require_member(session, actor, org_id, OrgRole.ORG_ADMIN)
+    actor.require_step_up()
+    org = await _org(session, org_id)
+    if source_id == target_id:
+        raise ValidationFailed("Choose two different business units", code="SAME_UNIT")
+    units = {b.id: b for b in (await session.scalars(select(BusinessUnit).where(
+        BusinessUnit.organization_id == org_id).with_for_update())).all()}
+    source, target = units.get(source_id), units.get(target_id)
+    if not source or not target:
+        raise NotFound("Business unit not found")
+    # If the target sits under the unit being removed, lift it to that unit's parent first (no cycles).
+    walk = target
+    while walk.parent_id:
+        if walk.parent_id == source.id:
+            target.parent_id = source.parent_id
+            break
+        walk = units.get(walk.parent_id)
+        if walk is None:
+            break
+    for child in units.values():
+        if child.parent_id == source.id and child.id != target.id:
+            child.parent_id = target.id
+    await session.execute(update(CostCenter).where(CostCenter.business_unit_id == source.id).values(business_unit_id=target.id))
+    await session.execute(update(OrgMember).where(OrgMember.organization_id == org_id, OrgMember.business_unit_id == source.id)
+                          .values(business_unit_id=target.id))
+    await session.execute(update(Invitation).where(Invitation.organization_id == org_id, Invitation.business_unit_id == source.id)
+                          .values(business_unit_id=target.id))
+    await session.flush()
+    await session.execute(delete(BusinessUnit).where(BusinessUnit.id == source.id))
+    _evt(session, E.BUSINESS_UNITS_MERGED, org, sourceId=source.id, targetId=target.id, sourceName=source.name, targetName=target.name)
+    record_audit(session, "buyer.business_units.merged", object_type="Organization", object_id=org.id, tenant_id=org.id,
+                 details={"source": str(source.id), "target": str(target.id)})
+    await session.flush()
+    return await list_business_units(session, actor, org_id)

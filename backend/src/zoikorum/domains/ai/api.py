@@ -131,3 +131,19 @@ async def inferences(actor: CurrentActor, session: DbSession, cursor: str | None
     return page_of((await session.scalars(stmt)).all(), lim, lambda r: {
         "id": r.id, "purpose": r.purpose, "model": r.model, "promptVersion": r.prompt_version, "inputHash": r.input_sha256,
         "fallbackUsed": r.fallback_used, "latencyMs": r.latency_ms, "createdAt": r.created_at})
+
+
+
+class OutcomeIn(BaseModel):
+    """What a person did with an AI suggestion: kept as-is, changed, or set aside (Regulator assurance s.7)."""
+    purpose: Literal["proposal-draft", "contract-summary", "dispute-summary", "search-intent", "specialization-match"]
+    subjectId: uuid.UUID | None = None
+    outcome: Literal["USED", "EDITED", "DISCARDED"]
+    note: str | None = Field(default=None, max_length=500)
+
+
+@router.post("/outcomes", status_code=204)
+async def record_outcome(body: OutcomeIn, actor: CurrentActor, session: DbSession) -> None:
+    """The human decision on an AI suggestion, recorded in the audit trail (AI never decides; this shows who did)."""
+    record_audit(session, "ai.suggestion." + body.outcome.lower(), object_type="AISuggestion",
+                 object_id=body.subjectId or actor.identity_id, details={"purpose": body.purpose, "note": body.note})

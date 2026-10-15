@@ -5,8 +5,15 @@ export interface PolicyVersion { id: string; number: number; status: string; lab
 export interface PolicyRule { id: string; appliesTo: string[]; condition: Record<string, unknown>; decision: string; reasonCode: string; message: string; approval?: { mode: string; steps: { role: string; count: number }[]; timeoutHours: number; escalationRole: string } }
 export interface PolicyProfile { id: string; orgId: string; name: string; description: string; status: string; version: number; activeVersionId: string | null; draftVersionId: string | null; versions: PolicyVersion[] }
 export interface Approval { id: string; orgId: string; subjectType: string; subjectId: string; action: string; status: string; deadline: string; requesterIdentityId: string; workflows: { mode: string; steps: { id: string; role: string; count: number }[] }[]; reasons: { message: string }[]; votes: { id: string; identityId: string; stepId: string; role: string; reason: string; decision: string; valid: boolean }[] }
-export interface ExceptionRequest { id: string; subjectType: string; subjectId: string; action: string; status: string; justification: string; documents: StoredFile[]; expiresAt: string; decisionReason: string | null }
+export interface ExceptionRequest { id: string; subjectType: string; subjectId: string; action: string; status: string; justification: string; documents: StoredFile[]; expiresAt: string; decisionReason: string | null; emergency?: boolean }
 export interface Page<T> { items: T[]; nextCursor: string | null }
+export interface PolicyChecks { checks: { severity: 'ERROR' | 'WARNING' | 'INFO'; code: string; message: string; rule: string | null }[]; appliesTo: string[]; riskLevel: string; version: string }
+export interface PolicyDashboard {
+  days: number; activeProfiles: number; draftProfiles: number; evaluations: number; decisions: Record<string, number>; interventionRate: number | null
+  approvals: { requested: number; pending: number; granted: number; denied: number; expired: number; medianHoursToDecide: number | null }
+  exceptions: { requested: number; granted: number; denied: number; emergency: number; rate: number | null }
+  spendHeldBack: { currency: string; amountMinor: number }[]; topReasons: { code: string; count: number }[]
+}
 export const policyApi = {
   profiles: (orgId: string, cursor?: string) => api<Page<PolicyProfile>>(`/v1/policy/profiles?orgId=${orgId}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`),
   create: (body: { orgId: string; name: string; description: string; template: string; businessUnitIds?: string[]; riskLevel?: string }) => api<PolicyProfile>('/v1/policy/profiles', { headers: { 'Idempotency-Key': crypto.randomUUID() }, method: 'POST', body }),
@@ -18,6 +25,8 @@ export const policyApi = {
   approvals: (orgId: string, cursor?: string) => api<Page<Approval>>(`/v1/policy/approvals?orgId=${orgId}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`),
   decide: (id: string, decision: 'GRANT' | 'DENY', reason: string, stepId?: string) => api<Approval>(`/v1/policy/approvals/${id}/decide`, { headers: { 'Idempotency-Key': crypto.randomUUID() }, method: 'POST', body: { decision, reason, stepId } }),
   exceptions: (orgId: string, cursor?: string) => api<Page<ExceptionRequest>>(`/v1/policy/exceptions?orgId=${orgId}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`),
-  requestException: (body: { orgId: string; subjectType: string; subjectId: string; action: string; justification: string; documents: Upload[]; expiresAt: string }) => api<ExceptionRequest>('/v1/policy/exceptions', { headers: { 'Idempotency-Key': crypto.randomUUID() }, method: 'POST', body }),
+  checks: (id: string) => api<PolicyChecks>(`/v1/policy/profiles/${id}/checks`),
+  dashboard: (orgId: string, days = 30) => api<PolicyDashboard>('/v1/policy/dashboard', { query: { orgId, days: String(days) } }),
+  requestException: (body: { orgId: string; subjectType: string; subjectId: string; action: string; justification: string; documents: Upload[]; expiresAt: string; emergency?: boolean }) => api<ExceptionRequest>('/v1/policy/exceptions', { headers: { 'Idempotency-Key': crypto.randomUUID() }, method: 'POST', body }),
   decideException: (id: string, decision: 'GRANT' | 'DENY', reason: string) => api<ExceptionRequest>(`/v1/policy/exceptions/${id}/decide`, { headers: { 'Idempotency-Key': crypto.randomUUID() }, method: 'POST', body: { decision, reason } }),
 }

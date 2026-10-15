@@ -76,6 +76,8 @@ class SavedSearch(Base, UUIDPk, Timestamps):
     name: Mapped[str] = mapped_column(String(80), nullable=False)
     params: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)  # search query parameters
     last_viewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    alerts_on: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)  # daily "new matches" notice
+    last_alerted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class SpecializationSuggestion(Base, UUIDPk, Timestamps):

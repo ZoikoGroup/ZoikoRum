@@ -5,7 +5,7 @@ import {
   type Availability, type EngagementType, type Offering, type PricingModel, type Profile, type TaxonomySpecialization,
 } from '../api/professional'
 import { HoursSlider } from '../components/HoursSlider'
-import { ErrorAlert, Field } from '../components/ui'
+import { ErrorAlert, Field, Loading } from '../components/ui'
 import { priceText, useMyProfile } from './ProfessionalPages'
 
 const STATUS_CLS: Record<string, string> = { ACTIVE: 'green', PAUSED: 'warn', DRAFT: '' }
@@ -235,7 +235,7 @@ export function OfferingsPage() {
   const load = useCallback(() => proApi.offerings().then(setOfferings).catch(setError), [])
   useEffect(() => { if (profile) load() }, [profile, load])
 
-  if (loading) return <p className="muted">Loading…</p>
+  if (loading) return <Loading />
   if (!profile) return <p className="muted">Create your <Link to="/app/professional">professional profile</Link> first.</p>
 
   async function duplicate(o: Offering) {

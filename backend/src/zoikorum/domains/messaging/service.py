@@ -7,7 +7,9 @@ import hashlib
 import json
 import re
 import uuid
+from datetime import timedelta
 from pathlib import PurePath
+from types import SimpleNamespace
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
@@ -26,6 +28,7 @@ from zoikorum.shared.errors import Conflict, Forbidden, NotFound, ValidationFail
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_audit, record_event
 from zoikorum.shared.http import Page
+from zoikorum.shared import scanning
 from zoikorum.shared.storage import get_storage
 
 
@@ -52,6 +55,12 @@ async def context_info(session, kind, context_id):
         access = await proposal.messaging_access(session, obj.request_id)
         title = f"Dispute · {access[0]}" if access else "Dispute"
         return obj, title, True, False
+    if kind == "INQUIRY":
+        thread = await session.scalar(select(Thread).where(Thread.context_type == "INQUIRY", Thread.context_id == context_id))
+        if not thread:
+            raise NotFound("Conversation not found")
+        return (SimpleNamespace(id=context_id, organization_id=thread.organization_id, professional_id=thread.professional_id, status="OPEN"),
+                thread.title, True, True)
     # Disputes use structured submissions; freeform chat is never enabled.
     raise Conflict("Dispute communication belongs in the structured dispute workspace", code="DISPUTE_WORKSPACE_REQUIRED")
 
@@ -91,7 +100,8 @@ async def checked_thread(session, actor, thread_id, *, write=False):
     if not thread:
         raise NotFound("Conversation not found")
     obj, _, can_send = await authorize(session, actor, thread.context_type, thread.context_id)
-    agreement = await contract.get_contract_by_request(session, obj.id) if thread.context_type == "PROPOSAL_REQUEST" else obj
+    agreement = (await contract.get_contract_by_request(session, obj.id) if thread.context_type == "PROPOSAL_REQUEST"
+                 else None if thread.context_type == "INQUIRY" else obj)
     if agreement and thread.context_type == "PROPOSAL_REQUEST":
         # Negotiation history stays readable; active work has one place to reply.
         can_send = can_send and agreement.status in {"GENERATED", "PENDING_SIGNATURE"}
@@ -149,6 +159,10 @@ async def open_thread(session, actor, body: ThreadIn):
             "Dispute workspaces are created from the dispute lifecycle",
             code="DISPUTE_THREAD_SYSTEM_CREATED",
         )
+    if body.contextType == "INQUIRY":
+        thread = await open_inquiry(session, actor, body.organizationId, body.contextId)
+        _, can_send = await checked_thread(session, actor, thread.id)
+        return await thread_out(session, actor, thread, can_send)
     await authorize(session, actor, body.contextType, body.contextId)
     thread = await ensure_thread(session, body.contextType, body.contextId)
     _, can_send = await checked_thread(session, actor, thread.id)
@@ -363,6 +377,7 @@ async def upload(session, actor, thread_id, body: UploadIn):
         raise ValidationFailed("Files must be between 1 byte and 50 MB")
     from zoikorum.domains.messaging.files import validate_file
     content_type = validate_file(body.name, data)
+    scanning.scan(data, body.name)
     version = (await session.scalar(select(func.max(Attachment.file_version)).where(
         Attachment.thread_id == thread.id, Attachment.name == body.name)) or 0) + 1
     file_id = uuid.uuid4()
@@ -550,3 +565,47 @@ async def _ensure_dispute_thread(session, dispute_id, agreement, event):
         select(Thread).where(Thread.context_type == "DISPUTE", Thread.context_id == dispute_id).with_for_update()
     )
     await append_message(session, thread, "A dispute workspace has been opened.", event_id=event.eventId)
+
+
+
+# ---- Enquiry before a request (Buyer journey: contact a professional before sending a request) --------------------
+
+INQUIRIES_PER_DAY = 20  # per organisation: new enquiry conversations, to keep cold outreach from becoming spam
+
+
+def inquiry_id(org_id: uuid.UUID, professional_id: uuid.UUID) -> uuid.UUID:
+    """One enquiry conversation per organisation and professional: reopening it returns the same thread."""
+    return uuid.uuid5(uuid.NAMESPACE_URL, f"zoikorum:inquiry:{org_id}:{professional_id}")
+
+
+async def open_inquiry(session, actor, org_id, professional_id):
+    """A member of a buyer organisation asks a published professional a question before sending a request. Only the
+    buyer side starts one; the professional answers in it. Engagement terms and payment still go through a request."""
+    if org_id is None:
+        raise ValidationFailed("Choose the organisation you are asking for", code="ORGANIZATION_REQUIRED")
+    account = await identity.get_identity(session, actor.identity_id)
+    org = await buyer.get_organization(session, org_id)
+    if not account or account.status != "ACTIVE" or not org or org.status != "ACTIVE" \
+            or not await buyer.get_member_roles(session, org_id, actor.identity_id):
+        raise Forbidden("Only a member of the asking organisation can start an enquiry", code="NOT_A_MEMBER")
+    pro = await professional.get_professional(session, professional_id)
+    if not pro or pro.status != "PUBLISHED":
+        raise NotFound("Professional not found")
+    if pro.identity_id == actor.identity_id:
+        raise Conflict("You cannot send an enquiry to yourself", code="OWN_PROFILE")
+    context_id = inquiry_id(org_id, professional_id)
+    existing = await session.scalar(select(Thread).where(Thread.context_type == "INQUIRY", Thread.context_id == context_id))
+    if existing:
+        return existing
+    recent = await session.scalar(select(func.count()).select_from(Thread).where(
+        Thread.context_type == "INQUIRY", Thread.organization_id == org_id, Thread.created_at >= clock.now() - timedelta(days=1))) or 0
+    if recent >= INQUIRIES_PER_DAY:
+        raise Conflict("Your organisation has started many enquiries today. Try again tomorrow, or send a request.",
+                       code="INQUIRY_LIMIT")
+    thread_id = uuid.uuid4()
+    await session.execute(insert(Thread).values(id=thread_id, context_type="INQUIRY", context_id=context_id, organization_id=org_id,
+        professional_id=professional_id, title=f"Enquiry from {org.name}"[:250], sequence=0, locked=False)
+        .on_conflict_do_nothing(index_elements=["context_type", "context_id"]))
+    record_event(session, E.THREAD_CREATED, aggregate_type="Thread", aggregate_id=thread_id, tenant_id=org_id,
+                 payload={"contextType": "INQUIRY", "contextId": str(context_id)})
+    return await session.scalar(select(Thread).where(Thread.context_type == "INQUIRY", Thread.context_id == context_id))

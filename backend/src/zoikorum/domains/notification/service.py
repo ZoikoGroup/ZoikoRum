@@ -44,7 +44,14 @@ EVENT_TITLES = {
     E.PROPOSAL_ACCEPTED: 'Proposal accepted', E.PROPOSAL_REJECTED: 'Proposal declined', E.PROPOSAL_EXPIRED: 'Proposal expired',
     E.CONTRACT_GENERATED: 'Agreement ready for signature', E.CONTRACT_SIGNED: 'Agreement signed',
     E.CONTRACT_ACTIVATED: 'Engagement activated', E.CONTRACT_COMPLETED: 'Engagement completed',
-    E.CONTRACT_TERMINATED: 'Engagement terminated', E.SIGNATURE_DEADLINE_ESCALATED: 'Signature overdue',
+    E.RETAINER_PAUSED: 'Retainer paused', E.RETAINER_RESUMED: 'Retainer resumed',
+    E.ESCROW_AUTO_FUNDING_FAILED: 'Automatic funding failed', E.ESCROW_AUTO_FUNDING_CHANGED: 'Automatic funding changed',
+    E.ENTERPRISE_READINESS_DECIDED: 'Enterprise readiness decided',
+    E.PROPOSAL_REQUEST_REMINDER: 'A request is waiting for your answer', E.PROPOSAL_REQUEST_UNANSWERED: 'No proposal yet',
+    E.CONTRACT_TERMINATED: 'Engagement terminated', E.CONTRACT_PROFESSIONAL_STATUS_CHANGED: 'Change affecting your engagement',
+    E.CONTRACT_TERMINATION_REQUESTED: 'Request to end the engagement',
+    E.CONTRACT_TERMINATION_DECLINED: 'Request to end the engagement declined',
+    E.CONTRACT_TERMINATION_WITHDRAWN: 'Request to end the engagement closed', E.SIGNATURE_DEADLINE_ESCALATED: 'Signature overdue',
     E.CHANGE_ORDER_REQUESTED: 'Contract change proposed', E.CHANGE_ORDER_APPROVED: 'Contract change approved',
     E.CHANGE_ORDER_REJECTED: 'Contract change declined', E.CONTRACT_AMENDED: 'Contract amendment signed',
     E.ESCROW_FUNDED: 'Payment held in escrow', E.ESCROW_RELEASED: 'Milestone payment released',
@@ -70,9 +77,16 @@ EVENT_TITLES = {
     E.DISPUTE_CLOSED: 'Dispute closed', E.DISPUTE_APPEALED: 'Dispute appeal filed', E.DISPUTE_APPEAL_DECIDED: 'Dispute appeal reviewed',
     E.ENFORCEMENT_ACTION_APPLIED: 'Account safety decision', E.ENFORCEMENT_ACTION_REVERSED: 'Restriction reversed',
     E.ENFORCEMENT_APPEAL_DECIDED: 'Safety appeal decided',
+    E.SAVED_PROFESSIONAL_AVAILABLE: 'A saved professional is available', E.SAVED_SEARCH_MATCHES: 'New matches for your saved search',
+    E.DISPUTE_CLARIFICATION_REQUESTED: 'The mediator has a question',
+    E.DISPUTE_REFERRED_TO_ARBITRATION: 'Dispute referred to external arbitration',
+    E.SESSION_CREATED: 'New sign-in to your account', E.TRUST_TIER_NUDGE: 'Verify to work with this buyer',
+    E.USER_REPORT_SUBMITTED: 'Report received', E.USER_REPORT_CLOSED: 'Your report was reviewed',
+    E.SUPPORT_REQUEST_ANSWERED: 'Support replied to your request', E.SUPPORT_REQUEST_RESOLVED: 'Your support request was resolved',
 }
 # Always shown in the app (email still follows the person's preferences): disputes and money that needs action.
-MUST_SEE = frozenset({E.PAYMENT_FAILED, E.MILESTONE_FUNDING_REVERSED, E.REFUND_FAILED, E.ESCROW_RELEASE_BLOCKED, E.PAYOUT_FAILED})
+MUST_SEE = frozenset({E.PAYMENT_FAILED, E.MILESTONE_FUNDING_REVERSED, E.REFUND_FAILED, E.ESCROW_RELEASE_BLOCKED, E.PAYOUT_FAILED,
+                      E.CONTRACT_PROFESSIONAL_STATUS_CHANGED})
 WEBHOOK_EVENTS = frozenset(e for e in EVENT_TITLES if domain_of(e) in {'proposal', 'contract', 'escrow', 'policy', 'dispute', 'verification'})
 
 
@@ -101,14 +115,19 @@ async def recipients(session, event):
         engagement = await contract.get_contract(session, contract_id)
         if engagement:
             org_id, pro_id = engagement.organization_id, engagement.professional_id
-    if org_id:
+    audience = 'BUYER' if p.get('buyersOnly') else p.get('audience')  # a notice for one side only
+    if org_id and audience != 'PROFESSIONAL':
         wanted = [OrgRole.APPROVER, OrgRole.BUDGET_OWNER, OrgRole.LEGAL_REVIEWER, OrgRole.ORG_ADMIN] if event.eventType in (E.APPROVAL_REQUIRED, E.APPROVAL_ESCALATED) else None
         if event.eventType == E.EXCEPTION_REQUESTED:
             wanted = [OrgRole.EXCEPTION_AUTHORITY]
         found.update(await buyer.list_member_identities(session, org_id, wanted))
     pro = await professional.get_professional(session, pro_id) if pro_id else None
-    if pro:
+    if pro and audience != 'BUYER':
         found.add(pro.identity_id)
+    if audience == 'PROFESSIONAL':  # only the professional, even when the event names the buyer
+        found = {pro.identity_id} if pro else set()
+    elif audience == 'BUYER' and pro:
+        found.discard(pro.identity_id)
     return found, org_id, pro.identity_id if pro else None
 
 
@@ -120,6 +139,12 @@ def target_url(event, recipient, professional_identity):
         return '/app/security'
     if domain_of(event.eventType) == 'admin':
         return '/app/safety'
+    if event.eventType == E.SAVED_SEARCH_MATCHES:
+        return '/app/find?' + str(p.get('query') or '')
+    if event.eventType == E.SAVED_PROFESSIONAL_AVAILABLE:
+        return f"/professionals/{p.get('professionalRef') or ''}"
+    if domain_of(event.eventType) == 'support':
+        return '/app/help?request=' + str(p.get('requestId') or '')
     if domain_of(event.eventType) == 'policy':
         return '/app/policies?orgId=' + str(p.get('organizationId') or event.tenantId or '')
     if dispute_id := p.get('disputeId'):
@@ -140,13 +165,16 @@ async def queue_event(session, event):
         return
     if event.eventType == E.AUTHENTICATION_FAILED and event.payload.get('reason') not in {'LOCKED_OUT', 'ACCOUNT_LOCKED'} and not event.payload.get('lockedUntil'):
         return
+    if event.eventType == E.SESSION_CREATED and not event.payload.get('newDevice'):
+        return
     found, org_id, pro_identity = await recipients(session, event)
     mandatory = domain_of(event.eventType) in {'identity', 'admin'}
     must_see = mandatory or domain_of(event.eventType) == 'dispute' or event.eventType in MUST_SEE
     saved_buyer = (event.eventType == E.PROPOSAL_REQUESTED and org_id and _uuid(event.payload.get('professionalId'))
                    and await professional.saved_buyer_alerts(session, _uuid(event.payload['professionalId']), org_id))
     notice = event.payload.get('notice') if domain_of(event.eventType) == 'admin' else None
-    body = '\n'.join(f'{key}: {value}' for key, value in notice.items()) if notice else 'Open your workspace to review this update and any required action.'
+    body = '\n'.join(f'{key}: {value}' for key, value in notice.items()) if notice else \
+        event.payload.get('message') or 'Open your workspace to review this update and any required action.'
     for recipient in found:
         prefs = await session.scalar(select(Preference).where(Preference.identity_id == recipient))
         priority = bool(saved_buyer and recipient == pro_identity)  # the professional asked to always hear from this buyer
@@ -164,6 +192,10 @@ async def queue_event(session, event):
         if result.scalar_one_or_none():
             if email_on:
                 await schedule_timer(session, EMAIL_TIMER, f'{nid}:0', clock.now())
+            if in_app:
+                from zoikorum.domains.notification import push
+                if push.configured():
+                    await schedule_timer(session, push.PUSH_TIMER, str(nid), clock.now())
             record_event(session, E.NOTIFICATION_QUEUED, aggregate_type='Notification', aggregate_id=nid,
                 tenant_id=org_id, payload={'identityId': recipient, 'notificationId': nid, 'sourceEventId': event.eventId})
     if org_id and event.eventType in WEBHOOK_EVENTS:
@@ -214,6 +246,9 @@ async def deliver_email(session, key):
     prefs = await session.scalar(select(Preference).where(Preference.identity_id == row.identity_id))
     if not row.mandatory and prefs and not prefs.email:
         row.email_status = 'DISABLED'
+        return
+    if not row.mandatory and prefs and prefs.digest != 'OFF' and row.event_type not in MUST_SEE:
+        row.email_status = 'DIGEST'  # sent in the next daily or weekly summary
         return
     url = web_url(staff=recipient.staff) + row.url  # staff open links in the staff web app
     if row.event_type in {E.IDENTITY_CREATED, E.EMAIL_CONFIRMATION_REQUESTED, E.PASSWORD_RESET_REQUESTED}:
@@ -307,7 +342,7 @@ async def deliver_webhook(session, key):
 
 
 def _out(p: Preference | None) -> PreferencesIO:
-    return PreferencesIO() if p is None else PreferencesIO(email=p.email, inApp=p.in_app, sms=p.sms, marketing=p.marketing)
+    return PreferencesIO() if p is None else PreferencesIO(email=p.email, inApp=p.in_app, sms=p.sms, marketing=p.marketing, digest=p.digest)
 
 
 async def get_preferences(session: AsyncSession, actor: Actor) -> PreferencesIO:
@@ -319,9 +354,115 @@ async def set_preferences(session: AsyncSession, actor: Actor, body: Preferences
     if p is None:
         p = Preference(id=uuid.uuid4(), identity_id=actor.identity_id)
         session.add(p)
-    p.email, p.in_app, p.sms, p.marketing = body.email, body.inApp, body.sms, body.marketing
+    p.email, p.in_app, p.sms, p.marketing, p.digest = body.email, body.inApp, body.sms, body.marketing, body.digest
     await session.flush()
     record_event(session, E.NOTIFICATION_PREFERENCES_UPDATED, aggregate_type="NotificationPreferences", aggregate_id=p.id,
                  payload={"identityId": actor.identity_id, "email": p.email, "inApp": p.in_app, "sms": p.sms,
                           "marketing": p.marketing})
     return _out(p)
+
+
+
+# ---- Email digests (Notifications: daily or weekly summary instead of one email per update) ---------------------------
+
+DIGEST_TIMER = "notification.digest"  # daily at 06:00 UTC, re-arms itself; weekly digests go out on Mondays
+
+
+def _next_digest(now):
+    from datetime import datetime as _dt, time as _time, timezone as _tz
+    run = _dt.combine(now.date(), _time(6, 0), tzinfo=_tz.utc)
+    return run if run > now else run + timedelta(days=1)
+
+
+async def bootstrap_digests(session) -> None:
+    nxt = _next_digest(clock.now())
+    await schedule_timer(session, DIGEST_TIMER, nxt.date().isoformat(), nxt)
+
+
+async def send_digests(session, *, rearm: bool = True) -> int:
+    """One email per person with everything held for the digest since the last one; urgent and security messages are
+    never held."""
+    sent = 0
+    weekly_day = clock.now().weekday() == 0
+    for p in (await session.scalars(select(Preference).where(Preference.digest.in_(("DAILY", "WEEKLY"))).with_for_update(skip_locked=True))).all():
+        if p.digest == "WEEKLY" and not weekly_day:
+            continue
+        held = (await session.scalars(select(Notification).where(Notification.identity_id == p.identity_id,
+                                                                  Notification.email_status == "DIGEST").order_by(Notification.created_at))).all()
+        if not held:
+            continue
+        recipient = await identity.get_identity(session, p.identity_id)
+        if not recipient or recipient.status != "ACTIVE":
+            continue
+        base = web_url(staff=recipient.staff)
+        lines = [f"- {n.title}: {n.body.splitlines()[0][:200] if n.body else ''}\n  {base}{n.url}" for n in held[:50]]
+        more = f"\n...and {len(held) - 50} more in your notifications." if len(held) > 50 else ""
+        subject = f"Your Zoikorum {'daily' if p.digest == 'DAILY' else 'weekly'} summary: {len(held)} update{'s' if len(held) != 1 else ''}"
+        try:
+            await providers.email_provider().send(recipient.email, subject, "\n".join(lines) + more, f"digest-{p.identity_id}-{clock.now():%Y%m%d}")
+        except Exception:
+            continue  # tried again at the next run; nothing is lost
+        now = clock.now()
+        for n in held:
+            n.email_status, n.delivered_at = "DIGESTED", now
+        p.digest_sent_at = now
+        sent += 1
+    if rearm:
+        nxt = _next_digest(clock.now())
+        await schedule_timer(session, DIGEST_TIMER, nxt.date().isoformat(), nxt)
+    return sent
+
+
+# ---- Private calendar feed (milestone due dates and deadlines in Google, Outlook or Apple Calendar) ---------------------
+
+async def calendar_link(session, actor, rotate: bool) -> dict:
+    """Create (or replace) the private address of the person's calendar feed. Only its SHA-256 is stored; replacing it
+    stops the old address at once."""
+    import hashlib
+    import secrets as _secrets
+
+    p = await session.scalar(select(Preference).where(Preference.identity_id == actor.identity_id).with_for_update())
+    if p is None:
+        p = Preference(id=uuid.uuid4(), identity_id=actor.identity_id)
+        session.add(p)
+    if not rotate:
+        p.calendar_token_hash = None
+        await session.flush()
+        return {"url": None}
+    token = _secrets.token_urlsafe(24)
+    p.calendar_token_hash = hashlib.sha256(token.encode()).hexdigest()
+    await session.flush()
+    return {"url": f"/v1/calendar/{token}.ics", "note": "Anyone with this address can see your dates. Replace it if it is shared."}
+
+
+def _ics_escape(text: str) -> str:
+    return text.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
+
+
+async def calendar_feed(session, token: str) -> str:
+    import hashlib
+
+    from zoikorum.domains.contract import facade as contract_facade
+    from zoikorum.domains.professional import facade as professional_facade
+
+    p = await session.scalar(select(Preference).where(Preference.calendar_token_hash == hashlib.sha256(token.encode()).hexdigest()))
+    if p is None:
+        raise NotFound("Calendar not found")
+    account = await identity.get_identity(session, p.identity_id)
+    if not account or account.status != "ACTIVE":
+        raise NotFound("Calendar not found")
+    orgs = await buyer.list_identity_organizations(session, p.identity_id)
+    pro = await professional_facade.get_professional_by_identity(session, p.identity_id)
+    items = await contract_facade.upcoming_dates(session, orgs, pro.id if pro else None)
+    base = web_url(staff=account.staff)
+    stamp = clock.now().strftime("%Y%m%dT%H%M%SZ")
+    out = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Zoikorum//Engagement dates//EN", "CALSCALE:GREGORIAN",
+           "X-WR-CALNAME:Zoikorum", "REFRESH-INTERVAL;VALUE=DURATION:PT6H"]
+    for it in items:
+        day = it["date"].strftime("%Y%m%d")
+        nxt = (it["date"] + timedelta(days=1)).strftime("%Y%m%d")
+        out += ["BEGIN:VEVENT", f"UID:{it['uid']}@zoikorum", f"DTSTAMP:{stamp}", f"DTSTART;VALUE=DATE:{day}", f"DTEND;VALUE=DATE:{nxt}",
+                f"SUMMARY:{_ics_escape(it['title'])}", f"DESCRIPTION:{_ics_escape(it['detail'] + ' ' + base + it['path'])}",
+                f"URL:{base}{it['path']}", "END:VEVENT"]
+    out.append("END:VCALENDAR")
+    return "\r\n".join(out) + "\r\n"

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { firmApi, FIRM_ROLE_INFO, formatMoney, ORG_ROLE_INFO, orgApi, type Invitation } from '../api/orgs'
 import { useAuth } from '../auth/AuthContext'
-import { AuthLayout, ErrorAlert } from '../components/ui'
+import { AuthLayout, ErrorAlert, Loading } from '../components/ui'
 
 type Kind = 'org' | 'firm'
 const roleLabel = (r: string) => ORG_ROLE_INFO[r as keyof typeof ORG_ROLE_INFO]?.label ?? FIRM_ROLE_INFO[r as keyof typeof FIRM_ROLE_INFO]?.label ?? r
@@ -67,7 +67,7 @@ export function InvitationsPage() {
       {user && !user.emailConfirmed && items.length > 0 && (
         <div className="alert alert-warn">Confirm your email address to accept invitations here, or use the link in the invitation email.</div>
       )}
-      {loading ? <p className="muted">Loading…</p> : items.length === 0 ? (
+      {loading ? <Loading /> : items.length === 0 ? (
         <section className="card panel"><p className="muted" style={{ margin: 0 }}>You have no pending invitations.</p></section>
       ) : items.map((i) => (
         <section key={i.id} className="card panel">

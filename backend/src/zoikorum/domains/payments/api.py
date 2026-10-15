@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import uuid
+from typing import Literal
 
 from fastapi import APIRouter, Header, Query, Request, Response
 
-from zoikorum.domains.payments import reconciliation, service, webhooks
+from zoikorum.domains.payments import operations, reconciliation, service, webhooks
 from zoikorum.domains.payments.schemas import (
-    ChargeOut, EarningsOut, InvoiceOut, PayoutAccountIn, PayoutAccountOut, ReconcileIn, ReconciliationOut, RefundOut,
+    ChargeOut, EarningsOut, InvoiceOut, OpsResolveIn, OpsWorklistOut, PayoutAccountIn, PayoutAccountOut, ReconcileIn,
+    ReconciliationOut, RefundOut,
 )
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
@@ -83,6 +85,23 @@ async def checkout(funding_id: uuid.UUID, actor: CurrentActor, session: DbSessio
 async def onboarding(actor: CurrentActor, session: DbSession):
     from zoikorum.domains.payments.integration import onboarding
     return await onboarding(session, actor)
+
+
+@router.get("/v1/payments/ops/worklist", response_model=OpsWorklistOut)
+async def ops_worklist(actor: CurrentActor, session: DbSession, includeResolved: bool = False):
+    """Financial Ops: failed payouts, failed refunds and chargeback losses that still need a person."""
+    return await operations.worklist(session, actor, includeResolved)
+
+
+@router.post("/v1/payments/ops/{kind}/{item_id}/retry", response_model=OpsWorklistOut)
+async def ops_retry(kind: Literal["PAYOUT", "REFUND"], item_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    return await operations.retry(session, actor, kind, item_id)
+
+
+@router.post("/v1/payments/ops/{kind}/{item_id}/resolve", response_model=OpsWorklistOut)
+async def ops_resolve(kind: Literal["PAYOUT", "REFUND", "CHARGEBACK_LOSS"], item_id: uuid.UUID, body: OpsResolveIn,
+                      actor: CurrentActor, session: DbSession):
+    return await operations.resolve(session, actor, kind, item_id, body)
 
 
 @router.get("/v1/payments/reconciliations", response_model=list[ReconciliationOut])

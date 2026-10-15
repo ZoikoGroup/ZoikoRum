@@ -32,6 +32,12 @@ class SettingsIn(BaseModel):
     autoDisputeMissedDeadline: bool = False
     autoDisputeRejectionCount: int | None = Field(default=None, ge=2, le=20)
     autoDisputeComplianceFlag: bool = False
+    # Enterprise dispute controls: above these amounts (minor units, engagement currency) a settlement needs a mediator,
+    # or a Legal Reviewer of the organisation; escalation roles name who may take a case to mediation for the organisation.
+    disputeMediationAboveMinor: int | None = Field(default=None, ge=0)
+    disputeLegalReviewAboveMinor: int | None = Field(default=None, ge=0)
+    disputeRetentionYears: int | None = Field(default=None, ge=1, le=25)  # keep closed dispute records at least this long
+    disputeEscalationRoles: list[Literal["ORG_ADMIN", "REQUESTER", "APPROVER", "BUDGET_OWNER", "LEGAL_REVIEWER", "EXCEPTION_AUTHORITY"]] | None = None
     requiredClauses: list[Literal["CONFIDENTIALITY", "IP_OWNERSHIP", "TERMINATION", "GOVERNING_LAW"]] = [
         "CONFIDENTIALITY", "IP_OWNERSHIP", "TERMINATION", "GOVERNING_LAW",
     ]
@@ -184,6 +190,9 @@ class ExceptionIn(BaseModel):
     justification: str = Field(min_length=10, max_length=4000)
     documents: list[UploadIn] = Field(default_factory=list, max_length=10)
     expiresAt: datetime
+    # Emergency path: for work that cannot wait (a regulator deadline, an incident). Short-lived (72 hours at most),
+    # needs a fuller reason, and every Exception Authority is told at once; the decision is still a person's.
+    emergency: bool = False
 
 
 class ExceptionDecisionIn(BaseModel):

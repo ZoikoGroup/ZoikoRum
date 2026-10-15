@@ -76,3 +76,32 @@ async def test_profile_history_and_expired_credentials_stay_visible(client, make
         await s.execute(text("UPDATE professional.credential_claims SET status = 'EXPIRED' WHERE professional_id = :p"), {"p": pro["id"]})
     creds = (await client.get(f"/v1/professionals/{pro['id']}")).json()["credentials"]
     assert [(x["name"], x["displayLabel"]) for x in creds] == [("CPA", "Expired")]
+
+
+async def test_saved_search_and_saved_professional_alerts(client, make_user, drain, sf):
+    from zoikorum.domains.marketplace import service as marketplace
+
+    buyer, _ = await buyer_org(client, make_user, drain)
+    saved = (await client.post("/v1/saved/searches", headers=buyer.h, json={"name": "Transfer pricing", "params": {"q": "tax"}})).json()
+    assert saved["alertsOn"] is True
+    async with sf() as s, s.begin():  # saved a while ago
+        await s.execute(text("UPDATE marketplace.saved_searches SET last_viewed_at = now() - interval '1 hour'"))
+    pro_user, pro = await publish(client, make_user, drain, "ann", headline="Tax adviser", primary="transfer-pricing")
+    async with sf() as s, s.begin():
+        assert await marketplace.saved_search_alerts(s) == 1
+    async with sf() as s, s.begin():
+        assert await marketplace.saved_search_alerts(s) == 0  # nothing newer since the last notice
+    off = await client.post(f"/v1/saved/searches/{saved['id']}/alerts", headers=buyer.h, json={"on": False})
+    assert off.json()["alertsOn"] is False
+
+    # Saved professional becomes available again.
+    await client.post("/v1/saved/professionals", headers=buyer.h, json={"professionalId": pro["id"]})
+    await client.put("/v1/professionals/me/availability", headers=pro_user.h,
+                     json={"availability": "TWO_WEEKS", "maxConcurrentEngagements": 3, "weeklyHours": 10})
+    await client.put("/v1/professionals/me/availability", headers=pro_user.h,
+                     json={"availability": "NOW", "maxConcurrentEngagements": 3, "weeklyHours": 30})
+    await drain()
+    titles = [n["title"] for n in (await client.get("/v1/notifications", headers=buyer.h)).json()["items"]]
+    assert "New matches for your saved search" in titles and "A saved professional is available" in titles
+    pro_titles = [n["title"] for n in (await client.get("/v1/notifications", headers=pro_user.h)).json()["items"]]
+    assert "A saved professional is available" not in pro_titles

@@ -1,0 +1,6 @@
+# Minimum versions for packages that only arrive as dependencies of other packages (mostly the optional cloud
+# integrations), so the image never ships a version with a known, fixed vulnerability. Raise a floor when the image
+# scan in CI reports a fixed HIGH or CRITICAL issue in one of them.
+msgpack>=1.2.1
+setuptools>=78.1.1
+urllib3>=2.8.0

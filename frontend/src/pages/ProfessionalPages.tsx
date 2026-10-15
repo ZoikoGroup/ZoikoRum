@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import { firmApi, formatMoney, type Firm } from '../api/orgs'
 import {
@@ -17,7 +17,7 @@ import { HoursSlider } from '../components/HoursSlider'
 import { CantFindSpecialization } from '../components/CantFindSpecialization'
 import { DraftSaved, ResumeDraft } from '../components/ResumeDraft'
 import { clearDraft, readDraft, useAutosave } from '../lib/autosave'
-import { ErrorAlert, Field } from '../components/ui'
+import { ErrorAlert, Field, Loading } from '../components/ui'
 import { AccountAlerts } from './Dashboards'
 import { ResendConfirmation } from '../components/ResendConfirmation'
 import { formatCurrencies } from '../lib/money'
@@ -164,7 +164,7 @@ export function ProfessionalDashboard() {
   }, [profile])
   useEffect(() => { load().catch(() => {}) }, [load])
 
-  if (loading || !user) return <p className="muted">Loading…</p>
+  if (loading || !user) return <Loading />
 
   async function run(action: () => Promise<unknown>) {
     setActionError(null)
@@ -369,14 +369,14 @@ export function ProfessionalDashboard() {
 // ---- Profile setup (step by step) ----------------------------------------------
 
 const STEPS = [
-  { key: 'basics', label: 'Basics' },
-  { key: 'specializations', label: 'Services' },
-  { key: 'engagement', label: 'Pricing & engagement' },
-  { key: 'availability', label: 'Availability' },
-  { key: 'verification', label: 'Verification' },
-  { key: 'credentials', label: 'Credentials' },
-  { key: 'jurisdictions', label: 'Jurisdictions' },
-  { key: 'publish', label: 'Review & publish' },
+  { key: 'basics', label: 'Basics', why: 'Buyers decide in seconds from your name, role title and photo. Your legal name stays private and is only matched against your ID.' },
+  { key: 'specializations', label: 'Services', why: 'Search and buyer policies work from these. Some need a validated credential or Tier A before you can take the work.' },
+  { key: 'engagement', label: 'Pricing & engagement', why: 'Buyers filter by engagement type, delivery and price. Rates are a guide only; the price is agreed in each proposal.' },
+  { key: 'availability', label: 'Availability', why: 'Requests only reach you when you can take them. At your limit, buyers see “At capacity” instead of waiting on you.' },
+  { key: 'verification', label: 'Verification', why: 'Verified identity (Tier B) is needed to send proposals; full verification (Tier A) for regulated work and many enterprise buyers.' },
+  { key: 'credentials', label: 'Credentials', why: 'Credentials are checked with the issuing body before they show as validated. Buyers and their policies rely on them.' },
+  { key: 'jurisdictions', label: 'Jurisdictions', why: 'Engagements can only be agreed where you serve clients and, for regulated work, where you are licensed.' },
+  { key: 'publish', label: 'Review & publish', why: 'You confirm the profile is accurate before buyers can find it. You can unpublish at any time.' },
 ] as const
 type StepKey = (typeof STEPS)[number]['key']
 
@@ -384,6 +384,20 @@ interface StepProps {
   profile: Profile
   onSaved: (p: Profile) => void
   next: () => void
+}
+
+/** Autosave for a step (Onboarding s.20/s.22): kept in this browser while unsaved, offered back on return. */
+function useStepDraft<T>(name: string, value: T, restore: (v: T) => void) {
+  const { user } = useAuth()
+  const key = user ? `${user.id}.profile.${name}` : null
+  const [initial] = useState(() => JSON.stringify(value))
+  const dirty = JSON.stringify(value) !== initial
+  const savedAt = useAutosave(key, value, dirty)
+  const [pending, setPending] = useState(() => readDraft<T>(key))
+  const banner = pending && !dirty && JSON.stringify(pending.value) !== initial
+    ? <ResumeDraft savedAt={pending.savedAt} onResume={() => { restore(pending.value); setPending(null) }} onDiscard={() => { clearDraft(key); setPending(null) }} />
+    : null
+  return { banner, saved: <div style={{ textAlign: 'right', minHeight: 18 }}><DraftSaved at={savedAt} /></div>, clear: () => clearDraft(key) }
 }
 
 /** Shared save wiring for each step's form. */
@@ -476,11 +490,20 @@ function FirmPicker({ profile, onSaved }: { profile: Profile; onSaved: (p: Profi
   )
 }
 
+// Standard role titles (Onboarding s.6): offered first so search and buyers see consistent titles; your own wording is allowed.
+const ROLE_TITLES = ['Fractional CFO', 'Fractional Controller', 'Financial Controller', 'Chartered Accountant', 'Certified Public Accountant',
+  'Management Accountant', 'Tax Adviser', 'Transfer Pricing Specialist', 'VAT / Indirect Tax Specialist', 'Internal Auditor',
+  'External Auditor', 'FP&A Lead', 'Treasury Specialist', 'M&A / Transaction Adviser', 'Valuation Specialist', 'Bookkeeper',
+  'Payroll Specialist', 'Forensic Accountant', 'Risk & Compliance Adviser', 'ERP Finance Consultant', 'ESG Reporting Adviser']
+
+const INDUSTRY_OPTIONS = ['Professional Services', 'Financial Services', 'Technology', 'Healthcare', 'Manufacturing', 'Retail & Consumer',
+  'Energy & Utilities', 'Public Sector', 'Education', 'Real Estate', 'Other']
+
 function BasicsStep({ profile, onSaved, next }: StepProps) {
   const initial = {
     displayName: profile.displayName, legalName: profile.legalName ?? '', headline: profile.headline ?? '',
     yearsExperienceBand: profile.yearsExperienceBand ?? '', bio: profile.bio ?? '', languages: profile.languages.join(', '),
-    city: profile.city ?? '', country: profile.country, website: profile.website ?? '',
+    city: profile.city ?? '', country: profile.country, website: profile.website ?? '', industries: profile.industries ?? [],
   }
   const [f, setF] = useState(initial)
   const [error, setError] = useState<unknown>(null)
@@ -507,7 +530,7 @@ function BasicsStep({ profile, onSaved, next }: StepProps) {
   }
 
   return (
-    <form onSubmit={submit}>
+    <form id="step-form" onSubmit={submit}>
       {pending && !touched && <ResumeDraft savedAt={pending.savedAt}
         onResume={() => { setF(pending.value); setPending(null); setTouched(true) }} onDiscard={() => { clearDraft(draftKey); setPending(null) }} />}
       <PhotoUploader profile={profile} onSaved={onSaved} />
@@ -523,7 +546,8 @@ function BasicsStep({ profile, onSaved, next }: StepProps) {
       </div>
       <div style={{ height: 16 }} />
       <Field label="Primary role title *" id="b-headline" hint="e.g. “Fractional CFO for SaaS companies”.">
-        <input id="b-headline" className="input" maxLength={120} value={f.headline} onChange={set('headline')} required />
+        <input id="b-headline" className="input" maxLength={120} value={f.headline} onChange={set('headline')} required list="role-titles" />
+        <datalist id="role-titles">{ROLE_TITLES.map((t) => <option key={t} value={t} />)}</datalist>
       </Field>
       <Field label="Bio (optional)" id="b-bio" hint={`What you do and for whom, in plain words: 150–250 words reads best, 300 at most ` +
         `(${f.bio.trim() ? f.bio.trim().split(/\s+/).length : 0} words). Avoid superlatives and guarantees such as “best”, “top-rated” or “#1”.`}>
@@ -540,6 +564,13 @@ function BasicsStep({ profile, onSaved, next }: StepProps) {
           <input id="b-lang" className="input" value={f.languages} onChange={set('languages')} placeholder="English, Spanish" />
         </Field>
       </div>
+      <fieldset className="plain-fieldset" style={{ marginTop: 16 }}>
+        <legend className="small"><strong>Industries you have served</strong> <span className="muted">(up to 8; buyers can filter by these)</span></legend>
+        {INDUSTRY_OPTIONS.map((i) => <label key={i} className="checkbox small" style={{ display: 'inline-flex', marginRight: 12 }}>
+          <input type="checkbox" checked={f.industries.includes(i)} disabled={!f.industries.includes(i) && f.industries.length >= 8}
+            onChange={(e) => { setTouched(true); setF({ ...f, industries: e.target.checked ? [...f.industries, i] : f.industries.filter((x) => x !== i) }) }} />
+          <span>{i}</span></label>)}
+      </fieldset>
       <div style={{ height: 16 }} />
       <div className="row">
         <Field label="City" id="b-city">
@@ -570,11 +601,13 @@ function SpecializationsStep({ profile, onSaved, next }: StepProps) {
   const [error, setError] = useState<unknown>(null)
   const { busy, save } = useSave(setError)
   useEffect(() => { taxonomyApi.all().then(setTaxonomy).catch(setError) }, [])
+  const draft = useStepDraft('services', { primary, secondary }, (v) => { setPrimary(v.primary); setSecondary(v.secondary) })
 
   function submit(e: FormEvent) {
     e.preventDefault()
     save(async () => {
       onSaved(await proApi.setSpecializations(primary, secondary.filter((s) => s !== primary)))
+      draft.clear()
       next()
     })
   }
@@ -597,7 +630,9 @@ function SpecializationsStep({ profile, onSaved, next }: StepProps) {
   }
 
   return (
-    <form onSubmit={submit}>
+    <form id="step-form" onSubmit={submit}>
+      {draft.banner}
+      {draft.saved}
       <ErrorAlert error={error} />
       <p className="muted small">
         Pick from the Zoikorum list so buyers can find you: one primary specialization and up to five more.
@@ -653,6 +688,9 @@ function EngagementStep({ profile, onSaved, next }: StepProps) {
   const [unit, setUnit] = useState(profile.rateUnit ?? 'HOUR')
   const [error, setError] = useState<unknown>(null)
   const { busy, save } = useSave(setError)
+  const draft = useStepDraft('engagement', { types, modes, pricing, rate, currency, unit }, (v) => {
+    setTypes(v.types); setModes(v.modes); setPricing(v.pricing); setRate(v.rate); setCurrency(v.currency); setUnit(v.unit)
+  })
 
   function submit(e: FormEvent) {
     e.preventDefault()
@@ -661,13 +699,16 @@ function EngagementStep({ profile, onSaved, next }: StepProps) {
         ? { indicativeRate: { amountMinor: toMinor(rate), currency }, rateUnit: unit }
         : profile.indicativeRate ? { clearRate: true } : {}
       onSaved(await proApi.update(profile.version, { engagementTypes: types, deliveryModes: modes, pricingModels: pricing, ...rateBody }))
+      draft.clear()
       next()
     })
   }
 
   return (
-    <form onSubmit={submit}>
+    <form id="step-form" onSubmit={submit}>
+      {draft.banner}
       <ErrorAlert error={error} />
+      {draft.saved}
       <h3>How you engage</h3>
       <Choices name="Engagement types" options={ENGAGEMENT_TYPES} value={types} onChange={setTypes} />
       <h3 style={{ marginTop: 20 }}>How you deliver</h3>
@@ -704,18 +745,24 @@ function AvailabilityStep({ profile, onSaved, next }: StepProps) {
   const [hours, setHours] = useState<number | null>(profile.weeklyHours ?? null)
   const [error, setError] = useState<unknown>(null)
   const { busy, save } = useSave(setError)
+  const draft = useStepDraft('availability', { availability, max, paused, hours }, (v) => {
+    setAvailability(v.availability); setMax(v.max); setPaused(v.paused); setHours(v.hours)
+  })
 
   function submit(e: FormEvent) {
     e.preventDefault()
     save(async () => {
       onSaved(await proApi.setAvailability({ availability, maxConcurrentEngagements: max ? Number(max) : null, temporarilyUnavailable: paused, weeklyHours: hours }))
+      draft.clear()
       next()
     })
   }
 
   return (
-    <form onSubmit={submit}>
+    <form id="step-form" onSubmit={submit}>
+      {draft.banner}
       <ErrorAlert error={error} />
+      {draft.saved}
       <div className="row">
         <Field label="When can you start new work?" id="a-when">
           <select id="a-when" className="input" value={availability} onChange={(e) => setAvailability(e.target.value as Availability)}>
@@ -758,21 +805,30 @@ function JurisdictionsStep({ profile, onSaved, next }: StepProps) {
   const [served, setServed] = useState(profile.servedJurisdictions)
   const [licensed, setLicensed] = useState(profile.licensedJurisdictions)
   const [ack, setAck] = useState(profile.crossBorderAcknowledged)
+  const [regulatedData, setRegulatedData] = useState(!!profile.handlesRegulatedData)
   const [error, setError] = useState<unknown>(null)
   const { busy, save } = useSave(setError)
+  const draft = useStepDraft('jurisdictions', { served, licensed, ack, regulatedData }, (v) => {
+    setServed(v.served); setLicensed(v.licensed); setAck(v.ack); setRegulatedData(v.regulatedData)
+  })
   const crossBorder = served.filter((c) => c !== profile.country)
 
   function submit(e: FormEvent) {
     e.preventDefault()
     save(async () => {
-      onSaved(await proApi.setJurisdictions({ served, licensed, crossBorderAcknowledged: ack }))
+      let saved = await proApi.setJurisdictions({ served, licensed, crossBorderAcknowledged: ack })
+      if (regulatedData !== !!saved.handlesRegulatedData) saved = await proApi.update(saved.version, { handlesRegulatedData: regulatedData })
+      onSaved(saved)
+      draft.clear()
       next()
     })
   }
 
   return (
-    <form onSubmit={submit}>
+    <form id="step-form" onSubmit={submit}>
+      {draft.banner}
       <ErrorAlert error={error} />
+      {draft.saved}
       <h3>Where you serve clients</h3>
       <CountryPicker id="served" value={served} onChange={setServed} />
       <h3 style={{ marginTop: 8 }}>Where you hold a licence (if any)</h3>
@@ -787,6 +843,11 @@ function JurisdictionsStep({ profile, onSaved, next }: StepProps) {
           </span>
         </label>
       )}
+      <label className="checkbox">
+        <input type="checkbox" checked={regulatedData} onChange={(e) => setRegulatedData(e.target.checked)} />
+        <span>I can handle regulated data (client financial records, personal data, client money) with appropriate controls:
+          encrypted storage, access limited to the engagement, and deletion or return at the end. This shows on your profile and is recorded.</span>
+      </label>
       <StepActions busy={busy} />
     </form>
   )
@@ -1000,8 +1061,17 @@ export function ProfileSetupPage() {
   const step = (STEPS.find((s) => s.key === params.get('step'))?.key ?? 'basics') as StepKey
   const index = STEPS.findIndex((s) => s.key === step)
   const go = (key: StepKey) => { setParams({ step: key }); window.scrollTo(0, 0) }
+  const navigate = useNavigate()
+  const exiting = useRef(false)
+  function saveAndExit() {
+    const form = document.getElementById('step-form') as HTMLFormElement | null
+    if (!form) { navigate('/app/professional'); return }
+    exiting.current = true
+    form.requestSubmit()
+    window.setTimeout(() => { exiting.current = false }, 5000)  // the save failed: stay on the step with its error
+  }
 
-  if (loading) return <p className="muted">Loading…</p>
+  if (loading) return <Loading />
   const View = STEP_VIEW[step]
   return (
     <>
@@ -1028,11 +1098,16 @@ export function ProfileSetupPage() {
             <div className="alert alert-warn">Confirm your email address before publishing: open the link we emailed you. <ResendConfirmation /></div>
           )}
           <section className="card panel">
-            <h2>{STEPS[index].label}</h2>
+            <div className="panel-head"><h2>{STEPS[index].label}</h2>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={saveAndExit}>Save &amp; exit</button></div>
+            <details className="why-ask small"><summary>Why we ask this</summary><p className="muted" style={{ margin: '4px 0 0' }}>{STEPS[index].why}</p></details>
             {/* key: remount the form with fresh values when the profile changes elsewhere */}
             <View key={`${step}-${profile.version}`} profile={profile}
               onSaved={(p) => { setProfile(p); setSaved(true) }}
-              next={() => { if (index < STEPS.length - 1) go(STEPS[index + 1].key) }} />
+              next={() => {
+                if (exiting.current) { exiting.current = false; navigate('/app/professional'); return }
+                if (index < STEPS.length - 1) go(STEPS[index + 1].key)
+              }} />
           </section>
         </>
       )}

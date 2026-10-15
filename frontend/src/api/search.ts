@@ -18,6 +18,8 @@ export interface SearchResult {
   tierLabel: string
   trustScore: number
   whyThisResult: string[]
+  regulatedPreview?: boolean
+  enterpriseReady?: boolean
   dimensions: Record<string, string>
   languages: string[]
   yearsExperienceBand: string | null
@@ -35,7 +37,9 @@ export interface SearchResponse { total: number; items: SearchResult[]; facets: 
 
 export type SearchQuery = Partial<Record<
   'q' | 'category' | 'spec' | 'specMatch' | 'tier' | 'verified' | 'engagementType' | 'delivery' | 'availability' |
-  'pricingModel' | 'credential' | 'jurisdiction' | 'experience' | 'publishedAfter' | 'sort' | 'limit' | 'offset', string>>
+  'pricingModel' | 'credential' | 'jurisdiction' | 'experience' | 'publishedAfter' | 'sort' | 'limit' | 'offset' |
+  'industry' | 'crossBorder' | 'enterpriseReady' | 'budgetMaxMinor' | 'budgetCurrency' | 'language', string>>
+export interface Suggestions { specializations: { slug: string; name: string }[]; professionals: { id: string; name: string; headline: string | null }[] }
 
 /** Filters suggested from the buyer's own words ("Describe what you need"), with one reason per filter. */
 export interface IntentFilters {
@@ -49,5 +53,6 @@ export const searchApi = {
     const clean = Object.fromEntries(Object.entries(query).filter(([, v]) => v)) as Record<string, string>
     return api<SearchResponse>('/v1/search/professionals', { query: clean })
   },
+  suggest: (q: string) => api<Suggestions>('/v1/search/suggest', { query: { q }, auth: false }),
   intent: (text: string) => api<IntentResponse>('/v1/search/intent', { method: 'POST', body: { text } }),
 }

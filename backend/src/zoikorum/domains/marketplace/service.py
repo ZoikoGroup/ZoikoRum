@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -19,6 +20,7 @@ from zoikorum.domains.marketplace.schemas import (
 )
 from zoikorum.domains.marketplace.taxonomy_data import default_taxonomy_rows, slugify
 from zoikorum.domains.professional import facade as professional_facade
+from zoikorum.domains.search import facade as search_facade
 from zoikorum.domains.trust import facade as trust_facade
 from zoikorum.domains.verification import facade as verification_facade
 from zoikorum.shared import clock
@@ -27,6 +29,7 @@ from zoikorum.shared.errors import Conflict, NotFound, ValidationFailed
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_event
 from zoikorum.shared.http import next_cursor, page_of, paginate
+from zoikorum.shared.relay import schedule_timer
 
 
 async def seed_default_taxonomy(session: AsyncSession) -> None:
@@ -330,7 +333,8 @@ MAX_SEARCHES = 25
 
 
 def _search_out(s: SavedSearch) -> SavedSearchOut:
-    return SavedSearchOut(id=s.id, name=s.name, params=s.params, lastViewedAt=s.last_viewed_at, createdAt=s.created_at)
+    return SavedSearchOut(id=s.id, name=s.name, params=s.params, lastViewedAt=s.last_viewed_at, alertsOn=s.alerts_on,
+                          createdAt=s.created_at)
 
 
 async def list_searches(session: AsyncSession, actor: Actor) -> list[SavedSearchOut]:
@@ -481,3 +485,61 @@ async def decide_suggestion(session: AsyncSession, actor: Actor, suggestion_id: 
     await session.flush()
     return _suggestion_out(s)
 
+
+
+# ---- Alerts: saved professionals become available, saved searches get new matches (Buyer Dashboard s.12-13) ----------
+
+AVAILABLE = ("NOW",)
+ALERT_TIMER = "marketplace.saved_search_alerts"  # daily at 07:00 UTC, re-arms itself
+
+
+async def professional_availability_changed(session: AsyncSession, payload: dict) -> None:
+    """Tell the people who saved this professional when they become available again."""
+    if payload.get("availability") not in AVAILABLE or payload.get("availabilityChanged") is False:
+        return
+    pro_id = uuid.UUID(str(payload["professionalId"]))
+    savers = (await session.scalars(select(SavedProfessional.identity_id).where(SavedProfessional.professional_id == pro_id))).all()
+    if not savers:
+        return
+    pro = await professional_facade.get_professional(session, pro_id)
+    name = pro.display_name if pro else "A professional you saved"
+    record_event(session, E.SAVED_PROFESSIONAL_AVAILABLE, aggregate_type="Professional", aggregate_id=pro_id,
+                 payload={"professionalRef": pro_id, "recipientIdentityIds": list(savers), "audience": "BUYER",
+                          "message": f"{name} is available to start new work now."})
+
+
+def next_alert_run(now):
+    run = now.replace(hour=7, minute=0, second=0, microsecond=0)
+    return run if run > now else run + timedelta(days=1)
+
+
+async def bootstrap_alerts(session: AsyncSession) -> None:
+    nxt = next_alert_run(clock.now())
+    await schedule_timer(session, ALERT_TIMER, nxt.date().isoformat(), nxt)
+
+
+async def saved_search_alerts(session: AsyncSession) -> int:
+    """Daily: for each saved search with alerts on, count professionals published since it was last viewed or alerted."""
+    from urllib.parse import urlencode
+
+    sent = 0
+    for s in (await session.scalars(select(SavedSearch).where(SavedSearch.alerts_on.is_(True)))).all():
+        since = max(filter(None, (s.last_viewed_at, s.last_alerted_at)))
+        count = await search_facade.count_new_matches(session, s.params, since)
+        if count:
+            record_event(session, E.SAVED_SEARCH_MATCHES, aggregate_type="SavedSearch", aggregate_id=s.id,
+                         payload={"identityId": s.identity_id, "savedSearchId": s.id, "count": count,
+                                  "query": urlencode(s.params),
+                                  "message": f"{count} new professional{'s' if count > 1 else ''} match “{s.name}”."})
+            sent += 1
+        s.last_alerted_at = clock.now()
+    nxt = next_alert_run(clock.now())
+    await schedule_timer(session, ALERT_TIMER, nxt.date().isoformat(), nxt)
+    return sent
+
+
+async def set_search_alerts(session: AsyncSession, actor: Actor, search_id: uuid.UUID, on: bool) -> SavedSearchOut:
+    s = await _my_search(session, actor, search_id)
+    s.alerts_on = on
+    await session.flush()
+    return _search_out(s)

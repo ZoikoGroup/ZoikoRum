@@ -93,12 +93,16 @@ export interface Profile {
   weeklyHours?: number | null
   servedJurisdictions: string[]
   licensedJurisdictions: string[]
+  handlesRegulatedData?: boolean
+  industries?: string[]
   crossBorderAcknowledged: boolean
   publishedAt: string | null
   version: number
 }
 
 export interface ProfilePatch {
+  industries?: string[]
+  handlesRegulatedData?: boolean
   displayName?: string
   legalName?: string
   headline?: string
@@ -170,6 +174,9 @@ export interface OfferingInput {
 }
 
 export interface PublicProfile {
+  enterprise?: { enterpriseReady: boolean; signals: string[] }
+  verificationInProgress?: string[]
+  verificationReport?: { check: string; status: 'VERIFIED' | 'EXPIRED'; verifiedAt: string | null; expiresAt: string | null }[]
   id: string
   photoUrl: string | null
   displayName: string
@@ -191,6 +198,8 @@ export interface PublicProfile {
   weeklyHours?: number | null
   servedJurisdictions: string[]
   licensedJurisdictions: string[]
+  handlesRegulatedData?: boolean
+  industries?: string[]
   credentials: { name: string; issuingBody: string; jurisdiction: string | null; status: string; displayLabel: string }[]
   offerings: Offering[]
   trust: { tier: 'A' | 'B' | 'C'; dimensions: Record<string, string>; explanation: string[]; updatedAt: string | null }
@@ -213,7 +222,31 @@ export interface BuyerCandidate {
   requests: number; engagements: number; completed: number; lastActivityAt: string | null
 }
 
+export interface Insights {
+  generatedAt: string
+  minimumSample: number
+  metrics: { key: string; label: string; value: number | null; basis: string; hint: string; lowerIsBetter?: boolean }[]
+  medianResponseHours: number | null
+  completedEngagements: number
+  averageRating: number | null
+  reviewCount: number
+  profileViews30d?: number
+}
+
+export interface EnterpriseReadiness {
+  status: 'NONE' | 'PENDING' | 'READY' | 'REJECTED' | 'LAPSED'
+  requirements: { key: string; label: string; met: boolean }[]
+  attestationVersion: string; attestationItems: { key: string; text: string }[]
+  attestation: { version: string; attestedAt: string } | null; appliedAt: string | null; decidedAt: string | null; decisionReason: string | null
+}
+
 export const proApi = {
+  enterprise: () => api<EnterpriseReadiness>(`${P}/me/enterprise`),
+  applyEnterprise: (attestation: Record<string, boolean>) => api<EnterpriseReadiness>(`${P}/me/enterprise/apply`, { method: 'POST', body: { attestation } }),
+  enterpriseApplications: () => api<{ professionalId: string; name: string; headline: string | null; appliedAt: string
+    requirements: { key: string; label: string; met: boolean }[]; attestation: { version: string; attestedAt: string } | null }[]>(`${P}/admin/enterprise-applications`),
+  decideEnterprise: (id: string, approve: boolean, reason: string) => api<EnterpriseReadiness>(`${P}/${id}/enterprise/decision`, { method: 'POST', body: { approve, reason } }),
+  insights: () => api<Insights>(`${P}/me/insights`),
   savedBuyers: () => api<SavedBuyer[]>(`${P}/me/saved-buyers`),
   buyerCandidates: () => api<BuyerCandidate[]>(`${P}/me/buyer-candidates`),
   saveBuyer: (organizationId: string) => api<SavedBuyer>(`${P}/me/saved-buyers`, { method: 'POST', body: { organizationId } }),

@@ -128,3 +128,21 @@ async def last_active(session: AsyncSession, ids: list[uuid.UUID]) -> dict[uuid.
     rows = await session.execute(select(Session.identity_id, func.max(Session.created_at))
                                  .where(Session.identity_id.in_(ids)).group_by(Session.identity_id))
     return dict(rows.all())
+
+
+async def two_step_enabled(session: AsyncSession, identity_id: uuid.UUID) -> bool:
+    """An authenticator app or at least one passkey."""
+    from sqlalchemy import func
+
+    from zoikorum.domains.identity.models import Passkey
+
+    i = await session.get(Identity, identity_id)
+    if i is None:
+        return False
+    return i.mfa_enabled_at is not None or bool(await session.scalar(
+        select(func.count()).select_from(Passkey).where(Passkey.identity_id == identity_id)))
+
+
+async def personas_of(session: AsyncSession, identity_id: uuid.UUID) -> frozenset[str]:
+    i = await session.get(Identity, identity_id)
+    return frozenset(i.personas or []) if i else frozenset()

@@ -30,7 +30,7 @@ python -m zoikorum.worker                          # outbox relay, consumer retr
 ```
 The worker must run, or events (and therefore the audit ledger and every later domain) will not progress.
 On Windows, clicking inside the worker's console window can pause it (QuickEdit mode); press Enter or Esc in that window to resume.
-Local uploads use `ZK_STORAGE_DIR` (default `var/storage` relative to the backend working directory, git-ignored). Optional S3 storage and hosted payment/verification configuration are described in [current status](docs/CURRENT_STATUS.md#integrations-and-remaining-production-work).
+Local uploads use `ZK_STORAGE_DIR` (default `var/storage` relative to the backend working directory, git-ignored). Production uses a Google Cloud Storage bucket (S3 is an alternative); see [DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 Create the first Platform Admin (only possible from the CLI; the password is prompted, or read from `ZK_ADMIN_PASSWORD`):
 ```bash

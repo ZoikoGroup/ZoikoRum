@@ -55,3 +55,11 @@ async def on_outcome(session: AsyncSession, event: EventEnvelope) -> None:
     if pid:
         prof = await service._profile(session, uuid.UUID(str(pid)))
         await service.recompute(session, prof, event.eventType)
+
+
+from zoikorum.shared.relay import on_timer  # noqa: E402
+
+
+@on_timer(service.DECAY_TIMER)
+async def on_daily_recompute(session, key, payload):
+    await service.daily_recompute(session)

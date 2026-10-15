@@ -6,11 +6,13 @@ import { formatMoney } from '../api/orgs'
 import { CONTRACT_STATUS, contractApi, type Contract } from '../api/contracts'
 import { proposalApi, requestStatus, type ProposalRequest } from '../api/proposals'
 import { savedApi, type SavedProfessional } from '../api/saved'
+import { messagingApi, type MessageThread } from '../api/messaging'
 import { useAuth } from '../auth/AuthContext'
 import { ActionList, Avatar, greeting, Icon, type Action } from '../components/dashboard'
 import { EmptyTable, PortalHeader, StatCard, Tabs } from '../components/portal'
 import { AccountAlerts } from './Dashboards'
 import { formatCurrencies } from '../lib/money'
+import { Loading } from '../components/ui'
 
 /* Customer dashboard: management design + Buyer Dashboard & Engagement wireframe (5 summary cards,
    attention strip, engagements, assurance, requests & proposals, saved professionals). Real data only;
@@ -51,6 +53,8 @@ export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
   const [reqTab, setReqTab] = useState<ReqTab>('all')
   const [requests, setRequests] = useState<ProposalRequest[]>([])
   const [hideBanner, setHideBanner] = useState(false)
+  const [threads, setThreads] = useState<MessageThread[]>([])
+  useEffect(() => { messagingApi.list().then((p) => setThreads(p.items.slice(0, 4))).catch(() => {}) }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -85,7 +89,7 @@ export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
   }, [org, kind, isAdmin])
 
   if (!user) return null
-  if (loading) return <p className="muted">Loading…</p>
+  if (loading) return <Loading />
 
   const actions: Action[] = []
   if (!user.emailConfirmed) actions.push({ title: 'Confirm your email address', detail: 'Needed before you can accept invitations', priority: 'High', to: '/app/settings', icon: 'mail' })
@@ -119,8 +123,8 @@ export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
 
       <div className="stat-row five">
         <StatCard icon="bell" tone="amber" label="Action Required" value={urgent.length} sub={urgent.length ? 'Needs your attention' : 'All caught up'} to="#actions" />
-        <StatCard icon="request" tone="blue" label="Open Requests" value={new Set(requests.filter((r) => ['OPEN', 'PROPOSAL_RECEIVED'].includes(r.status)).map((r) => r.groupId)).size}
-          sub="Waiting for or receiving proposals" to="/app/requests" />
+        <StatCard icon="star" tone="blue" label="Saved Professionals" value={saved.length}
+          sub={saved.filter((s) => s.availability === 'NOW').length ? `${saved.filter((s) => s.availability === 'NOW').length} available now` : 'Your shortlist'} to="/app/saved" />
         <StatCard icon="proposal" tone="violet" label="Proposals" value={toReview.length} sub="Awaiting your review" to="/app/proposals" />
         <StatCard icon="briefcase" tone="green" label="Active Engagements" value={contracts.filter((c) => c.status === 'ACTIVE').length}
           sub={toSign.length ? `${toSign.length} awaiting your signature` : 'In progress'} to="/app/engagements" />
@@ -151,15 +155,26 @@ export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
               </EmptyTable>
             ) : (
               <table className="data">
-                <thead><tr><th>Professional</th><th>Service</th><th>Stage</th><th>Next action</th><th>Value</th></tr></thead>
-                <tbody>{contracts.filter((c) => engTab === 'all' || engBucket(c) === engTab).slice(0, 6).map((c) => (
+                <thead><tr><th>Professional</th><th>Service</th><th>Stage</th><th>Progress</th><th>Value</th><th><span className="sr-only">Actions</span></th></tr></thead>
+                <tbody>{contracts.filter((c) => engTab === 'all' || engBucket(c) === engTab).slice(0, 6).map((c) => {
+                  const done = c.milestones.filter((m) => m.status === 'ACCEPTED').length
+                  const inReview = c.milestones.find((m) => m.status === 'SUBMITTED')
+                  const pct = c.milestones.length ? Math.round((done / c.milestones.length) * 100) : 0
+                  return (
                   <tr key={c.id}>
                     <td className="small">{c.parties.find((p) => p.role === 'PROFESSIONAL')?.name}</td>
-                    <td><Link to={`/app/engagements/${c.id}`}><strong>{c.title}</strong></Link></td>
-                    <td><span className={`badge ${CONTRACT_STATUS[c.status].tone}`}>{CONTRACT_STATUS[c.status].label}</span></td>
-                    <td className="small">{c.nextAction}</td>
+                    <td><Link to={`/app/engagements/${c.id}`}><strong>{c.title}</strong></Link><div className="muted small">{c.nextAction}</div></td>
+                    <td>{inReview && c.status === 'ACTIVE' ? <span className="badge warn">In review</span>
+                      : <span className={`badge ${CONTRACT_STATUS[c.status].tone}`}>{CONTRACT_STATUS[c.status].label}</span>}</td>
+                    <td className="small" title={`${done} of ${c.milestones.length} milestones accepted`}>
+                      <div className="bar" aria-hidden><span style={{ width: `${pct}%` }} /></div>{done}/{c.milestones.length}</td>
                     <td className="small">{formatMoney(c.total)}</td>
-                  </tr>))}</tbody>
+                    <td><span className="row" style={{ flexWrap: 'nowrap', gap: 4 }}>
+                      {inReview && <Link className="btn btn-primary btn-sm" to={`/app/engagements/${c.id}`}>Approve milestone</Link>}
+                      <Link className="btn btn-ghost btn-sm" to={`/app/messages?contextType=CONTRACT&contextId=${c.id}`} aria-label={`Message about ${c.title}`}><Icon name="message" /></Link>
+                    </span></td>
+                  </tr>)
+                })}</tbody>
               </table>
             )}
           </section>
@@ -194,6 +209,36 @@ export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
             <div className="panel-head"><h2>Pending Actions</h2></div>
             <ActionList actions={actions} empty="You're all caught up." />
           </section>
+
+          <section className="card panel" id="payments">
+            <div className="panel-head"><h2>Payments &amp; Contracts</h2><Link className="small" to="/app/payments">Open</Link></div>
+            <dl className="facts">
+              <dt>In escrow</dt><dd>{formatCurrencies(contracts.flatMap((c) => c.milestones.filter((m) => ['IN_PROGRESS', 'SUBMITTED', 'REVISION_REQUESTED', 'ACCEPTANCE_PENDING_APPROVAL', 'DISPUTED'].includes(m.status)).map((m) => m.amount)))}</dd>
+              <dt>Paid for accepted work</dt><dd>{formatCurrencies(contracts.map((c) => c.acceptedAmount))}</dd>
+              <dt>To sign</dt><dd>{toSign.length ? <Link to={`/app/engagements/${toSign[0].id}`}>{toSign.length} contract{toSign.length > 1 ? 's' : ''}</Link> : 'None'}</dd>
+              <dt>Unfunded milestones</dt><dd>{contracts.filter((c) => c.status === 'ACTIVE').flatMap((c) => c.milestones.filter((m) => m.status === 'PENDING_FUNDING')).length}</dd>
+            </dl>
+          </section>
+
+          <section className="card panel" id="messages">
+            <div className="panel-head"><h2>Messages &amp; Activity</h2><Link className="small" to="/app/messages">All messages</Link></div>
+            {threads.length === 0 ? <p className="muted small" style={{ margin: 0 }}>No conversations yet. Each request and engagement has its own.</p> : (
+              <ul className="pro-list">{threads.map((t) => (
+                <li key={t.id}><Icon name="message" /><span><Link to={`/app/messages?contextType=${t.contextType}&contextId=${t.contextId}`}><strong>{t.title}</strong></Link>
+                  <br /><span className="muted small">{t.counterpartName} · {new Date(t.updatedAt).toLocaleDateString()}</span></span>
+                  {t.unreadCount > 0 && <span className="badge green">{t.unreadCount} new</span>}</li>))}</ul>
+            )}
+          </section>
+
+          {kind === 'enterprise' && org && <section className="card panel" id="controls">
+            <div className="panel-head"><h2><Icon name="gear" /> Enterprise controls</h2></div>
+            <ul className="quick-actions">
+              <li><Link to={`/app/policies?orgId=${org.id}`}><Icon name="shield" /><span>Policies, approvals and exceptions</span><span aria-hidden>›</span></Link></li>
+              <li><Link to="/app/organisation?tab=roles"><Icon name="team" /><span>Roles and spend limits</span><span aria-hidden>›</span></Link></li>
+              <li><Link to="/app/enterprise/structure"><Icon name="building" /><span>Business units and cost centers</span><span aria-hidden>›</span></Link></li>
+              <li><Link to="/app/organisation?tab=entities"><Icon name="contract" /><span>Legal entities</span><span aria-hidden>›</span></Link></li>
+            </ul>
+          </section>}
 
           <section className="card panel">
             <div className="panel-head"><h2><Icon name="shield" /> Engagement Assurance</h2></div>

@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from zoikorum.domains.contract import service
 from zoikorum.domains.contract.schemas import (
     PartialOfferIn, ChangeOrderDecisionIn, ChangeOrderIn, ContractOut, ContractSummaryOut, DraftTextIn, EvidenceIn, ReviewIn,
-    RevisionIn, SignIn, SubmissionDraftOut, SubmitIn,
+    RevisionIn, SignIn, SubmissionDraftOut, SubmitIn, TerminateIn, TerminationDecisionIn,
 )
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
@@ -163,6 +163,46 @@ async def cancel_remaining_cycles(contract_id: uuid.UUID, body: CancelCyclesIn, 
     return await idem.run(session, actor, lambda: service.cancel_remaining_cycles(session, actor, contract_id, body.reason))
 
 
+@router.get("/v1/contracts/{contract_id}/activity")
+async def activity(contract_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    """The engagement's history from the tamper-evident audit trail."""
+    return await service.activity(session, actor, contract_id)
+
+
+@router.get("/v1/contracts/{contract_id}/all-files")
+async def all_files(contract_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    """Every file of the engagement: request, proposal, delivered work, messages, dispute evidence."""
+    return await service.files(session, actor, contract_id)
+
+
+@router.get("/v1/contracts/{contract_id}/evidence-pack")
+async def evidence_pack(contract_id: uuid.UUID, actor: CurrentActor, session: DbSession,
+                        format: Literal["pdf", "json"] = "pdf") -> Response:
+    """The engagement record with its fingerprint (PDF or JSON), for an auditor, a regulator or a court. Audited."""
+    data, name, media = await service.evidence_pack(session, actor, contract_id, format)
+    return Response(data, media_type=media, headers={"Content-Disposition": f'attachment; filename="{name}"',
+                                                     "Cache-Control": "no-store"})
+
+
+@router.post("/v1/contracts/{contract_id}/terminate", response_model=ContractOut)
+async def terminate(contract_id: uuid.UUID, body: TerminateIn, actor: CurrentActor, session: DbSession, idem: IdempotencyKey):
+    """End the engagement now (nothing in escrow, no open dispute) or, with ``mutual``, ask the other side to agree.
+    Needs a fresh two-step confirmation."""
+    return await idem.run(session, actor, lambda: service.terminate(session, actor, contract_id, body))
+
+
+@router.post("/v1/contracts/{contract_id}/termination/decision", response_model=ContractOut)
+async def decide_termination(contract_id: uuid.UUID, body: TerminationDecisionIn, actor: CurrentActor, session: DbSession,
+                             idem: IdempotencyKey):
+    """The other side agrees to end the engagement (held money for work not accepted goes back to the buyer) or declines."""
+    return await idem.run(session, actor, lambda: service.decide_termination(session, actor, contract_id, body))
+
+
+@router.post("/v1/contracts/{contract_id}/termination/withdraw", response_model=ContractOut)
+async def withdraw_termination(contract_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    return await service.withdraw_termination(session, actor, contract_id)
+
+
 @router.post("/v1/milestones/{milestone_id}/partial-acceptance", response_model=ContractOut)
 async def offer_partial(milestone_id: uuid.UUID, body: PartialOfferIn, actor: CurrentActor, session: DbSession):
     """Buyer: offer to accept submitted work for less (with a reason). Released only if the professional agrees."""
@@ -178,3 +218,25 @@ async def answer_partial(milestone_id: uuid.UUID, answer: Literal["agree", "decl
 @router.post("/v1/milestones/{milestone_id}/request-revision", response_model=ContractOut)
 async def request_revision(milestone_id: uuid.UUID, body: RevisionIn, actor: CurrentActor, session: DbSession):
     return await service.request_revision(session, actor, milestone_id, body)
+
+
+
+class PauseIn(BaseModel):
+    reason: str | None = Field(default=None, max_length=500)
+
+
+@router.post("/v1/contracts/{contract_id}/pause", response_model=ContractOut)
+async def pause_retainer(contract_id: uuid.UUID, body: PauseIn, actor: CurrentActor, session: DbSession):
+    """Buyer: pause a retainer (no new cycles until resumed)."""
+    return await service.set_retainer_pause(session, actor, contract_id, True, body.reason)
+
+
+@router.post("/v1/contracts/{contract_id}/resume", response_model=ContractOut)
+async def resume_retainer(contract_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    return await service.set_retainer_pause(session, actor, contract_id, False, None)
+
+
+@router.get("/v1/contracts/{contract_id}/policy-state")
+async def policy_state(contract_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> dict:
+    """Buyer: what the agreed policy would decide for funding, acceptance and release, before they are tried."""
+    return await service.policy_state(session, actor, contract_id)

@@ -71,6 +71,22 @@ def _jsonable(value: Any) -> Any:
     return to_jsonable_python(value, fallback=str)
 
 
+def _check_payload(event_type: str, payload: dict[str, Any]) -> None:
+    """Typed events (shared/event_schemas.py): an error outside production, a logged error in production."""
+    from zoikorum.shared import event_schemas
+
+    try:
+        event_schemas.check(event_type, {k: _jsonable(v) for k, v in payload.items()})
+    except ValueError:
+        from zoikorum.config import get_settings
+
+        if get_settings().env != "production":
+            raise
+        import logging
+
+        logging.getLogger("zoikorum.events").exception("event payload contract broken", extra={"eventType": event_type})
+
+
 def record_event(
     session: AsyncSession,
     event_type: str,
@@ -84,6 +100,7 @@ def record_event(
     """Append a domain event to the outbox in the caller's transaction."""
     if event_type not in ALL_EVENTS:
         raise ValueError(f"Unknown event type {event_type!r}; add it to shared/event_catalog.py first")
+    _check_payload(event_type, payload)
     ctx = context.current()
     envelope = EventEnvelope(
         eventId=uuid.uuid4(),
@@ -152,19 +169,23 @@ class Subscription:
     consumer: str
     event_type: str  # exact type or "*" for every event
     handler: Handler
+    # Optional slow step (files, outside services, AI) run BEFORE the consumer's transaction, with no database
+    # connection held: ``prepare(session_factory, envelope)``. Its result is passed to ``handler(session, env, result)``.
+    prepare: Callable[..., Awaitable[Any]] | None = None
 
 
 class SubscriberRegistry:
     def __init__(self) -> None:
         self._subs: dict[str, Subscription] = {}
 
-    def subscribe(self, event_type: str, *, consumer: str) -> Callable[[Handler], Handler]:
+    def subscribe(self, event_type: str, *, consumer: str, prepare: Callable[..., Awaitable[Any]] | None = None
+                  ) -> Callable[[Handler], Handler]:
         if event_type != ALL and event_type not in ALL_EVENTS:
             raise ValueError(f"Unknown event type {event_type!r}")
 
         def deco(fn: Handler) -> Handler:
             key = f"{consumer}|{event_type}"
-            self._subs[key] = Subscription(consumer=consumer, event_type=event_type, handler=fn)
+            self._subs[key] = Subscription(consumer=consumer, event_type=event_type, handler=fn, prepare=prepare)
             return fn
 
         return deco

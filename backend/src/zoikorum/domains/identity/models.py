@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import ARRAY, BigInteger, Boolean, DateTime, ForeignKey, Integer, LargeBinary, String, UniqueConstraint
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY, JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -35,6 +35,8 @@ class Identity(Base, UUIDPk, Timestamps, Versioned):
     signup_organization_name: Mapped[str | None] = mapped_column(String(200))
     mfa_secret_enc: Mapped[str | None] = mapped_column(String(500))  # AES-GCM encrypted TOTP secret
     mfa_enabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The 30-second time step of the last authenticator code accepted: a code is good once (RFC 6238 section 5.2).
+    mfa_totp_last_step: Mapped[int | None] = mapped_column(BigInteger)
     # One-time recovery codes for a lost authenticator: SHA-256 hashes only; each is removed when used.
     mfa_recovery_hashes: Mapped[list | None] = mapped_column(JSONB)
     failed_login_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -159,3 +161,42 @@ class DuplicateSuspicion(Base, UUIDPk, Timestamps):
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     resolution_note: Mapped[str | None] = mapped_column(String(500))
     kept_identity_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+
+
+class SsoConnection(Base, UUIDPk, Timestamps):
+    """An organisation's OpenID Connect identity provider (identity/sso.py) and SCIM token (identity/scim.py)."""
+    __tablename__ = "sso_connections"
+    __table_args__ = {"schema": SCHEMA}
+    organization_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, unique=True)
+    issuer: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    client_id: Mapped[str] = mapped_column(String(300), nullable=False, default="")
+    client_secret_enc: Mapped[str] = mapped_column(String(2000), nullable=False)
+    email_domains: Mapped[list[str]] = mapped_column(PG_ARRAY(String(253)), nullable=False, default=list)
+    enforce: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    jit: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    default_roles: Mapped[list[str]] = mapped_column(ARRAY(String(40)), nullable=False, default=list)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    scim_token_hash: Mapped[str | None] = mapped_column(String(64), unique=True)
+    created_by: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+
+
+class SsoLogin(Base, UUIDPk, CreatedAt):
+    """One sign-in attempt: its id is the OAuth state; nonce and PKCE verifier never leave the server."""
+    __tablename__ = "sso_logins"
+    __table_args__ = {"schema": SCHEMA}
+    connection_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    provider: Mapped[str] = mapped_column(String(20), nullable=False)  # org | google | microsoft
+    nonce: Mapped[str] = mapped_column(String(100), nullable=False)
+    code_verifier: Mapped[str] = mapped_column(String(200), nullable=False)
+    link_identity_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ExternalLogin(Base, UUIDPk, CreatedAt):
+    """An identity provider account (issuer|subject) connected to a Zoikorum account."""
+    __tablename__ = "external_logins"
+    __table_args__ = {"schema": SCHEMA}
+    identity_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.identities.id"), nullable=False, index=True)
+    provider: Mapped[str] = mapped_column(String(20), nullable=False)
+    subject: Mapped[str] = mapped_column(String(600), nullable=False, unique=True)

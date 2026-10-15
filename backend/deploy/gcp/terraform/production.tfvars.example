@@ -1,0 +1,10 @@
+# Copy to production.tfvars (git-ignored) and fill in.
+project           = "your-project-id"
+region            = "asia-south1"
+zone              = "asia-south1-a"
+environment       = "production"
+app_domain        = "app.example.com"
+staff_domain      = "staff.example.com"
+staff_members     = ["group:staff@example.com"]
+github_repository = "ZoikoGroup/ZoikoRum"
+analytics_replica = true
