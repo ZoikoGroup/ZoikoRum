@@ -339,3 +339,32 @@ async def test_enterprise_payments_overview_and_bulk_funding(client, make_user, 
     over = (await client.get(f"/v1/escrow/organization/{org_id}/overview", headers=buyer.h)).json()
     assert over["totals"][0]["heldMinor"] == first["amount"]["amountMinor"]
     assert over["releaseTimeline"][0]["milestone"].startswith("M1") and len(over["awaitingFunding"]) == len(c["milestones"]) - 1
+
+
+async def test_retainer_cycles_can_be_funded_automatically_with_every_usual_check(client, make_user, drain, sf):
+    from zoikorum.domains.escrow import service as escrow_service
+
+    pro_user, buyer, c = await retainer_contract(client, make_user, drain)
+    esc = await escrow_of(client, buyer, c)
+    url = f"/v1/escrow/{esc['id']}/auto-funding"
+    assert (await client.put(url, headers=buyer.h, json={"paymentMethodToken": "hosted_checkout"})).json()["code"] == "SAVED_METHOD_REQUIRED"
+    assert (await client.put(url, headers=pro_user.h, json={"paymentMethodToken": "tok_visa"})).status_code == 403
+    on = (await client.put(url, headers=buyer.h, json={"paymentMethodToken": "tok_visa"})).json()
+    assert on["autoFundingEnabledAt"]
+
+    m1, m2 = c["milestones"][0]["id"], c["milestones"][1]["id"]
+    async with sf() as s, s.begin():  # what the cycle's funding reminder triggers
+        await escrow_service.auto_fund_cycle(s, {"contractId": c["id"], "milestoneId": m1})
+    await drain()
+    assert [x["state"] for x in (await escrow_of(client, buyer, c))["allocations"]][:2] == ["HELD", "UNFUNDED"]
+
+    async with sf() as s, s.begin():  # the person who turned it on can now spend less than a cycle costs
+        await s.execute(text("UPDATE buyer.members SET spend_limit_minor = 100, spend_limit_currency = 'USD' WHERE identity_id = :i"), {"i": buyer.id})
+    async with sf() as s, s.begin():
+        await escrow_service.auto_fund_cycle(s, {"contractId": c["id"], "milestoneId": m2})
+    await drain()
+    assert (await escrow_of(client, buyer, c))["allocations"][1]["state"] == "UNFUNDED"
+    titles = [n["title"] for n in (await client.get("/v1/notifications", headers=buyer.h)).json()["items"]]
+    assert "Automatic funding failed" in titles
+    off = (await client.put(url, headers=buyer.h, json={"paymentMethodToken": None})).json()
+    assert off["autoFundingEnabledAt"] is None

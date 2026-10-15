@@ -6,7 +6,7 @@ import uuid
 from datetime import date, datetime
 
 from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import JSONB, ARRAY
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -60,6 +60,12 @@ class Professional(Base, UUIDPk, Timestamps, Versioned):
     licensed_jurisdictions: Mapped[list[str]] = mapped_column(ARRAY(String(2)), nullable=False, default=list)
     cross_border_acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     regulated_data_attested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # "can handle regulated data"
+    # Enterprise readiness designation: NONE | PENDING | READY | REJECTED (professional/enterprise.py)
+    enterprise_status: Mapped[str] = mapped_column(String(20), nullable=False, default="NONE", server_default="NONE")
+    enterprise_attestation: Mapped[dict | None] = mapped_column(JSONB)
+    enterprise_applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    enterprise_decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    enterprise_decision_reason: Mapped[str | None] = mapped_column(String(500))
 
     # Publishing (s.17)
     accuracy_attested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

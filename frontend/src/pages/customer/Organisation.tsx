@@ -7,6 +7,8 @@ import { ago, ActivityList } from '../../components/activity'
 import { Avatar, Icon } from '../../components/dashboard'
 import { PortalHeader, SidePanel, StatCard, Tabs } from '../../components/portal'
 import { ErrorAlert, Field, Loading } from '../../components/ui'
+import { ApiKeysPanel, ProcurementPackButton } from '../../components/ApiKeys'
+import { SsoSettings } from '../../components/SingleSignOn'
 import { COUNTRIES } from '../Join'
 import { countryName } from '../ProfessionalPages'
 
@@ -172,7 +174,8 @@ export default function OrganisationPage() {
                 Object.assign(document.createElement('a'), { href: url, download: `${orgCode}-audit.csv` }).click()
                 URL.revokeObjectURL(url)
               } catch (err) { setError(err) }
-            }}><Icon name="download" /> Export audit log (CSV)</button>}</div>
+            }}><Icon name="download" /> Export audit log (CSV)</button>}
+            <ProcurementPackButton onError={setError} /></div>
           <ul className="why">
             <li>Org Admins must use two-step verification; sensitive changes ask for a fresh code.</li>
             <li>Every change is recorded in a tamper-evident, hash-chained audit log.</li>
@@ -181,6 +184,8 @@ export default function OrganisationPage() {
             : <ActivityList records={activity} limit={30} />}
         </section>
       )}
+      {tab === 'security' && isAdmin && <SsoSettings orgId={org.id} />}
+      {tab === 'security' && isAdmin && <ApiKeysPanel orgId={org.id} />}
     </>
   )
 }

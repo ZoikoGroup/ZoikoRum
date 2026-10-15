@@ -32,6 +32,15 @@ async def _bootstrap_timers() -> None:
         from zoikorum.domains.marketplace import service as marketplace  # daily at 07:00 UTC: saved-search alerts
 
         await marketplace.bootstrap_alerts(s)
+        from zoikorum.domains.trust import service as trust  # daily at 03:00 UTC: scores fade with their half-life
+
+        await trust.bootstrap_decay(s)
+        from zoikorum.domains.audit import archive  # daily at 04:00 UTC: audit records older than 90 days to locked storage
+
+        await archive.bootstrap(s)
+        from zoikorum.domains.notification import service as notifications  # daily at 06:00 UTC: email digests
+
+        await notifications.bootstrap_digests(s)
 
 
 async def run(poll_seconds: float = 0.5) -> None:

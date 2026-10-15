@@ -132,6 +132,7 @@ def main() -> None:
     rc.add_argument("--day", help="YYYY-MM-DD (UTC); default yesterday")
     nk = sub.add_parser("new-field-key", help="make a field encryption data key wrapped by Cloud KMS (prints only the wrapped key)")
     nk.add_argument("--id", required=True, help="a name for the key, e.g. 2026-10")
+    sub.add_parser("new-push-keys", help="print a VAPID key pair for browser push notifications (ZK_VAPID_PUBLIC_KEY / PRIVATE_KEY)")
     sub.add_parser("rotate-field-keys", help="re-encrypt stored sensitive fields with ZK_FIELD_ACTIVE_KEY")
     dg = sub.add_parser("db-grants", help="give the app database user its privileges (append-only tables: read and insert)")
     dg.add_argument("--role", help="the app user (default ZK_DB_APP_ROLE)")
@@ -148,6 +149,19 @@ def main() -> None:
         wrapped = new_wrapped_key(args.id)
         print("Add to ZK_FIELD_DATA_KEYS (keep the existing entries), then set ZK_FIELD_ACTIVE_KEY to use it:")
         print(json.dumps({args.id: wrapped}))
+    if args.cmd == "new-push-keys":
+        import base64
+
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import ec
+
+        key = ec.generate_private_key(ec.SECP256R1())
+        public = key.public_key().public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint)
+        private = key.private_numbers().private_value.to_bytes(32, "big")
+        b64 = lambda b: base64.urlsafe_b64encode(b).rstrip(b"=").decode()  # noqa: E731
+        print("Store the private key as a secret; the public key is safe to share.")
+        print(f"ZK_VAPID_PUBLIC_KEY={b64(public)}")
+        print(f"ZK_VAPID_PRIVATE_KEY={b64(private)}")
     if args.cmd == "rotate-field-keys":
         asyncio.run(_rotate_field_keys())
     if args.cmd == "db-grants":

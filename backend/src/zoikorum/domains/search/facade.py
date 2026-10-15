@@ -26,3 +26,8 @@ async def count_new_matches(session: AsyncSession, params: dict[str, str], publi
     values: dict[str, Any] = {k: ([x for x in v.split(",") if x] if k in LIST_PARAMS else v) for k, v in params.items()}
     p = SearchParams(**{k: v for k, v in values.items() if k in SearchParams.model_fields}, publishedAfter=published_after, limit=1)
     return (await service.search(session, None, p)).total
+
+
+async def top10_exposure(session, new_talent_boost: bool) -> dict[str, float]:
+    from zoikorum.domains.search import service
+    return await service.top10_exposure(session, new_talent_boost)

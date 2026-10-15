@@ -81,3 +81,23 @@ async def opened_against(session: AsyncSession, professional_id: uuid.UUID) -> i
     """Disputes on this professional's engagements, whoever opened them (own performance insights)."""
     from sqlalchemy import func, select
     return await session.scalar(select(func.count(func.distinct(DisputeCase.contract_id))).where(DisputeCase.professional_id == professional_id)) or 0
+
+
+async def kpis(session: AsyncSession, since, until) -> dict:
+    """Disputes opened and decided in the period, how they were decided, time to decision, and what is open now."""
+    from sqlalchemy import func
+
+    window = [DisputeCase.created_at >= since, DisputeCase.created_at < until]
+    opened = await session.scalar(select(func.count()).select_from(DisputeCase).where(*window)) or 0
+    decided_rows = (await session.execute(select(DisputeCase.created_at, DisputeCase.decided_at, DisputeCase.decision).where(
+        DisputeCase.decided_at >= since, DisputeCase.decided_at < until))).all()
+    days = sorted((d - c).total_seconds() / 86400 for c, d, _ in decided_rows)
+    by_path: dict[str, int] = {}
+    for _, _, decision in decided_rows:
+        path = (decision or {}).get("decisionPath", "UNKNOWN")
+        by_path[path] = by_path.get(path, 0) + 1
+    open_now = await session.scalar(select(func.count()).select_from(DisputeCase).where(
+        DisputeCase.status.in_(("EVIDENCE_COLLECTION", "DIRECT_RESOLUTION", "MEDIATION")))) or 0
+    return {"opened": opened, "decided": len(decided_rows), "openNow": open_now, "byDecisionPath": by_path,
+            "medianDaysToDecision": round(days[len(days) // 2], 1) if days else None,
+            "decidedWithoutPlatform": sum(v for k, v in by_path.items() if k in ("DIRECT", "MEDIATION"))}

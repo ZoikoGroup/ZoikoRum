@@ -6,6 +6,8 @@ from typing import Literal
 from fastapi import APIRouter, Query, Request, Response, status
 
 from zoikorum.config import get_settings
+from zoikorum.shared.errors import ValidationFailed
+from pydantic import BaseModel, Field
 from zoikorum.domains.identity import duplicates, passkeys, privacy_requests, service
 from zoikorum.domains.identity.schemas import (
     DataRequestIn,
@@ -363,3 +365,123 @@ async def duplicate_queue(actor: CurrentActor, session: DbSession, cursor: str |
 async def resolve_duplicate(suspicion_id: uuid.UUID, body: DuplicateResolveIn, actor: CurrentActor, session: DbSession):
     """Support decision (step-up): MERGED closes the duplicate and keeps the chosen account; NOT_DUPLICATE dismisses."""
     return await duplicates.resolve(session, actor, suspicion_id, body)
+
+
+# ---- Single sign-on and SCIM (identity/sso.py, identity/scim.py) ---------------------------------------------------------
+
+class SsoStartIn(BaseModel):
+    email: str | None = Field(default=None, max_length=320)
+    provider: Literal["google", "microsoft"] | None = None
+
+
+class SsoCallbackIn(BaseModel):
+    code: str = Field(min_length=1, max_length=4000)
+    state: str = Field(min_length=1, max_length=100)
+
+
+class SsoConnectionIn(BaseModel):
+    issuer: str = Field(min_length=8, max_length=500, pattern=r"^https://")
+    clientId: str = Field(min_length=1, max_length=300)
+    clientSecret: str | None = Field(default=None, max_length=2000)  # empty on update: keep the stored one
+    emailDomains: list[str] = Field(min_length=1, max_length=20)
+    enforce: bool = False
+    justInTime: bool = True
+    defaultRoles: list[Literal["REQUESTER", "APPROVER", "BUDGET_OWNER", "LEGAL_REVIEWER", "EXCEPTION_AUTHORITY"]] = ["REQUESTER"]
+    enabled: bool = True
+
+
+@router.get("/auth/sso/providers")
+async def sso_providers() -> dict:
+    """Which of Google and Microsoft sign-in this installation offers."""
+    from zoikorum.domains.identity import sso
+    return sso.providers()
+
+
+@router.post("/auth/sso/start")
+async def sso_start(body: SsoStartIn, session: DbSession) -> dict:
+    """Where to send the browser: the organisation's identity provider (by email domain), Google or Microsoft."""
+    from zoikorum.domains.identity import sso
+    await enforce_budget("sso-start", body.email or body.provider or "", 20, 20, "Too many sign-in attempts. Wait a minute and try again.")
+    return await sso.start(session, email=body.email, provider=body.provider)
+
+
+@router.post("/auth/sso/link")
+async def sso_link(body: SsoStartIn, actor: CurrentActor, session: DbSession) -> dict:
+    """Signed in: connect Google or Microsoft to this account (needs a fresh two-step check)."""
+    from zoikorum.domains.identity import sso
+    if not body.provider:
+        raise ValidationFailed("Choose Google or Microsoft")
+    actor.require_step_up()
+    return await sso.start(session, provider=body.provider, link_actor=actor)
+
+
+@router.post("/auth/sso/callback", response_model=AuthOut)
+async def sso_callback(body: SsoCallbackIn, request: Request, response: Response) -> AuthOut:
+    from zoikorum.domains.identity import sso
+    async with session_factory()() as session:
+        async with session.begin():
+            result = await sso.callback(session, body.code, body.state, _ua(request))
+    return result.model_copy(update={"tokens": _issue(request, response, result.tokens)})
+
+
+@router.get("/organizations/{org_id}/sso")
+async def get_sso(org_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> dict:
+    from zoikorum.domains.identity import sso
+    return await sso.get_connection(session, actor, org_id)
+
+
+@router.put("/organizations/{org_id}/sso")
+async def set_sso(org_id: uuid.UUID, body: SsoConnectionIn, actor: CurrentActor, session: DbSession) -> dict:
+    """Organisation Admin: connect the organisation's OpenID Connect identity provider (Okta, Entra ID, Google Workspace...)."""
+    from zoikorum.domains.identity import sso
+    return await sso.set_connection(session, actor, org_id, body)
+
+
+@router.post("/organizations/{org_id}/sso/scim-token")
+async def scim_token(org_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> dict:
+    """Organisation Admin: a new SCIM token for automatic provisioning (shown once; the old one stops working)."""
+    from zoikorum.domains.identity import sso
+    return await sso.rotate_scim_token(session, actor, org_id)
+
+
+@router.get("/scim/v2/ServiceProviderConfig")
+async def scim_config() -> dict:
+    from zoikorum.domains.identity import scim
+    return scim.SERVICE_PROVIDER_CONFIG
+
+
+@router.get("/scim/v2/Users")
+async def scim_list(request: Request, session: DbSession, filter: str | None = None, startIndex: int = 1, count: int = 100) -> dict:
+    from zoikorum.domains.identity import scim
+    c = await scim.connection_for(session, request.headers.get("Authorization"))
+    return await scim.list_users(session, c, filter, max(1, startIndex), max(0, min(count, 200)))
+
+
+@router.post("/scim/v2/Users", status_code=status.HTTP_201_CREATED)
+async def scim_create(body: dict, request: Request, session: DbSession) -> dict:
+    from zoikorum.domains.identity import scim
+    c = await scim.connection_for(session, request.headers.get("Authorization"))
+    return await scim.create_user(session, c, body)
+
+
+@router.get("/scim/v2/Users/{user_id}")
+async def scim_get(user_id: str, request: Request, session: DbSession) -> dict:
+    from zoikorum.domains.identity import scim
+    c = await scim.connection_for(session, request.headers.get("Authorization"))
+    return await scim.get_user(session, c, user_id)
+
+
+@router.put("/scim/v2/Users/{user_id}")
+@router.patch("/scim/v2/Users/{user_id}")
+async def scim_update(user_id: str, body: dict, request: Request, session: DbSession) -> dict:
+    from zoikorum.domains.identity import scim
+    c = await scim.connection_for(session, request.headers.get("Authorization"))
+    return await scim.update_user(session, c, user_id, body)
+
+
+@router.delete("/scim/v2/Users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def scim_delete(user_id: str, request: Request, session: DbSession) -> Response:
+    from zoikorum.domains.identity import scim
+    c = await scim.connection_for(session, request.headers.get("Authorization"))
+    await scim.delete_user(session, c, user_id)
+    return Response(status_code=204)

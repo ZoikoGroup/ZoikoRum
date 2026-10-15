@@ -19,6 +19,14 @@
   "refundMinor",
   "releaseMinor"
  ],
+ "ApiKeyIn": [
+  "expiresInDays",
+  "name",
+  "scope"
+ ],
+ "ApiKeyTierIn": [
+  "tier"
+ ],
  "AppealOut": [
   "caseId",
   "decidedAt",
@@ -92,6 +100,9 @@
   "tokens",
   "user"
  ],
+ "AutoFundingIn": [
+  "paymentMethodToken"
+ ],
  "AvailabilityIn": [
   "availability",
   "maxConcurrentEngagements",
@@ -139,6 +150,9 @@
   "organizationId",
   "requests",
   "saved"
+ ],
+ "CalendarIn": [
+  "enabled"
  ],
  "CancelCyclesIn": [
   "reason"
@@ -474,8 +488,16 @@
  "EndpointPatch": [
   "enabled"
  ],
+ "EnterpriseApplyIn": [
+  "attestation"
+ ],
+ "EnterpriseDecisionIn": [
+  "approve",
+  "reason"
+ ],
  "EscrowOut": [
   "allocations",
+  "autoFundingEnabledAt",
   "canFund",
   "contractId",
   "currency",
@@ -604,6 +626,11 @@
   "sizeBand",
   "tradingName",
   "website"
+ ],
+ "FlagIn": [
+  "organizationIds",
+  "reason",
+  "rolloutPct"
  ],
  "ForgotPasswordIn": [
   "email"
@@ -1110,6 +1137,7 @@
   "requiredDimensions"
  ],
  "PreferencesIO": [
+  "digest",
   "email",
   "inApp",
   "mandatoryNotice",
@@ -1239,6 +1267,7 @@
   "deliveryModes",
   "displayName",
   "engagementTypes",
+  "enterprise",
   "firm",
   "handlesRegulatedData",
   "headline",
@@ -1274,6 +1303,17 @@
  ],
  "PublishIn": [
   "attestAccurate"
+ ],
+ "PushEndpointIn": [
+  "endpoint"
+ ],
+ "PushKeys": [
+  "auth",
+  "p256dh"
+ ],
+ "PushSubscriptionIn": [
+  "endpoint",
+  "keys"
  ],
  "QueueItemOut": [
   "createdAt",
@@ -1446,6 +1486,7 @@
   "dimensions",
   "displayName",
   "engagementTypes",
+  "enterpriseReady",
   "headline",
   "languages",
   "licensedJurisdictions",
@@ -1663,6 +1704,24 @@
  "SpecializationsIn": [
   "primary",
   "secondary"
+ ],
+ "SsoCallbackIn": [
+  "code",
+  "state"
+ ],
+ "SsoConnectionIn": [
+  "clientId",
+  "clientSecret",
+  "defaultRoles",
+  "emailDomains",
+  "enabled",
+  "enforce",
+  "issuer",
+  "justInTime"
+ ],
+ "SsoStartIn": [
+  "email",
+  "provider"
  ],
  "StaffMemberOut": [
   "displayName",

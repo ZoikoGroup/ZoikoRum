@@ -312,6 +312,9 @@ async def login(
         return LoginFailure("Email or password is incorrect")
 
     # Checked only after the password is right, so a stranger cannot learn which emails belong to staff.
+    from zoikorum.domains.identity import sso
+    if await sso.sso_required(session, identity):
+        return LoginFailure("Your organisation signs in with single sign-on. Use “Sign in with SSO”.", "SSO_REQUIRED")
     staff = bool(identity.platform_roles)
     if portal == "staff" and not staff:
         return LoginFailure("This sign-in is for Zoikorum staff only. Customers and professionals sign in on the main "

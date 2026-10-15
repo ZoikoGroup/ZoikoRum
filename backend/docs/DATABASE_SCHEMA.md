@@ -11,8 +11,8 @@ Migrations: `backend/alembic/versions/` (`alembic upgrade head`).
 ## Contents
 
 - [platform](#schema-platform) — 5 tables
-- [identity](#schema-identity) — 8 tables
-- [buyer](#schema-buyer) — 7 tables
+- [identity](#schema-identity) — 11 tables
+- [buyer](#schema-buyer) — 8 tables
 - [firm](#schema-firm) — 3 tables
 - [professional](#schema-professional) — 4 tables
 - [marketplace](#schema-marketplace) — 6 tables
@@ -25,11 +25,11 @@ Migrations: `backend/alembic/versions/` (`alembic upgrade head`).
 - [trust](#schema-trust) — 3 tables
 - [policy](#schema-policy) — 6 tables
 - [dispute](#schema-dispute) — 5 tables
-- [audit](#schema-audit) — 2 tables
+- [audit](#schema-audit) — 3 tables
 - [messaging](#schema-messaging) — 5 tables
-- [notification](#schema-notification) — 5 tables
+- [notification](#schema-notification) — 6 tables
 - [ai](#schema-ai) — 3 tables
-- [admin](#schema-admin) — 4 tables
+- [admin](#schema-admin) — 5 tables
 - [analytics](#schema-analytics) — 1 tables
 - [review](#schema-review) — 1 tables
 - [support](#schema-support) — 2 tables
@@ -172,6 +172,18 @@ Two accounts that look like the same person (Onboarding s.20). OPEN -> ANSWERED 
 
 Unique together: (identity_id, other_identity_id)
 
+### `identity.external_logins`
+
+An identity provider account (issuer|subject) connected to a Zoikorum account.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `identity_id` | UUID | no | FK → identity.identities.id, indexed |
+| `provider` | varchar(20) | no |  |
+| `subject` | varchar(600) | no | unique |
+| `id` | UUID | no | PK |
+| `created_at` | DATETIME | no |  |
+
 ### `identity.identities`
 
 Aggregate root: one ZoikoID per human or service actor.
@@ -270,8 +282,65 @@ Refresh-token session. Refresh tokens rotate; reuse revokes the family.
 | `id` | UUID | no | PK |
 | `created_at` | DATETIME | no |  |
 
+### `identity.sso_connections`
+
+An organisation's OpenID Connect identity provider (identity/sso.py) and SCIM token (identity/scim.py).
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `organization_id` | UUID | no | unique |
+| `issuer` | varchar(500) | no |  |
+| `client_id` | varchar(300) | no |  |
+| `client_secret_enc` | varchar(2000) | no |  |
+| `email_domains` | ARRAY | no |  |
+| `enforce` | BOOLEAN | no |  |
+| `jit` | BOOLEAN | no |  |
+| `default_roles` | ARRAY | no |  |
+| `enabled` | BOOLEAN | no |  |
+| `scim_token_hash` | varchar(64) | yes | unique |
+| `created_by` | UUID | no |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+
+### `identity.sso_logins`
+
+One sign-in attempt: its id is the OAuth state; nonce and PKCE verifier never leave the server.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `connection_id` | UUID | yes |  |
+| `provider` | varchar(20) | no |  |
+| `nonce` | varchar(100) | no |  |
+| `code_verifier` | varchar(200) | no |  |
+| `link_identity_id` | UUID | yes |  |
+| `expires_at` | DATETIME | no |  |
+| `used_at` | DATETIME | yes |  |
+| `id` | UUID | no | PK |
+| `created_at` | DATETIME | no |  |
+
 <a id="schema-buyer"></a>
 ## Schema `buyer`
+
+### `buyer.api_keys`
+
+An organisation's API key (buyer/api_keys.py). Only a SHA-256 fingerprint of the key is kept.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `organization_id` | UUID | no | FK → buyer.organizations.id, indexed |
+| `name` | varchar(100) | no |  |
+| `prefix` | varchar(16) | no | unique |
+| `key_hash` | varchar(64) | no | unique |
+| `scope` | varchar(10) | no |  |
+| `tier` | varchar(12) | no |  |
+| `created_by` | UUID | no |  |
+| `expires_at` | DATETIME | yes |  |
+| `last_used_at` | DATETIME | yes |  |
+| `revoked_at` | DATETIME | yes |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
 
 ### `buyer.billing_contacts`
 
@@ -543,6 +612,11 @@ Aggregate root. Lifecycle: DRAFT -> PUBLISHED <-> UNPUBLISHED; any -> SUSPENDED 
 | `licensed_jurisdictions` | ARRAY | no |  |
 | `cross_border_acknowledged_at` | DATETIME | yes |  |
 | `regulated_data_attested_at` | DATETIME | yes |  |
+| `enterprise_status` | varchar(20) | no |  |
+| `enterprise_attestation` | JSONB | yes |  |
+| `enterprise_applied_at` | DATETIME | yes |  |
+| `enterprise_decided_at` | DATETIME | yes |  |
+| `enterprise_decision_reason` | varchar(500) | yes |  |
 | `accuracy_attested_at` | DATETIME | yes |  |
 | `published_at` | DATETIME | yes |  |
 | `visibility_reduced` | BOOLEAN | no |  |
@@ -697,6 +771,8 @@ Base class used for declarative class definitions.  The :class:`_orm.Declarative
 | `years_experience_band` | varchar(10) | yes |  |
 | `languages` | ARRAY | no |  |
 | `industries` | ARRAY | no |  |
+| `enterprise_ready` | BOOLEAN | no |  |
+| `concepts` | JSONB | no |  |
 | `categories` | ARRAY | no |  |
 | `primary_specialization` | varchar(120) | yes |  |
 | `specializations` | ARRAY | no |  |
@@ -1009,6 +1085,9 @@ UNFUNDED -> FUNDED -> PARTIALLY_RELEASED -> FULLY_RELEASED (DISPUTED / REFUNDED 
 | `released_minor` | BIGINT | no |  |
 | `refunded_minor` | BIGINT | no |  |
 | `fees_minor` | BIGINT | no |  |
+| `auto_fund_token` | varchar(120) | yes |  |
+| `auto_fund_identity_id` | UUID | yes |  |
+| `auto_fund_enabled_at` | DATETIME | yes |  |
 | `fee_bps` | INTEGER | yes |  |
 | `id` | UUID | no | PK |
 | `updated_at` | DATETIME | no |  |
@@ -1670,6 +1749,23 @@ What both parties see on the visual timeline (Dispute doc s.15).
 <a id="schema-audit"></a>
 ## Schema `audit`
 
+### `audit.archives`
+
+A batch of audit records copied to write-once storage (audit/archive.py). The database rows stay.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `from_seq` | BIGINT | no |  |
+| `to_seq` | BIGINT | no | unique |
+| `record_count` | BIGINT | no |  |
+| `sha256` | varchar(64) | no |  |
+| `object_key` | varchar(300) | no |  |
+| `version_id` | varchar(200) | yes |  |
+| `locked` | BOOLEAN | no |  |
+| `last_verified_at` | DATETIME | yes |  |
+| `id` | UUID | no | PK |
+| `created_at` | DATETIME | no |  |
+
 ### `audit.audit_records` — append-only
 
 Insert-only. hash = sha256(prev_hash || canonical(record)). Never UPDATE/DELETE.
@@ -1768,7 +1864,7 @@ Base class used for declarative class definitions.  The :class:`_orm.Declarative
 | `id` | UUID | no | PK |
 | `created_at` | DATETIME | no |  |
 
-Unique together: (thread_id, sequence); (thread_id, source_event_id)
+Unique together: (thread_id, source_event_id); (thread_id, sequence)
 
 ### `messaging.read_positions`
 
@@ -1858,8 +1954,26 @@ Channel opt-ins. Security and enforcement notices are always sent by email, what
 | `in_app` | BOOLEAN | no |  |
 | `sms` | BOOLEAN | no |  |
 | `marketing` | BOOLEAN | no |  |
+| `digest` | varchar(10) | no |  |
+| `digest_sent_at` | DATETIME | yes |  |
+| `calendar_token_hash` | varchar(64) | yes | unique |
 | `id` | UUID | no | PK |
 | `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+
+### `notification.push_subscriptions`
+
+A browser that agreed to receive push notifications (Web Push). Removed when the browser says it is gone.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `identity_id` | UUID | no | indexed |
+| `endpoint` | varchar(1000) | no | unique |
+| `p256dh` | varchar(200) | no |  |
+| `auth` | varchar(100) | no |  |
+| `user_agent` | varchar(300) | yes |  |
+| `last_success_at` | DATETIME | yes |  |
+| `id` | UUID | no | PK |
 | `created_at` | DATETIME | no |  |
 
 ### `notification.webhook_deliveries`
@@ -1947,6 +2061,7 @@ Base class used for declarative class definitions.  The :class:`_orm.Declarative
 | `source_event_id` | UUID | no | unique |
 | `identity_id` | UUID | no | indexed |
 | `kind` | varchar(40) | no |  |
+| `subject_type` | varchar(20) | no |  |
 | `id` | UUID | no | PK |
 | `created_at` | DATETIME | no |  |
 
@@ -1983,6 +2098,21 @@ Base class used for declarative class definitions.  The :class:`_orm.Declarative
 | `updated_at` | DATETIME | no |  |
 | `created_at` | DATETIME | no |  |
 | `version` | BIGINT | no |  |
+
+### `admin.feature_flags`
+
+Gradual rollout of a feature defined in code (admin/flags.py): a percentage of people, plus named organisations.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `key` | varchar(80) | no | unique |
+| `rollout_pct` | INTEGER | no |  |
+| `organization_ids` | JSONB | no |  |
+| `reason` | varchar(500) | yes |  |
+| `changed_by` | UUID | yes |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
 
 ### `admin.feature_switches`
 

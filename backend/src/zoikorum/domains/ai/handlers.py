@@ -30,3 +30,30 @@ async def observe(session, event):
 
 for event_type in (E.AUTHENTICATION_FAILED, E.DISPUTE_INITIATED, E.MESSAGE_FLAGGED):
     subscribe(event_type, consumer="ai.advisory_risk")(observe)
+
+
+# ---- Risk score (ai/risk.py): payment and behaviour signals, per person and per organisation --------------------------
+
+RISK_SIGNALS = {
+    E.AUTHENTICATION_FAILED: "LOGIN_FAILURE", E.DISPUTE_INITIATED: "DISPUTE", E.MESSAGE_FLAGGED: "MESSAGE_FLAG",
+    E.PAYMENT_FAILED: "PAYMENT_FAILED", E.CHARGEBACK_RECEIVED: "CHARGEBACK", E.ESCROW_FUNDING_REVERSED: "FUNDING_REVERSED",
+    E.DUPLICATE_ACCOUNT_SUSPECTED: "DUPLICATE_ACCOUNT", E.DISPUTE_PATTERN_FLAGGED: "DISPUTE_PATTERN",
+}
+
+
+async def score_signal(session, event):
+    from zoikorum.domains.ai import risk
+
+    kind = RISK_SIGNALS[event.eventType]
+    p = event.payload
+    person = p.get("identityId") or p.get("senderIdentityId") or p.get("initiatedBy") or (
+        p.get("subjectId") if p.get("subjectType") == "IDENTITY" else None)
+    org = p.get("organizationId") or (event.tenantId if event.eventType in (E.PAYMENT_FAILED, E.CHARGEBACK_RECEIVED) else None)
+    if person:
+        await risk.observe(session, uuid.uuid5(event.eventId, "identity"), "IDENTITY", uuid.UUID(str(person)), kind, event.occurredAt)
+    if org and event.eventType in (E.PAYMENT_FAILED, E.CHARGEBACK_RECEIVED, E.ESCROW_FUNDING_REVERSED, E.DISPUTE_INITIATED):
+        await risk.observe(session, uuid.uuid5(event.eventId, "organization"), "ORGANIZATION", uuid.UUID(str(org)), kind, event.occurredAt)
+
+
+for event_type in RISK_SIGNALS:
+    subscribe(event_type, consumer="ai.risk_score")(score_signal)

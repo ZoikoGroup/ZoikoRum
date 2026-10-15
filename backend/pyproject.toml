@@ -30,6 +30,7 @@ ai = ["anthropic>=1,<2"]  # messages.parse(output_format=...) for the built-in p
 cloud = ["boto3>=1.35"]  # Amazon S3 storage
 gcs = ["google-cloud-storage>=2.18,<4", "google-cloud-kms>=3,<4"]  # Google Cloud Storage + KMS field-key wrapping
 monitoring = ["sentry-sdk>=2.0"]
+push = ["pywebpush>=2.0,<3"]  # browser push notifications (Web Push with VAPID keys)
 tracing = ["opentelemetry-sdk>=1.30", "opentelemetry-exporter-otlp-proto-http>=1.30",
            "opentelemetry-instrumentation-fastapi>=0.51b0", "opentelemetry-instrumentation-sqlalchemy>=0.51b0",
            "opentelemetry-instrumentation-httpx>=0.51b0"]

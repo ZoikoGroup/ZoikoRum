@@ -7,6 +7,7 @@ import type { Money } from './orgs'
 export type AllocationState = 'UNFUNDED' | 'FUNDING' | 'HELD' | 'ON_HOLD' | 'RELEASE_PENDING_APPROVAL' | 'RELEASED' | 'PARTIALLY_RELEASED' | 'REFUNDED'
 
 export interface Escrow {
+  autoFundingEnabledAt?: string | null
   id: string
   contractId: string
   status: 'UNFUNDED' | 'FUNDED' | 'PARTIALLY_RELEASED' | 'FULLY_RELEASED' | 'DISPUTED' | 'REFUNDED' | 'CLOSED'
@@ -63,6 +64,8 @@ export const escrowApi = {
   ledger: (id: string) => api<LedgerLine[]>(`/v1/escrow/${id}/ledger`),
   fund: (id: string, body: { milestoneIds?: string[]; all?: boolean; paymentMethodToken: string }) =>
     api<Escrow>(`/v1/escrow/${id}/fund`, { method: 'POST', body, headers: idem() }),
+  autoFunding: (id: string, paymentMethodToken: string | null) =>
+    api<Escrow>(`/v1/escrow/${id}/auto-funding`, { method: 'PUT', body: { paymentMethodToken } }),
   overview: (organizationId: string) => api<PaymentsOverview>(`/v1/escrow/organization/${organizationId}/overview`),
   bulkFund: (items: { accountId: string; milestoneIds: string[] }[], paymentMethodToken: string) =>
     api<{ funded: number; failed: number; results: { accountId: string; ok: boolean; code?: string; detail?: string }[] }>(

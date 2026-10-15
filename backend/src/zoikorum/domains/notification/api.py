@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import timedelta
-from fastapi import APIRouter, Query
+from fastapi import Request, Response, APIRouter, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
@@ -146,3 +146,53 @@ async def replay(delivery_id: uuid.UUID, actor: CurrentActor, session: DbSession
     record_audit(session, 'notification.webhook.replayed', object_type='WebhookDelivery', object_id=delivery.id,
         tenant_id=endpoint.organization_id, details={'endpointId': str(endpoint.id)})
     return delivery_out(delivery)
+
+
+class CalendarIn(BaseModel):
+    enabled: bool
+
+
+@router.put("/v1/calendar/link")
+async def calendar_link(body: CalendarIn, actor: CurrentActor, session: DbSession) -> dict:
+    """Create a new private calendar address (the old one stops working), or turn the feed off."""
+    return await service.calendar_link(session, actor, body.enabled)
+
+
+@router.get("/v1/calendar/{token}.ics", include_in_schema=False)
+async def calendar_feed(token: str, session: DbSession) -> Response:
+    """Private calendar feed: milestone due dates and signature deadlines (iCalendar), for calendar apps to subscribe to."""
+    body = await service.calendar_feed(session, token)
+    return Response(body, media_type="text/calendar; charset=utf-8", headers={"Cache-Control": "private, max-age=300"})
+
+
+class PushKeys(BaseModel):
+    p256dh: str = Field(min_length=10, max_length=200)
+    auth: str = Field(min_length=4, max_length=100)
+
+
+class PushSubscriptionIn(BaseModel):
+    endpoint: str = Field(min_length=10, max_length=1000, pattern=r"^https://")
+    keys: PushKeys
+
+
+class PushEndpointIn(BaseModel):
+    endpoint: str = Field(min_length=10, max_length=1000)
+
+
+@router.get("/v1/push/key")
+async def push_key() -> dict:
+    """The public VAPID key browsers subscribe with; null when push notifications are not set up."""
+    from zoikorum.domains.notification import push
+    return {"publicKey": push.public_key()}
+
+
+@router.post("/v1/push/subscriptions")
+async def push_subscribe(body: PushSubscriptionIn, request: Request, actor: CurrentActor, session: DbSession) -> dict:
+    from zoikorum.domains.notification import push
+    return await push.subscribe(session, actor, body.endpoint, body.keys.p256dh, body.keys.auth, request.headers.get("user-agent"))
+
+
+@router.post("/v1/push/subscriptions/remove")
+async def push_unsubscribe(body: PushEndpointIn, actor: CurrentActor, session: DbSession) -> dict:
+    from zoikorum.domains.notification import push
+    return await push.unsubscribe(session, actor, body.endpoint)

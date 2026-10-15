@@ -47,6 +47,7 @@ class FundingOut(BaseModel):
 
 
 class EscrowOut(BaseModel):
+    autoFundingEnabledAt: datetime | None = None  # retainer cycles funded automatically from a saved method
     id: uuid.UUID
     contractId: uuid.UUID
     status: str
@@ -77,6 +78,10 @@ class LedgerLineOut(BaseModel):
     milestoneId: uuid.UUID | None
     memo: str
     createdAt: datetime
+
+
+class AutoFundingIn(BaseModel):
+    paymentMethodToken: str | None = Field(default=None, min_length=3, max_length=120, pattern=r"^[A-Za-z0-9_\-]+$")  # null: turn off
 
 
 class BulkFundItem(BaseModel):

@@ -159,3 +159,31 @@ async def _transactional_session() -> AsyncIterator[AsyncSession]:
 # scope="function" -> commit happens BEFORE the HTTP response is returned, so a
 # client never sees 2xx for a write that later failed to commit.
 DbSession = Annotated[AsyncSession, Depends(_transactional_session, scope="function")]
+
+
+_analytics_factory: async_sessionmaker[AsyncSession] | None = None
+
+
+def analytics_session_factory() -> async_sessionmaker[AsyncSession]:
+    """Sessions on the analytics store (ZK_ANALYTICS_DATABASE_URL, e.g. a read replica); the main database when unset."""
+    global _analytics_factory
+    url = get_settings().analytics_database_url
+    if not url:
+        return session_factory()
+    if _analytics_factory is None:
+        engine = create_async_engine(url, pool_size=max(2, get_settings().db_pool_size // 2), pool_pre_ping=True)
+        _analytics_factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
+    return _analytics_factory
+
+
+async def _read_only_session() -> AsyncIterator[AsyncSession]:
+    """Reports: a read-only transaction on the analytics store, so a report can never change data."""
+    from sqlalchemy import text
+
+    async with analytics_session_factory()() as session:
+        async with session.begin():
+            await session.execute(text("SET TRANSACTION READ ONLY"))
+            yield session
+
+
+AnalyticsSession = Annotated[AsyncSession, Depends(_read_only_session, scope="function")]

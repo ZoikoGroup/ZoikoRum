@@ -5,7 +5,7 @@ import uuid
 from fastapi import APIRouter
 
 from zoikorum.domains.escrow import service
-from zoikorum.domains.escrow.schemas import BulkFundIn, EscrowOut, FundIn, LedgerLineOut
+from zoikorum.domains.escrow.schemas import AutoFundingIn, BulkFundIn, EscrowOut, FundIn, LedgerLineOut
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
 from zoikorum.shared.idempotency import IdempotencyKey
@@ -45,3 +45,9 @@ async def ledger(account_id: uuid.UUID, actor: CurrentActor, session: DbSession)
 async def fund(account_id: uuid.UUID, body: FundIn, actor: CurrentActor, session: DbSession, idem: IdempotencyKey):
     """Buyer funds milestones. The money is captured by the payment provider, then held until acceptance."""
     return await idem.run(session, actor, lambda: service.fund(session, actor, account_id, body))
+
+
+@router.put("/{account_id}/auto-funding", response_model=EscrowOut)
+async def set_auto_funding(account_id: uuid.UUID, body: AutoFundingIn, actor: CurrentActor, session: DbSession):
+    """Buyer: fund each new retainer cycle automatically from a saved payment method (null turns it off)."""
+    return await service.set_auto_funding(session, actor, account_id, body.paymentMethodToken)

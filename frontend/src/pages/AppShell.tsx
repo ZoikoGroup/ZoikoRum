@@ -121,6 +121,7 @@ export default function AppShell() {
           <Item to="/app/professional/buyers" icon="bookmark">Saved Buyers</Item>
           <Item to="/app/professional/earnings" count={n('/app/professional/earnings')} icon="wallet">Earnings</Item>
           <Item to="/app/professional/insights" icon="star">Performance</Item>
+          <Item to="/app/professional/enterprise" icon="building">Enterprise Ready</Item>
           <Item to="/app/professional/disputes" count={n('/app/professional/disputes')} icon="shield">Disputes</Item>
         </>}
 
@@ -136,6 +137,7 @@ export default function AppShell() {
           <div className="side-group">Administration</div>
           <Item to="/app/ops" icon="building" end>Admin Dashboard</Item>
           {isOfficer && <Item to="/app/ops/verification" count={n('/app/ops/verification')} icon="shield">Verification Reviews</Item>}
+          {isOfficer && <Item to="/app/ops/enterprise" icon="building">Enterprise Ready</Item>}
           {user.platformRoles.some((r) => ['PLATFORM_ADMIN', 'TS_ANALYST'].includes(r)) && <Item to="/app/ops/users" icon="user">Users</Item>}
           {isAdmin && <Item to="/app/ops/staff" icon="team">Staff &amp; Roles</Item>}
           {isAdmin && <Item to="/app/ops/taxonomy" count={n('/app/ops/taxonomy')} icon="folder">Taxonomy</Item>}

@@ -16,7 +16,7 @@ RUN pip install -r requirements.txt -c constraints.txt
 # tracing = OpenTelemetry, ai = Claude.
 # Only their dependencies are installed here: the application runs from /app/src (next to /app/alembic, which the
 # startup schema check reads), so the package itself is removed again.
-ARG EXTRAS="gcs,cloud,monitoring,tracing,ai"
+ARG EXTRAS="gcs,cloud,monitoring,tracing,ai,push"
 COPY pyproject.toml ./
 COPY src ./src
 # Then: dependencies of dependencies are raised to their fixed versions (constraints.txt), and pip itself is removed.

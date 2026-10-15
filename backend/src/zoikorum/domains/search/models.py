@@ -24,6 +24,7 @@ class ProfessionalDocument(Base, UUIDPk, Timestamps):
     __table_args__ = (
         Index("ix_professional_documents_document", "document", postgresql_using="gin"),
         Index("ix_professional_documents_specializations", "specializations", postgresql_using="gin"),
+        Index("ix_professional_documents_concepts", "concepts", postgresql_using="gin"),
         {"schema": SCHEMA},
     )
 
@@ -38,6 +39,8 @@ class ProfessionalDocument(Base, UUIDPk, Timestamps):
     years_experience_band: Mapped[str | None] = mapped_column(String(10))
     languages: Mapped[list[str]] = mapped_column(ARRAY(String(40)), nullable=False, default=list)
     industries: Mapped[list[str]] = mapped_column(ARRAY(String(40)), nullable=False, default=list, server_default="{}")
+    enterprise_ready: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    concepts: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")  # search/concepts.py vector
 
     categories: Mapped[list[str]] = mapped_column(ARRAY(String(120)), nullable=False, default=list)
     primary_specialization: Mapped[str | None] = mapped_column(String(120))

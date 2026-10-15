@@ -141,3 +141,14 @@ async def committed_for_cost_center(session: AsyncSession, cost_center_id: uuid.
         ProposalRequest, ProposalRequest.id == Proposal.request_id).where(
         ProposalRequest.cost_center_id == cost_center_id, Proposal.status == "ACCEPTED", Proposal.currency == currency,
         Proposal.decided_at >= since)) or 0
+
+
+async def accepted_values(session: AsyncSession, specializations: list[str], currency: str, engagement_type: str | None = None) -> list[int]:
+    """Totals of accepted proposals for these specializations in one currency (pricing guidance; amounts only)."""
+    from sqlalchemy import select
+
+    q = select(Proposal.total_minor).join(ProposalRequest, ProposalRequest.id == Proposal.request_id).where(
+        Proposal.status == "ACCEPTED", Proposal.currency == currency, ProposalRequest.specialization.in_(specializations))
+    if engagement_type:
+        q = q.where(ProposalRequest.engagement_type == engagement_type)
+    return [int(v) for v in (await session.scalars(q)).all()]

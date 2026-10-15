@@ -24,6 +24,15 @@ class Settings(BaseSettings):
     tracing_endpoint: str | None = None  # OpenTelemetry collector (OTLP/HTTP traces URL); needs backend[tracing]
     tracing_sample_ratio: float = Field(default=0.1, ge=0, le=1)  # share of new traces kept
     frontend_url: str = "http://localhost:5173"  # used to build links in invitations / emails
+    # Sign in with Google / Microsoft (OpenID Connect apps registered with each; empty: the button is not shown).
+    google_client_id: str | None = None
+    # Browser push notifications (Web Push): a VAPID key pair (python -m zoikorum.cli new-push-keys) and a contact address.
+    vapid_public_key: str | None = None
+    vapid_private_key: str | None = None
+    vapid_subject: str = "mailto:security@example.com"
+    google_client_secret: str | None = None
+    microsoft_client_id: str | None = None
+    microsoft_client_secret: str | None = None
     # The separate staff web app (frontend VITE_PORTAL=staff). Links in emails to staff use it; empty: frontend_url.
     staff_frontend_url: str | None = None
     # Passkeys: the WebAuthn relying party (a domain). Empty: the web app's host name. With separate customer and staff
@@ -31,6 +40,9 @@ class Settings(BaseSettings):
     webauthn_rp_id: str | None = None
     database_url: str = "postgresql+asyncpg://zoikorum:zoikorum@localhost:5434/zoikorum"
     db_pool_size: int = 10
+    # Separate analytics store (optional): reports and dashboards read from this database, normally a read replica of
+    # the main one, so heavy reporting never slows down the platform. Empty: they read the main database.
+    analytics_database_url: str | None = None
     # Production: two database users. Migrations run as the owner (ZK_MIGRATION_DATABASE_URL); the API and worker use
     # ZK_DATABASE_URL as ZK_DB_APP_ROLE, which may add to append-only tables (audit trail, ledger, evidence, signatures)
     # but never change or delete them, and cannot switch their protective triggers off (cli db-grants).

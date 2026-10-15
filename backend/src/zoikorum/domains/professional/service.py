@@ -714,7 +714,7 @@ async def public_profile(session: AsyncSession, actor: Actor | None, professiona
         newToPlatform=delivery["completed"] == 0 and (pro.published_at is None or (clock.now() - pro.published_at).days < 30))
     return PublicProfileOut(
         history=history, pendingSpecializations=await marketplace_facade.pending_specialization_names(session, pro.id),
-        verificationInProgress=in_progress, verificationReport=report,
+        verificationInProgress=in_progress, verificationReport=report, enterprise=await _enterprise_signals(session, pro),
         firm=PublicFirmOut(id=firm.id, name=firm.trading_name or firm.legal_name, verified=firm.status == "VERIFIED")
         if firm and firm.status != "SUSPENDED" else None,
         id=pro.id, photoUrl=photo_url(pro), displayName=pro.display_name, headline=pro.headline,
@@ -764,3 +764,8 @@ def _discard_photo(key: str) -> None:
         get_storage().delete(key)
     except DomainError as exc:
         log.warning("old profile photo kept in storage (%s)", exc.code)
+
+
+async def _enterprise_signals(session: AsyncSession, pro: Professional) -> dict:
+    from zoikorum.domains.professional import enterprise
+    return await enterprise.signals(session, pro)

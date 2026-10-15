@@ -5,7 +5,7 @@ import { ALLOCATION_STATE, escrowApi, paymentsApi, TEST_CARDS, type Escrow, type
 import { formatMoney } from '../api/orgs'
 import { Icon } from './dashboard'
 import { StatCard } from './portal'
-import { ErrorAlert, useDialog } from './ui'
+import { ErrorAlert, useDialog, useStepUp } from './ui'
 
 /* Escrow UI for an engagement (Payments & Escrow doc s.7-14): funding confirmation and the payments tab. */
 
@@ -88,6 +88,8 @@ export function PaymentsPanel({ c, escrow, side, onFund, fundBlocked }: { c: Con
         <StatCard icon="clock" tone="violet" value={escrow.status.replace(/_/g, ' ').toLowerCase()} label="Escrow status" sub={`Platform fee ${feeText(escrow.feeBps)}`} />
       </div>
       {pending.length > 0 && <div className="tip" style={{ marginBottom: 16 }}><Icon name="clock" /><span>A payment of {formatMoney(pending[0].amount)} is being processed.</span></div>}
+      {side === 'buyer' && (c.engagementType === 'RETAINER' || c.pricingModel === 'RETAINER') && c.status === 'ACTIVE' &&
+        <AutoFunding escrow={escrow} hosted={hosted} />}
       <section className="card panel">
         <div className="panel-head"><h2>Milestones in escrow</h2>
           {escrow.canFund && <button className="btn btn-primary btn-sm" disabled={!!fundBlocked} title={fundBlocked} onClick={() => onFund([])}><Icon name="lock" /> Fund remaining</button>}</div>
@@ -133,5 +135,32 @@ export function PaymentsPanel({ c, escrow, side, onFund, fundBlocked }: { c: Con
         )}
       </section>
     </>
+  )
+}
+
+
+/** Retainer auto-funding: each new cycle is funded from a saved payment method before it is due, with the same role,
+    spend-limit and policy checks as funding by hand. */
+function AutoFunding({ escrow, hosted }: { escrow: Escrow; hosted: boolean }) {
+  const [state, setState] = useState(escrow.autoFundingEnabledAt ?? null)
+  const [token, setToken] = useState(hosted ? '' : TEST_CARDS[0][0])
+  const [error, setError] = useState<unknown>(null)
+  const { run, modal } = useStepUp(setError)
+  const save = (value: string | null) => run(async () => setState((await escrowApi.autoFunding(escrow.id, value)).autoFundingEnabledAt ?? null))
+  return (
+    <section className="card panel">
+      {modal}
+      <div className="panel-head"><h2>Automatic funding</h2>
+        <span className={`badge ${state ? 'green' : ''}`}>{state ? `On since ${new Date(state).toLocaleDateString()}` : 'Off'}</span></div>
+      <ErrorAlert error={error} />
+      <p className="small muted">Each new cycle is funded a few days before it is due. Your role, your spend limit and your organisation's
+        policy are checked every time; if a check fails you are told and the cycle waits for you to fund it.</p>
+      {state ? <button className="btn btn-ghost btn-sm" onClick={() => save(null)}>Turn off</button> : <div className="row">
+        {hosted ? <input className="input" aria-label="Saved payment method" placeholder="Saved payment method ID (pm_…)" value={token} onChange={(e) => setToken(e.target.value.trim())} />
+          : <select className="input" aria-label="Payment method" value={token} onChange={(e) => setToken(e.target.value)}>
+            {TEST_CARDS.map(([t, l]) => <option key={t} value={t}>{l}</option>)}</select>}
+        <button className="btn btn-secondary btn-sm" disabled={token.length < 3} onClick={() => save(token)}>Turn on</button>
+      </div>}
+    </section>
   )
 }

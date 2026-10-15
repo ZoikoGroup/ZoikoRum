@@ -112,3 +112,44 @@ async def rebuild(session, actor):
             after = seq
     record_audit(session, "analytics.rebuilt", object_type="AnalyticsProjection", object_id="all", details={"events": count})
     return {"projectedEvents": count}
+
+
+
+async def marketplace_health(session, since=None, until=None) -> dict:
+    """Counts per event type in the period, proposal-to-contract conversion, median time from funding to release, the
+    current trust tier distribution and the latest event. All aggregated in SQL."""
+    from sqlalchemy import func
+
+    window = []
+    if since:
+        window.append(EventFact.occurred_at >= since)
+    if until:
+        window.append(EventFact.occurred_at < until)
+    counts = dict((await session.execute(select(EventFact.event_type, func.count()).where(*window)
+                                          .group_by(EventFact.event_type))).all())
+    last = await session.scalar(select(func.max(EventFact.occurred_at)).where(*window))
+    params = {"released": E.ESCROW_RELEASED, "funded": E.ESCROW_FUNDED, "since": since, "until": until}
+    latency = (await session.execute(text("""
+        SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM r.occurred_at - f.occurred_at))
+        FROM analytics.event_facts r
+        JOIN LATERAL (SELECT occurred_at FROM analytics.event_facts f
+                      WHERE f.event_type = :funded AND f.payload -> 'milestoneIds' ? (r.payload ->> 'milestoneId')
+                      ORDER BY f.occurred_at DESC LIMIT 1) f ON true
+        WHERE r.event_type = :released
+          AND (CAST(:since AS timestamptz) IS NULL OR r.occurred_at >= :since)
+          AND (CAST(:until AS timestamptz) IS NULL OR r.occurred_at < :until)"""), params)).scalar()
+    tiers = dict((await session.execute(text("""
+        SELECT tier, count(*) FROM (
+          SELECT DISTINCT ON (professional_id) professional_id,
+                 COALESCE(payload ->> 'tier', payload ->> 'toTier') AS tier
+          FROM analytics.event_facts
+          WHERE event_type IN (:changed, :recomputed) AND professional_id IS NOT NULL
+          ORDER BY professional_id, occurred_at DESC, seq DESC) latest
+        WHERE tier IS NOT NULL GROUP BY tier"""), {"changed": E.TRUST_TIER_CHANGED, "recomputed": E.TRUST_SCORE_RECOMPUTED})).all())
+    submitted = counts.get(E.PROPOSAL_SUBMITTED, 0)
+    return {"eventCounts": counts, "activations": counts.get(E.CONTRACT_ACTIVATED, 0),
+            "disputesOpened": counts.get(E.DISPUTE_INITIATED, 0), "disputesResolved": counts.get(E.DISPUTE_RESOLVED, 0),
+            "zeroResultSearches": counts.get(E.SEARCH_ZERO_RESULT, 0),
+            "proposalContractConversionBps": round(10000 * counts.get(E.CONTRACT_GENERATED, 0) / submitted) if submitted else None,
+            "medianReleaseLatencySeconds": float(latency) if latency is not None else None,
+            "trustTierDistribution": tiers, "lastEventAt": last}

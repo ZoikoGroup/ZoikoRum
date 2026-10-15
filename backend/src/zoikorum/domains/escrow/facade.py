@@ -141,3 +141,28 @@ async def ledger_for_contract(session: AsyncSession, contract_id: uuid.UUID) -> 
 
 async def account_id_for_contract(session: AsyncSession, contract_id: uuid.UUID) -> uuid.UUID | None:
     return await session.scalar(select(EscrowAccount.id).where(EscrowAccount.contract_id == contract_id))
+
+
+async def kpis(session: AsyncSession, since, until) -> dict:
+    """Money through escrow in the period (funded, released, fees, refunded) and held now, per currency."""
+    from sqlalchemy import func
+
+    from zoikorum.domains.escrow.models import Funding, Release
+
+    out: dict[str, dict] = {}
+
+    def row(ccy: str) -> dict:
+        return out.setdefault(ccy, {"currency": ccy, "fundedMinor": 0, "releasedMinor": 0, "feesMinor": 0, "heldNowMinor": 0,
+                                    "frozenNowMinor": 0})
+    for ccy, total in (await session.execute(select(Funding.currency, func.sum(Funding.amount_minor)).where(
+            Funding.status == "CAPTURED", Funding.captured_at >= since, Funding.captured_at < until).group_by(Funding.currency))).all():
+        row(ccy)["fundedMinor"] = int(total or 0)
+    for ccy, gross, fee in (await session.execute(select(Release.currency, func.sum(Release.gross_minor), func.sum(Release.fee_minor)).where(
+            Release.created_at >= since, Release.created_at < until).group_by(Release.currency))).all():
+        row(ccy)["releasedMinor"], row(ccy)["feesMinor"] = int(gross or 0), int(fee or 0)
+    for ccy, held, frozen in (await session.execute(select(EscrowAccount.currency, func.sum(EscrowAccount.held_minor),
+                                                           func.sum(EscrowAccount.on_hold_minor)).group_by(EscrowAccount.currency))).all():
+        row(ccy)["heldNowMinor"], row(ccy)["frozenNowMinor"] = int(held or 0), int(frozen or 0)
+    for r in out.values():
+        r["takeRateBps"] = round(10000 * r["feesMinor"] / r["releasedMinor"]) if r["releasedMinor"] else None
+    return {"byCurrency": sorted(out.values(), key=lambda r: r["currency"])}

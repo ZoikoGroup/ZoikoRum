@@ -45,3 +45,13 @@ from zoikorum.domains.ai.documents import DocumentCheck, assess_document, not_ch
 
 __all__ = ["CatalogEntry", "DocumentCheck", "Draft", "MatchIntent", "SearchIntent", "SpecializationMatch", "assess_document",
            "extract_match_intent", "extract_search_intent", "match_specializations", "not_checked", "save_inference_logs"]
+
+
+async def risk_top(session, actor, limit: int = 25) -> list[dict]:
+    from zoikorum.domains.ai import risk
+    return await risk.top(session, actor, limit)
+
+
+async def risk_explain(session, actor, subject_type: str, subject_id):
+    from zoikorum.domains.ai import risk
+    return await risk.explain(session, actor, subject_type, subject_id)

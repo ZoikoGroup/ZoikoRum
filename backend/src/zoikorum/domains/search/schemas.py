@@ -32,6 +32,7 @@ class SearchParams(BaseModel):
     budgetMaxMinor: int | None = None  # starting price at or under this (in budgetCurrency); unpriced offers still show
     budgetCurrency: str | None = None
     language: str | None = None
+    enterpriseReady: bool = False
     sort: Sort = "best"
     limit: int = 20
     offset: int = 0
@@ -86,7 +87,8 @@ class ResultItem(BaseModel):
     servedJurisdictions: list[str] = []  # where they take work (empty = unrestricted)
     licensedJurisdictions: list[str] = []
     whyThisResult: list[str]
-    regulatedPreview: bool = False  # offers regulated work but is below Tier A: shown, but cannot take that work yet
+    regulatedPreview: bool = False
+    enterpriseReady: bool = False  # offers regulated work but is below Tier A: shown, but cannot take that work yet
 
 
 class FacetValue(BaseModel):

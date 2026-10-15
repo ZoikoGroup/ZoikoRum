@@ -170,3 +170,13 @@ class AlertsIn(BaseModel):
 async def search_alerts(search_id: uuid.UUID, body: AlertsIn, actor: CurrentActor, session: DbSession):
     """Turn the daily "new matches" notice for a saved search on or off."""
     return await service.set_search_alerts(session, actor, search_id, body.on)
+
+
+@router.get("/v1/pricing/estimate")
+async def pricing_estimate(actor: CurrentActor, session: DbSession, specialization: str = Query(max_length=120),
+                           currency: str = Query(default="USD", pattern="^[A-Z]{3}$"), engagementType: str | None = Query(default=None, max_length=20)) -> dict:
+    """Signed-in: typical engagement values and published rates for a specialization (middle half of the range, from at
+    least five data points; the whole category when the specialization has too few)."""
+    from zoikorum.domains.marketplace import pricing
+
+    return await pricing.estimate(session, specialization, currency, engagementType)

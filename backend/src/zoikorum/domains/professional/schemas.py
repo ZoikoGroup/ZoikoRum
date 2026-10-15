@@ -266,6 +266,7 @@ class PublicProfileOut(BaseModel):
     pendingSpecializations: list[str] = []  # shown as "Custom (under review)"
     verificationInProgress: list[str] = []  # checks under review now, e.g. "Identity", "CPA (California)"
     verificationReport: list[dict] = []  # completed checks: {check, status, verifiedAt, expiresAt}
+    enterprise: dict = {}  # Enterprise Signals: {enterpriseReady, signals: [...]}
 
 
 # ---- Saved buyers (Professional Dashboard s.17) ----------------------------------

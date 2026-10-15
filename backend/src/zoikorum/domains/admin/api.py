@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import Response, APIRouter
 from pydantic import BaseModel, Field
 
 from zoikorum.domains.admin import service, switches
 from zoikorum.domains.admin.incidents import IncidentIn, IncidentUpdateIn
-from zoikorum.shared.auth import CurrentActor
+from zoikorum.shared.auth import OptionalActor, CurrentActor
 from zoikorum.shared import metrics
-from zoikorum.shared.db import DbSession
+from zoikorum.shared.db import AnalyticsSession, DbSession
 import uuid
+from typing import Literal
+from datetime import datetime
 from sqlalchemy import select
 from fastapi import Query
 from zoikorum.domains.admin.models import EnforcementCase
@@ -210,3 +212,104 @@ async def open_incident(body: IncidentIn, actor: CurrentActor, session: DbSessio
 async def update_incident(incident_id: uuid.UUID, body: IncidentUpdateIn, actor: CurrentActor, session: DbSession):
     from zoikorum.domains.admin import incidents as register
     return await register.update_incident(session, actor, incident_id, body)
+
+
+@router.get("/v1/admin/kpis")
+async def platform_kpis(actor: CurrentActor, session: AnalyticsSession, since: datetime | None = Query(None, alias="from"),
+                        until: datetime | None = Query(None, alias="to")) -> dict:
+    """Staff: platform KPIs for a period (default the last 30 days): board figures, onboarding, trust, engagements,
+    money through escrow, disputes and enforcement."""
+    from zoikorum.domains.admin import kpis
+
+    return await kpis.report(session, actor, since, until)
+
+
+class FlagIn(BaseModel):
+    rolloutPct: int = Field(ge=0, le=100)
+    organizationIds: list[uuid.UUID] = Field(default_factory=list, max_length=200)
+    reason: str = Field(min_length=10, max_length=500)
+
+
+@router.get("/v1/flags")
+async def my_flags(actor: OptionalActor, session: DbSession) -> dict:
+    """Which feature flags are on for the signed-in person (and their organisation), for the web app."""
+    from zoikorum.domains.admin import flags
+    from zoikorum.domains.buyer import facade as buyer_facade
+
+    org = None
+    if actor:
+        orgs = await buyer_facade.list_identity_organizations(session, actor.identity_id)
+        org = orgs[0] if orgs else None
+    return {k: await flags.enabled(session, k, actor.identity_id if actor else None, org) for k in flags.FLAGS}
+
+
+@router.get("/v1/admin/flags")
+async def list_flags(actor: CurrentActor, session: DbSession) -> list[dict]:
+    from zoikorum.domains.admin import flags
+
+    await service.staff(session, actor, PlatformRole.PLATFORM_ADMIN)
+    return await flags.list_flags(session)
+
+
+@router.get("/v1/admin/flags/{key}/fairness")
+async def flag_fairness(key: str, actor: CurrentActor, session: DbSession) -> dict:
+    """Ranking experiments: each group's share of top-10 search places with and without the change."""
+    from zoikorum.domains.admin import flags
+
+    await service.staff(session, actor, PlatformRole.PLATFORM_ADMIN)
+    return await flags.fairness(session, key)
+
+
+@router.put("/v1/admin/flags/{key}")
+async def set_flag(key: str, body: FlagIn, actor: CurrentActor, session: DbSession) -> dict:
+    """Platform Admin: roll a flag out to a percentage of people and named organisations (step-up, reason, audited)."""
+    from zoikorum.domains.admin import flags
+
+    return await flags.set_flag(session, actor, key, body.rolloutPct, body.organizationIds, body.reason)
+
+
+class ApiKeyTierIn(BaseModel):
+    tier: Literal["STANDARD", "ENTERPRISE"]
+
+
+@router.put("/v1/admin/api-keys/{key_id}/tier")
+async def set_api_key_tier(key_id: uuid.UUID, body: ApiKeyTierIn, actor: CurrentActor, session: DbSession) -> dict:
+    """Platform Admin: the request budget agreed with the organisation for this key."""
+    from zoikorum.domains.buyer import facade as buyer_facade
+    return await buyer_facade.set_api_key_tier(session, actor, key_id, body.tier)
+
+
+@router.get("/v1/procurement-pack")
+async def procurement_pack(actor: CurrentActor, format: Literal["pdf", "json"] = "pdf") -> Response:
+    """Signed-in customers: the security and compliance summary for a procurement review, built from live configuration."""
+    from zoikorum.domains.admin import procurement
+
+    data, name, media = procurement.render(format)
+    return Response(data, media_type=media, headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
+
+
+@router.get("/v1/admin/risk")
+async def risk_top(actor: CurrentActor, session: DbSession, limit: int = 25) -> list[dict]:
+    """Trust & Safety: the highest risk scores (last 30 days) with the signals behind them. Advisory only."""
+    from zoikorum.domains.ai import facade as ai_facade
+    return await ai_facade.risk_top(session, actor, max(1, min(limit, 100)))
+
+
+@router.get("/v1/admin/risk/{subject_type}/{subject_id}")
+async def risk_of(subject_type: Literal["IDENTITY", "ORGANIZATION"], subject_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> dict:
+    from zoikorum.domains.ai import facade as ai_facade
+    return await ai_facade.risk_explain(session, actor, subject_type, subject_id)
+
+
+@router.get("/v1/admin/audit/archives")
+async def audit_archives(actor: CurrentActor, session: DbSession) -> list[dict]:
+    """Audit records archived to write-once storage after 90 days, newest first."""
+    from zoikorum.domains.audit import facade as audit_facade
+    return await audit_facade.list_archives(session, actor)
+
+
+@router.post("/v1/admin/audit/archives/{archive_id}/verify")
+async def verify_audit_archive(archive_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> dict:
+    """Read an archive back and check its fingerprint and hash chain."""
+    from zoikorum.domains.audit import facade as audit_facade
+    return await audit_facade.verify_archive(session, actor, archive_id)

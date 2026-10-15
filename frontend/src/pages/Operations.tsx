@@ -1,3 +1,6 @@
+import { PlatformKpis } from '../components/PlatformKpis'
+import { FeatureFlags } from '../components/FeatureFlags'
+import { RiskScores } from '../components/RiskScores'
 import { useCallback, useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
@@ -94,6 +97,7 @@ export function SafetyPage({ operator = false }: { operator?: boolean }) {
       <ErrorAlert error={error} />
       {modal}
       {!operator && <MyReports />}
+      {operator && can('TS_ANALYST', 'RISK_LEAD', 'PLATFORM_ADMIN') && <RiskScores />}
 
       {operator && can('TS_ANALYST') && (
         <form
@@ -877,6 +881,7 @@ export function PlatformAnalyticsPage() {
 
       <ErrorAlert error={error} />
       {modal}
+      <PlatformKpis />
 
       {data ? (
         <section className="card panel">
@@ -1098,6 +1103,7 @@ export function SwitchesPage() {
           </tbody>
         </table>
       </section>
+      <FeatureFlags admin={admin} />
     </>
   )
 }

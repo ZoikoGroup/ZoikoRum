@@ -24,9 +24,9 @@ from zoikorum.domains.escrow.schemas import AllocationOut, BulkFundIn, EscrowOut
 from zoikorum.domains.professional import facade as professional_facade
 from zoikorum.shared import clock
 from zoikorum.shared.auth import Actor, OrgRole, PlatformRole
-from zoikorum.shared.errors import Conflict, DomainError, Forbidden, NotFound, PolicyBlocked
+from zoikorum.shared.errors import ValidationFailed, Conflict, DomainError, Forbidden, NotFound, PolicyBlocked
 from zoikorum.shared.event_catalog import E
-from zoikorum.shared.events import record_event
+from zoikorum.shared.events import record_audit, record_event
 from zoikorum.shared.money import Money, MoneyDTO
 from zoikorum.shared.relay import schedule_timer
 from zoikorum.shared.state_machine import StateMachine
@@ -132,6 +132,7 @@ async def _out(session: AsyncSession, actor: Actor, a: EscrowAccount, viewer: st
     unfunded = sum(x.amount_minor for x in allocs if x.state == "UNFUNDED")
     releases = {r.milestone_id: r.id for r in (await session.scalars(select(Release).where(Release.account_id == a.id))).all()}
     return EscrowOut(
+        autoFundingEnabledAt=a.auto_fund_enabled_at,
         id=a.id, contractId=a.contract_id, status=a.status, currency=ccy, total=_m(a.total_minor, ccy), funded=_m(a.funded_minor, ccy),
         held=_m(a.held_minor, ccy), released=_m(a.released_minor, ccy), fees=_m(a.fees_minor, ccy), refunded=_m(a.refunded_minor, ccy),
         unfunded=_m(unfunded, ccy), feeBps=_fee_bps(a),
@@ -224,13 +225,20 @@ async def ledger(session: AsyncSession, actor: Actor, account_id: uuid.UUID) -> 
 # ---- Funding ------------------------------------------------------------------------------------
 
 async def fund(session: AsyncSession, actor: Actor, account_id: uuid.UUID, body: FundIn) -> EscrowOut:
-    from zoikorum.domains.payments import facade as payments_facade
-    payments_facade.require_available()
-    await admin_facade.require_on(session, "FUNDING")
     a = await _account(session, account_id, lock=True)
     if await _viewer(session, actor, a) != "BUYER":
         raise Forbidden("Only the buyer funds escrow")
-    roles = await buyer_facade.get_member_roles(session, a.organization_id, actor.identity_id)
+    await _fund_for(session, actor.identity_id, a, body)
+    return await _out(session, actor, a, "BUYER")
+
+
+async def _fund_for(session: AsyncSession, identity_id: uuid.UUID, a: EscrowAccount, body: FundIn) -> None:
+    """Fund milestones on behalf of a member of the buyer organisation: their role, their spend limit and the
+    organisation's policy are checked exactly as when they press Fund themselves (also used by retainer auto-funding)."""
+    from zoikorum.domains.payments import facade as payments_facade
+    payments_facade.require_available()
+    await admin_facade.require_on(session, "FUNDING")
+    roles = await buyer_facade.get_member_roles(session, a.organization_id, identity_id)
     if not roles.intersection(FUNDERS):
         raise Forbidden("Funding needs the Requester, Approver or Budget Owner role", code="ROLE_REQUIRED")
     contract = await contract_facade.get_contract(session, a.contract_id)
@@ -259,24 +267,24 @@ async def fund(session: AsyncSession, actor: Actor, account_id: uuid.UUID, body:
     amount = sum(x.amount_minor for x in wanted)
     if a.funded_minor + amount > a.total_minor:
         raise Conflict("That would fund more than the contract total", code="OVER_FUNDING")
-    limit = await buyer_facade.get_member_spend_limit(session, a.organization_id, actor.identity_id)
+    limit = await buyer_facade.get_member_spend_limit(session, a.organization_id, identity_id)
     if limit is not None:
         # Per engagement: what this person has already put in counts too, so a large contract cannot be funded in
         # small pieces. A limit in another currency cannot be compared, so it does not authorise this one.
         already = await session.scalar(select(func.coalesce(func.sum(Funding.amount_minor), 0)).where(
-            Funding.account_id == a.id, Funding.requested_by == actor.identity_id, Funding.status.in_(("REQUESTED", "CAPTURED")))) or 0
+            Funding.account_id == a.id, Funding.requested_by == identity_id, Funding.status.in_(("REQUESTED", "CAPTURED")))) or 0
         if limit.currency != a.currency or already + amount > limit.minor:
             raise PolicyBlocked("This funding is above your spend limit for this engagement; ask a colleague with a higher limit",
                                 code="SPEND_LIMIT_EXCEEDED")
 
     await policy_facade.require_allowed(session, await policy_facade.commercial_context(session,
         org_id=a.organization_id, professional_id=a.professional_id, action=policy_facade.PolicyAction.ESCROW_FUND,
-        subject_type="EscrowAccount", subject_id=a.id, actor_identity_id=actor.identity_id,
+        subject_type="EscrowAccount", subject_id=a.id, actor_identity_id=identity_id,
         amount=amount, currency=a.currency, pinned_version_id=contract.policy_version_id,
         platform_default_pinned=contract.policy_version_id is None,
         extra={"contract.termsHash": contract.terms_hash, "contract.version": contract.contract_version,
             "funding.milestoneIds": sorted(str(x.milestone_id) for x in wanted)}))
-    f = Funding(account_id=a.id, organization_id=a.organization_id, requested_by=actor.identity_id,
+    f = Funding(account_id=a.id, organization_id=a.organization_id, requested_by=identity_id,
                 milestone_ids=[str(x.milestone_id) for x in wanted], amount_minor=amount, currency=a.currency, status="REQUESTED")
     session.add(f)
     await session.flush()
@@ -287,7 +295,6 @@ async def fund(session: AsyncSession, actor: Actor, account_id: uuid.UUID, body:
          milestoneIds=[x.milestone_id for x in wanted], paymentMethodToken=body.paymentMethodToken)
     await schedule_timer(session, TIMER_FUNDING_CHECK, str(f.id), clock.now() + FUNDING_CHECK_AFTER, {"fundingId": str(f.id)})
     await session.flush()
-    return await _out(session, actor, a, "BUYER")
 
 
 async def payment_captured(session: AsyncSession, payload: dict) -> None:
@@ -761,3 +768,61 @@ async def bulk_fund(session: AsyncSession, actor: Actor, body: BulkFundIn) -> di
         except DomainError as e:
             results.append({"accountId": item.accountId, "ok": False, "code": e.code, "detail": str(e.detail) if getattr(e, "detail", None) else e.code})
     return {"results": results, "funded": sum(1 for r in results if r["ok"]), "failed": sum(1 for r in results if not r["ok"])}
+
+
+
+# ---- Retainer auto-funding (Payments & Escrow s.15: auto-fund cycles from a saved payment method) ----------------------
+
+def _saved_method_ok(token: str) -> bool:
+    """A method that can be charged again later: a saved card or bank mandate at the provider, not a one-off checkout."""
+    from zoikorum.config import get_settings
+
+    if token == "hosted_checkout":
+        return False
+    return get_settings().payment_provider != "stripe" or token.startswith("pm_")
+
+
+async def set_auto_funding(session: AsyncSession, actor: Actor, account_id: uuid.UUID, token: str | None) -> EscrowOut:
+    """Turn automatic funding of retainer cycles on (with a saved payment method) or off. Funding then runs under the
+    authority of the person who turned it on: their role and spend limit are checked again for every cycle."""
+    a = await _account(session, account_id, lock=True)
+    if await _viewer(session, actor, a) != "BUYER":
+        raise Forbidden("Only the buyer organisation sets up automatic funding")
+    roles = await buyer_facade.get_member_roles(session, a.organization_id, actor.identity_id)
+    if not roles.intersection(FUNDERS):
+        raise Forbidden("Automatic funding needs the Requester, Approver or Budget Owner role", code="ROLE_REQUIRED")
+    if not await contract_facade.is_retainer(session, a.contract_id):
+        raise Conflict("Automatic funding is for retainers", code="NOT_A_RETAINER")
+    actor.require_step_up()
+    if token is not None:
+        if not _saved_method_ok(token):
+            raise ValidationFailed("Choose a saved payment method; a one-off checkout cannot be charged again", code="SAVED_METHOD_REQUIRED")
+        a.auto_fund_token, a.auto_fund_identity_id, a.auto_fund_enabled_at = token, actor.identity_id, clock.now()
+    else:
+        a.auto_fund_token = a.auto_fund_identity_id = a.auto_fund_enabled_at = None
+    _evt(session, E.ESCROW_AUTO_FUNDING_CHANGED, a, enabled=token is not None, by=actor.identity_id, audience="BUYER",
+         message="Retainer cycles will now be funded automatically before they are due." if token else "Automatic funding is off.")
+    record_audit(session, "escrow.auto_funding." + ("enabled" if token else "disabled"), object_type="EscrowAccount", object_id=a.id,
+                 tenant_id=a.organization_id)
+    await session.flush()
+    return await _out(session, actor, a, "BUYER")
+
+
+async def auto_fund_cycle(session: AsyncSession, payload: dict) -> None:
+    """Consumer of MILESTONE_FUNDING_REMINDER: fund the upcoming cycle when automatic funding is on. Every usual check
+    applies; if one fails, the buyer is told and the cycle waits to be funded by hand."""
+    a = await session.scalar(select(EscrowAccount).where(EscrowAccount.contract_id == uuid.UUID(str(payload["contractId"])))
+                             .with_for_update())
+    if a is None or not a.auto_fund_token or not a.auto_fund_identity_id:
+        return
+    milestone_id = uuid.UUID(str(payload["milestoneId"]))
+    alloc = await session.scalar(select(Allocation).where(Allocation.account_id == a.id, Allocation.milestone_id == milestone_id))
+    if alloc is None or alloc.state != "UNFUNDED":
+        return
+    try:
+        async with session.begin_nested():
+            await _fund_for(session, a.auto_fund_identity_id, a,
+                            FundIn(milestoneIds=[milestone_id], paymentMethodToken=a.auto_fund_token))
+    except DomainError as e:
+        _evt(session, E.ESCROW_AUTO_FUNDING_FAILED, a, milestoneId=milestone_id, code=e.code, audience="BUYER",
+             message=f"M{alloc.sequence} {alloc.title} could not be funded automatically ({e.detail or e.code}). Fund it from the engagement.")

@@ -45,6 +45,7 @@ async def search_professionals(
     budgetMaxMinor: int | None = Query(default=None, ge=0),
     budgetCurrency: str | None = Query(default=None, pattern="^[A-Za-z]{3}$"),
     language: str | None = Query(default=None, max_length=40),
+    enterpriseReady: bool = False,
     sort: Sort = "best",
     limit: int = Query(default=20, ge=1, le=50),
     offset: int = Query(default=0, ge=0, le=1000),
@@ -54,7 +55,7 @@ async def search_professionals(
                           engagementType=engagementType, delivery=delivery, availability=availability, pricingModel=pricingModel,
                           credential=credential, jurisdiction=jurisdiction, experience=experience, publishedAfter=publishedAfter,
                           industry=industry, crossBorder=crossBorder, budgetMaxMinor=budgetMaxMinor, budgetCurrency=budgetCurrency,
-                          language=language, sort=sort, limit=limit, offset=offset)
+                          language=language, enterpriseReady=enterpriseReady, sort=sort, limit=limit, offset=offset)
     return await service.cached_search(session, actor, params)
 
 

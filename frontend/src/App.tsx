@@ -27,6 +27,7 @@ const ProfileSetupPage = lazy(() => import('./pages/ProfessionalPages').then((m)
 const PublicProfilePage = lazy(() => import('./pages/PublicProfile'))
 const BrowseProfessionals = lazy(() => import('./pages/BrowseProfessionals'))
 const CategoryPage = lazy(() => import('./pages/CategoryPage'))
+const SsoCallbackPage = lazy(() => import('./components/SingleSignOn').then((m) => ({ default: m.SsoCallbackPage })))
 const FirmVerificationPage = lazy(() => import('./pages/VerificationPages').then((m) => ({ default: m.FirmVerificationPage })))
 const ProfessionalVerificationPage = lazy(() => import('./pages/VerificationPages').then((m) => ({ default: m.ProfessionalVerificationPage })))
 const ReviewQueuePage = lazy(() => import('./pages/VerificationPages').then((m) => ({ default: m.ReviewQueuePage })))
@@ -51,6 +52,8 @@ const RequestsPage = lazy(() => import('./pages/customer/CustomerRequests').then
 const MessagesPage = lazy(() => import('./pages/customer/Pipeline').then((m) => ({ default: m.MessagesPage })))
 const CustomerPaymentsPage = lazy(() => import('./pages/Money').then((m) => ({ default: m.CustomerPaymentsPage })))
 const PerformanceInsights = lazy(() => import('./pages/PerformanceInsights'))
+const EnterpriseReadinessPage = lazy(() => import('./pages/EnterpriseReadiness').then((m) => ({ default: m.EnterpriseReadinessPage })))
+const EnterpriseApplicationsPage = lazy(() => import('./pages/EnterpriseReadiness').then((m) => ({ default: m.EnterpriseApplicationsPage })))
 const EarningsPage = lazy(() => import('./pages/Money').then((m) => ({ default: m.EarningsPage })))
 const DisputeDetail = lazy(() => import('./pages/Disputes').then((m) => ({ default: m.DisputeDetail })))
 const DisputesPage = lazy(() => import('./pages/Disputes').then((m) => ({ default: m.DisputesPage })))
@@ -94,6 +97,7 @@ export default function App() {
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/confirm-email" element={<ConfirmEmail />} />
+          <Route path="/sso/callback" element={<SsoCallbackPage />} />
           <Route path="/invite" element={<InviteLanding />} />
           <Route path="/professionals" element={<BrowseProfessionals />} />
           <Route path="/categories/:slug" element={<CategoryPage />} />
@@ -132,6 +136,7 @@ export default function App() {
             <Route path="compare" element={<RequireRole any={CUSTOMER}><ComparePage /></RequireRole>} />
             <Route path="professional/earnings" element={<RequireRole any={['PROFESSIONAL']}><EarningsPage /></RequireRole>} />
             <Route path="professional/insights" element={<RequireRole any={['PROFESSIONAL']}><PerformanceInsights /></RequireRole>} />
+            <Route path="professional/enterprise" element={<RequireRole any={['PROFESSIONAL']}><EnterpriseReadinessPage /></RequireRole>} />
             <Route path="professional/buyers" element={<RequireRole any={['PROFESSIONAL']}><SavedBuyersPage /></RequireRole>} />
             <Route path="messages" element={<RequireRole any={[...CUSTOMER, 'PROFESSIONAL']}><MessagesPage /></RequireRole>} />
             <Route path="disputes" element={<RequireRole any={CUSTOMER}><DisputesPage role="buyer" /></RequireRole>} />
@@ -161,6 +166,7 @@ export default function App() {
             <Route path="ops/money" element={<RequireRole any={['FINANCIAL_OPS', 'PLATFORM_ADMIN']}><MoneyProblemsPage /></RequireRole>} />
             <Route path="ops/support" element={<RequireRole any={['SUPPORT_AGENT', 'PLATFORM_ADMIN']}><SupportQueuePage /></RequireRole>} />
             <Route path="ops/incidents" element={<RequireRole any={[...PLATFORM_ROLES]}><IncidentsPage /></RequireRole>} />
+            <Route path="ops/enterprise" element={<RequireRole any={['COMPLIANCE_OFFICER']}><EnterpriseApplicationsPage /></RequireRole>} />
             <Route path="ops/switches" element={<RequireRole any={['FINANCIAL_OPS', 'PLATFORM_ADMIN']}><SwitchesPage /></RequireRole>} />
             <Route path="security" element={<Security />} />
             <Route path="forbidden" element={<ForbiddenPage />} />

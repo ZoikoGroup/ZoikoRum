@@ -266,3 +266,13 @@ async def test_advanced_filters_autocomplete_and_cache(client, make_user, drain)
     await client.patch("/v1/professionals/me", headers=local.h, json={"industries": ["Healthcare"]})
     await drain()
     assert (await client.get(URL, params={"industry": "Healthcare"})).json()["total"] == first.json()["total"] + 1
+
+
+async def test_semantic_matching_finds_meaning_not_just_words(client, make_user, drain):
+    await publish(client, make_user, drain, "books", headline="Small business accountant", primary="bookkeeping-and-accounting-services")
+    await publish(client, make_user, drain, "vatty", headline="Indirect tax adviser", primary="vat-gst-sales-tax")
+    found = (await client.get(URL, params={"q": "someone to do my books"})).json()
+    first = found["items"][0]
+    assert first["displayName"].startswith("Books") and first["whyThisResult"][0].startswith("Related to")
+    vat = (await client.get(URL, params={"q": "GST registration"})).json()
+    assert vat["items"] and vat["items"][0]["displayName"].startswith("Vatty")

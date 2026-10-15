@@ -78,7 +78,9 @@ class E:
     # ---- Professional --------------------------------------------------------
     PROFESSIONAL_REGISTERED = _t("professional", "professional", "registered")
     PROFILE_UPDATED = _t("professional", "professional", "profile_updated")
-    PROFILE_VIEWED = _t("professional", "professional", "profile_viewed")  # analytics only: someone else opened the public profile
+    PROFILE_VIEWED = _t("professional", "professional", "profile_viewed")
+    ENTERPRISE_READINESS_REQUESTED = _t("professional", "enterprise", "readiness_requested")  # Compliance reviews
+    ENTERPRISE_READINESS_DECIDED = _t("professional", "enterprise", "readiness_decided")  # analytics only: someone else opened the public profile
     PROFILE_PUBLISHED = _t("professional", "professional", "profile_published")
     PROFILE_UNPUBLISHED = _t("professional", "professional", "profile_unpublished")
     PROFILE_SUSPENDED = _t("professional", "professional", "profile_suspended")
@@ -131,6 +133,8 @@ class E:
     CONTRACT_TERMINATED = _t("contract", "contract", "terminated")
     CONTRACT_TERMINATION_REQUESTED = _t("contract", "termination", "requested")  # one side asks to end by agreement
     RETAINER_PAUSED = _t("contract", "retainer", "paused")
+    ESCROW_AUTO_FUNDING_CHANGED = _t("escrow", "account", "auto_funding_changed")
+    ESCROW_AUTO_FUNDING_FAILED = _t("escrow", "account", "auto_funding_failed")  # the buyer funds the cycle by hand
     RETAINER_RESUMED = _t("contract", "retainer", "resumed")
     CONTRACT_TERMINATION_DECLINED = _t("contract", "termination", "declined")
     CONTRACT_TERMINATION_WITHDRAWN = _t("contract", "termination", "withdrawn")  # withdrawn, lapsed or overtaken by a dispute

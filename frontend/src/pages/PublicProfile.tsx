@@ -163,6 +163,11 @@ export default function PublicProfilePage() {
                 </section>
               </div>
               <aside>
+                {p.enterprise && p.enterprise.signals.length > 0 && <section className="card panel"><h2>Enterprise signals</h2>
+                  {p.enterprise.enterpriseReady && <p style={{ margin: '0 0 8px' }}><span className="badge green">Enterprise Ready</span>
+                    <span className="muted small"> · reviewed by Zoikorum compliance</span></p>}
+                  <ul className="checklist small">{p.enterprise.signals.map((s) => <li key={s}><span>{s}</span><span className="badge green">✓</span></li>)}</ul>
+                </section>}
                 <section className="card panel" id="verification-report"><h2>Verification report</h2>
                   <p className="small" style={{ marginTop: 0 }}>{TIER_MEANING[p.trust.tier]}</p>
                   <ul className="checklist">

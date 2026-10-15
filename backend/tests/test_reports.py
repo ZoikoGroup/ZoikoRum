@@ -71,3 +71,38 @@ async def test_reports_are_limited_per_day(client, make_user, drain):
     codes = [(await client.post(R, headers=reporter.h, json={**BODY, "subjectType": "IDENTITY", "subjectId": str(t.id)})).status_code
              for t in targets]
     assert codes[:5] == [201] * 5 and codes[5] == 429
+
+
+async def test_platform_kpis_cover_engagements_money_disputes_and_enforcement(client, make_user, drain):
+    from test_dispute import D, dispute_body, funded_contract
+
+    pro_user, pro, buyer, c = await funded_contract(client, make_user, drain)
+    await client.post(D, headers=buyer.idem(), json=dispute_body(c))
+    await drain()
+    admin = await make_user("kpi-admin", platform_roles=("PLATFORM_ADMIN",))
+    await admin.step_up()  # staff sign in with two-step
+    assert (await client.get("/v1/admin/kpis", headers=buyer.h)).status_code == 403
+    k = (await client.get("/v1/admin/kpis", headers=admin.h)).json()
+    assert k["engagements"]["engagementsStarted"] >= 1 and k["engagements"]["activeBuyerOrganisations"] >= 1
+    usd = next(r for r in k["payments"]["byCurrency"] if r["currency"] == "USD")
+    assert usd["fundedMinor"] > 0 and usd["frozenNowMinor"] > 0
+    assert k["disputes"]["opened"] >= 1 and k["disputes"]["openNow"] >= 1 and k["board"]["disputeRatePct"] is not None
+    assert k["onboarding"]["profilesPublished"] >= 1 and k["trust"]["tiersNow"].get("B", 0) >= 1
+    assert set(k["enforcement"]) >= {"casesOpened", "openNow", "incidentsOpenNow"}
+    health = (await client.get("/v1/analytics/marketplace-health", headers=admin.h)).json()
+    assert health["activations"] >= 1 and health["disputesOpened"] >= 1 and health["trustTierDistribution"]
+
+
+async def test_report_sessions_are_read_only():
+    import pytest
+    from sqlalchemy import text
+    from sqlalchemy.exc import DBAPIError
+
+    from zoikorum.shared.db import _read_only_session
+
+    gen = _read_only_session()
+    session = await gen.__anext__()
+    assert (await session.execute(text("SELECT 1"))).scalar() == 1
+    with pytest.raises(DBAPIError, match="read-only"):
+        await session.execute(text("CREATE TEMP TABLE should_fail (x int)"))
+    await gen.aclose()

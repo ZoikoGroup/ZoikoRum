@@ -34,6 +34,7 @@ export function ResultCard({ r, saved, onToggle }: { r: SearchResult; saved?: bo
         </div>
         <div className="result-side">
           <span className={`badge ${r.tier === 'C' ? 'warn' : 'green'}`}>Tier {r.tier} · {r.tierLabel}</span>
+          {r.enterpriseReady && <span className="badge green">Enterprise Ready</span>}
           {r.regulatedPreview && <span className="badge warn" title="Regulated work (audit, tax filing, regulatory reporting) needs Tier A">Preview for regulated work</span>}
           {onToggle && <SaveButton id={r.professionalId} saved={!!saved} onToggle={onToggle} />}
         </div>

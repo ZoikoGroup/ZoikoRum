@@ -91,6 +91,20 @@ def create_app() -> FastAPI:
                 raise Forbidden("This account is restricted", code="ACCOUNT_NOT_ACTIVE")
             return actor
     app.state.actor_validator = validate_actor
+
+    async def api_key_resolver(token, path, method):
+        from zoikorum.domains.buyer import facade as buyer
+        from zoikorum.shared.db import session_factory
+        async with session_factory()() as session:
+            return await buyer.api_key_principal(session, token, path, method)
+
+    async def api_key_budget(token):
+        from zoikorum.domains.buyer import facade as buyer
+        from zoikorum.shared.db import session_factory
+        async with session_factory()() as session:
+            return await buyer.api_key_budget(session, token)
+    app.state.api_key_resolver = api_key_resolver
+    app.state.api_key_budget = api_key_budget
     for d in load_domains():
         api = _maybe_import(f"zoikorum.domains.{d}.api")
         if api is not None and hasattr(api, "router"):

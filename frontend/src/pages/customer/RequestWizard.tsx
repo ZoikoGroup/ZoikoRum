@@ -11,6 +11,7 @@ import { Avatar, Icon } from '../../components/dashboard'
 import { PortalHeader, TierBadge } from '../../components/portal'
 import { DraftSaved, ResumeDraft } from '../../components/ResumeDraft'
 import { ErrorAlert, Field } from '../../components/ui'
+import { PriceGuide } from '../../components/PriceGuide'
 import { useAuth } from '../../auth/AuthContext'
 import { clearDraft, readDraft, useAutosave } from '../../lib/autosave'
 
@@ -269,6 +270,8 @@ export default function RequestWizard() {
                   <input type="checkbox" checked={f.pricingPreferences.includes(v)} onChange={() => set('pricingPreferences', toggle(f.pricingPreferences, v))} />{l}</label>))}</div></div>
             <Field label="Payment cadence (optional)" id="w-cad"><select id="w-cad" className="input" value={f.paymentCadence} onChange={(e) => set('paymentCadence', e.target.value as PaymentCadence | '')}>
               <option value="">No preference</option>{CADENCES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field>
+            <PriceGuide specialization={pros[0]?.specializations.find((x) => x.primary)?.slug ?? pros[0]?.specializations[0]?.slug ?? null}
+              currency={f.currency} engagementType={f.engagementType} />
             <label className="checkbox"><input type="checkbox" checked={f.budgetOn} onChange={(e) => set('budgetOn', e.target.checked)} /><span>Share a budget range (optional — helps professionals propose accurately)</span></label>
             {entities.length > 1 && <Field label="Contracting entity" id="w-entity" hint="Named as the buyer on the contract and on invoices.">
               <select id="w-entity" className="input" value={legalEntityId} onChange={(e) => setLegalEntityId(e.target.value)}>

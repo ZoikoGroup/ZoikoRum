@@ -86,3 +86,14 @@ class FeatureSwitch(Base, UUIDPk, Timestamps):
     paused: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     reason: Mapped[str | None] = mapped_column(String(500))
     changed_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+
+
+class FeatureFlag(Base, UUIDPk, Timestamps):
+    """Gradual rollout of a feature defined in code (admin/flags.py): a percentage of people, plus named organisations."""
+    __tablename__ = "feature_flags"
+    __table_args__ = {"schema": "admin"}
+    key: Mapped[str] = mapped_column(String(80), nullable=False, unique=True)
+    rollout_pct: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    organization_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)  # always on for these
+    reason: Mapped[str | None] = mapped_column(String(500))
+    changed_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))

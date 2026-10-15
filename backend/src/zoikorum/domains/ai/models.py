@@ -39,5 +39,6 @@ class RiskObservation(Base, UUIDPk, CreatedAt):
     __tablename__ = "risk_observations"
     __table_args__ = {"schema": "ai"}
     source_event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), unique=True, nullable=False)
-    identity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    identity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)  # the subject's id
     kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    subject_type: Mapped[str] = mapped_column(String(20), nullable=False, default="IDENTITY", server_default="IDENTITY")  # or ORGANIZATION

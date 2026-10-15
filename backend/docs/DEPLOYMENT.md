@@ -62,6 +62,27 @@ Development-only switches are refused outside local development: `ZK_DEV_SKIP_MF
 
 ## Google Cloud setup (once per environment)
 
+**As code (recommended).** `backend/deploy/gcp/terraform/` creates everything below: the APIs, service accounts and
+their roles, Workload Identity Federation for the Release workflow, Artifact Registry (keeps the last 20 releases),
+the KMS key, one Secret Manager secret per line of `secrets.list` (values are added by hand, never in Terraform state),
+the files bucket, a private network with Cloud NAT, Cloud SQL (private IP, point-in-time recovery, optional analytics
+read replica), the VM without a public address, the firewall rules, and the HTTPS load balancer with a managed
+certificate, an http→https redirect and Identity-Aware Proxy on the staff app.
+
+```
+cd backend/deploy/gcp/terraform
+cp production.tfvars.example production.tfvars          # git-ignored; fill in
+gcloud storage buckets create gs://<state-bucket> --location=$REGION --uniform-bucket-level-access --versioning
+terraform init -backend-config="bucket=<state-bucket>" -backend-config="prefix=zoikorum/production"
+terraform plan -var-file=production.tfvars && terraform apply -var-file=production.tfvars
+terraform output                                         # values for the GitHub variables and settings
+```
+
+Then add the secret values, create the two database users (below), point DNS at `load_balancer_ip`, and install Docker
+and the repository on the VM. Staging is the same with `environment = "staging"` and its own state prefix.
+
+**By hand (the same resources):**
+
 ```
 PROJECT=<project-id>  REGION=<asia-south1>  ZONE=<asia-south1-a>  DOMAIN=<your-domain.com>
 VM_SA=zoikorum-vm@$PROJECT.iam.gserviceaccount.com        # the VM (API, worker) runs as this account
@@ -171,14 +192,18 @@ The `production` environment's required reviewers approve it. The workflow:
 1. builds the backend, customer and staff images, and scans them (a fixable HIGH or CRITICAL vulnerability stops it);
 2. pushes them to Artifact Registry;
 3. on the VM (`backend/deploy/gcp/deploy.sh`, over IAP SSH): fetches the settings from Secret Manager, pulls the
-   images, runs `check-config --connect` (stops if anything is missing), runs migrations and `db-grants`, restarts the
-   services and waits for `/ready`.
+   images, runs `check-config --connect` (stops if anything is missing), runs migrations and `db-grants`;
+4. **canary:** starts the new API next to the running one and waits for its `/ready`. If it never gets there, the deploy
+   stops with its log lines and the running release is untouched;
+5. **switch:** restarts the services on the new release and waits for `/ready` on both web apps. If they do not
+   become ready, the previous release (recorded in `/var/lib/zoikorum/release`) is started again automatically and
+   the workflow fails.
 
 One-time GitHub setup: repository variables `GCP_PROJECT`, `GCP_REGION`, `GCP_REGISTRY`, `GCP_VM`, `GCP_ZONE`,
 `GCP_WIF_PROVIDER`, `GCP_DEPLOY_SA`, `ZK_FRONTEND_URL`, `ZK_STAFF_FRONTEND_URL`, and Workload Identity Federation so
 GitHub signs in to Google without a stored key (`$DEPLOY_SA` needs Artifact Registry writer and IAP-secured SSH to the VM).
 
-**Roll back:** run the workflow again with the previous version (migrations only ever add, so an earlier version runs on
+**Roll back by choice:** run the workflow again with the previous version (migrations only ever add, so an earlier version runs on
 the newer schema). By hand on the VM: `sudo ZK_RELEASE=<previous> ZK_REGISTRY=<registry>/ ./backend/deploy/gcp/deploy.sh`.
 
 **After a release that adds search fields:** `$DC run --rm api python -m zoikorum.cli reindex-search` once.

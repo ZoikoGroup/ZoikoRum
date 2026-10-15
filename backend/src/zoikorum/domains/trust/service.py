@@ -7,6 +7,7 @@ enforcement) take effect within one event delivery. AI risk flags are recorded a
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -22,6 +23,7 @@ from zoikorum.domains.contract import facade as contract_facade
 from zoikorum.domains.dispute import facade as dispute_facade
 from zoikorum.domains.proposal import facade as proposal_facade
 from zoikorum.shared import clock
+from zoikorum.shared.relay import schedule_timer
 from zoikorum.shared.auth import Actor, PlatformRole
 from zoikorum.shared.errors import NotFound
 from zoikorum.shared.event_catalog import E
@@ -83,6 +85,10 @@ async def recompute(session: AsyncSession, prof: TrustProfile, source_event_type
     score = min(100, result.score + completion_points + on_time_points + dispute_points + response_points)
     explanation = list(result.explanation[:-1]) + [f"Completed engagements: {completion_points}/25; on-time delivery: {on_time_points}/10; confirmed dispute outcomes: {dispute_points}/15; responsiveness: {response_points}/10."]
     old_tier = prof.tier
+    # Hysteresis: a score that moves by less than SCORE_STEP with nothing else changing keeps its published value, so
+    # search order does not shuffle on every small event.
+    if result.tier == prof.tier and result.dimensions == prof.dimensions and abs(score - prof.score) < SCORE_STEP:
+        score = prof.score
     changed = (result.tier, score, result.dimensions, explanation) != (
         prof.tier, prof.score, prof.dimensions, prof.explanation)
     prof.tier, prof.score, prof.dimensions, prof.explanation = result.tier, score, result.dimensions, explanation
@@ -197,3 +203,30 @@ async def history(session: AsyncSession, actor: Actor, professional_id: uuid.UUI
         signals=[SignalOut(type=s.signal_type, adverse=s.adverse, summary=s.summary, at=s.created_at) for s in signals],
         flags=list(prof.flags) if prof else [],
     )
+
+
+
+# ---- Daily recompute: completions fade with their half-life even when nothing new happens -----------------------------
+
+SCORE_STEP = 2
+DECAY_TIMER = "trust.daily_recompute"  # daily at 03:00 UTC, re-arms itself
+
+
+def _next_run(now):
+    from datetime import datetime, time, timezone
+    run = datetime.combine(now.date(), time(3, 0), tzinfo=timezone.utc)
+    return run if run > now else run + timedelta(days=1)
+
+
+async def bootstrap_decay(session: AsyncSession) -> None:
+    nxt = _next_run(clock.now())
+    await schedule_timer(session, DECAY_TIMER, nxt.date().isoformat(), nxt)
+
+
+async def daily_recompute(session: AsyncSession) -> int:
+    rows = (await session.scalars(select(TrustProfile).with_for_update(skip_locked=True))).all()
+    for prof in rows:
+        await recompute(session, prof, "DAILY_RECOMPUTE")
+    nxt = _next_run(clock.now())
+    await schedule_timer(session, DECAY_TIMER, nxt.date().isoformat(), nxt)
+    return len(rows)

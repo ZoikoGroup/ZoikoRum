@@ -210,6 +210,14 @@ async def _current_actor(request: Request) -> Actor:
     token = _bearer(request)
     if not token:
         raise Unauthenticated()
+    if token.startswith("zk_"):  # an organisation API key (buyer/api_keys.py)
+        resolver = getattr(request.app.state, "api_key_resolver", None)
+        if resolver is None:
+            raise Unauthenticated("API keys are not accepted here")
+        actor = await resolver(token, request.url.path, request.method)
+        context.bind_actor(str(actor.identity_id), "api_key", None, actor.auth_strength)
+        request.state.actor = actor
+        return actor
     actor = decode_access_token(token)
     validator = getattr(request.app.state, "actor_validator", None)
     if validator:
