@@ -137,6 +137,10 @@ export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T
     }
   }
   if (!res.ok) throw await toError(res)
+  // Refresh dependent badges after successful commands; read receipts have their own updates.
+  if (typeof window !== 'undefined' && method !== 'GET' && !path.startsWith('/v1/auth/') && !path.endsWith('/read')) {
+    window.dispatchEvent(new Event('zk:activity'))
+  }
   if (res.status === 204) return undefined as T
   if (text) return (await res.text()) as T
   if (blob) return (await res.blob()) as T

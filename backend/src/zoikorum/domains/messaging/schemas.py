@@ -17,7 +17,7 @@ class ThreadIn(BaseModel):
 
 class UploadIn(BaseModel):
     name: str = Field(min_length=1, max_length=255)
-    dataBase64: str = Field(min_length=1, max_length=14_000_000)
+    dataBase64: str = Field(min_length=1, max_length=4 * ((50 * 1024 * 1024 + 2) // 3))
 
 
 class AttachmentOut(BaseModel):
@@ -75,6 +75,8 @@ class ThreadOut(BaseModel):
     country: str | None
     lastMessage: str
     lastMessageFromSystem: bool
+    relatedThreadId: uuid.UUID | None = None
+    archivedRequest: bool = False
 
 
 class MessageHitOut(BaseModel):

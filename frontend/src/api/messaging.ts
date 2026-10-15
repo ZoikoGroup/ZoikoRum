@@ -43,6 +43,8 @@ export interface MessageThread {
   country: string | null
   lastMessage: string
   lastMessageFromSystem: boolean
+  relatedThreadId?: string | null
+  archivedRequest?: boolean
 }
 
 interface Page<T> {

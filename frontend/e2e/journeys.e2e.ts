@@ -63,8 +63,8 @@ test('a customer accepts delivered work and downloads the invoice PDF', async ({
   await signIn(page, buyer.email)
   await page.goto(`/app/engagements/${contract.id}`)
   await page.getByRole('tab', { name: /Milestones/ }).click()
-  page.once('dialog', (d) => d.accept())  // "Accept M1 …? This releases … from escrow"
-  await page.getByRole('button', { name: 'Accept milestone' }).first().click()
+  await page.getByRole('button', { name: /^Accept all & release/ }).first().click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Accept and release' }).click()  // "This releases … from escrow"
   await expect(page.getByText(/Milestone accepted/)).toBeVisible()
 
   await page.getByRole('tab', { name: 'Agreement' }).click()
@@ -72,9 +72,12 @@ test('a customer accepts delivered work and downloads the invoice PDF', async ({
   await page.getByRole('button', { name: /Download PDF/ }).click()
   expect((await agreement).suggestedFilename()).toBe(`${contract.reference}-v1.pdf`)
 
-  await page.goto('/app/payments')
-  await page.getByRole('tab', { name: /Invoices/ }).click()
-  await expect(page.getByText(/ZK-INV-\d{6}/)).toBeVisible({ timeout: 20_000 })
+  // The invoice is issued by the worker a moment after the release; the list loads once, so reload until it is there.
+  await expect(async () => {
+    await page.goto('/app/payments')
+    await page.getByRole('tab', { name: /Invoices/ }).click()
+    await expect(page.getByText(/ZK-INV-\d{6}/)).toBeVisible({ timeout: 3_000 })
+  }).toPass({ timeout: 30_000 })
   const invoice = page.waitForEvent('download')
   await page.getByRole('button', { name: 'PDF' }).first().click()
   expect((await invoice).suggestedFilename()).toMatch(/^ZK-INV-\d{6}\.pdf$/)

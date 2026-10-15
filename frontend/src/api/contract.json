@@ -448,6 +448,19 @@
   "settings",
   "version"
  ],
+ "DraftItemOut": [
+  "acceptanceCriteria",
+  "changesRequested",
+  "deliverableKey",
+  "evidence",
+  "note",
+  "ready",
+  "title"
+ ],
+ "DraftTextIn": [
+  "itemNotes",
+  "note"
+ ],
  "DuplicateAnswerIn": [
   "answer",
   "note"
@@ -753,6 +766,11 @@
   "number",
   "tax",
   "total"
+ ],
+ "IssueOut": [
+  "code",
+  "deliverableKey",
+  "message"
  ],
  "JurisdictionsIn": [
   "crossBorderAcknowledged",
@@ -1503,10 +1521,6 @@
   "whyThisResult",
   "yearsExperienceBand"
  ],
- "ReviewIn": [
-  "comment",
-  "rating"
- ],
  "RevisionChange": [
   "field",
   "requested"
@@ -1741,14 +1755,45 @@
   "sha256",
   "size"
  ],
+ "SubmissionDraftOut": [
+  "blockers",
+  "canSubmit",
+  "declaration",
+  "items",
+  "milestoneId",
+  "note",
+  "revisionNumber",
+  "savedAt",
+  "warnings"
+ ],
+ "SubmissionItemOut": [
+  "acceptanceCriteria",
+  "carriedOver",
+  "deliverableKey",
+  "evidence",
+  "note",
+  "title"
+ ],
  "SubmissionOut": [
+  "declaredAt",
   "files",
   "id",
+  "items",
+  "lateReason",
   "note",
+  "review",
+  "revisionNumber",
   "submittedAt"
  ],
+ "SubmissionReviewOut": [
+  "outcome",
+  "reviewedAt",
+  "verdicts"
+ ],
  "SubmitIn": [
+  "confirmed",
   "files",
+  "lateReason",
   "note"
  ],
  "SuggestIn": [
@@ -1858,6 +1903,7 @@
   "organizationId"
  ],
  "ThreadOut": [
+  "archivedRequest",
   "canSend",
   "contextId",
   "contextType",
@@ -1873,6 +1919,7 @@
   "locked",
   "photoUrl",
   "professionalId",
+  "relatedThreadId",
   "title",
   "unreadCount",
   "updatedAt",
@@ -1935,6 +1982,16 @@
   "msg",
   "type"
  ],
+ "VerdictIn": [
+  "comment",
+  "deliverableKey",
+  "verdict"
+ ],
+ "VerdictOut": [
+  "comment",
+  "deliverableKey",
+  "verdict"
+ ],
  "zoikorum__domains__admin__schemas__AppealDecisionIn": [
   "reason",
   "upheld"
@@ -1955,6 +2012,26 @@
  ],
  "zoikorum__domains__ai__api__RequestIn": [
   "requestId"
+ ],
+ "zoikorum__domains__contract__schemas__EvidenceIn": [
+  "file",
+  "label",
+  "url",
+  "version"
+ ],
+ "zoikorum__domains__contract__schemas__EvidenceOut": [
+  "file",
+  "host",
+  "id",
+  "kind",
+  "label",
+  "provider",
+  "type",
+  "url",
+  "version"
+ ],
+ "zoikorum__domains__contract__schemas__ReviewIn": [
+  "verdicts"
  ],
  "zoikorum__domains__contract__schemas__RevisionIn": [
   "reason"
@@ -2110,6 +2187,10 @@
  "zoikorum__domains__proposal__schemas__RevisionIn": [
   "changes",
   "note"
+ ],
+ "zoikorum__domains__review__api__ReviewIn": [
+  "comment",
+  "rating"
  ],
  "zoikorum__domains__search__schemas__SuggestOut": [
   "professionals",

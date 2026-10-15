@@ -103,7 +103,8 @@ async def checked_thread(session, actor, thread_id, *, write=False):
     agreement = (await contract.get_contract_by_request(session, obj.id) if thread.context_type == "PROPOSAL_REQUEST"
                  else None if thread.context_type == "INQUIRY" else obj)
     if agreement and thread.context_type == "PROPOSAL_REQUEST":
-        can_send = can_send and agreement.status in {"GENERATED", "PENDING_SIGNATURE", "ACTIVE"}
+        # Negotiation history stays readable; active work has one place to reply.
+        can_send = can_send and agreement.status in {"GENERATED", "PENDING_SIGNATURE"}
     if agreement:
         open_case = await session.scalar(select(DisputeContext.dispute_id).where(
             DisputeContext.contract_id == agreement.id, DisputeContext.is_open.is_(True)).limit(1))
@@ -111,11 +112,24 @@ async def checked_thread(session, actor, thread_id, *, write=False):
         obj = agreement
     disputed = getattr(obj, "status", "") == "DISPUTED" or any(m.status == "DISPUTED" for m in getattr(obj, "milestones", ()))
     if write and (thread.locked or disputed or not can_send):
-        raise Conflict("This conversation is read-only; use the dispute workspace for disputed work", code="THREAD_READ_ONLY")
+        raise Conflict("This conversation is read-only. Continue active work in the engagement conversation; use the dispute workspace for disputed work.", code="THREAD_READ_ONLY")
     return thread, can_send and not thread.locked and not disputed
 
 
 async def thread_out(session, actor, thread, can_send):
+    related_id = None
+    archived = False
+    if thread.context_type == "PROPOSAL_REQUEST":
+        agreement = await contract.get_contract_by_request(session, thread.context_id)
+        if agreement:
+            related_id = await session.scalar(select(Thread.id).where(
+                Thread.context_type == "CONTRACT", Thread.context_id == agreement.id))
+            archived = agreement.status not in {"GENERATED", "PENDING_SIGNATURE"}
+    elif thread.context_type == "CONTRACT":
+        agreement = await contract.get_contract(session, thread.context_id)
+        if agreement:
+            related_id = await session.scalar(select(Thread.id).where(
+                Thread.context_type == "PROPOSAL_REQUEST", Thread.context_id == agreement.request_id))
     pos = await session.scalar(select(ReadPosition.sequence).where(ReadPosition.thread_id == thread.id,
         ReadPosition.identity_id == actor.identity_id)) or 0
     unread = await session.scalar(select(func.count()).select_from(Message).where(Message.thread_id == thread.id,
@@ -126,7 +140,10 @@ async def thread_out(session, actor, thread, can_send):
     counterpart = pro.display_name if pro and pro.identity_id != actor.identity_id else org.name if org else "Organisation"
     is_professional = bool(pro and pro.identity_id == actor.identity_id)
     return ThreadOut(id=thread.id, contextType=thread.context_type, contextId=thread.context_id, title=thread.title,
-        locked=not can_send, lockReason=thread.lock_reason or ("Conversation is read-only" if not can_send else None),
+        locked=not can_send, lockReason=thread.lock_reason or (
+            "Request history is read-only. Continue in the engagement conversation." if archived
+            else "Conversation is read-only" if not can_send else None),
+        relatedThreadId=related_id, archivedRequest=archived,
         canSend=can_send, unreadCount=unread, lastSequence=thread.sequence, updatedAt=thread.updated_at,
         counterpartName=counterpart, viewerRole="PROFESSIONAL" if is_professional else "BUYER",
         professionalId=thread.professional_id, photoUrl=pro.photo_url if pro and not is_professional else None,
@@ -356,8 +373,8 @@ async def upload(session, actor, thread_id, body: UploadIn):
         data = base64.b64decode(body.dataBase64, validate=True)
     except (ValueError, binascii.Error) as exc:
         raise ValidationFailed("Invalid file encoding") from exc
-    if not data or len(data) > 10 * 1024 * 1024:
-        raise ValidationFailed("Files must be between 1 byte and 10 MB")
+    if not data or len(data) > 50 * 1024 * 1024:
+        raise ValidationFailed("Files must be between 1 byte and 50 MB")
     from zoikorum.domains.messaging.files import validate_file
     content_type = validate_file(body.name, data)
     scanning.scan(data, body.name)

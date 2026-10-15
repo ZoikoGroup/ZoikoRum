@@ -13,8 +13,8 @@ docker compose --env-file <settings> -f docker-compose.prod.yml run --rm migrate
 
 ## Alternative: `zoikorum_fresh_install.sql`
 
-This is a snapshot of a freshly migrated, empty database (PostgreSQL 16, migration `e3f4a5b6c7d8`). It contains
-107 tables in 23 schemas, the triggers that keep audit and ledger records append-only, the 133 starter
+This is a snapshot of a freshly migrated, empty database (PostgreSQL 16, migration `f4a5b6c7d8e9`). It contains
+109 tables in 23 schemas, the triggers that keep audit and ledger records append-only, the 133 starter
 specializations, and the migration marker.
 
 1. Create an empty database and the user the app connects as.

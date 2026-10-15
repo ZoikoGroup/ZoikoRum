@@ -7,7 +7,7 @@ import uuid
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from zoikorum.domains.contract.models import ChangeOrder, Contract, Signature
+from zoikorum.domains.contract.models import ChangeOrder, Contract, Signature, Submission, SubmissionReview
 from zoikorum.domains.professional import facade as professional_facade
 from zoikorum.shared import privacy
 
@@ -22,7 +22,9 @@ async def _party(session: AsyncSession, identity_id: uuid.UUID):
 async def export(session: AsyncSession, identity_id: uuid.UUID) -> dict:
     return {"contracts": await privacy.rows(session, Contract, await _party(session, identity_id)),
             "signatures": await privacy.rows(session, Signature, Signature.signer_identity_id == identity_id),
-            "changeOrders": await privacy.rows(session, ChangeOrder, ChangeOrder.proposed_by_identity_id == identity_id)}
+            "changeOrders": await privacy.rows(session, ChangeOrder, ChangeOrder.proposed_by_identity_id == identity_id),
+            "deliveries": await privacy.rows(session, Submission, Submission.submitted_by == identity_id),
+            "deliveryReviews": await privacy.rows(session, SubmissionReview, SubmissionReview.reviewer_identity_id == identity_id)}
 
 
 async def blockers(session: AsyncSession, identity_id: uuid.UUID) -> list[str]:

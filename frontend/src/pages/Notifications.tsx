@@ -10,13 +10,16 @@ export function NotificationsPage() {
   const [rows, setRows] = useState<Notification[]>([])
   const [cursor, setCursor] = useState<string | null>(null)
   const initialLoad = useRef(false)
+  const reading = useRef(new Set<string>())
+  const readOverrides = useRef(new Map<string, Notification>())
   const [error, setError] = useState<unknown>(null)
 
   const load = useCallback(async () => {
     const page = await notificationApi.inbox()
     setRows((previous) => {
-      const ids = new Set(page.items.map((row) => row.id))
-      return [...page.items, ...previous.filter((row) => !ids.has(row.id))]
+      const incoming = page.items.map(row => readOverrides.current.get(row.id) ?? row)
+      const ids = new Set(incoming.map(row => row.id))
+      return [...incoming, ...previous.filter(row => !ids.has(row.id))]
     })
     if (!initialLoad.current) {
       setCursor(page.nextCursor)
@@ -31,12 +34,23 @@ export function NotificationsPage() {
   }, [load])
 
   async function open(row: Notification) {
+    if (row.readAt || reading.current.has(row.id)) return
+    reading.current.add(row.id)
+    const optimistic = { ...row, readAt: 'pending' }
+    readOverrides.current.set(row.id, optimistic)
+    setRows(list => list.map(r => r.id === row.id ? optimistic : r))
+    window.dispatchEvent(new CustomEvent('zk:notification-read', { detail: { id: row.id, phase: 'start' } }))
     try {
       const result = await notificationApi.read(row.id)
-      setRows((list) => list.map((r) => (r.id === row.id ? result : r)))
+      readOverrides.current.set(row.id, result)
+      setRows(list => list.map(r => r.id === row.id ? result : r))
+      window.dispatchEvent(new CustomEvent('zk:notification-read', { detail: { id: row.id, phase: 'complete' } }))
     } catch (err) {
+      readOverrides.current.delete(row.id)
+      setRows(list => list.map(r => r.id === row.id ? row : r))
+      window.dispatchEvent(new CustomEvent('zk:notification-read', { detail: { id: row.id, phase: 'rollback' } }))
       setError(err)
-    }
+    } finally { reading.current.delete(row.id) }
   }
 
   const unreadCount = rows.filter((r) => !r.readAt).length

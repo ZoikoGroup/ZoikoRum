@@ -1,5 +1,6 @@
-"""Contract domain tables: the agreement generated from an accepted proposal, its milestones, signatures and
-milestone submissions. Signatures are append-only (database trigger): a signature is never edited or removed."""
+"""Contract domain tables: the agreement generated from an accepted proposal, its milestones, signatures, milestone
+submissions (with the professional's drafts) and the buyer's reviews of them. Signatures, submissions and reviews are
+append-only (database trigger): they are never edited or removed."""
 
 from __future__ import annotations
 
@@ -175,7 +176,8 @@ class Signature(Base, UUIDPk, CreatedAt):
 
 
 class Submission(Base, UUIDPk, CreatedAt):
-    """A professional's delivery for a milestone: a note plus file fingerprints. Never edited; resubmitting adds a row."""
+    """A professional's delivery for a milestone, item by item against the contract's deliverables. Append-only
+    (database trigger): resubmitting adds a row with the next revision number."""
 
     __tablename__ = "submissions"
     __table_args__ = {"schema": SCHEMA}
@@ -184,3 +186,34 @@ class Submission(Base, UUIDPk, CreatedAt):
     submitted_by: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     note: Mapped[str] = mapped_column(String(2000), nullable=False, default="")
     files: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)  # [{name, sha256, size, contentType, key}]: the files themselves live in blob storage
+    revision_number: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")  # 0 first delivery, 1.. resubmissions
+    # [{deliverableKey, title, acceptanceCriteria, note, evidence: [FILE | LINK record], carriedOver}]; empty for one-step deliveries
+    items: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
+    declaration: Mapped[dict | None] = mapped_column(JSONB)  # {text, confirmedAt, ip}: what the professional confirmed when sending
+    late_reason: Mapped[str | None] = mapped_column(String(500))
+
+
+class SubmissionDraft(Base, UUIDPk, Timestamps, Versioned):
+    """Work being prepared for a milestone, saved as the professional goes. Only the professional sees it; sending turns it
+    into a Submission and removes the draft. One per milestone."""
+
+    __tablename__ = "submission_drafts"
+    __table_args__ = {"schema": SCHEMA}
+
+    milestone_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.milestones.id"), nullable=False, unique=True)
+    professional_identity_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    note: Mapped[str] = mapped_column(String(2000), nullable=False, default="")
+    items: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)  # {deliverableKey: {note, evidence: [...]}}
+
+
+class SubmissionReview(Base, UUIDPk, CreatedAt):
+    """The buyer's verdict on each deliverable of one submission, and what followed (accepted or sent back). Append-only."""
+
+    __tablename__ = "submission_reviews"
+    __table_args__ = {"schema": SCHEMA}
+
+    submission_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.submissions.id"), nullable=False, index=True)
+    milestone_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.milestones.id"), nullable=False, index=True)
+    reviewer_identity_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    verdicts: Mapped[list] = mapped_column(JSONB, nullable=False)  # [{deliverableKey, verdict: MET | CHANGES_REQUESTED, comment}]
+    outcome: Mapped[str] = mapped_column(String(30), nullable=False)  # ACCEPTED | REVISION_REQUESTED

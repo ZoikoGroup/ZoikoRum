@@ -412,18 +412,25 @@ function DecisionForm({ c, onDone }: { c: VerificationCase; onDone: () => void }
   }
   const [expiresAt, setExpiresAt] = useState('')
   const [error, setError] = useState<unknown>(null)
+  const [saving, setSaving] = useState(false)
+  const savingRef = useRef(false)
   const { run, modal } = useStepUp(setError)
 
   function submit(e: FormEvent) {
     e.preventDefault()
     setError(null)
     run(async () => {
-      await verificationApi.decide(c.id, {
+      if (savingRef.current) return
+      savingRef.current = true
+      setSaving(true)
+      try {
+        await verificationApi.decide(c.id, {
         decision, reasonCode: reasonCode === 'OTHER' && otherCode.trim() ? otherCode.trim() : reasonCode,
         ...(publicReason ? { publicReason } : {}),
         ...(decision === 'VERIFIED' && expiresAt ? { expiresAt: new Date(`${expiresAt}T23:59:59Z`).toISOString() } : {}),
       })
-      onDone()
+        await onDone()
+      } finally { savingRef.current = false; setSaving(false) }
     })
   }
 
@@ -469,7 +476,7 @@ function DecisionForm({ c, onDone }: { c: VerificationCase; onDone: () => void }
         <textarea id="d-msg" className="input" rows={3} maxLength={500} value={publicReason} onChange={(e) => setPublicReason(e.target.value)}
           required={decision !== 'VERIFIED'} />
       </Field>
-      <button className="btn btn-primary">Record decision</button>
+      <button className="btn btn-primary" disabled={saving}>{saving ? 'Recording…' : 'Record decision'}</button>
     </form>
   )
 }
@@ -479,27 +486,60 @@ export function ReviewQueuePage() {
   const [selected, setSelected] = useState<VerificationCase | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<unknown>(null)
-  const load = useCallback(() => verificationApi.queue().then((p) => setItems(p.items)).catch(setError), [])
-  useEffect(() => { load() }, [load])
+  const [loading, setLoading] = useState(true)
+  const [opening, setOpening] = useState<string | null>(null)
+  const [person, setPerson] = useState('')
+  const [query, setQuery] = useState('')
+  const [checkType, setCheckType] = useState('')
+  const [status, setStatus] = useState('OPEN')
+  const [visibleCount, setVisibleCount] = useState(25)
+  const loadSequence = useRef(0)
+  const loadInProgress = useRef(false)
+  const openSequence = useRef(0)
+  const load = useCallback(async (force = false) => {
+    if (loadInProgress.current && !force) return
+    loadInProgress.current = true
+    const sequence = ++loadSequence.current
+    try {
+      const rows = await verificationApi.reviewCases()
+      if (sequence === loadSequence.current) setItems(rows)
+    } catch (err) { if (sequence === loadSequence.current) setError(err) }
+    finally { if (sequence === loadSequence.current) { loadInProgress.current = false; setLoading(false) } }
+  }, [])
+  useEffect(() => {
+    void load()
+    const timer = window.setInterval(() => void load(), 15000)
+    return () => { window.clearInterval(timer) }
+  }, [load])
+  const people = [...new Map(items.map(item => [`${item.subjectType}:${item.subjectId}`, item])).entries()]
+    .sort((a, b) => (a[1].subjectName ?? '').localeCompare(b[1].subjectName ?? ''))
+  const filtered = items.filter(item => (!person || `${item.subjectType}:${item.subjectId}` === person)
+    && (!checkType || item.verificationType === checkType) && (!status || (status === 'OPEN' ? OPEN.includes(item.status) : item.status === status))
+    && (!query.trim() || `${item.subjectName ?? ''} ${item.label}`.toLowerCase().includes(query.trim().toLowerCase())))
+  function resetFilters() { setVisibleCount(25) }
 
   async function open(id: string) {
+    const sequence = ++openSequence.current
+    setOpening(id)
+    setSelected(null)
     setError(null)
     try {
-      setSelected(await verificationApi.get(id))
-    } catch (err) {
-      setError(err)
-    }
+      const result = await verificationApi.get(id)
+      if (sequence === openSequence.current) setSelected(result)
+    } catch (err) { if (sequence === openSequence.current) setError(err) }
+    finally { if (sequence === openSequence.current) setOpening(null) }
   }
 
   return (
     <>
       <div className="page-head"><div><h1>Verification reviews</h1>
-        <p className="muted" style={{ margin: 0 }}>Open checks waiting for a human decision. You cannot review your own case.</p></div></div>
+        <p className="muted" style={{ margin: 0 }}>Filter verification history by person, check and status. Open cases need an independent human decision.</p></div></div>
       <ErrorAlert error={error} />
       <SecondLooks onDone={setNotice} onError={setError} />
       {notice && <div className="alert alert-success" role="status">{notice}</div>}
+      {opening && <p role="status">Loading verification case…</p>}
       {selected && (
-        <section className="card panel">
+        <section className="card panel" aria-label="Open verification case">
           <div className="offering-top">
             <div><h2 style={{ margin: 0 }}>{selected.label}</h2>
               <p className="muted small">{selected.subjectType === 'PROFESSIONAL'
@@ -533,18 +573,27 @@ export function ReviewQueuePage() {
               ))}</tbody>
             </table>
           )}
-          <DecisionForm c={selected} onDone={async () => { setNotice(`Decision recorded for ${selected.label}.`); setSelected(null); await load() }} />
+          {OPEN.includes(selected.status) ? <DecisionForm key={selected.id} c={selected} onDone={async () => { setNotice(`Decision recorded for ${selected.label}.`); setSelected(current => current?.id === selected.id ? null : current); await load(true) }} /> : <div className="tip"><span><strong>Recorded outcome: {selected.status.replaceAll('_', ' ')}</strong>{(selected.publicReason || selected.reasonCode) && <p>{selected.publicReason || selected.reasonCode}</p>}{selected.expiresAt && <p>Valid until: {fmtDate(selected.expiresAt)}</p>}<p>This check has been decided. Use the revocation or appeal workflow to change an outcome.</p></span></div>}
           <div style={{ height: 8 }} />
-          <button className="btn btn-ghost btn-sm" onClick={() => setSelected(null)}>Close</button>
+          <button className="btn btn-ghost btn-sm" onClick={() => { openSequence.current++; setSelected(null) }}>Close</button>
         </section>
       )}
       <AppealsPanel onDecided={setNotice} />
-      <VerifiedPanel onRevoked={async (msg) => { setNotice(msg); await load() }} />
+      <VerifiedPanel onRevoked={async (msg) => { setNotice(msg); await load(true) }} />
       <section className="card panel">
-        {items.length === 0 ? <p className="muted" style={{ margin: 0 }}>Nothing waiting. All checks are decided.</p> : (
+        <h2>Verification checks</h2>
+        <div className="review-filters">
+          <Field label="Search person or check" id="review-search"><input id="review-search" className="input" value={query} onChange={e => { setQuery(e.target.value); resetFilters() }} /></Field>
+          <Field label="Professional or firm" id="review-person"><select id="review-person" className="input" value={person} onChange={e => { setPerson(e.target.value); resetFilters() }}><option value="">All people and firms</option>{people.map(([key, item]) => <option key={key} value={key}>{item.subjectName ?? item.subjectId} ({item.subjectType === 'FIRM' ? 'Firm' : 'Professional'})</option>)}</select></Field>
+          <Field label="Check type" id="review-type"><select id="review-type" className="input" value={checkType} onChange={e => { setCheckType(e.target.value); resetFilters() }}><option value="">All checks</option>{[...new Set(items.map(item => item.verificationType))].map(type => <option key={type} value={type}>{type.replaceAll('_', ' ')}</option>)}</select></Field>
+          <Field label="Status" id="review-status"><select id="review-status" className="input" value={status} onChange={e => { setStatus(e.target.value); resetFilters() }}><option value="OPEN">Open checks</option><option value="">All statuses</option>{[...OPEN, 'VERIFIED', 'FAILED', 'EXPIRED', 'REVOKED'].map(value => <option key={value} value={value}>{value.replaceAll('_', ' ')}</option>)}</select></Field>
+        </div>
+        <button className="btn btn-secondary btn-sm" onClick={() => { setLoading(true); void load(true) }} disabled={loading}>{loading ? 'Loading…' : 'Refresh checks'}</button>
+        <p className="muted small" role="status">{filtered.length} matching checks. Decisions remain separate for each check.</p>
+        {loading && items.length === 0 ? <p role="status">Loading checks…</p> : filtered.length === 0 ? <p className="muted">{items.length ? 'No checks match these filters.' : 'No open checks waiting for review.'}</p> : (
           <table className="data">
             <thead><tr><th>Check</th><th>Subject</th><th>Status</th><th>Evidence</th><th>Due</th><th><span className="sr-only">Actions</span></th></tr></thead>
-            <tbody>{items.map((q) => (
+            <tbody>{filtered.slice(0, visibleCount).map((q) => (
               <tr key={q.id}>
                 <td><strong>{q.label}</strong>{q.providerResult === 'REVIEW' && q.verificationType === 'RESTRICTIONS' &&
                   <div className="muted small">Possible screening match</div>}
@@ -555,11 +604,12 @@ export function ReviewQueuePage() {
                 <td>{q.evidenceCount}{(q.flaggedEvidence ?? 0) > 0 && <> <span className="badge warn" title="The automatic check thinks a file is unrelated or unreadable">
                   {q.flaggedEvidence} flagged</span></>}</td>
                 <td>{fmtDate(q.estimatedCompletion)} {q.overdue && <span className="badge warn">Overdue</span>}</td>
-                <td style={{ textAlign: 'right' }}><button className="btn btn-secondary btn-sm" onClick={() => open(q.id)}>Review</button></td>
+                <td style={{ textAlign: 'right' }}><button className="btn btn-secondary btn-sm" disabled={opening === q.id} onClick={() => open(q.id)}>{opening === q.id ? 'Loading…' : OPEN.includes(q.status) ? 'Review' : 'View case'}</button></td>
               </tr>
             ))}</tbody>
           </table>
         )}
+        {filtered.length > visibleCount && <button className="btn btn-secondary" onClick={() => setVisibleCount(n => n + 25)}>Show more checks</button>}
       </section>
     </>
   )

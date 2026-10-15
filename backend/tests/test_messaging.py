@@ -191,7 +191,7 @@ async def test_dispute_events_lock_and_unlock_after_last_open_case(client, make_
     await publish(E.DISPUTE_CLOSED, second)
     unlocked = (await client.get("/v1/threads", headers=buyer.h)).json()["items"]
     assert next(t for t in unlocked if t["id"] == contract_thread["id"])["locked"] is False
-    assert next(t for t in unlocked if t["id"] == request_thread["id"])["locked"] is False
+    assert next(t for t in unlocked if t["id"] == request_thread["id"])["locked"] is True
 
     async with sf() as session:
         with pytest.raises(DBAPIError):
@@ -283,3 +283,30 @@ async def test_a_buyer_can_ask_a_professional_before_sending_a_request(client, m
     assert (await client.post("/v1/threads", headers=pro_user.idem(), json=body)).json()["code"] == "NOT_A_MEMBER"
     stranger = await make_user("enquiry-stranger")
     assert (await client.get(f"/v1/threads/{thread['id']}", headers=stranger.h)).status_code == 404
+
+
+async def test_active_engagement_links_and_archives_request_chat(client, make_user, drain):
+    _, _, buyer, agreement = await signed_contract(client, make_user, drain)
+    rows = (await client.get("/v1/threads", headers=buyer.h)).json()["items"]
+    request = next(row for row in rows if row["contextType"] == "PROPOSAL_REQUEST")
+    active = next(row for row in rows if row["contextType"] == "CONTRACT")
+    assert request["archivedRequest"] and not request["canSend"]
+    assert request["relatedThreadId"] == active["id"]
+    assert active["relatedThreadId"] == request["id"] and active["canSend"]
+    history = await client.get(f"/v1/threads/{request['id']}/messages", headers=buyer.h)
+    assert history.status_code == 200 and history.json()["items"]
+    blocked = await client.post(f"/v1/threads/{request['id']}/messages", headers=buyer.idem(), json={"body": "Wrong place"})
+    assert blocked.status_code == 409
+    sent = await client.post(f"/v1/threads/{active['id']}/messages", headers=buyer.idem(), json={"body": "Continue the work here"})
+    assert sent.status_code == 201, sent.text
+
+
+async def test_message_attachments_accept_50mb_and_reject_larger(client, make_user, drain):
+    _, buyer, _, thread = await request_conversation(client, make_user, drain)
+    url = f"/v1/threads/{thread['id']}/attachments"
+    content = b"x" * (50 * 1024 * 1024)
+    uploaded = await client.post(url, headers=buyer.idem(), json={"name": "large.txt", "dataBase64": base64.b64encode(content).decode()})
+    assert uploaded.status_code == 201, uploaded.text[:500]
+    assert uploaded.json()["size"] == len(content)
+    over = await client.post(url, headers=buyer.idem(), json={"name": "too-large.txt", "dataBase64": base64.b64encode(content + b"x").decode()})
+    assert over.status_code == 422

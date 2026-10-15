@@ -669,8 +669,11 @@ async def subject_cases(session: AsyncSession, actor: Actor, subject_type: str, 
 async def review_queue(session: AsyncSession, actor: Actor, cursor: str | None, limit: int | None, status: str | None) -> dict:
     actor.require_platform_role(*REVIEWERS)
     # Default: checks waiting for a decision. "VERIFIED": decided checks, so a mistaken verification can be revoked.
-    states = (status,) if status in (*OPEN_STATES, "VERIFIED") else ("PENDING", "IN_REVIEW")
-    stmt, lim = paginate(select(VerificationCase).where(VerificationCase.status.in_(states)), VerificationCase, cursor, limit)
+    states = (status,) if status in (*OPEN_STATES, "VERIFIED", "FAILED", "EXPIRED", "REVOKED") else OPEN_STATES
+    stmt = select(VerificationCase)
+    if status != "ALL":
+        stmt = stmt.where(VerificationCase.status.in_(states))
+    stmt, lim = paginate(stmt, VerificationCase, cursor, limit)
     rows = (await session.scalars(stmt)).all()
     counts = dict((await session.execute(
         select(EvidenceItem.case_id, func.count()).where(EvidenceItem.case_id.in_([c.id for c in rows])).group_by(EvidenceItem.case_id)
