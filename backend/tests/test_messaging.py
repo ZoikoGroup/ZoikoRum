@@ -186,7 +186,7 @@ async def test_dispute_events_lock_and_unlock_after_last_open_case(client, make_
     async with sf() as session, session.begin():
         record_event(session, E.DISPUTE_RESOLVED, aggregate_type="Dispute", aggregate_id=second,
             tenant_id=contract["organizationId"], payload={"disputeId": second, "contractId": contract["id"],
-                "outcome": "REWORK", "allocations": []})
+                "outcome": "REWORK", "decisionPath": "DIRECT", "allocations": [], "currency": "USD"})
     await drain()
     await publish(E.DISPUTE_CLOSED, second)
     unlocked = (await client.get("/v1/threads", headers=buyer.h)).json()["items"]

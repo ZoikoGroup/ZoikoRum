@@ -10,8 +10,8 @@ WORKDIR /build
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 # Pinned versions first (cached layer).
-COPY requirements.txt ./
-RUN pip install -r requirements.txt
+COPY requirements.txt constraints.txt ./
+RUN pip install -r requirements.txt -c constraints.txt
 # Optional integrations: gcs = Google Cloud Storage, cloud = Amazon S3, monitoring = error reporting,
 # tracing = OpenTelemetry, ai = Claude.
 # Only their dependencies are installed here: the application runs from /app/src (next to /app/alembic, which the
@@ -19,11 +19,16 @@ RUN pip install -r requirements.txt
 ARG EXTRAS="gcs,cloud,monitoring,tracing,ai"
 COPY pyproject.toml ./
 COPY src ./src
-RUN if [ -n "$EXTRAS" ]; then pip install ".[${EXTRAS}]" && pip uninstall -y zoikorum; fi
+# Then: dependencies of dependencies are raised to their fixed versions (constraints.txt), and pip itself is removed.
+RUN if [ -n "$EXTRAS" ]; then pip install ".[${EXTRAS}]" -c constraints.txt && pip uninstall -y zoikorum; fi \
+ && pip install --upgrade -c constraints.txt msgpack setuptools urllib3 \
+ && pip uninstall -y pip
 
 FROM python:3.13-slim AS runtime
 ENV PATH="/opt/venv/bin:$PATH" PYTHONPATH=/app/src PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 ZK_ENV=production
-RUN useradd --system --uid 10001 --home-dir /app zoikorum
+# No installer at runtime: pip bundles its own older copies of urllib3, msgpack and setuptools, and nothing is
+# installed after the build (the app environment's pip is removed in the build stage).
+RUN python -m pip uninstall -y pip && useradd --system --uid 10001 --home-dir /app zoikorum
 WORKDIR /app
 COPY --from=build /opt/venv /opt/venv
 COPY alembic.ini ./

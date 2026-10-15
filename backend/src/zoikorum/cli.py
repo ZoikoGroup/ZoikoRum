@@ -95,20 +95,21 @@ async def _db_grants(role: str | None) -> None:
 
 async def _rotate_field_keys() -> None:
     """Re-encrypt every stored sensitive value that is not yet on the active key, in small transactions."""
-    from sqlalchemy import text
+    from sqlalchemy import column as sql_column, select, table as sql_table, update
 
     from zoikorum.shared.crypto import ENCRYPTED_COLUMNS, active_key_id, decrypt_field, encrypt_field, key_id_of
 
     target = active_key_id()
     async with session_factory()() as session:
         for table, column in ENCRYPTED_COLUMNS:
-            rows = (await session.execute(text(f"SELECT id, {column} FROM {table} WHERE {column} IS NOT NULL"))).all()
+            schema, name = table.split(".")
+            t = sql_table(name, sql_column("id"), sql_column(column), schema=schema)  # identifiers quoted by SQLAlchemy
+            rows = (await session.execute(select(t.c.id, t.c[column]).where(t.c[column].is_not(None)))).all()
             changed = 0
             for row_id, value in rows:
                 if key_id_of(value) == target and value.startswith("v2:"):
                     continue
-                await session.execute(text(f"UPDATE {table} SET {column} = :v WHERE id = :id"),
-                                      {"v": encrypt_field(decrypt_field(value)), "id": row_id})
+                await session.execute(update(t).where(t.c.id == row_id).values({column: encrypt_field(decrypt_field(value))}))
                 changed += 1
             await session.commit()
             print(f"{table}.{column}: {changed} re-encrypted, {len(rows) - changed} already on key {target}")

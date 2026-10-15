@@ -107,7 +107,7 @@ jobs:
       - name: Scan images for known vulnerabilities (fixable HIGH and CRITICAL fail the build)
         run: |
           for image in zoikorum-backend:ci zoikorum-web:ci zoikorum-web-staff:ci; do
-            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.56.2 image               --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --no-progress "$image"
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.56.2 image --scanners vuln --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --no-progress "$image"
           done
       - name: Software bill of materials (CycloneDX)
         run: |
