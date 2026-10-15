@@ -112,6 +112,7 @@ export const verificationApi = {
   forSubject: (type: SubjectType, id: string) => api<VerificationCase[]>(`${V}/subjects/${type}/${id}`),
   addEvidence: (id: string, evidenceType: EvidenceType, items: Upload[]) =>
     api<VerificationCase>(`${V}/cases/${id}/evidence`, { method: 'POST', body: { evidenceType, items } }),
+  reviewCases: () => allPages<QueueItem>(`${V}/review-queue`, { status: 'ALL' }),
   queue: (cursor?: string | null) =>
     api<{ items: QueueItem[]; nextCursor: string | null }>(`${V}/review-queue`, { query: cursor ? { cursor } : undefined }),
   verified: () => api<{ items: QueueItem[]; nextCursor: string | null }>(`${V}/review-queue`, { query: { status: 'VERIFIED', limit: '50' } }),

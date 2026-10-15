@@ -18,7 +18,7 @@ Migrations: `backend/alembic/versions/` (`alembic upgrade head`).
 - [marketplace](#schema-marketplace) — 6 tables
 - [search](#schema-search) — 1 tables
 - [proposal](#schema-proposal) — 2 tables
-- [contract](#schema-contract) — 6 tables
+- [contract](#schema-contract) — 8 tables
 - [escrow](#schema-escrow) — 5 tables
 - [payments](#schema-payments) — 7 tables
 - [verification](#schema-verification) — 6 tables
@@ -946,9 +946,38 @@ Append-only receipt: who signed which version and terms, how strongly authentica
 
 Unique together: (contract_id, contract_version, party)
 
-### `contract.submissions`
+### `contract.submission_drafts`
 
-A professional's delivery for a milestone: a note plus file fingerprints. Never edited; resubmitting adds a row.
+Work being prepared for a milestone, saved as the professional goes. Only the professional sees it; sending turns it into a Submission and removes the draft. One per milestone.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `milestone_id` | UUID | no | FK → contract.milestones.id, unique |
+| `professional_identity_id` | UUID | no |  |
+| `note` | varchar(2000) | no |  |
+| `items` | JSONB | no |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+| `version` | BIGINT | no |  |
+
+### `contract.submission_reviews` — append-only
+
+The buyer's verdict on each deliverable of one submission, and what followed (accepted or sent back). Append-only.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `submission_id` | UUID | no | FK → contract.submissions.id, indexed |
+| `milestone_id` | UUID | no | FK → contract.milestones.id, indexed |
+| `reviewer_identity_id` | UUID | no |  |
+| `verdicts` | JSONB | no |  |
+| `outcome` | varchar(30) | no |  |
+| `id` | UUID | no | PK |
+| `created_at` | DATETIME | no |  |
+
+### `contract.submissions` — append-only
+
+A professional's delivery for a milestone, item by item against the contract's deliverables. Append-only (database trigger): resubmitting adds a row with the next revision number.
 
 | Column | Type | Null | Keys / index |
 |---|---|---|---|
@@ -956,6 +985,10 @@ A professional's delivery for a milestone: a note plus file fingerprints. Never 
 | `submitted_by` | UUID | no |  |
 | `note` | varchar(2000) | no |  |
 | `files` | JSONB | no |  |
+| `revision_number` | INTEGER | no |  |
+| `items` | JSONB | no |  |
+| `declaration` | JSONB | yes |  |
+| `late_reason` | varchar(500) | yes |  |
 | `id` | UUID | no | PK |
 | `created_at` | DATETIME | no |  |
 
@@ -1710,7 +1743,7 @@ Base class used for declarative class definitions.  The :class:`_orm.Declarative
 | `id` | UUID | no | PK |
 | `created_at` | DATETIME | no |  |
 
-Unique together: (thread_id, source_event_id); (thread_id, sequence)
+Unique together: (thread_id, sequence); (thread_id, source_event_id)
 
 ### `messaging.read_positions`
 

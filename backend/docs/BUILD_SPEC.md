@@ -216,10 +216,21 @@ Milestone: PENDING_FUNDING → IN_PROGRESS → SUBMITTED → (REVISION_REQUESTED
   then professional. Signature rows append-only (signer, party, termsHash, authStrength, signedAt, ip). Both signed → ACTIVE
   + CONTRACT_ACTIVATED. termsHash mismatch → 409.
 - Consume ESCROW_FUNDED → listed milestones PENDING_FUNDING → IN_PROGRESS (MILESTONE_STARTED). No work without funding.
-- `POST /v1/milestones/{id}/submit` (professional) {note, deliverables[{name, sha256, size}]} → SUBMITTED; acceptance timer
-  (acceptance_window_days; auto-accept only if auto_accept_after_days set, else reminder + escalation).
+- Delivery draft (professional only, private until sent; one per milestone, seeded from the last delivery after a revision
+  request): `GET|PATCH|DELETE /v1/milestones/{id}/submission-draft` (PATCH {note?, itemNotes{key: note}}),
+  `POST .../submission-draft/items/{key}/evidence` {file | url [, label, version]} (links are recognised from the address,
+  https only, never fetched by the server), `DELETE .../items/{key}/evidence/{evidenceId}`, `GET .../submission-draft/files/{sha256}`.
+  Response lists one item per deliverable of the milestone (from the contract terms) with blockers (NO_EVIDENCE, NO_CHANGES)
+  and warnings (LATE, LIVE_DOCUMENT, NO_VERSION, SAME_FILE_TWICE).
+- `POST /v1/milestones/{id}/submit` (professional) → SUBMITTED; acceptance timer (acceptance_window_days; auto-accept only if
+  auto_accept_after_days set, else reminder + escalation). With a draft: {confirmed: true, lateReason?}; any blocker → 409
+  DELIVERY_INCOMPLETE; the submission stores items, revisionNumber and the declaration (text, time, ip). Without a draft:
+  {note, files} in one step. Submissions are append-only.
 - `POST /v1/milestones/{id}/accept` (Idempotency; org REQUESTER/APPROVER; policy MILESTONE_ACCEPT) → ACCEPTED + MILESTONE_ACCEPTED.
   `POST /v1/milestones/{id}/request-revision` {reason}.
+  `POST /v1/milestones/{id}/review` (Idempotency) {verdicts[{deliverableKey, verdict MET|CHANGES_REQUESTED, comment}]}: one verdict
+  per deliverable of the latest delivery; all MET → accept (same policy check), otherwise → REVISION_REQUESTED with the comments.
+  Stored append-only in contract.submission_reviews.
 - All milestones ACCEPTED → CONTRACT_COMPLETED.
 - Change orders: `POST /v1/contracts/{id}/change-orders` {type ADD_DELIVERABLE|MODIFY_DELIVERABLE|EXTEND_TIMELINE|PRICING_CHANGE, delta, impact};
   `POST /v1/change-orders/{id}/approve|reject` by the other party (+ policy CHANGE_ORDER_APPROVE). Approved material change

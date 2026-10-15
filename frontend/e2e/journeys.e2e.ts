@@ -63,8 +63,8 @@ test('a customer accepts delivered work and downloads the invoice PDF', async ({
   await signIn(page, buyer.email)
   await page.goto(`/app/engagements/${contract.id}`)
   await page.getByRole('tab', { name: /Milestones/ }).click()
-  page.once('dialog', (d) => d.accept())  // "Accept M1 …? This releases … from escrow"
-  await page.getByRole('button', { name: 'Accept milestone' }).first().click()
+  await page.getByRole('button', { name: /^Accept all & release/ }).first().click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Accept and release' }).click()  // "This releases … from escrow"
   await expect(page.getByText(/Milestone accepted/)).toBeVisible()
 
   await page.getByRole('tab', { name: 'Agreement' }).click()

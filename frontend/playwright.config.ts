@@ -8,6 +8,8 @@ import { defineConfig, devices } from '@playwright/test'
 
 const API_PORT = 8100
 const WEB_PORT = 5199  // not 5173 or 5174: those are the customer and staff apps (npm run dev, npm run dev:staff)
+// Slow development machines can allow more time for fresh-database migrations.
+const startupTimeout = Number(process.env.ZK_E2E_STARTUP_TIMEOUT_MS ?? 120_000)
 const python = process.env.ZK_E2E_PYTHON ?? (process.platform === 'win32' ? '../.venv/Scripts/python.exe' : 'python')
 
 export default defineConfig({
@@ -29,14 +31,14 @@ export default defineConfig({
     {
       command: `"${python}" ../backend/scripts/e2e_stack.py`,
       url: `http://127.0.0.1:${API_PORT}/ready`,
-      timeout: 120_000,
+      timeout: startupTimeout,
       reuseExistingServer: false,
       env: { ZK_E2E_API_PORT: String(API_PORT), ZK_E2E_WEB_URL: `http://localhost:${WEB_PORT}` },
     },
     {
       command: 'npx vite',
       url: `http://localhost:${WEB_PORT}/login`,
-      timeout: 120_000,
+      timeout: startupTimeout,
       reuseExistingServer: false,
       env: { ZK_API_TARGET: `http://127.0.0.1:${API_PORT}`, ZK_WEB_PORT: String(WEB_PORT) },
     },
