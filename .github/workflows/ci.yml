@@ -44,11 +44,13 @@ jobs:
           alembic upgrade head
           alembic check
       - name: Unit tests (no database)
-        run: pytest -m unit
+        run: pytest -m unit --cov --cov-report=
       - name: Integration tests
-        run: pytest -m integration
+        run: pytest -m integration --cov --cov-append --cov-report=
       - name: Regression tests (end-to-end flows, Steps 1-9)
-        run: pytest -m regression
+        run: pytest -m regression --cov --cov-append --cov-report=
+      - name: Test coverage (the build fails below 80%; measured 84% when the gate was set)
+        run: coverage report --fail-under=80 --skip-covered --sort=cover
 
   frontend:
     runs-on: ubuntu-latest

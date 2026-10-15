@@ -3,7 +3,7 @@ import { useTwoStepReady } from '../auth/useTwoStep'
 import { EngagementReview } from '../components/EngagementReview'
 import { AIAssistance } from '../components/AIAssistance'
 import { Link, useParams } from 'react-router-dom'
-import { CONTRACT_STATUS, contractApi, MILESTONE_STATUS, deliveredFileUrl, type ActivityEntry, type ChangeOrder, type Contract, type ContractMilestone,
+import { CONTRACT_STATUS, contractApi, MILESTONE_STATUS, type PolicyState, deliveredFileUrl, type ActivityEntry, type ChangeOrder, type Contract, type ContractMilestone,
   type EngagementFile } from '../api/contracts'
 import { disputeApi, OPEN_PHASES, type Dispute } from '../api/disputes'
 import { escrowApi, type Escrow } from '../api/escrow'
@@ -118,6 +118,14 @@ export function EngagementDetail({ side }: { side: Side }) {
   // Payments are processed in the background (provider capture, then escrow hold): refresh a few times after funding.
   const refreshSoon = () => { for (const ms of [1200, 3000, 6000]) setTimeout(() => { load() }, ms) }
   useEffect(() => { if (tab === 'agreement' && doc === null) contractApi.document(id).then(setDoc).catch(setError) }, [tab, doc, id])
+  // Live policy state (buyer): blocked actions are shown, and disabled, before anyone tries them.
+  const [policy, setPolicy] = useState<PolicyState | null>(null)
+  const policyKey = c && side === 'buyer' ? `${c.id}:${c.status}:${c.milestones.map((m) => m.status).join(',')}` : ''
+  useEffect(() => { if (policyKey) contractApi.policyState(id).then(setPolicy).catch(() => setPolicy(null)) }, [policyKey, id])
+  const blockedReason = (action: string, milestoneId?: string) => {
+    const a = policy?.actions.find((x) => x.action === action && (!milestoneId || x.milestoneId === milestoneId))
+    return a?.decision === 'BLOCK' ? a.reasons[0]?.message ?? 'Blocked by your organisation policy' : undefined
+  }
 
   if (!c) return error ? <ErrorAlert error={error} /> : <Loading />
   const st = CONTRACT_STATUS[c.status]
@@ -300,7 +308,8 @@ export function EngagementDetail({ side }: { side: Side }) {
             onPause={(reason) => act(() => contractApi.pause(c.id, reason), 'Retainer paused. No new cycles are funded until you resume.')}
             onResume={() => act(() => contractApi.resume(c.id), 'Retainer resumed.')} />}
           {c.milestones.map((m) => <MilestoneCard key={m.id} m={m} c={c} side={side} busy={busy}
-            canFund={!!escrow?.canFund && escrow.allocations.some((x) => x.milestoneId === m.id && x.state === 'UNFUNDED')}
+            canFund={!!escrow?.canFund && escrow.allocations.some((x) => x.milestoneId === m.id && x.state === 'UNFUNDED') && !blockedReason('ESCROW_FUND', m.id)}
+            acceptBlocked={blockedReason('MILESTONE_ACCEPT', m.id)}
             funding={escrow?.allocations.find((x) => x.milestoneId === m.id)?.state === 'FUNDING'}
             onFund={() => setFundFor([m.id])}
             onSubmit={(note, files) => act(() => contractApi.submit(m.id, note, files), 'Work submitted for review.')}
@@ -311,7 +320,9 @@ export function EngagementDetail({ side }: { side: Side }) {
         </>
       )}
 
-      {tab === 'payments' && <PaymentsPanel c={c} escrow={escrow} side={side} onFund={(ids) => setFundFor(ids)} />}
+      {side === 'buyer' && ['overview', 'milestones', 'payments'].includes(tab) && <PolicyStatePanel state={policy} />}
+      {tab === 'payments' && <PaymentsPanel c={c} escrow={escrow} side={side} onFund={(ids) => setFundFor(ids)}
+        fundBlocked={blockedReason('ESCROW_FUND')} />}
 
       {tab === 'messages' && <MessagesPreview c={c} />}
       {tab === 'files' && <FilesPanel c={c} onError={setError} />}
@@ -585,7 +596,8 @@ function RetainerCycles({ c, side, busy, onCancel, onPause, onResume }: { c: Con
   )
 }
 
-function MilestoneCard({ m, c, side, busy, canFund, funding, onFund, onSubmit, onAccept, onRevise, onOfferPartial, onAnswerPartial }: {
+function MilestoneCard({ m, c, side, busy, canFund, funding, onFund, onSubmit, onAccept, onRevise, onOfferPartial, onAnswerPartial, acceptBlocked }: {
+  acceptBlocked?: string
   m: ContractMilestone; c: Contract; side: Side; busy: boolean; canFund: boolean; funding: boolean; onFund: () => void
   onSubmit: (note: string, files: Upload[]) => void; onAccept: () => void; onRevise: (reason: string) => void
   onOfferPartial: (amountMinor: number, reason: string) => void; onAnswerPartial: (agree: boolean) => void
@@ -672,7 +684,7 @@ function MilestoneCard({ m, c, side, busy, canFund, funding, onFund, onSubmit, o
         </> : <>
           <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => setRevising(true)}>Request revision</button>
           {!m.partialOffer && <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => setPartial(true)}>Accept for less…</button>}
-          <button className="btn btn-primary" disabled={busy} onClick={onAccept}>Accept milestone</button>
+          <button className="btn btn-primary" disabled={busy || !!acceptBlocked} title={acceptBlocked} onClick={onAccept}>Accept milestone</button>
         </>}
       </div>}
     </section>
@@ -785,6 +797,30 @@ function ActivityPanel({ c, onError }: { c: Contract; onError: (e: unknown) => v
       )}
       <p className="muted small" style={{ margin: 0 }}>From the append-only, hash-chained audit trail. The evidence pack carries a fingerprint that is
         recorded with each download, so a copy can be checked later.</p>
+    </section>
+  )
+}
+
+
+const POLICY_BADGE: Record<string, [string, string]> = {
+  ALLOW: ['green', 'Allowed'], REQUIRE_APPROVAL: ['', 'Needs approval'], REQUIRE_EXCEPTION: ['warn', 'Needs an exception'], BLOCK: ['warn', 'Blocked'],
+}
+
+/** What the agreed policy will decide for the next money actions on this engagement. */
+function PolicyStatePanel({ state }: { state: PolicyState | null }) {
+  if (!state || state.actions.length === 0) return null
+  return (
+    <section className="card panel">
+      <div className="panel-head"><h2>Your policy on this engagement</h2><span className="badge">{state.policyVersion}</span></div>
+      <ul className="checklist">{state.actions.map((a) => {
+        const [tone, label] = POLICY_BADGE[a.decision] ?? ['', a.decision]
+        return <li key={`${a.action}-${a.milestoneId}`}><span><strong>{a.label}</strong> · {a.milestone}
+          {a.decision !== 'ALLOW' && a.reasons[0] && <><br /><span className="muted small">{a.reasons[0].message}</span></>}
+          {a.decision === 'REQUIRE_EXCEPTION' && <><br /><Link className="small" to={`/app/policies?${new URLSearchParams({ tab: 'exceptions',
+            subjectType: a.action === 'ESCROW_FUND' ? 'EscrowAccount' : 'Milestone', subjectId: a.milestoneId, action: a.action })}`}>Request an exception</Link></>}</span>
+          <span className={`badge ${tone}`}>{label}</span></li>
+      })}</ul>
+      <p className="muted small">Checked against the policy version agreed for this engagement. Approvals are requested when you take the action.</p>
     </section>
   )
 }

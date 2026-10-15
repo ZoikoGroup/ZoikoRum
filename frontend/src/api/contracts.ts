@@ -165,6 +165,7 @@ export const contractApi = {
   cancelRemainingCycles: (id: string, reason: string) =>
     api<Contract>(`${C}/${id}/cancel-remaining-cycles`, { method: 'POST', body: { reason }, headers: idem() }),
   activity: (id: string) => api<ActivityEntry[]>(`${C}/${id}/activity`),
+  policyState: (id: string) => api<PolicyState>(`${C}/${id}/policy-state`),
   pause: (id: string, reason?: string) => api<Contract>(`${C}/${id}/pause`, { method: 'POST', body: { reason: reason || null } }),
   resume: (id: string) => api<Contract>(`${C}/${id}/resume`, { method: 'POST' }),
   files: (id: string) => api<EngagementFile[]>(`${C}/${id}/all-files`),
@@ -187,4 +188,12 @@ export const MILESTONE_STATUS: Record<MilestoneStatus, { label: string; tone: ''
   SUBMITTED: { label: 'Submitted for review', tone: 'warn' }, REVISION_REQUESTED: { label: 'Revision requested', tone: 'warn' },
   ACCEPTANCE_PENDING_APPROVAL: { label: 'Awaiting approval', tone: 'warn' }, ACCEPTED: { label: 'Accepted', tone: 'green' },
   DISPUTED: { label: 'Disputed', tone: 'warn' }, CANCELLED: { label: 'Cancelled', tone: '' },
+}
+
+/** What the engagement's agreed policy would decide for the next money actions (buyer side only). */
+export interface PolicyState {
+  contractId: string
+  policyVersion: string
+  actions: { action: 'ESCROW_FUND' | 'MILESTONE_ACCEPT' | 'ESCROW_RELEASE'; label: string; milestoneId: string; milestone: string
+    decision: 'ALLOW' | 'REQUIRE_APPROVAL' | 'REQUIRE_EXCEPTION' | 'BLOCK'; reasons: { code: string; message: string }[] }[]
 }

@@ -67,7 +67,8 @@ export function FundDialog({ escrow, preselect, onClose, onFunded }: {
   )
 }
 
-export function PaymentsPanel({ c, escrow, side, onFund }: { c: Contract; escrow: Escrow | null; side: 'buyer' | 'professional'; onFund: (ids: string[]) => void }) {
+export function PaymentsPanel({ c, escrow, side, onFund, fundBlocked }: { c: Contract; escrow: Escrow | null; side: 'buyer' | 'professional'
+  onFund: (ids: string[]) => void; fundBlocked?: string }) {
   const [ledger, setLedger] = useState<LedgerLine[] | null>(null)
   const [paymentError, setPaymentError] = useState<unknown>(null)
   const [hosted, setHosted] = useState(false)
@@ -89,7 +90,8 @@ export function PaymentsPanel({ c, escrow, side, onFund }: { c: Contract; escrow
       {pending.length > 0 && <div className="tip" style={{ marginBottom: 16 }}><Icon name="clock" /><span>A payment of {formatMoney(pending[0].amount)} is being processed.</span></div>}
       <section className="card panel">
         <div className="panel-head"><h2>Milestones in escrow</h2>
-          {escrow.canFund && <button className="btn btn-primary btn-sm" onClick={() => onFund([])}><Icon name="lock" /> Fund remaining</button>}</div>
+          {escrow.canFund && <button className="btn btn-primary btn-sm" disabled={!!fundBlocked} title={fundBlocked} onClick={() => onFund([])}><Icon name="lock" /> Fund remaining</button>}</div>
+        {fundBlocked && <p className="small warn-text" role="note">{fundBlocked}</p>}
         <div className="payment-frame small">
           <span><Icon name="shield" /> <strong>Who releases:</strong> the buyer accepts each milestone; their organisation's approvers agree where its policy asks.</span>
           <span><Icon name="clock" /> <strong>What happens next:</strong> {escrow.held.amountMinor > 0 ? 'money held now is released when its milestone is accepted, or stays frozen if a dispute is opened.'

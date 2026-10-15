@@ -87,7 +87,7 @@ mistakes. A browser test checks the dialog keyboard behaviour.
 ## 6. Known limits at launch (agreed, not bugs)
 
 - Search is PostgreSQL full-text with ranking by trust, availability and track record; no semantic/vector search.
-- Passkeys are built. Enterprise single sign-on (SAML/OIDC) and SCIM provisioning are being built (see [GAP_AUDIT.md](GAP_AUDIT.md)).
+- Passkeys are built. Enterprise single sign-on (SAML/OIDC) and SCIM provisioning are not built yet.
 - Retainers are funded cycle by cycle by the buyer; there is no automatic card charging.
 - Recovery of money after a dispute has settled and been paid out follows a manual process (no automated clawback).
 - Live behaviour of Stripe, Veriff, SES and Anthropic has been tested only with their test modes or simulations in

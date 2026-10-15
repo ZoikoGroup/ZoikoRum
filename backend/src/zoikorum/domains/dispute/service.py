@@ -1031,7 +1031,7 @@ async def record_arbitration_award(session: AsyncSession, actor: Actor, case_id:
 # ---- Retention (Dispute resolution: retention rules by policy and jurisdiction) -----------------------------------
 
 # Minimum years records about a commercial dispute are kept, per country. STARTER VALUES pending confirmation by
-# counsel (GAP_AUDIT section D); the platform default (ZK_DISPUTE_RETENTION_YEARS) applies wherever it is longer.
+# counsel; the platform default (ZK_DISPUTE_RETENTION_YEARS) applies wherever it is longer.
 RETENTION_MINIMUM_YEARS = {"US": 7, "GB": 6, "IE": 6, "DE": 10, "FR": 10, "NL": 7, "ES": 6, "IT": 10, "IN": 8, "SG": 5,
                            "AE": 5, "AU": 7, "CA": 7}
 TIMER_RETENTION = "dispute.retention_review"

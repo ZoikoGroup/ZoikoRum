@@ -271,6 +271,8 @@ export function EnterpriseStructurePage() {
   const [error, setError] = useState<unknown>(null)
   const [unitName, setUnitName] = useState('')
   const [cc, setCc] = useState({ name: '', code: '', unit: '', amount: '', currency: 'USD' })
+  const [merge, setMerge] = useState({ from: '', into: '' })
+  const { run, modal } = useStepUp(setError)
   const canManageCostCenters = !!org?.myRoles.some((r) => r === 'ORG_ADMIN' || r === 'BUDGET_OWNER')
 
   const load = useCallback(async () => {
@@ -297,6 +299,14 @@ export function EnterpriseStructurePage() {
     }
   }
 
+  function mergeUnits(e: FormEvent) {
+    e.preventDefault()
+    const from = units.find((u) => u.id === merge.from)?.name, into = units.find((u) => u.id === merge.into)?.name
+    if (!confirm(`Fold "${from}" into "${into}"? Its sub-units, cost centers, members and policies move to "${into}", and "${from}" is removed.`)) return
+    setError(null)
+    run(async () => { setUnits(await orgApi.mergeBusinessUnits(org!.id, merge.from, merge.into)); setMerge({ from: '', into: '' }); await load() })
+  }
+
   async function addCenter(e: FormEvent) {
     e.preventDefault()
     setError(null)
@@ -319,6 +329,7 @@ export function EnterpriseStructurePage() {
       <div className="page-head"><div><h1>Organization structure</h1>
         <p className="muted" style={{ margin: 0 }}>{org.name} · Business units and cost centers used for spend control.</p></div></div>
       <ErrorAlert error={error} />
+      {modal}
       <section className="card panel">
         <h2>Business units</h2>
         {units.length === 0 ? <p className="muted">No business units yet.</p> : (
@@ -330,6 +341,19 @@ export function EnterpriseStructurePage() {
               <input id="bu-name" className="input" value={unitName} onChange={(e) => setUnitName(e.target.value)} placeholder="e.g. Finance" />
             </Field>
             <button className="btn btn-primary" disabled={!unitName.trim()}>Add</button>
+          </form>
+        )}
+        {isAdmin && units.length > 1 && (
+          <form className="row" onSubmit={mergeUnits} style={{ marginTop: 12 }}>
+            <Field label="Merge business unit" id="bu-from">
+              <select id="bu-from" className="input" value={merge.from} onChange={(e) => setMerge({ ...merge, from: e.target.value })}>
+                <option value="">Choose…</option>{units.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select>
+            </Field>
+            <Field label="into" id="bu-into">
+              <select id="bu-into" className="input" value={merge.into} onChange={(e) => setMerge({ ...merge, into: e.target.value })}>
+                <option value="">Choose…</option>{units.filter((u) => u.id !== merge.from).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select>
+            </Field>
+            <button className="btn btn-secondary" disabled={!merge.from || !merge.into}>Merge</button>
           </form>
         )}
       </section>
