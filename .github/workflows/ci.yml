@@ -91,7 +91,7 @@ jobs:
         run: npm audit --audit-level=high
       - name: Secrets in the code or its history
         run: |
-          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.21.2 git /repo --no-banner --redact --config /repo/.gitleaks.toml
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.21.2 git /repo --no-banner --redact --verbose --config /repo/.gitleaks.toml
 
   images:
     # The deployable images must build, and the API image must refuse development secrets outside development.
