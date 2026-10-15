@@ -288,7 +288,7 @@ export function DeliveryForm({ m, onSent }: { m: ContractMilestone; onSent: (c: 
         <textarea rows={2} maxLength={2000} value={message} placeholder="Anything they should know about this delivery"
           onChange={(e) => { setMessage(e.target.value); autosave('', e.target.value) }} /></label>
 
-      {issues.length > 0 && <div className="checklist">
+      {issues.length > 0 && <div className="delivery-issues">
         <strong className="small">Before you send</strong>
         <ul>{issues.map((i) => <li key={i.code + (i.deliverableKey ?? '') + i.message} className={i.blocking ? 'block' : 'warn'}>
           <span aria-hidden>{i.blocking ? '●' : '⚠'}</span>

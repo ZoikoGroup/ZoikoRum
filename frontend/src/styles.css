@@ -886,13 +886,13 @@ pre.agreement { white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular
 .hint-warn { color: var(--zk-warn); margin: 4px 0 0; }
 .spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #b2ccff; border-top-color: var(--zk-blue); animation: zk-spin 0.8s linear infinite; }
 
-.checklist { margin: 10px 0; padding: 10px 12px; border-radius: 8px; background: var(--zk-warn-bg); border: 1px solid #fedf89; }
-.checklist ul { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; }
-.checklist li { display: flex; gap: 8px; font-size: 13px; }
-.checklist li.block { color: var(--zk-danger); }
-.checklist li.warn { color: var(--zk-warn); }
-.checklist li.block .link-like { color: var(--zk-danger); }
-.checklist li.warn .link-like { color: var(--zk-warn); }
+.delivery-issues { margin: 10px 0; padding: 10px 12px; border-radius: 8px; background: var(--zk-warn-bg); border: 1px solid #fedf89; }
+.delivery-issues ul { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; }
+.delivery-issues li { display: flex; gap: 8px; font-size: 13px; }
+.delivery-issues li.block { color: var(--zk-danger); }
+.delivery-issues li.warn { color: var(--zk-warn); }
+.delivery-issues li.block .link-like { color: var(--zk-danger); }
+.delivery-issues li.warn .link-like { color: var(--zk-warn); }
 .delivery-send, .decision-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
   margin-top: 12px; padding: 12px 14px; border-radius: 10px; background: var(--zk-surface); border: 1px solid var(--zk-border);
   position: sticky; bottom: 12px; box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08); z-index: 2; }
