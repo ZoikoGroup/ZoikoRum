@@ -1,7 +1,7 @@
 from __future__ import annotations
 import uuid
 from collections import Counter, defaultdict
-from sqlalchemy import select, delete, text
+from sqlalchemy import select, delete, func, literal_column, text
 from sqlalchemy.dialects.postgresql import insert
 from zoikorum.domains.analytics.models import EventFact
 from zoikorum.domains.audit import facade as audit
@@ -91,6 +91,60 @@ def summarize(rows, role="buyer"):
             "verificationStatus": dict(Counter(checks.values())),
             "upcomingMilestones": sorted([detail for mid, detail in milestone_details.items() if milestones.get(mid) != "ACCEPTED" and detail["dueDate"] and contracts.get(detail["contractId"]) != "CLOSED"], key=lambda item: item["dueDate"]),
             "lastEventAt": max((r.occurred_at for r in rows), default=None)}
+
+
+DAILY_METRICS = {
+    E.SEARCH_PERFORMED: "searches", E.SEARCH_ZERO_RESULT: "zeroResultSearches", E.PROPOSAL_SUBMITTED: "proposalsSubmitted",
+    E.CONTRACT_GENERATED: "contractsGenerated", E.CONTRACT_ACTIVATED: "activations", E.ESCROW_RELEASED: "releases",
+    E.DISPUTE_INITIATED: "disputesOpened", E.DISPUTE_RESOLVED: "disputesResolved",
+}
+UTC_DAY = literal_column("(analytics.event_facts.occurred_at AT TIME ZONE 'UTC')::date")
+
+
+def in_window(stmt, since, until):
+    if since:
+        stmt = stmt.where(EventFact.occurred_at >= since)
+    if until:
+        stmt = stmt.where(EventFact.occurred_at < until)
+    return stmt
+
+
+async def marketplace_health(session, since=None, until=None):
+    """Aggregated in Postgres so the cost follows the window, not the size of the event history."""
+    counts = dict((await session.execute(in_window(
+        select(EventFact.event_type, func.count()).group_by(EventFact.event_type), since, until))).all())
+    last_event_at = await session.scalar(in_window(select(func.max(EventFact.occurred_at)), since, until))
+
+    daily: dict = {}
+    rows = await session.execute(in_window(
+        select(UTC_DAY, EventFact.event_type, func.count()).where(EventFact.event_type.in_(DAILY_METRICS))
+        .group_by(UTC_DAY, EventFact.event_type), since, until))
+    for day, kind, n in rows:
+        daily.setdefault(day, {"date": day.isoformat(), **{metric: 0 for metric in DAILY_METRICS.values()}})[DAILY_METRICS[kind]] = n
+
+    released = in_window(select(EventFact.occurred_at.label("released_at"), EventFact.payload["milestoneId"].astext.label("milestone_id"))
+                         .where(EventFact.event_type == E.ESCROW_RELEASED), since, until).subquery()
+    funded = (select(EventFact.occurred_at.label("funded_at"), func.jsonb_array_elements_text(EventFact.payload["milestoneIds"]).label("milestone_id"))
+              .where(EventFact.event_type == E.ESCROW_FUNDED).subquery())
+    last_funding = (select(func.max(funded.c.funded_at)).where(funded.c.milestone_id == released.c.milestone_id,
+                                                                funded.c.funded_at <= released.c.released_at).scalar_subquery())
+    latency = func.extract("epoch", released.c.released_at - last_funding)
+    median_release = await session.scalar(select(func.percentile_cont(0.5).within_group(latency)).where(last_funding.isnot(None)))
+
+    tier = func.coalesce(EventFact.payload["tier"].astext, EventFact.payload["toTier"].astext).label("tier")
+    latest = (select(EventFact.professional_id, tier)
+              .where(EventFact.event_type.in_((E.TRUST_TIER_CHANGED, E.TRUST_SCORE_RECOMPUTED)), EventFact.professional_id.isnot(None))
+              .order_by(EventFact.professional_id, EventFact.occurred_at.desc(), EventFact.seq.desc())
+              .distinct(EventFact.professional_id).subquery())
+    tiers = dict((await session.execute(select(latest.c.tier, func.count()).where(latest.c.tier.isnot(None)).group_by(latest.c.tier))).all())
+
+    return {"window": {"from": since, "to": until},
+            "eventCounts": counts, "searches": counts.get(E.SEARCH_PERFORMED, 0), "zeroResultSearches": counts.get(E.SEARCH_ZERO_RESULT, 0),
+            "activations": counts.get(E.CONTRACT_ACTIVATED, 0),
+            "disputesOpened": counts.get(E.DISPUTE_INITIATED, 0), "disputesResolved": counts.get(E.DISPUTE_RESOLVED, 0),
+            "proposalContractConversionBps": round(10000 * counts.get(E.CONTRACT_GENERATED, 0) / counts[E.PROPOSAL_SUBMITTED]) if counts.get(E.PROPOSAL_SUBMITTED) else None,
+            "medianReleaseLatencySeconds": float(median_release) if median_release is not None else None,
+            "trustTierDistribution": tiers, "daily": [daily[day] for day in sorted(daily)], "lastEventAt": last_event_at}
 
 
 def report(rows):

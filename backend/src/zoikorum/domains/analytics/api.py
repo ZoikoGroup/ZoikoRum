@@ -3,7 +3,6 @@ import io
 import uuid
 from datetime import datetime
 from typing import Literal
-from collections import Counter
 from fastapi import APIRouter, Query, Response
 from zoikorum.domains.analytics import service
 from zoikorum.domains.buyer import facade as buyer
@@ -50,26 +49,10 @@ async def professional_dashboard(actor: CurrentActor, session: DbSession):
 @router.get("/v1/analytics/marketplace-health")
 async def marketplace_health(actor: CurrentActor, session: DbSession, since: datetime | None = Query(None, alias="from"), until: datetime | None = Query(None, alias="to")):
     actor.require_platform_role(*PlatformRole.ALL)
+    """Marketplace health for the window [from, to): totals, a per-day (UTC) series of the key counts, and the current
+    trust tier distribution, which is a snapshot rather than windowed."""
     validate_dates(since, until)
-    rows = await service.facts(session, since=since, until=until)
-    counts = Counter(r.event_type for r in rows)
-    tiers = {}
-    funded_at, release_latencies = {}, []
-    for r in await service.facts(session):
-        if r.event_type == E.ESCROW_FUNDED:
-            for mid in r.payload.get("milestoneIds", []): funded_at[str(mid)] = r.occurred_at
-    for r in rows:
-        if r.event_type == E.ESCROW_RELEASED and str(r.payload.get("milestoneId")) in funded_at:
-            release_latencies.append(max(0, (r.occurred_at - funded_at[str(r.payload["milestoneId"])]).total_seconds()))
-    from statistics import median
-    for r in await service.facts(session):
-        if r.event_type in (E.TRUST_TIER_CHANGED, E.TRUST_SCORE_RECOMPUTED) and r.professional_id:
-            tiers[str(r.professional_id)] = r.payload.get("tier", r.payload.get("toTier"))
-    return {"eventCounts": dict(counts), "activations": counts[E.CONTRACT_ACTIVATED], "disputesOpened": counts[E.DISPUTE_INITIATED],
-            "disputesResolved": counts[E.DISPUTE_RESOLVED], "zeroResultSearches": counts[E.SEARCH_ZERO_RESULT],
-            "proposalContractConversionBps": round(10000 * counts[E.CONTRACT_GENERATED] / counts[E.PROPOSAL_SUBMITTED]) if counts[E.PROPOSAL_SUBMITTED] else None,
-            "medianReleaseLatencySeconds": median(release_latencies) if release_latencies else None,
-            "trustTierDistribution": dict(Counter(v for v in tiers.values() if v)), "lastEventAt": max((r.occurred_at for r in rows), default=None)}
+    return await service.marketplace_health(session, since, until)
 
 
 @router.post("/v1/admin/analytics/rebuild")
