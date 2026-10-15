@@ -32,3 +32,14 @@ async def continue_authorized(session, event):
 async def on_expiry(session: AsyncSession, key: str, payload: dict) -> None:
     """A sent proposal past its validity date expires and can no longer be accepted."""
     await service.expire(session, payload)
+
+
+
+@on_timer(service.TIMER_REQUEST_REMINDER)
+async def on_request_reminder(session: AsyncSession, key: str, payload: dict) -> None:
+    await service.request_reminder(session, payload)
+
+
+@on_timer(service.TIMER_REQUEST_DUE)
+async def on_request_due(session: AsyncSession, key: str, payload: dict) -> None:
+    await service.request_due(session, payload)

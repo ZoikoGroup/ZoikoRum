@@ -16,6 +16,8 @@ RUN npm run build
 
 FROM nginx:1.27-alpine
 ENV API_UPSTREAM=http://api:8000
+# The Google load balancer's own public address (its forwarding rule), so it is skipped when finding the visitor.
+ENV TRUSTED_LB_IP=127.0.0.1
 # The official image renders /etc/nginx/templates/*.template with environment variables at start.
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html

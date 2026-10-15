@@ -52,6 +52,7 @@ class E:
     BUYER_REGISTERED = _t("buyer", "buyer", "registered")
     ORGANIZATION_CREATED = _t("buyer", "organization", "created")
     BUSINESS_UNIT_CREATED = _t("buyer", "business_unit", "created")
+    BUSINESS_UNITS_MERGED = _t("buyer", "business_unit", "merged")  # policy profiles follow the surviving unit
     COST_CENTER_CREATED = _t("buyer", "cost_center", "created")
     LEGAL_ENTITY_CREATED = _t("buyer", "legal_entity", "created")
     LEGAL_ENTITY_UPDATED = _t("buyer", "legal_entity", "updated")  # details, default, or archived
@@ -77,6 +78,7 @@ class E:
     # ---- Professional --------------------------------------------------------
     PROFESSIONAL_REGISTERED = _t("professional", "professional", "registered")
     PROFILE_UPDATED = _t("professional", "professional", "profile_updated")
+    PROFILE_VIEWED = _t("professional", "professional", "profile_viewed")  # analytics only: someone else opened the public profile
     PROFILE_PUBLISHED = _t("professional", "professional", "profile_published")
     PROFILE_UNPUBLISHED = _t("professional", "professional", "profile_unpublished")
     PROFILE_SUSPENDED = _t("professional", "professional", "profile_suspended")
@@ -108,6 +110,8 @@ class E:
     # ---- Proposal ------------------------------------------------------------
     PROPOSAL_REQUESTED = _t("proposal", "request", "created")
     PROPOSAL_REQUEST_DECLINED = _t("proposal", "request", "declined")
+    PROPOSAL_REQUEST_REMINDER = _t("proposal", "request", "reminder")  # to the professional: answer is due soon
+    PROPOSAL_REQUEST_UNANSWERED = _t("proposal", "request", "unanswered")  # to the buyer: the time to answer passed
     PROPOSAL_REQUEST_CANCELLED = _t("proposal", "request", "cancelled")
     NDA_ACCEPTED = _t("proposal", "request", "nda_accepted")
     PROPOSAL_SUBMITTED = _t("proposal", "proposal", "submitted")
@@ -125,7 +129,14 @@ class E:
     CONTRACT_ACTIVATED = _t("contract", "contract", "activated")
     CONTRACT_COMPLETED = _t("contract", "contract", "completed")
     CONTRACT_TERMINATED = _t("contract", "contract", "terminated")
+    CONTRACT_TERMINATION_REQUESTED = _t("contract", "termination", "requested")  # one side asks to end by agreement
+    RETAINER_PAUSED = _t("contract", "retainer", "paused")
+    RETAINER_RESUMED = _t("contract", "retainer", "resumed")
+    CONTRACT_TERMINATION_DECLINED = _t("contract", "termination", "declined")
+    CONTRACT_TERMINATION_WITHDRAWN = _t("contract", "termination", "withdrawn")  # withdrawn, lapsed or overtaken by a dispute
     CONTRACT_DISPUTED = _t("contract", "contract", "disputed")
+    # Buyers on open engagements are told when the professional is suspended or a check lapses (playbook: Level 3+).
+    CONTRACT_PROFESSIONAL_STATUS_CHANGED = _t("contract", "contract", "professional_status_changed")
     CONTRACT_DISPUTE_CLEARED = _t("contract", "contract", "dispute_cleared")
     SIGNATURE_DEADLINE_ESCALATED = _t("contract", "contract", "signature_deadline_escalated")
     CHANGE_ORDER_REQUESTED = _t("contract", "change_order", "requested")
@@ -196,6 +207,9 @@ class E:
     TRUST_SIGNAL_REVOKED = _t("trust", "profile", "signal_revoked")
     TRUST_SCORE_RECOMPUTED = _t("trust", "profile", "score_recomputed")
     TRUST_TIER_CHANGED = _t("trust", "profile", "tier_changed")
+    TRUST_TIER_NUDGE = _t("trust", "profile", "tier_nudge")
+    SAVED_PROFESSIONAL_AVAILABLE = _t("marketplace", "saved_professional", "available")  # to people who saved them
+    SAVED_SEARCH_MATCHES = _t("marketplace", "saved_search", "new_matches")  # daily: new professionals match a saved search  # a buyer needs a higher tier: what to verify to qualify
     TRUST_PROFILE_FLAGGED = _t("trust", "profile", "flagged")
 
     # ---- Policy --------------------------------------------------------------
@@ -256,10 +270,21 @@ class E:
 
     # ---- Administration / Trust & Safety enforcement -------------------------
     ENFORCEMENT_CASE_OPENED = _t("admin", "enforcement_case", "opened")
+    ENFORCEMENT_CASE_CLOSED = _t("admin", "enforcement_case", "closed")  # reviewed, no action needed
+    USER_REPORT_SUBMITTED = _t("admin", "user_report", "submitted")
+    DISPUTE_CLARIFICATION_REQUESTED = _t("dispute", "case", "clarification_requested")
+    DISPUTE_REFERRED_TO_ARBITRATION = _t("dispute", "case", "referred_to_arbitration")
+    DISPUTE_PATTERN_FLAGGED = _t("dispute", "case", "pattern_flagged")
+    DISPUTE_RETENTION_DUE = _t("dispute", "case", "retention_due")  # Legal reviews the closed record  # advisory: repeated disputes decided against the opener
+    SUPPORT_REQUEST_OPENED = _t("support", "request", "opened")
+    SUPPORT_REQUEST_ANSWERED = _t("support", "request", "answered")  # staff replied: the person is told
+    SUPPORT_REQUEST_RESOLVED = _t("support", "request", "resolved")
+    USER_REPORT_CLOSED = _t("admin", "user_report", "closed")
     ENFORCEMENT_ACTION_APPLIED = _t("admin", "enforcement_case", "action_applied")
     ENFORCEMENT_ACTION_REVERSED = _t("admin", "enforcement_case", "action_reversed")
     ENFORCEMENT_APPEAL_FILED = _t("admin", "enforcement_case", "appeal_filed")
     ENFORCEMENT_APPEAL_DECIDED = _t("admin", "enforcement_case", "appeal_decided")
+    ENFORCEMENT_REMEDIATION_COMPLETED = _t("admin", "enforcement_case", "remediation_completed")
     OPERATOR_ACTION_LOGGED = _t("admin", "operator", "action_logged")
 
 

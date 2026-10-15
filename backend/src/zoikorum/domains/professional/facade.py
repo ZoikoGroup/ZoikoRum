@@ -36,6 +36,7 @@ class ProfessionalSummary:
     years_experience_band: str | None
     languages: tuple[str, ...]
     visibility_reduced: bool  # enforcement - search must down-rank, with explanation
+    industries: tuple[str, ...] = ()
     # Added for the search projection (optional, so existing callers are unaffected).
     bio: str | None = None
     city: str | None = None
@@ -69,7 +70,7 @@ def _summary(p: Professional) -> ProfessionalSummary:
         engagement_types=tuple(p.engagement_types), delivery_modes=tuple(p.delivery_modes),
         pricing_models=tuple(p.pricing_models), availability=effective_availability(p),
         max_concurrent_engagements=p.max_concurrent_engagements, active_engagements=p.active_engagements,
-        years_experience_band=p.years_experience_band, languages=tuple(p.languages),
+        years_experience_band=p.years_experience_band, languages=tuple(p.languages), industries=tuple(p.industries),
         visibility_reduced=p.visibility_reduced, bio=p.bio, city=p.city, indicative_rate_minor=p.rate_minor,
         indicative_rate_currency=p.rate_currency, published_at=p.published_at, photo_url=photo_url(p),
     )

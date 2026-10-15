@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -70,6 +71,31 @@ class ChargeOut(BaseModel):
     chargedBackAt: datetime | None = None
 
 
+class OpsItemOut(BaseModel):
+    kind: Literal["PAYOUT", "REFUND", "CHARGEBACK_LOSS"]
+    id: uuid.UUID
+    amount: MoneyDTO
+    engagement: str
+    contractId: uuid.UUID
+    buyer: str
+    professional: str
+    problem: str
+    since: datetime
+    canRetry: bool
+    resolution: str | None
+    resolvedAt: datetime | None
+
+
+class OpsWorklistOut(BaseModel):
+    items: list[OpsItemOut]
+    open: int
+
+
+class OpsResolveIn(BaseModel):
+    outcome: Literal["RECOVERED", "WRITTEN_OFF", "SETTLED_OUTSIDE"]
+    note: str = Field(min_length=5, max_length=1000)
+
+
 class RefundOut(BaseModel):
     id: uuid.UUID
     contractId: uuid.UUID
@@ -77,6 +103,7 @@ class RefundOut(BaseModel):
     disputeId: uuid.UUID | None
     amount: MoneyDTO
     status: str
+    failureMessage: str | None = None
     createdAt: datetime
     settledAt: datetime | None
 

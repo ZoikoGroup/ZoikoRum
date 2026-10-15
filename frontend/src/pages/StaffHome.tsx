@@ -7,6 +7,7 @@ import { verificationApi, type QueueItem } from '../api/verification'
 import { useAuth } from '../auth/AuthContext'
 import { ago, describe } from '../components/activity'
 import { Kpi } from '../components/dashboard'
+import { Loading } from '../components/ui'
 
 /** Admin / operations dashboard: platform counts, recent activity and the moderation queues. All figures are live. */
 export function StaffHome() {
@@ -55,7 +56,7 @@ export function StaffHome() {
         <section className="card panel">
           <div className="panel-head"><h2>Recent Activity</h2></div>
           {!canReadLedger ? <p className="muted small" style={{ margin: 0 }}>Platform activity is visible to Compliance, Legal and Platform Admins.</p>
-            : activity === null ? <p className="muted small">Loading…</p> : rows.length === 0 ? <p className="muted small">No activity yet.</p> : (
+            : activity === null ? <Loading lines={1} /> : rows.length === 0 ? <p className="muted small">No activity yet.</p> : (
               <table className="data">
                 <thead><tr><th>Activity</th><th>Area</th><th>Time</th></tr></thead>
                 <tbody>{rows.map(({ r, text }) => (

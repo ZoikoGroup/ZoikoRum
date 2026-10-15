@@ -51,3 +51,8 @@ async def on_recommendation_lapsed(session: AsyncSession, key: str, payload: dic
 @on_timer(service.TIMER_DIRECT)
 async def on_direct_window(session: AsyncSession, key: str, payload: dict) -> None:
     await service.direct_window_closed(session, payload)
+
+
+@on_timer(service.TIMER_RETENTION)
+async def on_retention_due(session: AsyncSession, key: str, payload: dict) -> None:
+    await service.retention_due(session, payload)

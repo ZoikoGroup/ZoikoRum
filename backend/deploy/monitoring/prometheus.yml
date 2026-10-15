@@ -1,0 +1,23 @@
+# Prometheus scrape configuration for Zoikorum (docker compose --profile monitoring, or copy into your own Prometheus /
+# Google Cloud Managed Service for Prometheus). /metrics needs ZK_METRICS_TOKEN as a bearer token; it is never served
+# through the public web app (nginx does not forward it), so scrape the API service directly on the private network.
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  - job_name: zoikorum-api
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/metrics_token   # the value of ZK_METRICS_TOKEN, mounted as a secret file
+    static_configs:
+      - targets: ["api:8000"]

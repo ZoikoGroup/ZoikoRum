@@ -141,6 +141,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
 
 def install(app: FastAPI) -> None:
+    from zoikorum.shared.idempotency import IdempotencyMiddleware
+
+    app.add_middleware(IdempotencyMiddleware)  # inside the rate limit: a replay still counts as a request
     app.add_middleware(RateLimitMiddleware)
     app.add_middleware(CorrelationMiddleware)
     app.add_middleware(SecurityHeadersMiddleware)  # outermost: also covers rate-limit and error responses

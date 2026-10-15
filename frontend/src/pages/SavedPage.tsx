@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { LABEL } from '../api/professional'
 import { savedApi, type SavedProfessional } from '../api/saved'
 import { useAuth } from '../auth/AuthContext'
-import { ErrorAlert } from '../components/ui'
+import { ErrorAlert, Loading } from '../components/ui'
 
 /** Saved-ids for pages that show many professionals; null until known (or when the viewer cannot save). */
 // eslint-disable-next-line react-refresh/only-export-components
@@ -47,7 +47,7 @@ export function SavedPage() {
         <Link className="btn btn-primary" to="/professionals">Find more</Link></div>
       <ErrorAlert error={error} />
       <section className="card panel">
-        {items === null ? <p className="muted">Loading…</p> : items.length === 0 ? (
+        {items === null ? <Loading /> : items.length === 0 ? (
           <p className="muted" style={{ margin: 0 }}>Nothing saved yet. Use ☆ Save on a profile or search result.</p>
         ) : (
           <table className="data">

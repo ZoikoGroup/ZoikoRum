@@ -3,7 +3,7 @@ import {
   formatMoney, ORG_ROLE_INFO, ORG_ROLES, orgApi,
   type BusinessUnit, type CostCenter, type Invitation, type Organization, type OrgMember, type OrgRole,
 } from '../api/orgs'
-import { ErrorAlert, Field, useDialog, useStepUp } from '../components/ui'
+import { ErrorAlert, Field, useDialog, useStepUp, Loading } from '../components/ui'
 
 const CURRENCIES = ['USD', 'GBP', 'EUR', 'INR', 'CAD', 'AUD', 'SGD', 'AED']
 
@@ -95,7 +95,7 @@ export function EnterpriseTeamPage() {
   }, [org])
   useEffect(() => { load() }, [load])
 
-  if (loading) return <p className="muted">Loading…</p>
+  if (loading) return <Loading />
   if (!org) return <><ErrorAlert error={orgError} /><p className="muted">Your enterprise organization is still being set up. Refresh in a moment.</p></>
 
   function sendInvite(e: FormEvent) {
@@ -283,7 +283,7 @@ export function EnterpriseStructurePage() {
     }
   }, [org])
   useEffect(() => { load() }, [load])
-  if (loading || !org) return <p className="muted">Loading…</p>
+  if (loading || !org) return <Loading />
 
   async function addUnit(e: FormEvent) {
     e.preventDefault()

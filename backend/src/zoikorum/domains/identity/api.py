@@ -54,16 +54,39 @@ def _ua(request: Request) -> str | None:
     return request.headers.get("User-Agent")
 
 
+# The web app keeps its refresh token in an HttpOnly cookie that page scripts cannot read, so an injected script cannot
+# steal a long-lived sign-in (Handbook: session security). The browser marks its requests with X-Zk-Client: web; when
+# the cookie is used the refresh token is never put in a response body. Other API clients keep the token in the body.
+REFRESH_COOKIE = "zk_refresh"
+
+
+def _cookie_mode(request: Request) -> bool:
+    return request.headers.get("X-Zk-Client") == "web" or REFRESH_COOKIE in request.cookies
+
+
+def _issue(request: Request, response: Response, pair: TokenPair) -> TokenPair:
+    if not _cookie_mode(request):
+        return pair
+    s = get_settings()
+    response.set_cookie(REFRESH_COOKIE, pair.refreshToken, max_age=s.refresh_token_ttl_seconds, path="/v1/auth",
+                        httponly=True, samesite="strict", secure=s.env not in ("local", "development", "test"))
+    return pair.model_copy(update={"refreshToken": ""})
+
+
+def _forget(response: Response) -> None:
+    response.delete_cookie(REFRESH_COOKIE, path="/v1/auth")
+
+
 def _expose_dev_tokens() -> bool:
     # Local development and tests only: everywhere else (staging included) links arrive by email, never in a response.
     return get_settings().env in ("local", "development", "test")
 
 
 @router.post("/auth/register", response_model=RegisterOut, status_code=status.HTTP_201_CREATED)
-async def register(body: RegisterIn, request: Request, session: DbSession) -> RegisterOut:
+async def register(body: RegisterIn, request: Request, response: Response, session: DbSession) -> RegisterOut:
     identity, pair, confirm = await service.register(session, body, _ua(request))
     return RegisterOut(
-        tokens=pair,
+        tokens=_issue(request, response, pair),
         user=service.to_out(identity, []),
         emailConfirmationToken=confirm if _expose_dev_tokens() else None,
     )
@@ -76,7 +99,7 @@ async def confirm_email(body: ConfirmEmailIn, session: DbSession) -> IdentityOut
 
 
 @router.post("/auth/login", response_model=AuthOut)
-async def login(body: LoginIn, request: Request) -> AuthOut:
+async def login(body: LoginIn, request: Request, response: Response) -> AuthOut:
     await enforce_budget("login-email", body.email.lower(), 10, 10, "Too many sign-in attempts for this account. Wait a minute and try again.")
     # Own transaction: a failed attempt must still commit its lockout counter.
     async with session_factory()() as session:
@@ -85,23 +108,27 @@ async def login(body: LoginIn, request: Request) -> AuthOut:
                                          body.portal)
     if isinstance(result, service.LoginFailure):
         raise Unauthenticated(result.detail, code=result.code)
-    return result
+    return result.model_copy(update={"tokens": _issue(request, response, result.tokens)})
 
 
 @router.post("/auth/refresh", response_model=TokenPair)
-async def refresh(body: RefreshIn, request: Request) -> TokenPair:
+async def refresh(body: RefreshIn, request: Request, response: Response) -> TokenPair:
+    token = body.refreshToken or request.cookies.get(REFRESH_COOKIE)
+    if not token:
+        raise Unauthenticated("Please sign in again", code="SESSION_EXPIRED")
     # Own transaction: refresh-token reuse must revoke the family even though we reject.
     async with session_factory()() as session:
         async with session.begin():
-            result = await service.refresh(session, body.refreshToken, _ua(request))
+            result = await service.refresh(session, token, _ua(request))
     if isinstance(result, service.LoginFailure):
         raise Unauthenticated(result.detail, code=result.code)
-    return result
+    return _issue(request, response, result)
 
 
 @router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(actor: CurrentActor, session: DbSession) -> None:
+async def logout(actor: CurrentActor, session: DbSession, response: Response) -> None:
     await service.logout(session, actor)
+    _forget(response)
 
 
 @router.post("/auth/password/forgot", response_model=ForgotPasswordOut, status_code=status.HTTP_202_ACCEPTED)
@@ -137,14 +164,14 @@ async def mfa_recovery_codes(actor: CurrentActor, session: DbSession) -> Recover
 
 
 @router.post("/auth/step-up", response_model=TokenPair)
-async def step_up(body: StepUpIn, request: Request, actor: CurrentActor) -> TokenPair:
+async def step_up(body: StepUpIn, request: Request, response: Response, actor: CurrentActor) -> TokenPair:
     # Own transaction: a wrong code must still commit its lockout counter.
     async with session_factory()() as session:
         async with session.begin():
             result = await service.step_up(session, actor, body.totpCode, _ua(request))
     if isinstance(result, service.LoginFailure):
         raise Unauthenticated(result.detail, code=result.code)
-    return result
+    return _issue(request, response, result)
 
 
 # ---- Passkeys ----------------------------------------------------------------------------------------------------------
@@ -156,14 +183,14 @@ async def passkey_login_options(session: DbSession) -> dict:
 
 
 @router.post("/auth/passkey", response_model=AuthOut)
-async def passkey_login(body: PasskeyLoginIn, request: Request) -> AuthOut:
+async def passkey_login(body: PasskeyLoginIn, request: Request, response: Response) -> AuthOut:
     # Own transaction: a failed attempt must still commit its lockout counter and use up the challenge.
     async with session_factory()() as session:
         async with session.begin():
             result = await passkeys.login(session, body.credential, _ua(request), body.portal)
     if isinstance(result, service.LoginFailure):
         raise Unauthenticated(result.detail, code=result.code)
-    return result
+    return result.model_copy(update={"tokens": _issue(request, response, result.tokens)})
 
 
 @router.post("/auth/step-up/passkey/options")
@@ -172,14 +199,14 @@ async def passkey_step_up_options(actor: CurrentActor, session: DbSession) -> di
 
 
 @router.post("/auth/step-up/passkey", response_model=TokenPair)
-async def passkey_step_up(body: PasskeyStepUpIn, request: Request, actor: CurrentActor) -> TokenPair:
+async def passkey_step_up(body: PasskeyStepUpIn, request: Request, response: Response, actor: CurrentActor) -> TokenPair:
     """Confirm a sensitive action with a passkey instead of the 6-digit code."""
     async with session_factory()() as session:
         async with session.begin():
             result = await passkeys.step_up(session, actor, body.credential, _ua(request))
     if isinstance(result, service.LoginFailure):
         raise Unauthenticated(result.detail, code=result.code)
-    return result
+    return _issue(request, response, result)
 
 
 @router.get("/me/passkeys", response_model=list[PasskeyOut])
@@ -266,9 +293,11 @@ async def data_requests(actor: CurrentActor, session: DbSession):
 
 
 @router.post("/me/account-types", response_model=AuthOut)
-async def add_account_type(body: AddPersonaIn, request: Request, actor: CurrentActor, session: DbSession) -> AuthOut:
+async def add_account_type(body: AddPersonaIn, request: Request, response: Response, actor: CurrentActor,
+                           session: DbSession) -> AuthOut:
     """Add Buyer or Professional to an existing account; returns fresh tokens with the new role."""
-    return await service.add_persona(session, actor, body.accountType, _ua(request))
+    result = await service.add_persona(session, actor, body.accountType, _ua(request))
+    return result.model_copy(update={"tokens": _issue(request, response, result.tokens)})
 
 
 # ---- Platform staff administration (Platform Admin, MFA + step-up) -------------

@@ -1,5 +1,8 @@
-import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useCallback, useEffect, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
+import { SUPPORT_STATUS, SUPPORT_TOPICS, supportApi, type SupportRequest, type SupportTopic } from '../../api/support'
+import { SupportThread } from '../../components/SupportThread'
+import { ErrorAlert } from '../../components/ui'
 import { Icon, type IconName } from '../../components/dashboard'
 import { EmptyTable, PortalHeader, SidePanel } from '../../components/portal'
 
@@ -17,7 +20,7 @@ const TOPICS: Topic[] = [
     ['Why can’t I see a trust score?', 'The raw score is internal. You see the Tier and each verified dimension, which is what matters for a decision.'],
   ] },
   { icon: 'request', title: 'Requests & proposals', summary: 'From a need to a selected professional.', answers: [
-    ['How do I ask for a proposal?', 'Requesting proposals opens in the next release. You will send a request from a verified professional’s profile.'],
+    ['How do I ask for a proposal?', 'Open a verified professional’s profile (or a search result) and choose Request proposal. Describe the work, deliverables and budget; the professional answers with a proposal you can compare, revise or accept.'],
     ['Can I require an NDA?', 'Yes — a request can require an NDA before the professional sees its details.'],
   ] },
   { icon: 'contract', title: 'Contracts & engagements', summary: 'Signing, milestones and changes.', answers: [
@@ -82,13 +85,7 @@ export default function HelpPage() {
               </section>
             ))}
           </div>
-          <section className="card panel">
-            <div className="panel-head"><h2>Your support cases</h2></div>
-            <EmptyTable columns={['Case', 'Topic', 'Status', 'Opened', 'Last update']}>
-              <strong>No support cases.</strong> Raising a support case from here arrives with engagements. For a problem with an engagement,
-              open a dispute from the engagement itself.
-            </EmptyTable>
-          </section>
+          <SupportRequests />
         </div>
         <aside>
           <SidePanel title="Service status">
@@ -109,4 +106,67 @@ export default function HelpPage() {
       </div>
     </>
   )
+}
+
+
+/** Ask Zoikorum for help and follow the conversation (the error reference and engagement come from the link, if any). */
+function SupportRequests() {
+  const [params, setParams] = useSearchParams()
+  const [rows, setRows] = useState<SupportRequest[] | null>(null)
+  const [selected, setSelected] = useState<SupportRequest | null>(null)
+  const [asking, setAsking] = useState(!!params.get('ref'))
+  const [topic, setTopic] = useState<SupportTopic>(params.get('ref') ? 'TECHNICAL' : 'ACCOUNT')
+  const [subject, setSubject] = useState('')
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState<unknown>(null)
+  const [busy, setBusy] = useState(false)
+  const load = useCallback(() => supportApi.mine().then(setRows).catch(setError), [])
+  useEffect(() => { load() }, [load])
+  const openId = params.get('request')
+  useEffect(() => { if (openId) supportApi.get(openId).then(setSelected).catch(setError) }, [openId])
+
+  async function submit() {
+    setBusy(true); setError(null)
+    try {
+      const r = await supportApi.open({ topic, subject: subject.trim(), message: message.trim(), context: {
+        page: params.get('from') ?? undefined, contractId: params.get('contract') ?? undefined, errorReference: params.get('ref') ?? undefined } })
+      setAsking(false); setSubject(''); setMessage(''); setSelected(r); await load()
+      setParams({ request: r.id })
+    } catch (err) { setError(err) } finally { setBusy(false) }
+  }
+
+  return <>
+    {selected && <SupportThread request={selected}
+      onReply={async (m) => { setSelected(await supportApi.reply(selected.id, m)); await load() }}
+      onResolve={async () => { setSelected(await supportApi.resolve(selected.id)); await load() }} />}
+    <section className="card panel">
+      <div className="panel-head"><h2>Your help requests</h2>
+        {!asking && <button className="btn btn-primary btn-sm" onClick={() => setAsking(true)}>Ask for help</button>}</div>
+      <ErrorAlert error={error} />
+      {asking && <form onSubmit={(e) => { e.preventDefault(); void submit() }} style={{ marginBottom: 16 }}>
+        {params.get('ref') && <p className="muted small">Error reference <code>{params.get('ref')}</code> will be attached, so our team can find what happened.</p>}
+        <label className="label" htmlFor="support-topic">What is it about?</label>
+        <select id="support-topic" className="input" value={topic} onChange={(e) => setTopic(e.target.value as SupportTopic)}>
+          {SUPPORT_TOPICS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+        <label className="label" htmlFor="support-subject" style={{ marginTop: 10 }}>Short summary</label>
+        <input id="support-subject" className="input" maxLength={200} value={subject} onChange={(e) => setSubject(e.target.value)} required />
+        <label className="label" htmlFor="support-message" style={{ marginTop: 10 }}>What happened, and what did you expect?</label>
+        <textarea id="support-message" className="input" rows={4} maxLength={5000} value={message} onChange={(e) => setMessage(e.target.value)} required />
+        <p className="muted small">We answer within one business day. For disagreements about delivered work, raise a dispute from the engagement instead.</p>
+        <div className="row"><button className="btn btn-primary" disabled={busy || subject.trim().length < 5 || message.trim().length < 10}>Send</button>
+          <button type="button" className="btn btn-ghost" onClick={() => setAsking(false)}>Cancel</button></div>
+      </form>}
+      {rows && rows.length === 0 && !asking ? (
+        <EmptyTable columns={['Request', 'Topic', 'Status', 'Opened', 'Last update']}><strong>No help requests.</strong> Choose “Ask for help”
+          when something is not working or you cannot find an answer above.</EmptyTable>
+      ) : rows && rows.length > 0 && (
+        <table className="data"><thead><tr><th>Request</th><th>Topic</th><th>Status</th><th>Opened</th><th>Last update</th></tr></thead>
+          <tbody>{rows.map((r) => <tr key={r.id}><td><button className="link-button" onClick={() => setParams({ request: r.id })}><strong>{r.subject}</strong></button>
+            <div className="muted small"><code>{r.reference}</code></div></td>
+            <td className="small">{SUPPORT_TOPICS.find(([v]) => v === r.topic)?.[1]}</td>
+            <td><span className={`badge ${SUPPORT_STATUS[r.status].tone}`}>{SUPPORT_STATUS[r.status].label}</span></td>
+            <td className="small">{new Date(r.createdAt).toLocaleDateString()}</td><td className="small">{new Date(r.updatedAt).toLocaleString()}</td></tr>)}</tbody></table>
+      )}
+    </section>
+  </>
 }

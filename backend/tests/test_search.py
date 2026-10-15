@@ -233,3 +233,36 @@ async def test_proven_professionals_rank_above_newcomers(client, make_user, drai
     assert order == [pro["id"], newcomer["id"]]  # same headline and tier: the track record decides
     why = next(i for i in items if i["professionalId"] == pro["id"])["whyThisResult"]
     assert any("1 completed engagement" in w for w in why) and any("5.0★ from 1 verified review" in w for w in why)
+
+
+async def test_advanced_filters_autocomplete_and_cache(client, make_user, drain):
+    from zoikorum.domains.search import service as search_service
+
+    local, _ = await publish(client, make_user, drain, "loc", headline="Bookkeeper", primary="management-accounting", served=("US",), offering_price=50_000)
+    wide, wide_pro = await publish(client, make_user, drain, "wide", headline="Fractional CFO", primary="fractional-cfo",
+                                   served=("US", "GB", "DE"), offering_price=900_000)
+    await client.patch("/v1/professionals/me", headers=wide.h, json={"industries": ["Technology", "Healthcare"]})
+    await drain()
+    names = lambda r: {i["displayName"] for i in r.json()["items"]}  # noqa: E731
+
+    tech = names(await client.get(URL, params={"industry": "Technology"}))
+    assert any(n.startswith("Wide") for n in tech) and not any(n.startswith("Loc") for n in tech)
+    cross = names(await client.get(URL, params={"crossBorder": "true"}))
+    assert any(n.startswith("Wide") for n in cross) and not any(n.startswith("Loc") for n in cross)
+    cheap = names(await client.get(URL, params={"budgetMaxMinor": 100_000, "budgetCurrency": "USD"}))
+    assert any(n.startswith("Loc") for n in cheap) and not any(n.startswith("Wide") for n in cheap)
+    assert (await client.patch("/v1/professionals/me", headers=wide.h, json={"industries": ["Space Mining"]})).status_code == 422
+
+    s = (await client.get("/v1/search/suggest", params={"q": "fraction"})).json()
+    assert any(x["slug"] == "fractional-cfo" for x in s["specializations"])
+    assert any(p["headline"] == "Fractional CFO" for p in (await client.get("/v1/search/suggest", params={"q": "Fractional"})).json()["professionals"])
+    assert (await client.get("/v1/search/suggest", params={"q": "f"})).json() == {"specializations": [], "professionals": []}
+
+    # Signed-out results are cached, but any profile change shows at once.
+    search_service._cache.clear()
+    first = await client.get(URL, params={"industry": "Healthcare"})
+    assert len(search_service._cache) == 1
+    assert (await client.get(URL, params={"industry": "Healthcare"})).json() == first.json()  # served from the cache
+    await client.patch("/v1/professionals/me", headers=local.h, json={"industries": ["Healthcare"]})
+    await drain()
+    assert (await client.get(URL, params={"industry": "Healthcare"})).json()["total"] == first.json()["total"] + 1

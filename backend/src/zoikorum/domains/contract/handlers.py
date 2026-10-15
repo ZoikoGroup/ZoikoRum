@@ -86,3 +86,39 @@ async def on_dispute_initiated(session: AsyncSession, event: EventEnvelope) -> N
 @subscribe(E.DISPUTE_RESOLVED, consumer="contract.dispute_outcome")
 async def on_dispute_resolved(session: AsyncSession, event: EventEnvelope) -> None:
     await service.dispute_resolved(session, event.payload)
+
+
+@on_timer(service.TIMER_TERMINATION_LAPSE)
+async def on_termination_lapse(session: AsyncSession, key: str, payload: dict) -> None:
+    await service.termination_lapsed(session, payload)
+
+
+@subscribe(E.ENFORCEMENT_ACTION_APPLIED, consumer="contract.offboarding")
+async def on_enforcement_applied(session: AsyncSession, event: EventEnvelope) -> None:
+    p = event.payload
+    if p.get("action") != "OFFBOARD" or p.get("subjectType") != "IDENTITY":
+        return
+    pro = await service.professional_facade.get_professional_by_identity(session, uuid.UUID(str(p["subjectId"])))
+    if pro is not None:
+        await service.professional_offboarded(session, pro.id)
+
+
+
+@subscribe(E.ENFORCEMENT_ACTION_APPLIED, consumer="contract.tell_buyers_restricted")
+async def on_professional_restricted(session: AsyncSession, event: EventEnvelope) -> None:
+    await service.professional_restricted(session, event.payload)
+
+
+@subscribe(E.ENFORCEMENT_ACTION_REVERSED, consumer="contract.tell_buyers_restored")
+async def on_professional_restored(session: AsyncSession, event: EventEnvelope) -> None:
+    await service.professional_restricted(session, event.payload, reversed_=True)
+
+
+@subscribe(E.VERIFICATION_EXPIRED, consumer="contract.tell_buyers_check_expired")
+async def on_check_expired(session: AsyncSession, event: EventEnvelope) -> None:
+    await service.professional_check_lapsed(session, event.payload, expired=True)
+
+
+@subscribe(E.VERIFICATION_REVOKED, consumer="contract.tell_buyers_check_revoked")
+async def on_check_revoked(session: AsyncSession, event: EventEnvelope) -> None:
+    await service.professional_check_lapsed(session, event.payload, expired=False)

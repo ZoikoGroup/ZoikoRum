@@ -29,3 +29,4 @@ node_modules/
 *.swp
 .DS_Store
 Thumbs.db
+backend/deploy/monitoring/metrics_token

@@ -89,3 +89,25 @@ async def test_payout_statement_pdf_for_the_professional_only(client, make_user,
     async with sf() as s:
         hashes = (await s.scalars(text("SELECT evidence_hash FROM audit.audit_records WHERE action LIKE '%payout.statement_downloaded%'"))).all()
     assert len(hashes) == 2 and len(hashes[0]) == 64  # refused and missing downloads record nothing
+
+
+async def test_invoice_shows_the_tax_included_in_the_amount(client, make_user, drain, sf, monkeypatch):
+    from zoikorum.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "tax_rules", {"US": {"label": "Sales tax", "rateBps": 1000, "basis": "FEE"}})
+    pro_user, pro, buyer, c = await signed_contract(client, make_user, drain)
+    esc = await escrow_of(client, buyer, c)
+    m1 = c["milestones"][0]
+    await client.post(f"{E}/{esc['id']}/fund", headers=buyer.idem(), json={"milestoneIds": [m1["id"]], "paymentMethodToken": "tok_visa"})
+    await drain()
+    await client.post(f"/v1/milestones/{m1['id']}/submit", headers=pro_user.h, json={"note": "Master file"})
+    await client.post(f"/v1/milestones/{m1['id']}/accept", headers=buyer.idem())
+    await drain()
+    (invoice,) = (await client.get("/v1/payments/invoices", headers=buyer.h, params={"organizationId": c["organizationId"]})).json()["items"]
+    gross = m1["amount"]["amountMinor"]
+    fee = gross // 10  # the 10% platform fee
+    assert invoice["total"]["amountMinor"] == gross  # tax-inclusive: what was paid does not change
+    assert invoice["tax"]["amountMinor"] == round(fee * 1000 / 11000)
+    assert invoice["lines"][1]["description"] == "Of which Sales tax 10% on the Zoikorum platform fee (included)"
+    r = await client.get(f"/v1/payments/invoices/{invoice['id']}/pdf", headers=buyer.h)
+    assert r.status_code == 200 and r.content.startswith(b"%PDF-")

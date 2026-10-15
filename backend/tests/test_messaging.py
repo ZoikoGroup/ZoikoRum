@@ -263,3 +263,23 @@ async def test_global_search_finds_only_messages_the_viewer_may_read(client, mak
     assert (await client.get("/v1/messaging/search", headers=buyer.h, params={"q": "%"})).status_code == 422  # too short
     outsider = await make_user("eve")
     assert (await client.get("/v1/messaging/search", headers=outsider.h, params={"q": "reconciliation"})).json() == []
+
+
+async def test_a_buyer_can_ask_a_professional_before_sending_a_request(client, make_user, drain):
+    pro_user, pro = await tier_b(client, make_user, drain, "enquiry-pro")
+    buyer, org = await buyer_org(client, make_user, drain, "enquiry-buyer")
+    body = {"contextType": "INQUIRY", "contextId": pro["id"], "organizationId": org["id"]}
+    r = await client.post("/v1/threads", headers=buyer.idem(), json=body)
+    assert r.status_code in (200, 201), r.text
+    thread = r.json()
+    assert thread["contextType"] == "INQUIRY" and thread["canSend"] is True and thread["viewerRole"] == "BUYER"
+    assert (await client.post("/v1/threads", headers=buyer.idem(), json=body)).json()["id"] == thread["id"]  # one per pair
+    sent = await client.post(f"/v1/threads/{thread['id']}/messages", headers=buyer.idem(), json={"body": "Do you cover Indian transfer pricing?", "attachments": []})
+    assert sent.status_code in (200, 201), sent.text
+    # The professional answers in the same conversation but cannot start one for an organisation they are not part of.
+    pro_view = (await client.get(f"/v1/threads/{thread['id']}", headers=pro_user.h)).json()
+    assert pro_view["viewerRole"] == "PROFESSIONAL" and pro_view["canSend"] is True
+    assert (await client.post(f"/v1/threads/{thread['id']}/messages", headers=pro_user.idem(), json={"body": "Yes, both entities.", "attachments": []})).status_code in (200, 201)
+    assert (await client.post("/v1/threads", headers=pro_user.idem(), json=body)).json()["code"] == "NOT_A_MEMBER"
+    stranger = await make_user("enquiry-stranger")
+    assert (await client.get(f"/v1/threads/{thread['id']}", headers=stranger.h)).status_code == 404

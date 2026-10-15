@@ -7,7 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from zoikorum.domains.audit import service
 from zoikorum.shared import clock
 from zoikorum.shared.events import ALL, EventEnvelope, subscribe
+from zoikorum.shared.metrics import gauge_source
 from zoikorum.shared.relay import on_timer, schedule_timer
+
+gauge_source(service.chain_health)
 
 
 @subscribe(ALL, consumer="audit.ledger")

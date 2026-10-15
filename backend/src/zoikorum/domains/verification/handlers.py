@@ -33,9 +33,10 @@ async def on_professional_registered(session: AsyncSession, event: EventEnvelope
     await service.open_restrictions_screening(session, event.payload)
 
 
-@subscribe(E.VERIFICATION_EVIDENCE_SUBMITTED, consumer="verification.document_check")
-async def on_evidence_submitted(session: AsyncSession, event: EventEnvelope) -> None:
-    await service.check_evidence(session, event.payload)
+@subscribe(E.VERIFICATION_EVIDENCE_SUBMITTED, consumer="verification.document_check",
+           prepare=lambda sf, event: service.prepare_evidence_checks(sf, event.payload))
+async def on_evidence_submitted(session: AsyncSession, event: EventEnvelope, prepared) -> None:
+    await service.check_evidence(session, event.payload, prepared)
 
 
 @on_timer(service.TIMER_REMINDER)

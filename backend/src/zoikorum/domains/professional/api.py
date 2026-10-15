@@ -5,7 +5,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Header, Response, status
 
-from zoikorum.domains.professional import saved_buyers, service
+from zoikorum.domains.professional import insights, saved_buyers, service
 from zoikorum.domains.professional.schemas import (
     BuyerCandidateOut, SavedBuyerIn, SavedBuyerOut, SavedBuyerPatch,
     AvailabilityIn,
@@ -186,3 +186,9 @@ async def update_saved_buyer(saved_id: uuid.UUID, body: SavedBuyerPatch, actor: 
 async def remove_saved_buyer(saved_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> Response:
     await saved_buyers.remove(session, actor, saved_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/me/insights")
+async def my_insights(actor: CurrentActor, session: DbSession) -> dict:
+    """Your own performance from platform records: response, acceptance, on-time delivery, revisions, disputes."""
+    return await insights.mine(session, actor)

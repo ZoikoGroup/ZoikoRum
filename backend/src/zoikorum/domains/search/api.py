@@ -8,7 +8,7 @@ from fastapi import APIRouter, Query, Request
 from zoikorum.config import get_settings
 
 from zoikorum.domains.search import service
-from zoikorum.domains.search.schemas import IntentIn, IntentOut, SearchOut, SearchParams, Sort
+from zoikorum.domains.search.schemas import IntentIn, IntentOut, SearchOut, SearchParams, Sort, SuggestOut
 from zoikorum.shared.auth import CurrentActor, OptionalActor
 from zoikorum.shared import ratelimit
 from zoikorum.shared.db import DbSession
@@ -40,6 +40,11 @@ async def search_professionals(
     jurisdiction: str | None = Query(default=None, pattern="^[A-Za-z]{2}$"),
     experience: str | None = Query(default=None, pattern=r"^(0-2|3-5|6-10|11-15|16\+)$"),
     publishedAfter: datetime | None = None,
+    industry: str | None = Query(default=None, max_length=40),
+    crossBorder: bool = False,
+    budgetMaxMinor: int | None = Query(default=None, ge=0),
+    budgetCurrency: str | None = Query(default=None, pattern="^[A-Za-z]{3}$"),
+    language: str | None = Query(default=None, max_length=40),
     sort: Sort = "best",
     limit: int = Query(default=20, ge=1, le=50),
     offset: int = Query(default=0, ge=0, le=1000),
@@ -48,8 +53,15 @@ async def search_professionals(
     params = SearchParams(organizationId=organizationId, q=q, category=category, spec=_csv(spec), specMatch=specMatch, tier=_csv(tier), verified=_csv(verified),
                           engagementType=engagementType, delivery=delivery, availability=availability, pricingModel=pricingModel,
                           credential=credential, jurisdiction=jurisdiction, experience=experience, publishedAfter=publishedAfter,
-                          sort=sort, limit=limit, offset=offset)
-    return await service.search(session, actor, params)
+                          industry=industry, crossBorder=crossBorder, budgetMaxMinor=budgetMaxMinor, budgetCurrency=budgetCurrency,
+                          language=language, sort=sort, limit=limit, offset=offset)
+    return await service.cached_search(session, actor, params)
+
+
+@router.get("/v1/search/suggest", response_model=SuggestOut)
+async def suggest(session: DbSession, q: str = Query(default="", max_length=100)):
+    """Search-box autocomplete: matching expertise, then matching professionals (public data only)."""
+    return await service.suggest(session, q)
 
 
 # AI calls cost money and time: a tighter budget than the general API limit, per signed-in session or client address.

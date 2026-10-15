@@ -1,0 +1,2098 @@
+{
+ "AcceptByTokenIn": [
+  "token"
+ ],
+ "ActionIn": [
+  "action",
+  "durationDays",
+  "notice",
+  "remediation"
+ ],
+ "AddPersonaIn": [
+  "accountType"
+ ],
+ "AlertsIn": [
+  "on"
+ ],
+ "AllocationIn": [
+  "milestoneId",
+  "refundMinor",
+  "releaseMinor"
+ ],
+ "AppealOut": [
+  "caseId",
+  "decidedAt",
+  "decisionNote",
+  "filedAt",
+  "id",
+  "statement",
+  "status"
+ ],
+ "AppealQueueItemOut": [
+  "canDecide",
+  "caseId",
+  "caseLabel",
+  "caseStatus",
+  "evidenceCount",
+  "filedAt",
+  "id",
+  "originalReason",
+  "statement",
+  "status",
+  "subjectId",
+  "subjectName",
+  "subjectType",
+  "verificationType"
+ ],
+ "ApprovalDecisionIn": [
+  "decision",
+  "reason",
+  "stepId"
+ ],
+ "ApprovalRouteIn": [
+  "escalationRole",
+  "mode",
+  "steps",
+  "timeoutHours"
+ ],
+ "ApprovalStepIn": [
+  "count",
+  "role"
+ ],
+ "ArbitrationAwardIn": [
+  "allocations",
+  "awardReference",
+  "citations",
+  "extendDays",
+  "note",
+  "outcome",
+  "summary"
+ ],
+ "ArbitrationReferIn": [
+  "forum",
+  "reason"
+ ],
+ "AssessmentIn": [
+  "level",
+  "reasonCode"
+ ],
+ "AssignIn": [
+  "mediatorIdentityId"
+ ],
+ "AttachmentOut": [
+  "contentType",
+  "fileVersion",
+  "id",
+  "name",
+  "sha256",
+  "size",
+  "uploadedAt"
+ ],
+ "AuthOut": [
+  "tokens",
+  "user"
+ ],
+ "AvailabilityIn": [
+  "availability",
+  "maxConcurrentEngagements",
+  "temporarilyUnavailable",
+  "weeklyHours"
+ ],
+ "BillingContactOut": [
+  "displayName",
+  "email",
+  "identityId",
+  "isPrimary"
+ ],
+ "BillingContactsIn": [
+  "backupIdentityId",
+  "primaryIdentityId"
+ ],
+ "Budget": [
+  "currency",
+  "maxMinor",
+  "minMinor"
+ ],
+ "BulkFundIn": [
+  "items",
+  "paymentMethodToken"
+ ],
+ "BulkFundItem": [
+  "accountId",
+  "milestoneIds"
+ ],
+ "BusinessUnitIn": [
+  "name",
+  "parentId"
+ ],
+ "BusinessUnitOut": [
+  "id",
+  "name",
+  "parentId"
+ ],
+ "BuyerCandidateOut": [
+  "completed",
+  "country",
+  "engagements",
+  "lastActivityAt",
+  "name",
+  "organizationId",
+  "requests",
+  "saved"
+ ],
+ "CancelCyclesIn": [
+  "reason"
+ ],
+ "CancelIn": [
+  "note",
+  "reasonCode"
+ ],
+ "CaseOut": [
+  "appeal",
+  "appealDeadline",
+  "createdAt",
+  "credentialClaimId",
+  "details",
+  "estimatedCompletion",
+  "evidence",
+  "expiresAt",
+  "hostedProvider",
+  "hostedReason",
+  "hostedStatus",
+  "id",
+  "isMine",
+  "jurisdiction",
+  "label",
+  "publicReason",
+  "reasonCode",
+  "secondLook",
+  "specialization",
+  "status",
+  "subjectId",
+  "subjectLegalName",
+  "subjectType",
+  "verificationType",
+  "verifiedAt",
+  "version"
+ ],
+ "ChangeOrderDecisionIn": [
+  "reason"
+ ],
+ "ChangeOrderIn": [
+  "delta",
+  "impact",
+  "type"
+ ],
+ "ChangeOrderOut": [
+  "appliedVersion",
+  "baseContractVersion",
+  "contractId",
+  "createdAt",
+  "decidedAt",
+  "decidedByIdentityId",
+  "decisionReason",
+  "delta",
+  "id",
+  "impact",
+  "preview",
+  "proposedByIdentityId",
+  "proposerParty",
+  "status",
+  "type"
+ ],
+ "ChangePreviewOut": [
+  "after",
+  "before",
+  "label"
+ ],
+ "ChargeOut": [
+  "amount",
+  "capturedAt",
+  "chargedBackAt",
+  "contractId",
+  "createdAt",
+  "failureMessage",
+  "id",
+  "methodLabel",
+  "status"
+ ],
+ "ClarificationIn": [
+  "question",
+  "to"
+ ],
+ "CloseCaseIn": [
+  "reason"
+ ],
+ "CollectionIn": [
+  "name"
+ ],
+ "CollectionItemsIn": [
+  "professionalIds"
+ ],
+ "CollectionOut": [
+  "count",
+  "id",
+  "name",
+  "updatedAt"
+ ],
+ "CompareItem": [
+  "availability",
+  "country",
+  "deliveryModes",
+  "dimensions",
+  "displayName",
+  "engagementTypes",
+  "headline",
+  "languages",
+  "licensedJurisdictions",
+  "photoUrl",
+  "pricingModels",
+  "professionalId",
+  "servedJurisdictions",
+  "specializations",
+  "startingPrice",
+  "tier",
+  "verifiedCredentials",
+  "yearsExperienceBand"
+ ],
+ "ConfirmEmailIn": [
+  "token"
+ ],
+ "ContractIn": [
+  "contractId"
+ ],
+ "ContractOut": [
+  "acceptedAmount",
+  "activatedAt",
+  "canEndNow",
+  "canRequestEnd",
+  "canSign",
+  "changeOrders",
+  "completedAt",
+  "contractVersion",
+  "createdAt",
+  "documentSha256",
+  "engagementType",
+  "id",
+  "milestones",
+  "ndaRequired",
+  "nextAction",
+  "organizationId",
+  "parties",
+  "pauseReason",
+  "pausedAt",
+  "pendingChangeOrderId",
+  "policyVersionLabel",
+  "pricingModel",
+  "professionalId",
+  "proposalId",
+  "reference",
+  "requestId",
+  "revisions",
+  "signatureDeadline",
+  "signatures",
+  "status",
+  "terminationRequest",
+  "terms",
+  "termsHash",
+  "title",
+  "total",
+  "version",
+  "viewerRole"
+ ],
+ "ContractRevisionOut": [
+  "changeOrderId",
+  "contractVersion",
+  "createdAt",
+  "currency",
+  "documentSha256",
+  "milestones",
+  "terms",
+  "termsHash",
+  "total"
+ ],
+ "ContractSummaryOut": [
+  "contracts",
+  "milestones",
+  "role"
+ ],
+ "CostCenterIn": [
+  "businessUnitId",
+  "code",
+  "name",
+  "quarterlyBudget"
+ ],
+ "CostCenterOut": [
+  "businessUnitId",
+  "code",
+  "id",
+  "name",
+  "quarterlyBudget"
+ ],
+ "CredentialIn": [
+  "credentialType",
+  "expiresOn",
+  "issuedOn",
+  "issuingBody",
+  "jurisdiction",
+  "name",
+  "registrationNumber",
+  "specialization"
+ ],
+ "CredentialOut": [
+  "credentialType",
+  "displayLabel",
+  "expiresOn",
+  "id",
+  "issuedOn",
+  "issuingBody",
+  "jurisdiction",
+  "name",
+  "registrationNumber",
+  "specialization",
+  "status"
+ ],
+ "DataRequestIn": [
+  "requestType"
+ ],
+ "DataRequestOut": [
+  "completedAt",
+  "createdAt",
+  "downloadable",
+  "expiresAt",
+  "id",
+  "reasons",
+  "requestType",
+  "retained",
+  "scheduledFor",
+  "status"
+ ],
+ "DecisionIn": [
+  "decision",
+  "expiresAt",
+  "publicReason",
+  "reasonCode"
+ ],
+ "DeclineIn": [
+  "note",
+  "reasonCode"
+ ],
+ "Deliverable": [
+  "acceptanceCriteria",
+  "description",
+  "key",
+  "title"
+ ],
+ "Delta": [
+  "field",
+  "label",
+  "proposed",
+  "requested",
+  "status"
+ ],
+ "DisputeOut": [
+  "arbitration",
+  "canCooldown",
+  "canEscalate",
+  "category",
+  "clarifications",
+  "closedAt",
+  "context",
+  "contractId",
+  "contractReference",
+  "createdAt",
+  "decidedAt",
+  "decision",
+  "desiredOutcome",
+  "directDeadline",
+  "disputed",
+  "evidence",
+  "evidenceComplete",
+  "evidenceDeadline",
+  "id",
+  "initiatorParty",
+  "legalHold",
+  "legalReviewRequired",
+  "mediationRequired",
+  "mediatorAssigned",
+  "milestones",
+  "nextStep",
+  "pendingDecision",
+  "prefersEarlyResolution",
+  "proposals",
+  "recommendation",
+  "reference",
+  "retainUntil",
+  "retentionBasis",
+  "status",
+  "summary",
+  "timeline",
+  "viewerRole"
+ ],
+ "DraftIn": [
+  "rules",
+  "settings",
+  "version"
+ ],
+ "DuplicateAnswerIn": [
+  "answer",
+  "note"
+ ],
+ "DuplicateOut": [
+  "account",
+  "accountName",
+  "createdAt",
+  "id",
+  "identityId",
+  "otherAccount",
+  "otherAccountName",
+  "otherIdentityId",
+  "resolutionNote",
+  "resolvedAt",
+  "signal",
+  "status",
+  "userAnswer",
+  "userNote"
+ ],
+ "DuplicateResolveIn": [
+  "keepIdentityId",
+  "note",
+  "outcome"
+ ],
+ "EarningsOut": [
+  "monthlySettledByCurrency",
+  "payoutAccount",
+  "payouts",
+  "totals",
+  "totalsByCurrency"
+ ],
+ "EndpointIn": [
+  "eventTypes",
+  "organizationId",
+  "url"
+ ],
+ "EndpointPatch": [
+  "enabled"
+ ],
+ "EscrowOut": [
+  "allocations",
+  "canFund",
+  "contractId",
+  "currency",
+  "feeBps",
+  "fees",
+  "funded",
+  "fundings",
+  "held",
+  "id",
+  "refunded",
+  "released",
+  "status",
+  "total",
+  "unfunded",
+  "viewerRole"
+ ],
+ "EvaluateIn": [
+  "action",
+  "attributes",
+  "orgId",
+  "pinnedPolicyVersionId",
+  "previewProfileId",
+  "subjectId",
+  "subjectType"
+ ],
+ "EvidenceCheckOut": [
+  "checkedAt",
+  "note",
+  "seen",
+  "source",
+  "verdict"
+ ],
+ "EvidenceFile": [
+  "contentType",
+  "dataBase64",
+  "name",
+  "sha256",
+  "size"
+ ],
+ "ExceptionDecisionIn": [
+  "decision",
+  "reason"
+ ],
+ "ExceptionIn": [
+  "action",
+  "documents",
+  "emergency",
+  "expiresAt",
+  "justification",
+  "orgId",
+  "subjectId",
+  "subjectType"
+ ],
+ "ExportIn": [
+  "correlationId",
+  "format",
+  "objectId",
+  "objectType",
+  "since",
+  "tenantId",
+  "until"
+ ],
+ "ExportOut": [
+  "chainHeadHash",
+  "contentSha256",
+  "createdAt",
+  "format",
+  "id",
+  "recordCount",
+  "status"
+ ],
+ "FacetValue": [
+  "count",
+  "label",
+  "value"
+ ],
+ "FirmInvitationOut": [
+  "createdAt",
+  "devInviteUrl",
+  "email",
+  "expiresAt",
+  "firmId",
+  "firmName",
+  "id",
+  "roles",
+  "status"
+ ],
+ "FirmInviteIn": [
+  "email",
+  "roles"
+ ],
+ "FirmLinkIn": [
+  "firmId"
+ ],
+ "FirmMemberOut": [
+  "displayName",
+  "email",
+  "identityId",
+  "joinedAt",
+  "roles"
+ ],
+ "FirmMemberPatch": [
+  "roles"
+ ],
+ "FirmOut": [
+  "createdAt",
+  "hasAuthorizedRepresentative",
+  "hqCountry",
+  "id",
+  "legalName",
+  "memberCount",
+  "myRoles",
+  "primaryCategory",
+  "registrationNumber",
+  "sizeBand",
+  "status",
+  "tradingName",
+  "version",
+  "website"
+ ],
+ "FirmPatch": [
+  "hqCountry",
+  "legalName",
+  "primaryCategory",
+  "registrationNumber",
+  "sizeBand",
+  "tradingName",
+  "website"
+ ],
+ "ForgotPasswordIn": [
+  "email"
+ ],
+ "ForgotPasswordOut": [
+  "message",
+  "resetToken"
+ ],
+ "FundIn": [
+  "all",
+  "milestoneIds",
+  "paymentMethodToken"
+ ],
+ "FundingOut": [
+  "amount",
+  "capturedAt",
+  "createdAt",
+  "failureMessage",
+  "id",
+  "milestoneIds",
+  "status"
+ ],
+ "GoldenTest": [
+  "input",
+  "mustContain"
+ ],
+ "GrantRoleIn": [
+  "role"
+ ],
+ "HTTPValidationError": [
+  "detail"
+ ],
+ "HistoryOut": [
+  "completedEngagements",
+  "medianResponseHours",
+  "newToPlatform",
+  "onTimeRate"
+ ],
+ "HostedSimulateIn": [
+  "status"
+ ],
+ "IdentityOut": [
+  "country",
+  "createdAt",
+  "defaultDashboard",
+  "displayName",
+  "email",
+  "emailConfirmed",
+  "id",
+  "language",
+  "links",
+  "mfaBypass",
+  "mfaEnabled",
+  "mfaRequired",
+  "organizationName",
+  "personas",
+  "phone",
+  "platformRoles",
+  "primaryPersona",
+  "status",
+  "timeZone"
+ ],
+ "IncidentIn": [
+  "kind",
+  "severity",
+  "summary",
+  "title"
+ ],
+ "IncidentUpdateIn": [
+  "addRemediation",
+  "advanceTo",
+  "completeRemediation",
+  "note",
+  "notified",
+  "review",
+  "rootCause",
+  "severity"
+ ],
+ "IntentFilters": [
+  "availability",
+  "delivery",
+  "engagementType",
+  "jurisdiction",
+  "q",
+  "spec",
+  "verified"
+ ],
+ "IntentIn": [
+  "text"
+ ],
+ "IntentOut": [
+  "filters",
+  "reasons",
+  "source"
+ ],
+ "InvitationOut": [
+  "createdAt",
+  "devInviteUrl",
+  "email",
+  "expiresAt",
+  "id",
+  "organizationId",
+  "organizationName",
+  "roles",
+  "spendLimit",
+  "status"
+ ],
+ "InviteIn": [
+  "businessUnitId",
+  "email",
+  "roles",
+  "spendLimit"
+ ],
+ "InvoiceOut": [
+  "contractId",
+  "id",
+  "issuedAt",
+  "lines",
+  "milestoneId",
+  "number",
+  "tax",
+  "total"
+ ],
+ "JurisdictionsIn": [
+  "crossBorderAcknowledged",
+  "licensed",
+  "served"
+ ],
+ "LedgerLineOut": [
+  "createdAt",
+  "credit",
+  "debit",
+  "entryGroupId",
+  "entryType",
+  "id",
+  "ledgerAccount",
+  "memo",
+  "milestoneId",
+  "referenceId",
+  "referenceType"
+ ],
+ "LegalEntityIn": [
+  "country",
+  "isDefault",
+  "legalName",
+  "registeredAddress",
+  "registrationNumber",
+  "taxId"
+ ],
+ "LegalEntityOut": [
+  "country",
+  "id",
+  "isDefault",
+  "legalName",
+  "registeredAddress",
+  "registrationNumber",
+  "status",
+  "taxId"
+ ],
+ "LegalHoldIn": [
+  "hold",
+  "reason"
+ ],
+ "LinkOut": [
+  "kind",
+  "roles",
+  "targetId",
+  "type"
+ ],
+ "LoginIn": [
+  "email",
+  "password",
+  "portal",
+  "recoveryCode",
+  "totpCode"
+ ],
+ "MePatch": [
+  "displayName",
+  "language",
+  "phone",
+  "timeZone"
+ ],
+ "MemberOut": [
+  "businessUnitId",
+  "displayName",
+  "email",
+  "identityId",
+  "joinedAt",
+  "lastActiveAt",
+  "roles",
+  "spendLimit"
+ ],
+ "MemberPatch": [
+  "businessUnitId",
+  "clearSpendLimit",
+  "roles",
+  "spendLimit"
+ ],
+ "MergeUnitsIn": [
+  "targetId"
+ ],
+ "MessageHitOut": [
+  "senderName",
+  "sentAt",
+  "sequence",
+  "snippet",
+  "threadId",
+  "threadTitle"
+ ],
+ "MessageIn": [
+  "attachments",
+  "body"
+ ],
+ "MessageOut": [
+  "attachments",
+  "body",
+  "contentHash",
+  "id",
+  "senderIdentityId",
+  "senderName",
+  "sentAt",
+  "sequence"
+ ],
+ "MfaEnrollOut": [
+  "otpauthUri",
+  "secret"
+ ],
+ "MfaResetIn": [
+  "reason"
+ ],
+ "MfaVerifyIn": [
+  "totpCode"
+ ],
+ "Milestone": [
+  "amountMinor",
+  "deliverableKeys",
+  "description",
+  "dueDate",
+  "title"
+ ],
+ "MilestoneOut": [
+  "acceptanceDueAt",
+  "acceptedAt",
+  "acceptedRelease",
+  "amount",
+  "deliverableKeys",
+  "description",
+  "dueDate",
+  "id",
+  "lastRevisionReason",
+  "partialOffer",
+  "reviewOverdue",
+  "revisionCount",
+  "sequence",
+  "startedAt",
+  "status",
+  "submissions",
+  "submittedAt",
+  "title"
+ ],
+ "MilestoneRef": [
+  "amount",
+  "id",
+  "sequence",
+  "title"
+ ],
+ "MoneyDTO": [
+  "amountMinor",
+  "currency"
+ ],
+ "NoticeIn": [
+  "howToGetHelp",
+  "whatChanged",
+  "whatHappened",
+  "whatHappensNext",
+  "whatYouCanDo",
+  "whyItHappened"
+ ],
+ "OfferingIn": [
+  "deliverables",
+  "engagementTypes",
+  "pricingModel",
+  "specialization",
+  "startingPrice",
+  "summary",
+  "title",
+  "typicalDuration"
+ ],
+ "OfferingOut": [
+  "deliverables",
+  "engagementTypes",
+  "id",
+  "pricingModel",
+  "specialization",
+  "specializationName",
+  "startingPrice",
+  "status",
+  "summary",
+  "title",
+  "typicalDuration",
+  "version"
+ ],
+ "OfferingPatch": [
+  "clearStartingPrice",
+  "deliverables",
+  "engagementTypes",
+  "pricingModel",
+  "specialization",
+  "startingPrice",
+  "summary",
+  "title",
+  "typicalDuration"
+ ],
+ "OpsItemOut": [
+  "amount",
+  "buyer",
+  "canRetry",
+  "contractId",
+  "engagement",
+  "id",
+  "kind",
+  "problem",
+  "professional",
+  "resolution",
+  "resolvedAt",
+  "since"
+ ],
+ "OpsResolveIn": [
+  "note",
+  "outcome"
+ ],
+ "OpsWorklistOut": [
+  "items",
+  "open"
+ ],
+ "OrganizationOut": [
+  "businessContext",
+  "country",
+  "createdAt",
+  "id",
+  "industry",
+  "memberCount",
+  "myRoles",
+  "name",
+  "orgType",
+  "status",
+  "timeZone",
+  "version"
+ ],
+ "OrganizationPatch": [
+  "businessContext",
+  "industry",
+  "name",
+  "timeZone"
+ ],
+ "OutcomeIn": [
+  "note",
+  "outcome",
+  "purpose",
+  "subjectId"
+ ],
+ "OverrideIn": [
+  "reason"
+ ],
+ "OwnerIn": [
+  "control",
+  "country",
+  "name",
+  "percent"
+ ],
+ "Page_AppealQueueItemOut_": [
+  "items",
+  "nextCursor"
+ ],
+ "Page_ChargeOut_": [
+  "items",
+  "nextCursor"
+ ],
+ "Page_ContractOut_": [
+  "items",
+  "nextCursor"
+ ],
+ "Page_DisputeOut_": [
+  "items",
+  "nextCursor"
+ ],
+ "Page_DuplicateOut_": [
+  "items",
+  "nextCursor"
+ ],
+ "Page_InvoiceOut_": [
+  "items",
+  "nextCursor"
+ ],
+ "Page_MessageOut_": [
+  "items",
+  "nextCursor"
+ ],
+ "Page_QueueItemOut_": [
+  "items",
+  "nextCursor"
+ ],
+ "Page_RefundOut_": [
+  "items",
+  "nextCursor"
+ ],
+ "Page_RequestOut_": [
+  "items",
+  "nextCursor"
+ ],
+ "Page_SavedOut_": [
+  "items",
+  "nextCursor"
+ ],
+ "Page_SuggestionOut_": [
+  "items",
+  "nextCursor"
+ ],
+ "Page_ThreadOut_": [
+  "items",
+  "nextCursor"
+ ],
+ "Page_UserOut_": [
+  "items",
+  "nextCursor"
+ ],
+ "PartialOfferIn": [
+  "amountMinor",
+  "reason"
+ ],
+ "PartialOfferOut": [
+  "amount",
+  "offeredAt",
+  "reason",
+  "refund"
+ ],
+ "PartyOut": [
+  "detail",
+  "name",
+  "role"
+ ],
+ "PasskeyLoginIn": [
+  "credential",
+  "portal"
+ ],
+ "PasskeyOptionsIn": [
+  "password"
+ ],
+ "PasskeyOut": [
+  "backedUp",
+  "createdAt",
+  "id",
+  "lastUsedAt",
+  "name"
+ ],
+ "PasskeyRegisterIn": [
+  "credential",
+  "name"
+ ],
+ "PasskeyStepUpIn": [
+  "credential"
+ ],
+ "PauseIn": [
+  "reason"
+ ],
+ "PayoutAccountIn": [
+  "accountNumber",
+  "country",
+  "currency",
+  "holderName"
+ ],
+ "PayoutAccountOut": [
+  "country",
+  "createdAt",
+  "currency",
+  "holderName",
+  "label",
+  "status"
+ ],
+ "PayoutOut": [
+  "contractId",
+  "createdAt",
+  "delayReason",
+  "expectedAt",
+  "failureMessage",
+  "fee",
+  "gross",
+  "id",
+  "milestoneId",
+  "net",
+  "settledAt",
+  "status"
+ ],
+ "PhotoIn": [
+  "contentType",
+  "dataBase64"
+ ],
+ "PolicyFilterOut": [
+  "hidden",
+  "jurisdictions",
+  "minTier",
+  "organizationId",
+  "organizationName",
+  "requiredDimensions"
+ ],
+ "PreferencesIO": [
+  "email",
+  "inApp",
+  "mandatoryNotice",
+  "marketing",
+  "sms"
+ ],
+ "ProfessionalBrief": [
+  "country",
+  "displayName",
+  "headline",
+  "id",
+  "photoUrl",
+  "tier"
+ ],
+ "ProfileIn": [
+  "businessUnitIds",
+  "description",
+  "name",
+  "orgId",
+  "riskLevel",
+  "rules",
+  "settings",
+  "template"
+ ],
+ "ProfileOut": [
+  "availability",
+  "bio",
+  "city",
+  "country",
+  "crossBorderAcknowledged",
+  "deliveryModes",
+  "displayName",
+  "engagementTypes",
+  "firmId",
+  "handlesRegulatedData",
+  "headline",
+  "id",
+  "indicativeRate",
+  "industries",
+  "languages",
+  "legalName",
+  "licensedJurisdictions",
+  "maxConcurrentEngagements",
+  "pendingSpecializations",
+  "photoUrl",
+  "pricingModels",
+  "primaryCategory",
+  "publishedAt",
+  "rateUnit",
+  "servedJurisdictions",
+  "specializations",
+  "status",
+  "temporarilyUnavailable",
+  "version",
+  "website",
+  "weeklyHours",
+  "yearsExperienceBand"
+ ],
+ "ProfilePatch": [
+  "bio",
+  "city",
+  "clearRate",
+  "country",
+  "deliveryModes",
+  "displayName",
+  "engagementTypes",
+  "handlesRegulatedData",
+  "headline",
+  "indicativeRate",
+  "industries",
+  "languages",
+  "legalName",
+  "pricingModels",
+  "rateUnit",
+  "website",
+  "yearsExperienceBand"
+ ],
+ "PromptIn": [
+  "goldenTests",
+  "instructions",
+  "promptKey",
+  "targetModel"
+ ],
+ "ProposalAttachmentsIn": [
+  "files"
+ ],
+ "ProposalBrief": [
+  "id",
+  "status",
+  "submittedAt",
+  "total",
+  "validUntil"
+ ],
+ "ProposalIn": [
+  "assumptions",
+  "currency",
+  "deliverables",
+  "endDate",
+  "exclusions",
+  "milestones",
+  "pricingModel",
+  "scopeAlignment",
+  "scopeNotes",
+  "startDate",
+  "summary",
+  "total",
+  "validUntil"
+ ],
+ "PublicCredentialOut": [
+  "displayLabel",
+  "issuingBody",
+  "jurisdiction",
+  "name",
+  "status"
+ ],
+ "PublicFirmOut": [
+  "id",
+  "name",
+  "verified"
+ ],
+ "PublicProfileOut": [
+  "availability",
+  "bio",
+  "city",
+  "country",
+  "credentials",
+  "deliveryModes",
+  "displayName",
+  "engagementTypes",
+  "firm",
+  "handlesRegulatedData",
+  "headline",
+  "history",
+  "id",
+  "indicativeRate",
+  "industries",
+  "isOwnProfile",
+  "languages",
+  "licensedJurisdictions",
+  "offerings",
+  "pendingSpecializations",
+  "photoUrl",
+  "pricingModels",
+  "primaryCategory",
+  "primaryCategoryName",
+  "publishedAt",
+  "rateUnit",
+  "servedJurisdictions",
+  "specializations",
+  "trust",
+  "verificationInProgress",
+  "verificationReport",
+  "verifiedJurisdictions",
+  "weeklyHours",
+  "yearsExperienceBand"
+ ],
+ "PublicTrustOut": [
+  "dimensions",
+  "explanation",
+  "tier",
+  "updatedAt"
+ ],
+ "PublishIn": [
+  "attestAccurate"
+ ],
+ "QueueItemOut": [
+  "createdAt",
+  "estimatedCompletion",
+  "evidenceCount",
+  "flaggedEvidence",
+  "hostedProvider",
+  "hostedReason",
+  "hostedStatus",
+  "id",
+  "jurisdiction",
+  "label",
+  "overdue",
+  "providerResult",
+  "status",
+  "subjectId",
+  "subjectName",
+  "subjectType",
+  "verificationType"
+ ],
+ "ReadIn": [
+  "throughSequence"
+ ],
+ "ReadinessItem": [
+  "done",
+  "key",
+  "label",
+  "required"
+ ],
+ "ReadinessOut": [
+  "canPublish",
+  "items"
+ ],
+ "ReasonIn": [
+  "reason"
+ ],
+ "RecommendationIn": [
+  "allocations",
+  "citations",
+  "extendDays",
+  "note",
+  "outcome",
+  "summary"
+ ],
+ "ReconcileIn": [
+  "day"
+ ],
+ "ReconciliationCheck": [
+  "currency",
+  "difference",
+  "ledger",
+  "name",
+  "ok",
+  "payments",
+  "provider"
+ ],
+ "ReconciliationOut": [
+  "checks",
+  "day",
+  "id",
+  "mismatches",
+  "runBy",
+  "status",
+  "updatedAt"
+ ],
+ "RecoveryCodesOut": [
+  "recoveryCodes"
+ ],
+ "RefreshIn": [
+  "refreshToken"
+ ],
+ "RefundOut": [
+  "amount",
+  "contractId",
+  "createdAt",
+  "disputeId",
+  "failureMessage",
+  "id",
+  "milestoneId",
+  "settledAt",
+  "status"
+ ],
+ "RegisterOut": [
+  "emailConfirmationToken",
+  "tokens",
+  "user"
+ ],
+ "RejectIn": [
+  "note",
+  "reasonCode"
+ ],
+ "RemediationDoneIn": [
+  "note"
+ ],
+ "ReportIn": [
+  "category",
+  "confidential",
+  "description",
+  "subjectId",
+  "subjectType"
+ ],
+ "RequestOut": [
+  "attachments",
+  "budget",
+  "businessContext",
+  "buyerIdentityId",
+  "buyerName",
+  "closedAt",
+  "costCenterId",
+  "createdAt",
+  "customDeliverables",
+  "deliverables",
+  "deliveryMode",
+  "dependencies",
+  "desiredStartDate",
+  "details",
+  "detailsHidden",
+  "engagementType",
+  "estimatedDuration",
+  "groupId",
+  "groupSize",
+  "id",
+  "jurisdictionConflict",
+  "legalEntityId",
+  "location",
+  "ndaAccepted",
+  "ndaRequired",
+  "objective",
+  "offeringId",
+  "organizationId",
+  "organizationName",
+  "paymentCadence",
+  "pricingPreferences",
+  "professional",
+  "proposal",
+  "reasonCode",
+  "reasonNote",
+  "respondBy",
+  "sentAt",
+  "service",
+  "specialization",
+  "status",
+  "version",
+  "viewerRole"
+ ],
+ "RequestSummaryOut": [
+  "proposals",
+  "requests",
+  "role"
+ ],
+ "ResendConfirmationOut": [
+  "emailConfirmationToken",
+  "message"
+ ],
+ "ResetPasswordIn": [
+  "newPassword",
+  "token"
+ ],
+ "ResolutionIn": [
+  "allocations",
+  "extendDays",
+  "note",
+  "outcome"
+ ],
+ "ResultItem": [
+  "availability",
+  "city",
+  "country",
+  "deliveryModes",
+  "dimensions",
+  "displayName",
+  "engagementTypes",
+  "headline",
+  "languages",
+  "licensedJurisdictions",
+  "photoUrl",
+  "pricingModels",
+  "professionalId",
+  "regulatedPreview",
+  "servedJurisdictions",
+  "specializations",
+  "startingPrice",
+  "tier",
+  "tierLabel",
+  "trustScore",
+  "whyThisResult",
+  "yearsExperienceBand"
+ ],
+ "ReviewIn": [
+  "comment",
+  "rating"
+ ],
+ "RevisionChange": [
+  "field",
+  "requested"
+ ],
+ "RevokeIn": [
+  "publicReason",
+  "reasonCode"
+ ],
+ "RuleIn": [
+  "appliesTo",
+  "approval",
+  "condition",
+  "decision",
+  "id",
+  "message",
+  "reasonCode"
+ ],
+ "SaveIn": [
+  "professionalId"
+ ],
+ "SavedBuyerIn": [
+  "alerts",
+  "note",
+  "organizationId"
+ ],
+ "SavedBuyerOut": [
+  "alerts",
+  "completed",
+  "country",
+  "engagements",
+  "id",
+  "lastActivityAt",
+  "name",
+  "note",
+  "organizationId",
+  "requests",
+  "savedAt"
+ ],
+ "SavedBuyerPatch": [
+  "alerts",
+  "note"
+ ],
+ "SavedOut": [
+  "availability",
+  "available",
+  "city",
+  "collectionIds",
+  "country",
+  "dimensions",
+  "displayName",
+  "engagementTypes",
+  "headline",
+  "languages",
+  "lastVerifiedAt",
+  "photoUrl",
+  "pricingModels",
+  "primarySpecialization",
+  "professionalId",
+  "savedAt",
+  "specializations",
+  "startingPrice",
+  "tier",
+  "yearsExperienceBand"
+ ],
+ "SavedSearchIn": [
+  "name",
+  "params"
+ ],
+ "SavedSearchOut": [
+  "alertsOn",
+  "createdAt",
+  "id",
+  "lastViewedAt",
+  "name",
+  "params"
+ ],
+ "SearchOut": [
+  "facets",
+  "items",
+  "policy",
+  "total"
+ ],
+ "SecondLookIn": [
+  "confirm",
+  "publicReason",
+  "reasonCode"
+ ],
+ "SendIn": [
+  "acknowledged"
+ ],
+ "SessionOut": [
+  "authStrength",
+  "current",
+  "device",
+  "id",
+  "signedInAt"
+ ],
+ "SettingsIn": [
+  "acceptanceWindowDays",
+  "allowedCurrencies",
+  "allowedJurisdictions",
+  "autoAcceptAfterDays",
+  "autoDisputeComplianceFlag",
+  "autoDisputeMissedDeadline",
+  "autoDisputeRejectionCount",
+  "challengeWindowDays",
+  "clauseTexts",
+  "directResolutionBusinessDays",
+  "disputeEscalationRoles",
+  "disputeEvidenceDays",
+  "disputeLegalReviewAboveMinor",
+  "disputeMediationAboveMinor",
+  "disputeRetentionYears",
+  "escrowRequired",
+  "governingLaw",
+  "minTrustTier",
+  "partialReleaseAllowed",
+  "requiredClauses",
+  "requiredDimensions",
+  "signatureDeadlineDays",
+  "stepUpForApprovals"
+ ],
+ "SignIn": [
+  "termsHash"
+ ],
+ "SignalOut": [
+  "adverse",
+  "at",
+  "summary",
+  "type"
+ ],
+ "SignatureOut": [
+  "authStrength",
+  "contractVersion",
+  "party",
+  "signedAt",
+  "signerName",
+  "termsHash"
+ ],
+ "SpecRef": [
+  "name",
+  "primary",
+  "slug"
+ ],
+ "SpecializationAdminOut": [
+  "categorySlug",
+  "credentialHints",
+  "deliverableTemplates",
+  "groupSlug",
+  "name",
+  "regulated",
+  "requiresCredential",
+  "requiresInsurance",
+  "slug",
+  "status",
+  "taxonomyVersion"
+ ],
+ "SpecializationDraftOut": [
+  "categorySlug",
+  "credentialLikely",
+  "description",
+  "groupSlug",
+  "name"
+ ],
+ "SpecializationIn": [
+  "credentialHints",
+  "deliverableTemplates",
+  "groupSlug",
+  "name",
+  "regulated",
+  "requiresCredential",
+  "requiresInsurance"
+ ],
+ "SpecializationMatchOut": [
+  "categoryName",
+  "groupName",
+  "name",
+  "slug"
+ ],
+ "SpecializationOut": [
+  "name",
+  "primary",
+  "regulated",
+  "requiresCredential",
+  "slug"
+ ],
+ "SpecializationPatch": [
+  "credentialHints",
+  "deliverableTemplates",
+  "name",
+  "regulated",
+  "requiresCredential",
+  "requiresInsurance"
+ ],
+ "SpecializationsIn": [
+  "primary",
+  "secondary"
+ ],
+ "StaffMemberOut": [
+  "displayName",
+  "email",
+  "id",
+  "mfaEnabled",
+  "platformRoles",
+  "status"
+ ],
+ "StepUpIn": [
+  "totpCode"
+ ],
+ "StoredFileOut": [
+  "contentType",
+  "hasFile",
+  "name",
+  "sha256",
+  "size"
+ ],
+ "SubmissionOut": [
+  "files",
+  "id",
+  "note",
+  "submittedAt"
+ ],
+ "SubmitIn": [
+  "files",
+  "note"
+ ],
+ "SuggestIn": [
+  "text"
+ ],
+ "SuggestionDecisionIn": [
+  "action",
+  "groupSlug",
+  "mergeSlug",
+  "name",
+  "note",
+  "regulated",
+  "requiresCredential"
+ ],
+ "SuggestionIn": [
+  "categorySlug",
+  "credentialLikely",
+  "description",
+  "groupSlug",
+  "name",
+  "source",
+  "text"
+ ],
+ "SuggestionOut": [
+  "categorySlug",
+  "createdAt",
+  "credentialLikely",
+  "description",
+  "groupSlug",
+  "id",
+  "name",
+  "professionalId",
+  "professionalName",
+  "resolutionNote",
+  "resolvedAt",
+  "resolvedSlug",
+  "source",
+  "status",
+  "text"
+ ],
+ "SupportContextIn": [
+  "contractId",
+  "errorReference",
+  "page"
+ ],
+ "SupportMessageOut": [
+  "authorName",
+  "body",
+  "createdAt",
+  "fromStaff",
+  "id"
+ ],
+ "SupportReplyIn": [
+  "message",
+  "resolve"
+ ],
+ "SupportRequestIn": [
+  "context",
+  "message",
+  "subject",
+  "topic"
+ ],
+ "SupportRequestOut": [
+  "assignedToName",
+  "context",
+  "createdAt",
+  "firstRespondedAt",
+  "firstResponseDueAt",
+  "id",
+  "messages",
+  "overdue",
+  "reference",
+  "requesterName",
+  "resolvedAt",
+  "status",
+  "subject",
+  "topic",
+  "updatedAt"
+ ],
+ "SwitchIn": [
+  "paused",
+  "reason"
+ ],
+ "TerminateIn": [
+  "mutual",
+  "reason"
+ ],
+ "TerminationDecisionIn": [
+  "agree",
+  "note"
+ ],
+ "TerminationRequestOut": [
+  "canAnswer",
+  "canWithdraw",
+  "createdAt",
+  "decidedAt",
+  "decisionNote",
+  "expiresAt",
+  "id",
+  "reason",
+  "requesterParty",
+  "status"
+ ],
+ "ThreadIn": [
+  "contextId",
+  "contextType",
+  "organizationId"
+ ],
+ "ThreadOut": [
+  "canSend",
+  "contextId",
+  "contextType",
+  "counterpartName",
+  "country",
+  "createdAt",
+  "headline",
+  "id",
+  "lastMessage",
+  "lastMessageFromSystem",
+  "lastSequence",
+  "lockReason",
+  "locked",
+  "photoUrl",
+  "professionalId",
+  "title",
+  "unreadCount",
+  "updatedAt",
+  "viewerRole"
+ ],
+ "TierChangeOut": [
+  "at",
+  "fromTier",
+  "reasons",
+  "toTier"
+ ],
+ "TimelineOut": [
+  "actor",
+  "at",
+  "kind",
+  "ref",
+  "text"
+ ],
+ "TokenPair": [
+  "accessToken",
+  "expiresIn",
+  "refreshToken",
+  "tokenType"
+ ],
+ "TrustHistoryOut": [
+  "flags",
+  "signals",
+  "tierChanges"
+ ],
+ "TrustOut": [
+  "dimensions",
+  "explanation",
+  "professionalId",
+  "score",
+  "tier",
+  "tierLabel",
+  "updatedAt"
+ ],
+ "UnreadSummaryOut": [
+  "unreadMessages",
+  "unreadThreads"
+ ],
+ "UserOut": [
+  "country",
+  "createdAt",
+  "displayName",
+  "email",
+  "emailConfirmed",
+  "id",
+  "lastSignInAt",
+  "mfaEnabled",
+  "personas",
+  "platformRoles",
+  "status"
+ ],
+ "ValidationError": [
+  "ctx",
+  "input",
+  "loc",
+  "msg",
+  "type"
+ ],
+ "zoikorum__domains__admin__schemas__AppealDecisionIn": [
+  "reason",
+  "upheld"
+ ],
+ "zoikorum__domains__admin__schemas__AppealIn": [
+  "evidence",
+  "reason"
+ ],
+ "zoikorum__domains__admin__schemas__CaseIn": [
+  "evidenceRefs",
+  "signalSource",
+  "subjectId",
+  "subjectType",
+  "summary"
+ ],
+ "zoikorum__domains__ai__api__DisputeIn": [
+  "disputeId"
+ ],
+ "zoikorum__domains__ai__api__RequestIn": [
+  "requestId"
+ ],
+ "zoikorum__domains__contract__schemas__RevisionIn": [
+  "reason"
+ ],
+ "zoikorum__domains__dispute__schemas__AllocationOut": [
+  "milestoneId",
+  "milestoneOutcome",
+  "refund",
+  "release",
+  "sequence",
+  "title"
+ ],
+ "zoikorum__domains__dispute__schemas__AppealDecisionIn": [
+  "outcome",
+  "reason",
+  "remediation"
+ ],
+ "zoikorum__domains__dispute__schemas__AppealIn": [
+  "evidence",
+  "explanation",
+  "grounds"
+ ],
+ "zoikorum__domains__dispute__schemas__DisputeIn": [
+  "category",
+  "context",
+  "contractId",
+  "desiredOutcome",
+  "milestoneIds",
+  "prefersEarlyResolution",
+  "summary"
+ ],
+ "zoikorum__domains__dispute__schemas__EvidenceIn": [
+  "description",
+  "evidenceType",
+  "items"
+ ],
+ "zoikorum__domains__dispute__schemas__EvidenceOut": [
+  "description",
+  "evidenceType",
+  "id",
+  "items",
+  "party",
+  "submittedAt"
+ ],
+ "zoikorum__domains__dispute__schemas__ProposalOut": [
+  "allocations",
+  "createdAt",
+  "id",
+  "mine",
+  "note",
+  "outcome",
+  "party",
+  "respondedAt",
+  "status"
+ ],
+ "zoikorum__domains__escrow__schemas__AllocationOut": [
+  "amount",
+  "fee",
+  "fundedAt",
+  "milestoneId",
+  "releaseReference",
+  "released",
+  "releasedAt",
+  "sequence",
+  "state",
+  "title"
+ ],
+ "zoikorum__domains__identity__schemas__RegisterIn": [
+  "acceptTerms",
+  "accountType",
+  "country",
+  "displayName",
+  "email",
+  "organizationName",
+  "password",
+  "termsVersion"
+ ],
+ "zoikorum__domains__marketplace__schemas__SuggestOut": [
+  "draft",
+  "matches",
+  "source"
+ ],
+ "zoikorum__domains__messaging__schemas__UploadIn": [
+  "dataBase64",
+  "name"
+ ],
+ "zoikorum__domains__professional__schemas__RegisterIn": [
+  "country",
+  "displayName",
+  "firmId"
+ ],
+ "zoikorum__domains__proposal__schemas__ProposalOut": [
+  "assumptions",
+  "attachments",
+  "createdAt",
+  "currency",
+  "decidedAt",
+  "deliverables",
+  "deltas",
+  "endDate",
+  "exclusions",
+  "expired",
+  "groupId",
+  "id",
+  "milestones",
+  "organizationId",
+  "pricingModel",
+  "professional",
+  "reasonCode",
+  "reasonNote",
+  "requestId",
+  "revisionCount",
+  "revisionRequests",
+  "scopeAlignment",
+  "scopeNotes",
+  "startDate",
+  "status",
+  "submittedAt",
+  "summary",
+  "termsHash",
+  "total",
+  "updatedAt",
+  "validUntil",
+  "version"
+ ],
+ "zoikorum__domains__proposal__schemas__RequestIn": [
+  "acknowledged",
+  "attachments",
+  "budget",
+  "businessContext",
+  "costCenterId",
+  "customDeliverables",
+  "deliverables",
+  "deliveryMode",
+  "dependencies",
+  "desiredStartDate",
+  "details",
+  "draft",
+  "engagementType",
+  "estimatedDuration",
+  "legalEntityId",
+  "location",
+  "ndaRequired",
+  "objective",
+  "offeringId",
+  "organizationId",
+  "paymentCadence",
+  "pricingPreferences",
+  "professionalIds",
+  "service",
+  "specialization"
+ ],
+ "zoikorum__domains__proposal__schemas__RevisionIn": [
+  "changes",
+  "note"
+ ],
+ "zoikorum__domains__search__schemas__SuggestOut": [
+  "professionals",
+  "specializations"
+ ],
+ "zoikorum__domains__verification__schemas__AppealDecisionIn": [
+  "expiresAt",
+  "note",
+  "outcome"
+ ],
+ "zoikorum__domains__verification__schemas__AppealIn": [
+  "statement"
+ ],
+ "zoikorum__domains__verification__schemas__CaseIn": [
+  "consent",
+  "details",
+  "jurisdiction",
+  "owners",
+  "subjectId",
+  "subjectType",
+  "verificationType"
+ ],
+ "zoikorum__domains__verification__schemas__EvidenceIn": [
+  "evidenceType",
+  "items"
+ ],
+ "zoikorum__domains__verification__schemas__EvidenceOut": [
+  "automaticCheck",
+  "contentType",
+  "evidenceType",
+  "fileName",
+  "hasFile",
+  "id",
+  "sha256",
+  "sizeBytes",
+  "uploadedAt"
+ ],
+ "zoikorum__shared__uploads__UploadIn": [
+  "contentType",
+  "dataBase64",
+  "name",
+  "sha256",
+  "size"
+ ]
+}

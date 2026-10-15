@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { formatMoney } from '../api/orgs'
 import { LABEL, taxonomyApi, type TaxonomyCategory } from '../api/professional'
@@ -8,6 +8,7 @@ import { ErrorAlert, SiteHeader } from '../components/ui'
 import { COUNTRIES } from './Join'
 import { countryName } from './ProfessionalPages'
 import { SaveButton, useSavedIds } from './SavedPage'
+import { SearchBox } from '../components/SearchBox'
 
 const PAGE = 20
 const SORTS: [string, string][] = [
@@ -33,6 +34,7 @@ export function ResultCard({ r, saved, onToggle }: { r: SearchResult; saved?: bo
         </div>
         <div className="result-side">
           <span className={`badge ${r.tier === 'C' ? 'warn' : 'green'}`}>Tier {r.tier} · {r.tierLabel}</span>
+          {r.regulatedPreview && <span className="badge warn" title="Regulated work (audit, tax filing, regulatory reporting) needs Tier A">Preview for regulated work</span>}
           {onToggle && <SaveButton id={r.professionalId} saved={!!saved} onToggle={onToggle} />}
         </div>
       </div>
@@ -90,11 +92,6 @@ export default function BrowseProfessionals() {
     setItems([...items, ...r.items])
     setOffset(next)
   }
-  function submit(e: FormEvent) {
-    e.preventDefault()
-    set('q', q.trim() || null)
-  }
-
   const groups = taxonomy.flatMap((c) => c.groups)
   return (
     <>
@@ -102,11 +99,8 @@ export default function BrowseProfessionals() {
       <main className="profile-wrap">
         <div className="page-head"><div><h1>Browse verified professionals</h1>
           <p className="muted" style={{ margin: 0 }}>Every result shows its Trust Tier and why it matched. Ranking can't be bought.</p></div></div>
-        <form className="search-bar" onSubmit={submit} role="search">
-          <input className="input" aria-label="Search professionals" placeholder="Try “fractional CFO”, “transfer pricing” or “SOX”"
-            value={q} onChange={(e) => setQ(e.target.value)} />
-          <button className="btn btn-primary">Search</button>
-        </form>
+        <SearchBox value={q} onChange={setQ} onSearch={(v) => set('q', v || null)}
+          onPickSpecialization={(slug) => set('spec', slug)} placeholder="Try “fractional CFO”, “transfer pricing” or “SOX”" />
         <div className="browse">
           <aside className="card panel filters" aria-label="Filters">
             <label className="filter-label" htmlFor="f-spec">Specialization</label>

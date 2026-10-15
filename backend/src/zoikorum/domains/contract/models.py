@@ -51,6 +51,8 @@ class Contract(Base, UUIDPk, Timestamps, Versioned):
     signature_deadline: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    paused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # retainer paused: no new cycles funded
+    pause_reason: Mapped[str | None] = mapped_column(String(500))
     pending_change_order_id: Mapped[uuid.UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey(f"{SCHEMA}.change_orders.id", use_alter=True, name="fk_contracts_pending_change_order_id_change_orders"),
@@ -80,6 +82,24 @@ class ChangeOrder(Base, UUIDPk, Timestamps, Versioned):
     decision_reason: Mapped[str | None] = mapped_column(String(1000))
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     applied_version: Mapped[int | None] = mapped_column(Integer)
+
+
+class TerminationRequest(Base, UUIDPk, Timestamps):
+    """One side asks to end the engagement by agreement (needed while money is in escrow). PENDING -> AGREED |
+    DECLINED | WITHDRAWN | LAPSED | CANCELLED (a dispute was opened). Kept as history, never deleted."""
+
+    __tablename__ = "termination_requests"
+    __table_args__ = (Index("ix_termination_requests_contract", "contract_id", "created_at"), {"schema": SCHEMA})
+
+    contract_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.contracts.id"), nullable=False)
+    requested_by_identity_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    requester_party: Mapped[str] = mapped_column(String(20), nullable=False)  # BUYER | PROFESSIONAL
+    reason: Mapped[str] = mapped_column(String(1000), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="PENDING")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    decided_by_identity_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    decision_note: Mapped[str | None] = mapped_column(String(1000))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class ContractRevision(Base, UUIDPk, CreatedAt):

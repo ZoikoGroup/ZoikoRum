@@ -108,3 +108,16 @@ async def contracting_entity(session: AsyncSession, org_id: uuid.UUID, entity_id
         return None
     return {"id": str(e.id), "legalName": e.legal_name, "registrationNumber": e.registration_number, "country": e.country,
             "registeredAddress": e.registered_address, "taxId": e.tax_id}
+
+
+async def member_roles_by_identity(session: AsyncSession, org_id: uuid.UUID) -> dict[uuid.UUID, set[str]]:
+    """Active members of an organisation and their roles."""
+    from zoikorum.domains.buyer.models import OrgMember
+
+    rows = (await session.execute(select(OrgMember.identity_id, OrgMember.roles).where(
+        OrgMember.organization_id == org_id, OrgMember.status == "ACTIVE"))).all()
+    return {i: set(r) for i, r in rows}
+
+
+async def business_unit_names(session: AsyncSession, org_id: uuid.UUID) -> dict[uuid.UUID, str]:
+    return dict((await session.execute(select(BusinessUnit.id, BusinessUnit.name).where(BusinessUnit.organization_id == org_id))).all())

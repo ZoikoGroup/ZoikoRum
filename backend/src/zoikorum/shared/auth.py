@@ -31,11 +31,12 @@ class PlatformRole:
     FINANCIAL_OPS = "FINANCIAL_OPS"
     EXECUTIVE = "EXECUTIVE"
     AI_SAFETY_REVIEWER = "AI_SAFETY_REVIEWER"
+    SUPPORT_AGENT = "SUPPORT_AGENT"  # answers help requests; no authority over money, verification or enforcement
 
     ALL = frozenset(
         {
             PLATFORM_ADMIN, TS_ANALYST, COMPLIANCE_OFFICER, RISK_LEAD, LEGAL,
-            MEDIATOR, FINANCIAL_OPS, EXECUTIVE, AI_SAFETY_REVIEWER,
+            MEDIATOR, FINANCIAL_OPS, EXECUTIVE, AI_SAFETY_REVIEWER, SUPPORT_AGENT,
         }
     )
 

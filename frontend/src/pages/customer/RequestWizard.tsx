@@ -117,10 +117,20 @@ export default function RequestWizard() {
 
   const problems = [
     !f.service.trim() || f.objective.trim().length < 5 ? 0 : -1,
-    !f.desiredStartDate || f.desiredStartDate < today() || (f.deliveryMode !== 'REMOTE' && !f.location.trim()) ? 1 : -1,
+    f.deliverables.length === 0 || !f.desiredStartDate || f.desiredStartDate < today() || (f.deliveryMode !== 'REMOTE' && !f.location.trim()) ? 1 : -1,
     f.budgetOn && (!f.budgetMax || (f.budgetMin !== '' && Number(f.budgetMin) > Number(f.budgetMax))) ? 2 : -1,
   ].filter((s) => s >= 0)
   const canNext = !problems.includes(step) && (step !== 3 || f.acknowledged)
+  // Plain reasons for a disabled Continue, shown under the step (no guessing what is missing).
+  const missing = [
+    ...(step === 0 ? [!f.service.trim() && 'Say which service you need.', f.objective.trim().length < 5 && 'Describe the outcome in a sentence.'] : []),
+    ...(step === 1 ? [f.deliverables.length === 0 && 'Add at least one deliverable: what you expect to receive.',
+      !f.desiredStartDate && 'Choose a start date.', f.desiredStartDate && f.desiredStartDate < today() && 'The start date cannot be in the past.',
+      f.deliveryMode !== 'REMOTE' && !f.location.trim() && 'Add the location for on-site or hybrid work.'] : []),
+    ...(step === 2 && f.budgetOn ? [!f.budgetMax && 'Enter a maximum budget, or switch the budget off.',
+      f.budgetMin !== '' && f.budgetMax && Number(f.budgetMin) > Number(f.budgetMax) && 'The minimum budget is above the maximum.'] : []),
+    ...(step === 3 && !f.acknowledged ? ['Tick the acknowledgement to continue.'] : []),
+  ].filter((x): x is string => !!x)
 
   async function addFiles(files: FileList | null) {
     if (!files) return
@@ -141,7 +151,8 @@ export default function RequestWizard() {
         desiredStartDate: f.desiredStartDate, estimatedDuration: f.estimatedDuration, deliveryMode: f.deliveryMode,
         location: f.deliveryMode === 'REMOTE' ? null : f.location.trim(),
         budget: f.budgetOn ? { minMinor: f.budgetMin ? toMinor(f.budgetMin) : null, maxMinor: toMinor(f.budgetMax), currency: f.currency } : null,
-        ndaRequired: f.ndaRequired, attachments: f.attachments, deliverables: f.deliverables, dependencies: f.dependencies,
+        ndaRequired: f.ndaRequired, attachments: f.attachments, deliverables: f.deliverables,
+        customDeliverables: f.deliverables.filter((d) => !templates.includes(d)), dependencies: f.dependencies,
         pricingPreferences: f.pricingPreferences, paymentCadence: f.paymentCadence || null, acknowledged: f.acknowledged, draft,
       })
       clearDraft(draftKey)
@@ -180,7 +191,8 @@ export default function RequestWizard() {
 
   return (
     <>
-      <PortalHeader eyebrow="Requests" title="Request a proposal" subtitle="A structured request: professionals reply with scope, milestones and price — no payment until you accept and sign." />
+      <PortalHeader eyebrow="Requests" title="Request a proposal" subtitle="A structured request: professionals reply with scope, milestones and price — no payment until you accept and sign."
+        actions={<Link className="btn btn-ghost" to="/app/help?from=/app/requests/new"><Icon name="help" /> Need help?</Link>} />
       <div className="governance-strip"><span><Icon name="shield" /> Verified identity</span><span><Icon name="contract" /> Contract-ready</span>
         <span><Icon name="lock" /> Payment protection</span><span><Icon name="clock" /> Audit record</span></div>
       <ol className="wizard-steps">{STEPS.map((s, i) => (
@@ -197,6 +209,7 @@ export default function RequestWizard() {
         onDiscard={() => { clearDraft(draftKey); setPending(null) }} />}
       <ErrorAlert error={error} />
       <div style={{ textAlign: 'right', minHeight: 18 }}><DraftSaved at={savedAt} /></div>
+      {missing.length > 0 && touched && <ul className="field-problems" role="status">{missing.map((m) => <li key={m}>{m}</li>)}</ul>}
 
       <div className="home-grid wide">
         <section className="card panel wizard-body">
@@ -224,7 +237,8 @@ export default function RequestWizard() {
                 <button type="button" className="btn btn-secondary btn-sm" disabled={custom.trim().length < 2 || f.deliverables.length >= 15}
                   onClick={() => { set('deliverables', [...new Set([...f.deliverables, custom.trim()])]); setCustom('') }}>Add</button>
               </div>
-              <p className="muted small" style={{ margin: '4px 0 0' }}>Suggestions come from the professional's services. Custom deliverables are flagged for clarity in the proposal.</p></div>
+              <p className="muted small" style={{ margin: '4px 0 0' }}>Suggestions come from the professional's services. Your own deliverables are marked
+                so the professional confirms what you mean in the proposal.</p></div>
             <Field label="Details" id="w-details" hint={`${f.details.length}/1200 · What does “done” look like? How will success be measured? What will you provide?`}>
               <textarea id="w-details" className="input" rows={6} maxLength={1200} value={f.details} onChange={(e) => set('details', e.target.value)} /></Field>
             <div className="row">

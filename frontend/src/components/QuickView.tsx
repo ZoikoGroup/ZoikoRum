@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { LABEL, proApi, type PublicProfile } from '../api/professional'
 import { equivalency } from '../lib/equivalency'
 import { countryName } from '../pages/ProfessionalPages'
+import { Loading } from './ui'
 
 /* Profile preview (Finance & Accounting category s.6): opened by hovering a result for ~0.7s on desktop or the
    "Quick view" button. Strict content: short summary, verified credentials only, top specializations, engagement
@@ -20,7 +21,7 @@ export function QuickView({ id, buyerCountry, saved, onSave, onClose }: {
   return (
     <div className="quick-view card" role="dialog" aria-label="Profile preview" onMouseLeave={onClose}>
       <button className="icon-btn qv-close" aria-label="Close preview" onClick={onClose}>×</button>
-      {failed ? <p className="muted small">The preview could not be loaded.</p> : !p ? <p className="muted small">Loading…</p> : <>
+      {failed ? <p className="muted small">The preview could not be loaded.</p> : !p ? <Loading lines={1} /> : <>
         {p.bio && <p className="qv-summary">{p.bio}</p>}
         <div className="qv-grid">
           <div><div className="filter-label">Verified credentials</div>

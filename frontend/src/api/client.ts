@@ -19,14 +19,17 @@ export class ApiError extends Error {
 
 export interface TokenPair {
   accessToken: string
-  refreshToken: string
+  refreshToken: string  // empty for the web app: the server keeps it in an HttpOnly cookie
   tokenType: string
   expiresIn: number
 }
 
-// Access token lives in memory only. The refresh token is kept in localStorage so a reload
-// keeps the session. (Production: move the refresh token to an httpOnly cookie.)
-const REFRESH_KEY = 'zk.refresh'
+// The access token (15 minutes) lives in memory only. The refresh token is an HttpOnly cookie set by the server, which
+// page scripts cannot read; localStorage only remembers that a session exists, so a reload knows to ask for a new
+// access token. Every request says X-Zk-Client: web so the server uses the cookie.
+const SESSION_KEY = 'zk.session'
+const LEGACY_REFRESH_KEY = 'zk.refresh'  // stored by earlier versions; used once, then removed
+const WEB = { 'X-Zk-Client': 'web' }
 let accessToken: string | null = null
 let refreshing: Promise<boolean> | null = null
 let onSessionLost: () => void = () => {}
@@ -34,13 +37,15 @@ let onSessionLost: () => void = () => {}
 export const tokens = {
   set(pair: TokenPair) {
     accessToken = pair.accessToken
-    localStorage.setItem(REFRESH_KEY, pair.refreshToken)
+    localStorage.setItem(SESSION_KEY, '1')
+    localStorage.removeItem(LEGACY_REFRESH_KEY)
   },
   clear() {
     accessToken = null
-    localStorage.removeItem(REFRESH_KEY)
+    localStorage.removeItem(SESSION_KEY)
+    localStorage.removeItem(LEGACY_REFRESH_KEY)
   },
-  hasRefresh: () => !!localStorage.getItem(REFRESH_KEY),
+  hasRefresh: () => !!localStorage.getItem(SESSION_KEY) || !!localStorage.getItem(LEGACY_REFRESH_KEY),
   onSessionLost(fn: () => void) {
     onSessionLost = fn
   },
@@ -65,15 +70,17 @@ async function toError(res: Response): Promise<ApiError> {
 }
 
 export async function refreshSession(): Promise<boolean> {
-  const rt = localStorage.getItem(REFRESH_KEY)
-  if (!rt) return false
+  if (!tokens.hasRefresh()) return false
+  const legacy = localStorage.getItem(LEGACY_REFRESH_KEY)
   if (!refreshing) {
     refreshing = (async () => {
       const res = await fetch('/v1/auth/refresh', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken: rt }),
-      })
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', ...WEB },
+        body: JSON.stringify(legacy ? { refreshToken: legacy } : {}),
+      }).catch(() => null)
+      if (!res) return false  // server unreachable: keep the session and try again later
       if (!res.ok) {
         tokens.clear()
         return false
@@ -100,11 +107,17 @@ interface RequestOptions {
 export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const { method = 'GET', body, auth = true, query, headers: extra = {}, text = false, blob = false } = opts
   const url = query ? `${path}?${new URLSearchParams(query)}` : path
+  // Every change carries an Idempotency-Key (one per call, reused if the request is resent after a token refresh), so
+  // the server never applies the same change twice.
+  const idem: Record<string, string> = method !== 'GET' && !extra['Idempotency-Key'] ? { 'Idempotency-Key': crypto.randomUUID() } : {}
 
   const send = () =>
     fetch(url, {
       method,
+      credentials: 'same-origin',
       headers: {
+        ...WEB,
+        ...idem,
         ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
         ...(auth && accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         ...extra,

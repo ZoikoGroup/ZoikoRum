@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.domains.dispute.models import DisputeCase
@@ -53,3 +54,30 @@ async def assistance_evidence(session: AsyncSession, dispute_id: uuid.UUID, revi
     return {"reference": c.reference, "category": c.category, "summary": c.summary, "context": c.context,
             "evidence": [{"id": str(e.id), "party": e.party, "type": e.evidence_type, "description": e.description,
                           "files": [{"name": f["name"], "sha256": f["sha256"]} for f in e.items]} for e in evidence]}
+
+
+async def disputes_for_contract(session: AsyncSession, contract_id: uuid.UUID) -> list[dict]:
+    """Every dispute on the engagement, open or closed, for its record."""
+    rows = (await session.scalars(select(DisputeCase).where(DisputeCase.contract_id == contract_id)
+                                  .order_by(DisputeCase.created_at))).all()
+    return [{"id": str(c.id), "reference": c.reference, "category": c.category, "status": c.status,
+             "summary": c.summary, "openedAt": c.created_at.isoformat()} for c in rows]
+
+
+async def files_for_contract(session: AsyncSession, contract_id: uuid.UUID):
+    from zoikorum.domains.dispute.models import EvidenceItem
+    from zoikorum.shared.uploads import FileRef
+
+    cases = {c.id: c for c in (await session.scalars(select(DisputeCase).where(DisputeCase.contract_id == contract_id))).all()}
+    if not cases:
+        return []
+    items = (await session.scalars(select(EvidenceItem).where(EvidenceItem.case_id.in_(list(cases)))
+                                   .order_by(EvidenceItem.created_at))).all()
+    return [FileRef(f"Dispute evidence ({cases[e.case_id].reference})", f["name"], f["sha256"], int(f.get("size", 0)),
+                    e.created_at, f"/v1/disputes/{e.case_id}/files/{f['sha256']}") for e in items for f in e.items]
+
+
+async def opened_against(session: AsyncSession, professional_id: uuid.UUID) -> int:
+    """Disputes on this professional's engagements, whoever opened them (own performance insights)."""
+    from sqlalchemy import func, select
+    return await session.scalar(select(func.count(func.distinct(DisputeCase.contract_id))).where(DisputeCase.professional_id == professional_id)) or 0

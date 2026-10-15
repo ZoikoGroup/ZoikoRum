@@ -6,7 +6,7 @@ import { useAuth } from '../../auth/AuthContext'
 import { ago, ActivityList } from '../../components/activity'
 import { Avatar, Icon } from '../../components/dashboard'
 import { PortalHeader, SidePanel, StatCard, Tabs } from '../../components/portal'
-import { ErrorAlert, Field } from '../../components/ui'
+import { ErrorAlert, Field, Loading } from '../../components/ui'
 import { COUNTRIES } from '../Join'
 import { countryName } from '../ProfessionalPages'
 
@@ -59,7 +59,7 @@ export default function OrganisationPage() {
   useEffect(() => { load() }, [load])
 
   if (!user) return null
-  if (!org) return error ? <ErrorAlert error={error} /> : <p className="muted">Loading…</p>
+  if (!org) return error ? <ErrorAlert error={error} /> : <Loading />
   const isAdmin = org.myRoles.includes('ORG_ADMIN')
   const canBill = isAdmin || org.myRoles.includes('BUDGET_OWNER')
   const isTeam = org.orgType !== 'INDIVIDUAL'
@@ -114,7 +114,7 @@ export default function OrganisationPage() {
               )}
             </section>
             <MembersTable members={members.slice(0, 6)} onViewAll={() => setTab('members')} />
-            <RolesSummary members={members} />
+            <RolesSummary members={members} orgId={org.id} />
           </div>
           <aside>
             <SidePanel title="Quick actions">
@@ -205,7 +205,7 @@ function MembersTable({ members, onViewAll }: { members: OrgMember[]; onViewAll?
   )
 }
 
-function RolesSummary({ members }: { members: OrgMember[] }) {
+function RolesSummary({ members, orgId }: { members: OrgMember[]; orgId: string }) {
   const approvers = members.filter((m) => m.roles.includes('APPROVER'))
   const legal = members.filter((m) => m.roles.includes('LEGAL_REVIEWER'))
   const budget = members.filter((m) => m.roles.includes('BUDGET_OWNER'))
@@ -219,7 +219,8 @@ function RolesSummary({ members }: { members: OrgMember[] }) {
       <div className="authority-row">
         {card('contract', 'Contract approval authority', [...approvers, ...legal].filter((v, i, a) => a.indexOf(v) === i))}
         {card('wallet', 'Payment approval authority', [...approvers, ...budget].filter((v, i, a) => a.indexOf(v) === i))}
-        <div className="authority-card"><Icon name="gear" /><span><strong>Engagement policy controls</strong><br /><span className="muted small">Policy profiles arrive with enterprise policies</span></span></div>
+        <div className="authority-card"><Icon name="gear" /><span><strong>Engagement policy controls</strong><br />
+          <Link className="small" to={`/app/policies?orgId=${orgId}`}>Policy profiles, approvals and exceptions →</Link></span></div>
       </div>
     </section>
   )

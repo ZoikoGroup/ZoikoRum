@@ -39,6 +39,7 @@ export interface ContractTerms {
   exclusions: string[]
   startDate: string | null
   endDate: string | null
+  governingLaw?: string  // set by an enterprise policy; otherwise the Terms of Service apply
 }
 
 export interface ChangeOrder {
@@ -102,9 +103,31 @@ export interface Contract {
   nextAction: string
   canSign: boolean
   acceptedAmount: Money
+  /** End at once (nothing in escrow, no dispute) or ask the other side to agree (money is held). */
+  canEndNow: boolean
+  pausedAt?: string | null
+  pauseReason?: string | null
+  canRequestEnd: boolean
+  terminationRequest: TerminationRequest | null
   createdAt: string
   version: number
 }
+
+export interface TerminationRequest {
+  id: string
+  requesterParty: 'BUYER' | 'PROFESSIONAL'
+  reason: string
+  status: 'PENDING' | 'AGREED' | 'DECLINED' | 'WITHDRAWN' | 'LAPSED' | 'CANCELLED'
+  expiresAt: string
+  decisionNote: string | null
+  decidedAt: string | null
+  createdAt: string
+  canAnswer: boolean
+  canWithdraw: boolean
+}
+
+export interface ActivityEntry { at: string; what: string; action: string; by: string; hash: string }
+export interface EngagementFile { source: string; name: string; sha256: string; size: number; uploadedAt: string | null; url: string }
 
 export interface ContractSummary { role: 'buyer' | 'professional'; contracts: Partial<Record<ContractStatus, number>>; milestones: Partial<Record<MilestoneStatus, number>> }
 
@@ -141,6 +164,16 @@ export const contractApi = {
     api<Contract>(`/v1/milestones/${milestoneId}/partial-acceptance/${agree ? 'agree' : 'decline'}`, { method: 'POST', headers: idem() }),
   cancelRemainingCycles: (id: string, reason: string) =>
     api<Contract>(`${C}/${id}/cancel-remaining-cycles`, { method: 'POST', body: { reason }, headers: idem() }),
+  activity: (id: string) => api<ActivityEntry[]>(`${C}/${id}/activity`),
+  pause: (id: string, reason?: string) => api<Contract>(`${C}/${id}/pause`, { method: 'POST', body: { reason: reason || null } }),
+  resume: (id: string) => api<Contract>(`${C}/${id}/resume`, { method: 'POST' }),
+  files: (id: string) => api<EngagementFile[]>(`${C}/${id}/all-files`),
+  evidencePack: (id: string, format: 'pdf' | 'json') => api<Blob>(`${C}/${id}/evidence-pack`, { query: { format }, blob: true }),
+  terminate: (id: string, reason: string, mutual: boolean) =>
+    api<Contract>(`${C}/${id}/terminate`, { method: 'POST', body: { reason, mutual }, headers: idem() }),
+  answerTermination: (id: string, agree: boolean, note?: string) =>
+    api<Contract>(`${C}/${id}/termination/decision`, { method: 'POST', body: { agree, note: note || null }, headers: idem() }),
+  withdrawTermination: (id: string) => api<Contract>(`${C}/${id}/termination/withdraw`, { method: 'POST' }),
   requestRevision: (milestoneId: string, reason: string) =>
     api<Contract>(`/v1/milestones/${milestoneId}/request-revision`, { method: 'POST', body: { reason } }),
 }

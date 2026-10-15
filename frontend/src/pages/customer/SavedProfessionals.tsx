@@ -7,7 +7,7 @@ import { CompareDialog } from '../../components/CompareDialog'
 import { Avatar, Icon } from '../../components/dashboard'
 import { PortalHeader, SidePanel, StatCard, Tabs, TierBadge, VerifyChips } from '../../components/portal'
 import { SavedSearchesPanel } from '../../components/SavedSearches'
-import { ErrorAlert } from '../../components/ui'
+import { ErrorAlert, Loading } from '../../components/ui'
 import { countryName } from '../ProfessionalPages'
 
 const MAX_COMPARE = 3
@@ -119,7 +119,7 @@ export default function SavedProfessionals() {
               </select></label>
           </div>
 
-          {items === null ? <p className="muted">Loading…</p> : list.length === 0 ? (
+          {items === null ? <Loading /> : list.length === 0 ? (
             <p className="muted" style={{ margin: '12px 0 0' }}>
               {items.length === 0 ? <>Nothing saved yet. <Link to="/app/find">Find professionals</Link> and use Save to build your shortlist.</> : 'No saved professionals match these filters.'}
             </p>

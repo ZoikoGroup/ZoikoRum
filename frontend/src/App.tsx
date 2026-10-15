@@ -26,6 +26,7 @@ const ProfessionalDashboard = lazy(() => import('./pages/ProfessionalPages').the
 const ProfileSetupPage = lazy(() => import('./pages/ProfessionalPages').then((m) => ({ default: m.ProfileSetupPage })))
 const PublicProfilePage = lazy(() => import('./pages/PublicProfile'))
 const BrowseProfessionals = lazy(() => import('./pages/BrowseProfessionals'))
+const CategoryPage = lazy(() => import('./pages/CategoryPage'))
 const FirmVerificationPage = lazy(() => import('./pages/VerificationPages').then((m) => ({ default: m.FirmVerificationPage })))
 const ProfessionalVerificationPage = lazy(() => import('./pages/VerificationPages').then((m) => ({ default: m.ProfessionalVerificationPage })))
 const ReviewQueuePage = lazy(() => import('./pages/VerificationPages').then((m) => ({ default: m.ReviewQueuePage })))
@@ -49,6 +50,7 @@ const RequestDetailPage = lazy(() => import('./pages/customer/CustomerRequests')
 const RequestsPage = lazy(() => import('./pages/customer/CustomerRequests').then((m) => ({ default: m.RequestsPage })))
 const MessagesPage = lazy(() => import('./pages/customer/Pipeline').then((m) => ({ default: m.MessagesPage })))
 const CustomerPaymentsPage = lazy(() => import('./pages/Money').then((m) => ({ default: m.CustomerPaymentsPage })))
+const PerformanceInsights = lazy(() => import('./pages/PerformanceInsights'))
 const EarningsPage = lazy(() => import('./pages/Money').then((m) => ({ default: m.EarningsPage })))
 const DisputeDetail = lazy(() => import('./pages/Disputes').then((m) => ({ default: m.DisputeDetail })))
 const DisputesPage = lazy(() => import('./pages/Disputes').then((m) => ({ default: m.DisputesPage })))
@@ -67,6 +69,9 @@ const AIAdminPage = lazy(() => import('./pages/Operations').then((m) => ({ defau
 const ReportsPage = lazy(() => import('./pages/Operations').then((m) => ({ default: m.ReportsPage })))
 const PlatformAnalyticsPage = lazy(() => import('./pages/Operations').then((m) => ({ default: m.PlatformAnalyticsPage })))
 const DeadLettersPage = lazy(() => import('./pages/Operations').then((m) => ({ default: m.DeadLettersPage })))
+const MoneyProblemsPage = lazy(() => import('./pages/Operations').then((m) => ({ default: m.MoneyProblemsPage })))
+const SupportQueuePage = lazy(() => import('./pages/Operations').then((m) => ({ default: m.SupportQueuePage })))
+const IncidentsPage = lazy(() => import('./pages/Operations').then((m) => ({ default: m.IncidentsPage })))
 const SwitchesPage = lazy(() => import('./pages/Operations').then((m) => ({ default: m.SwitchesPage })))
 
 const ENTERPRISE: ('ENTERPRISE_ADMIN' | 'ENTERPRISE_MEMBER')[] = ['ENTERPRISE_ADMIN', 'ENTERPRISE_MEMBER']
@@ -91,6 +96,7 @@ export default function App() {
           <Route path="/confirm-email" element={<ConfirmEmail />} />
           <Route path="/invite" element={<InviteLanding />} />
           <Route path="/professionals" element={<BrowseProfessionals />} />
+          <Route path="/categories/:slug" element={<CategoryPage />} />
           <Route path="/professionals/:id" element={<PublicProfilePage />} />
 
           {/* Signed in: each workspace is gated by role (the API enforces the same rules). */}
@@ -125,6 +131,7 @@ export default function App() {
             <Route path="payments" element={<RequireRole any={CUSTOMER}><CustomerPaymentsPage /></RequireRole>} />
             <Route path="compare" element={<RequireRole any={CUSTOMER}><ComparePage /></RequireRole>} />
             <Route path="professional/earnings" element={<RequireRole any={['PROFESSIONAL']}><EarningsPage /></RequireRole>} />
+            <Route path="professional/insights" element={<RequireRole any={['PROFESSIONAL']}><PerformanceInsights /></RequireRole>} />
             <Route path="professional/buyers" element={<RequireRole any={['PROFESSIONAL']}><SavedBuyersPage /></RequireRole>} />
             <Route path="messages" element={<RequireRole any={[...CUSTOMER, 'PROFESSIONAL']}><MessagesPage /></RequireRole>} />
             <Route path="disputes" element={<RequireRole any={CUSTOMER}><DisputesPage role="buyer" /></RequireRole>} />
@@ -151,6 +158,9 @@ export default function App() {
             <Route path="ops/ai" element={<RequireRole any={['AI_SAFETY_REVIEWER']}><AIAdminPage /></RequireRole>} />
             <Route path="ops/analytics" element={<RequireRole any={[...PLATFORM_ROLES]}><PlatformAnalyticsPage /></RequireRole>} />
             <Route path="ops/dead-letters" element={<RequireRole any={['FINANCIAL_OPS', 'PLATFORM_ADMIN']}><DeadLettersPage /></RequireRole>} />
+            <Route path="ops/money" element={<RequireRole any={['FINANCIAL_OPS', 'PLATFORM_ADMIN']}><MoneyProblemsPage /></RequireRole>} />
+            <Route path="ops/support" element={<RequireRole any={['SUPPORT_AGENT', 'PLATFORM_ADMIN']}><SupportQueuePage /></RequireRole>} />
+            <Route path="ops/incidents" element={<RequireRole any={[...PLATFORM_ROLES]}><IncidentsPage /></RequireRole>} />
             <Route path="ops/switches" element={<RequireRole any={['FINANCIAL_OPS', 'PLATFORM_ADMIN']}><SwitchesPage /></RequireRole>} />
             <Route path="security" element={<Security />} />
             <Route path="forbidden" element={<ForbiddenPage />} />

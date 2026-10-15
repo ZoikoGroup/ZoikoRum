@@ -16,14 +16,16 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.config import get_settings
+from zoikorum.domains.admin import facade as admin_facade
 from zoikorum.domains.buyer import facade as buyer_facade
 from zoikorum.domains.contract import facade as contract_facade
 from zoikorum.domains.dispute.models import DisputeAppeal, DisputeCase, EvidenceItem, ResolutionProposal, TimelineEntry
 from zoikorum.domains.dispute.schemas import (
-    AllocationIn, AllocationOut, AssignIn, DisputeIn, DisputeOut, EvidenceIn, EvidenceOut, MilestoneRef, ProposalOut,
+    AllocationIn, AllocationOut, ArbitrationAwardIn, ArbitrationReferIn, AssignIn, DisputeIn, DisputeOut, EvidenceIn, EvidenceOut, MilestoneRef, ProposalOut,
     RecommendationIn, ResolutionIn, TimelineOut,
 )
 from zoikorum.domains.identity import facade as identity_facade
+from zoikorum.domains.policy import facade as policy_facade
 from zoikorum.domains.professional import facade as professional_facade
 from zoikorum.shared import clock
 from zoikorum.shared.auth import Actor, OrgRole, PlatformRole
@@ -71,8 +73,8 @@ def _evt(session: AsyncSession, event_type: str, c: DisputeCase, **payload) -> N
                           "professionalId": c.professional_id, **payload})
 
 
-def _log(session: AsyncSession, c: DisputeCase, kind: str, actor: str, text: str) -> None:
-    session.add(TimelineEntry(case_id=c.id, kind=kind, actor=actor, text=text[:500]))
+def _log(session: AsyncSession, c: DisputeCase, kind: str, actor: str, text: str, ref: str | None = None) -> None:
+    session.add(TimelineEntry(case_id=c.id, kind=kind, actor=actor, text=text[:500], ref=ref))
 
 
 async def _case(session: AsyncSession, case_id: uuid.UUID, lock: bool = False) -> DisputeCase:
@@ -102,6 +104,11 @@ async def _require_buyer_authority(session: AsyncSession, actor: Actor, c, relea
         raise Forbidden("Acting on a dispute for your organisation needs the Requester or Approver role", code="ROLE_REQUIRED")
     if not settle:
         return
+    rules = await _rules(session, c)
+    if rules.dispute_legal_review_above_minor is not None and c.disputed_minor > rules.dispute_legal_review_above_minor \
+            and OrgRole.LEGAL_REVIEWER not in roles:
+        raise Forbidden("Your organisation's policy needs its Legal Reviewer to settle a dispute of this size",
+                        code="LEGAL_REVIEW_REQUIRED")
     actor.require_step_up()
     limit = await buyer_facade.get_member_spend_limit(session, c.organization_id, actor.identity_id)
     if release_minor and limit is not None and (limit.currency != c.currency or release_minor > limit.minor):
@@ -145,7 +152,8 @@ async def _contract(session: AsyncSession, contract_id: uuid.UUID) -> contract_f
 
 # ---- Allocations ----------------------------------------------------------------------------------
 
-async def _allocations(session: AsyncSession, c: DisputeCase, outcome: str, raw: list[AllocationIn]) -> list[dict]:
+async def _allocations(session: AsyncSession, c: DisputeCase, outcome: str, raw: list[AllocationIn],
+                       extend_days: int | None = None) -> list[dict]:
     """Validates a structured outcome. Money outcomes split each disputed milestone fully into release + refund."""
     k = await _contract(session, c.contract_id)
     ms = {m.id: m for m in k.milestones if str(m.id) in c.milestone_ids}
@@ -153,7 +161,10 @@ async def _allocations(session: AsyncSession, c: DisputeCase, outcome: str, raw:
         if any(a.releaseMinor or a.refundMinor for a in raw):
             raise ValidationFailed("Rework and timeline extension keep the money held; do not split it", code="ALLOCATION_NOT_ALLOWED")
         mo = "REWORK" if outcome == "REWORK" else "EXTEND"
-        return [{"milestoneId": str(mid), "releaseMinor": 0, "refundMinor": 0, "milestoneOutcome": mo} for mid in ms]
+        if outcome == "TIMELINE_EXTENSION" and not extend_days:
+            raise ValidationFailed("Say how many days later the work is due", code="EXTENSION_DAYS_REQUIRED")
+        return [{"milestoneId": str(mid), "releaseMinor": 0, "refundMinor": 0, "milestoneOutcome": mo,
+                 **({"extendDays": extend_days} if outcome == "TIMELINE_EXTENSION" else {})} for mid in ms]
     if not raw and outcome in ("FULL_RELEASE", "FULL_REFUND", "TERMINATION"):
         release = outcome == "FULL_RELEASE"
         raw = [AllocationIn(milestoneId=mid, releaseMinor=m.amount_minor if release else 0, refundMinor=0 if release else m.amount_minor)
@@ -195,6 +206,9 @@ def _next_step(c: DisputeCase, viewer: str) -> str:
     if c.status == "DIRECT_RESOLUTION":
         return f"Make or answer a structured proposal before {c.direct_deadline:%d %b %Y} — otherwise the case goes to a mediator."
     if c.status == "MEDIATION":
+        if c.arbitration:
+            return (f"Referred to external arbitration ({c.arbitration['forum']}). The money stays frozen until the platform's Legal "
+                    "team records the arbitrator's award.")
         if not c.mediator_identity_id:
             return "Waiting for a mediator to be assigned."
         if c.pending_decision:
@@ -212,7 +226,11 @@ async def _out(session: AsyncSession, actor: Actor, c: DisputeCase, viewer: str)
     evidence = (await session.scalars(select(EvidenceItem).where(EvidenceItem.case_id == c.id).order_by(EvidenceItem.created_at))).all()
     proposals = (await session.scalars(select(ResolutionProposal).where(ResolutionProposal.case_id == c.id).order_by(ResolutionProposal.created_at))).all()
     timeline = (await session.scalars(select(TimelineEntry).where(TimelineEntry.case_id == c.id).order_by(TimelineEntry.created_at))).all()
+    rules = await _rules(session, c)
+    mediation_required = await _mediation_required(session, c, rules)
     return DisputeOut(
+        mediationRequired=mediation_required, arbitration=c.arbitration,
+        legalReviewRequired=rules.dispute_legal_review_above_minor is not None and c.disputed_minor > rules.dispute_legal_review_above_minor,
         id=c.id, reference=c.reference, contractId=c.contract_id, contractReference=c.contract_reference,
         milestones=[MilestoneRef(id=m.id, sequence=m.sequence, title=m.title, amount=MoneyDTO(amountMinor=m.amount_minor, currency=m.currency))
                     for m in k.milestones if str(m.id) in c.milestone_ids],
@@ -224,10 +242,14 @@ async def _out(session: AsyncSession, actor: Actor, c: DisputeCase, viewer: str)
                               items=[file_out(i) for i in e.items], submittedAt=e.created_at) for e in evidence],
         proposals=[ProposalOut(id=p.id, party=p.party, outcome=p.outcome, allocations=await _allocations_out(session, c, p.allocations), note=p.note,
                                status=p.status, createdAt=p.created_at, respondedAt=p.responded_at, mine=p.party == viewer) for p in proposals],
-        timeline=[TimelineOut(kind=t.kind, actor=t.actor, text=t.text, at=t.created_at) for t in timeline],
+        timeline=[TimelineOut(kind=t.kind, actor=t.actor, text=t.text, at=t.created_at, ref=t.ref) for t in timeline],
+        prefersEarlyResolution=c.prefers_early_resolution, clarifications=list(c.clarifications),
+        retainUntil=c.retain_until, retentionBasis=c.retention_basis, legalHold=c.legal_hold,
+        canCooldown=viewer in ("BUYER", "PROFESSIONAL") and viewer not in c.cooldown_used_by and c.status in ("EVIDENCE_COLLECTION", "DIRECT_RESOLUTION"),
         viewerRole=viewer, canEscalate=c.status == "DIRECT_RESOLUTION" and viewer in ("BUYER", "PROFESSIONAL")
-        and any(p.status == "REJECTED" for p in proposals),
-        nextStep=_next_step(c, viewer), createdAt=c.created_at,
+        and (mediation_required or any(p.status == "REJECTED" for p in proposals)),
+        nextStep="The buyer organisation's policy needs a mediator for a dispute of this size: escalate to start mediation."
+        if mediation_required and c.status == "DIRECT_RESOLUTION" else _next_step(c, viewer), createdAt=c.created_at,
     )
 
 
@@ -270,6 +292,9 @@ async def open_dispute(session: AsyncSession, actor: Actor, body: DisputeIn) -> 
     party = await _party_of(session, actor, k.organization_id, k.professional_id)
     if party is None:
         raise NotFound("Contract not found")
+    if "DISPUTE_ACCESS_RESTRICTION" in await admin_facade.active_restrictions(session, "IDENTITY", actor.identity_id):
+        raise Forbidden("Opening new disputes is restricted on your account for now (see Account safety). You can still "
+                        "answer disputes opened against you.", code="DISPUTE_ACCESS_RESTRICTED")
     if party == "BUYER":
         await _require_buyer_authority(session, actor, k, settle=False)  # opening freezes money: decider roles only
     if k.status not in ("ACTIVE", "DISPUTED"):
@@ -287,7 +312,7 @@ async def open_dispute(session: AsyncSession, actor: Actor, body: DisputeIn) -> 
                        "not yet accepted can be disputed.", code="MILESTONE_NOT_DISPUTABLE")
 
     now = clock.now()
-    c = DisputeCase(reference=f"ZK-DSP-{uuid.uuid4().hex[:8].upper()}", contract_id=k.id, contract_reference=k.reference or "—",
+    c = DisputeCase(prefers_early_resolution=body.prefersEarlyResolution, reference=f"ZK-DSP-{uuid.uuid4().hex[:8].upper()}", contract_id=k.id, contract_reference=k.reference or "—",
                     organization_id=k.organization_id, professional_id=k.professional_id, milestone_ids=[str(i) for i in sorted(wanted, key=str)],
                     category=body.category, summary=body.summary.strip(), desired_outcome=body.desiredOutcome, context=body.context.strip(),
                     initiated_by=actor.identity_id, initiator_party=party, status="EVIDENCE_COLLECTION", currency=k.currency,
@@ -326,10 +351,13 @@ async def add_evidence(session: AsyncSession, actor: Actor, case_id: uuid.UUID, 
     party = await _require_party(session, actor, c)
     if c.status != "EVIDENCE_COLLECTION" or clock.now() > c.evidence_deadline:
         raise Conflict("The evidence window has closed", code="EVIDENCE_CLOSED")
-    session.add(EvidenceItem(case_id=c.id, party=party, submitted_by=actor.identity_id, evidence_type=body.evidenceType,
-                             description=body.description.strip(), items=store_uploads(f"disputes/{c.id}", body.items)))
+    item = EvidenceItem(case_id=c.id, party=party, submitted_by=actor.identity_id, evidence_type=body.evidenceType,
+                        description=body.description.strip(), items=store_uploads(f"disputes/{c.id}", body.items))
+    session.add(item)
+    await session.flush()
     _log(session, c, "EVIDENCE", await _actor_label(session, actor, party),
-         f"Evidence added: {body.evidenceType.replace('_', ' ').lower()}" + (f" ({len(body.items)} file(s))" if body.items else ""))
+         f"Evidence added: {body.evidenceType.replace('_', ' ').lower()}" + (f" ({len(body.items)} file(s))" if body.items else ""),
+         ref=f"evidence:{item.id}")
     _evt(session, E.DISPUTE_EVIDENCE_SUBMITTED, c, party=party, evidenceType=body.evidenceType, files=len(body.items))
     await session.flush()
     return await _out(session, actor, c, party)
@@ -392,7 +420,10 @@ async def propose(session: AsyncSession, actor: Actor, case_id: uuid.UUID, body:
     party = await _require_party(session, actor, c)
     if c.status != "DIRECT_RESOLUTION":
         raise Conflict("Proposals are made during the direct resolution window", code="NOT_IN_DIRECT_RESOLUTION")
-    allocations = await _allocations(session, c, body.outcome, body.allocations)
+    if await _mediation_required(session, c):
+        raise Conflict("The buyer organisation's policy needs a mediator for a dispute of this size. Escalate the case instead.",
+                       code="MEDIATION_REQUIRED")
+    allocations = await _allocations(session, c, body.outcome, body.allocations, body.extendDays)
     if party == "BUYER":
         await _require_buyer_authority(session, actor, c, _release(allocations))
     for p in (await session.scalars(select(ResolutionProposal).where(
@@ -421,6 +452,9 @@ async def respond(session: AsyncSession, actor: Actor, proposal_id: uuid.UUID, a
         raise Forbidden("The other party answers your proposal")
     if p.status != "OPEN" or c.status != "DIRECT_RESOLUTION":
         raise Conflict("This proposal is no longer open", code="PROPOSAL_CLOSED")
+    if accept and await _mediation_required(session, c):
+        raise Conflict("The buyer organisation's policy needs a mediator for a dispute of this size. Escalate the case instead.",
+                       code="MEDIATION_REQUIRED")
     if accept and party == "BUYER":
         await _require_buyer_authority(session, actor, c, _release(p.allocations))
     p.status, p.responded_at = ("ACCEPTED" if accept else "REJECTED"), clock.now()
@@ -441,7 +475,14 @@ async def escalate(session: AsyncSession, actor: Actor, case_id: uuid.UUID) -> D
     party = await _require_party(session, actor, c)
     if c.status != "DIRECT_RESOLUTION":
         raise Conflict("Only a case in direct resolution can be escalated", code="NOT_IN_DIRECT_RESOLUTION")
-    if not await session.scalar(select(ResolutionProposal.id).where(ResolutionProposal.case_id == c.id, ResolutionProposal.status == "REJECTED")):
+    if party == "BUYER":
+        rules = await _rules(session, c)
+        if rules.dispute_escalation_roles:
+            roles = await buyer_facade.get_member_roles(session, c.organization_id, actor.identity_id)
+            if not roles.intersection(rules.dispute_escalation_roles):
+                raise Forbidden("Your organisation's policy names who may escalate a dispute: "
+                                + ", ".join(r.replace("_", " ").title() for r in rules.dispute_escalation_roles), code="ESCALATION_ROLE_REQUIRED")
+    if not await _mediation_required(session, c) and not await session.scalar(select(ResolutionProposal.id).where(ResolutionProposal.case_id == c.id, ResolutionProposal.status == "REJECTED")):
         raise Conflict("Escalation unlocks after a proposal has been declined, or when the window ends", code="ESCALATION_LOCKED")
     await _to_mediation(session, c, f"Escalated by the {party.lower()}.")
     await session.flush()
@@ -477,13 +518,15 @@ async def _require_mediator(session: AsyncSession, actor: Actor, c: DisputeCase)
         raise Forbidden("Only the assigned mediator can do this")
     if c.status != "MEDIATION":
         raise Conflict("The case is not in mediation", code="NOT_IN_MEDIATION")
+    if c.arbitration:
+        raise Conflict("The case was referred to external arbitration; Legal records the award", code="REFERRED_TO_ARBITRATION")
     actor.require_step_up()
 
 
 async def recommend(session: AsyncSession, actor: Actor, case_id: uuid.UUID, body: RecommendationIn) -> DisputeOut:
     c = await _case(session, case_id, lock=True)
     await _require_mediator(session, actor, c)
-    allocations = await _allocations(session, c, body.outcome, body.allocations)
+    allocations = await _allocations(session, c, body.outcome, body.allocations, body.extendDays)
     c.recommendation = {"outcome": body.outcome, "allocations": allocations, "summary": body.summary.strip(), "citations": body.citations,
                         "acceptedBy": [], "rejectedBy": [], "issuedAt": clock.now().isoformat()}
     _log(session, c, "RECOMMENDATION", "Mediator", f"Recommendation issued: {OUTCOME_LABEL[body.outcome]}. Binding only if both parties accept.")
@@ -538,7 +581,7 @@ async def propose_decision(session: AsyncSession, actor: Actor, case_id: uuid.UU
     await _require_mediator(session, actor, c)
     if not c.recommendation or not c.recommendation.get("rejectedBy"):
         raise Conflict("A platform decision follows a recommendation that a party declined", code="RECOMMENDATION_FIRST")
-    allocations = await _allocations(session, c, body.outcome, body.allocations)
+    allocations = await _allocations(session, c, body.outcome, body.allocations, body.extendDays)
     c.pending_decision = {"outcome": body.outcome, "allocations": allocations, "summary": body.summary.strip(), "citations": body.citations,
                           "proposedBy": str(actor.identity_id), "proposedAt": clock.now().isoformat()}
     _log(session, c, "DECISION_PROPOSED", "Mediator", f"Platform decision proposed ({OUTCOME_LABEL[body.outcome]}); awaiting a second reviewer.")
@@ -584,10 +627,12 @@ async def _resolve(session: AsyncSession, c: DisputeCase, outcome: str, allocati
     await cancel_timer(session, TIMER_EVIDENCE, str(c.id))
     await cancel_timer(session, TIMER_DIRECT, str(c.id))
     outcomes = {a["milestoneOutcome"] for a in allocations}
-    _log(session, c, "DECIDED", {"DIRECT": "Both parties", "MEDIATION": "Both parties (mediated)", "PLATFORM": "Platform (two reviewers)"}[path],
+    _log(session, c, "DECIDED", {"DIRECT": "Both parties", "MEDIATION": "Both parties (mediated)", "PLATFORM": "Platform (two reviewers)",
+                                 "ARBITRATION": "External arbitrator (recorded by Legal)"}[path],
          f"Decision issued: {plain}")
     _evt(session, E.DISPUTE_RESOLVED, c, outcome=outcome, decidedBy=decided_by, decisionPath=path, allocations=allocations,
          milestoneOutcome=outcomes.pop() if len(outcomes) == 1 else "MIXED", currency=c.currency)
+    await _check_bad_faith(session, c, outcome)
 
 
 async def resolution_executed(session: AsyncSession, payload: dict) -> None:
@@ -602,7 +647,8 @@ async def resolution_executed(session: AsyncSession, payload: dict) -> None:
     _evt(session, E.DISPUTE_ENFORCED, c)
     CASE_STATES.assert_can("ENFORCED", "CLOSED")
     c.status, c.closed_at = "CLOSED", now
-    _log(session, c, "CLOSED", "System", "Case closed and the record sealed.")
+    await _set_retention(session, c)
+    _log(session, c, "CLOSED", "System", f"Case closed and the record sealed. Kept until at least {c.retain_until:%d %b %Y} ({c.retention_basis}).")
     _evt(session, E.DISPUTE_CLOSED, c)
 
 
@@ -757,3 +803,298 @@ async def compliance_trigger(session, payload):
         if (await contract_facade.policy_controls(session, cid)).get("autoDisputeComplianceFlag"):
             c = await contract_facade.get_contract(session, cid)
             await automatic_case(session, cid, {m.id for m in c.milestones}, "COMPLIANCE_BREACH", "confirmed compliance restriction")
+
+
+
+# ---- Evidence from the engagement conversation, clarifications, cooldown --------------------------------------------
+
+async def import_messages(session: AsyncSession, actor: Actor, case_id: uuid.UUID) -> DisputeOut:
+    """Add the engagement's conversation as evidence: every message with its time, sender and content fingerprint, as a
+    CSV file both sides and the mediator can open. The messages themselves stay unchanged in the thread."""
+    import base64
+    import csv
+    import hashlib
+    import io
+
+    from zoikorum.domains.messaging import facade as messaging_facade
+    from zoikorum.shared.uploads import UploadIn
+
+    c = await _case(session, case_id, lock=True)
+    party = await _require_party(session, actor, c)
+    if c.status != "EVIDENCE_COLLECTION" or clock.now() > c.evidence_deadline:
+        raise Conflict("The evidence window has closed", code="EVIDENCE_CLOSED")
+    k = await _contract(session, c.contract_id)
+    messages = (await messaging_facade.export_thread(session, "PROPOSAL_REQUEST", k.request_id)
+                + await messaging_facade.export_thread(session, "CONTRACT", c.contract_id))
+    if not messages:
+        raise Conflict("There are no messages to add", code="NO_MESSAGES")
+    people = await identity_facade.get_identities(session, [m.sender_identity_id for m in messages if m.sender_identity_id])
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["sent_at", "sender", "message", "content_sha256", "attachment_sha256s"])
+    for m in messages:
+        who = people[m.sender_identity_id].display_name if m.sender_identity_id in people else "Zoikorum"
+        w.writerow([m.sent_at.isoformat(), who, m.body, m.content_hash, " ".join(m.attachment_hashes)])
+    data = buf.getvalue().encode()
+    upload = UploadIn(name=f"{c.reference}-conversation.csv", sha256=hashlib.sha256(data).hexdigest(), size=len(data),
+                      contentType="text/csv", dataBase64=base64.b64encode(data).decode())
+    item = EvidenceItem(case_id=c.id, party=party, submitted_by=actor.identity_id, evidence_type="COMMUNICATION",
+                        description=f"Conversation record from Zoikorum messages ({len(messages)} messages, fingerprints included)",
+                        items=store_uploads(f"disputes/{c.id}", [upload]))
+    session.add(item)
+    await session.flush()
+    _log(session, c, "EVIDENCE", await _actor_label(session, actor, party),
+         f"Conversation record added ({len(messages)} messages)", ref=f"evidence:{item.id}")
+    _evt(session, E.DISPUTE_EVIDENCE_SUBMITTED, c, party=party, evidenceType="COMMUNICATION", files=1)
+    await session.flush()
+    return await _out(session, actor, c, party)
+
+
+MAX_CLARIFICATIONS = 3
+
+
+async def request_clarification(session: AsyncSession, actor: Actor, case_id: uuid.UUID, to: str, question: str) -> DisputeOut:
+    """The mediator asks one side a focused question (limited, so a case does not drift). They answer with evidence."""
+    c = await _case(session, case_id, lock=True)
+    await _require_mediator(session, actor, c)
+    if len(c.clarifications) >= MAX_CLARIFICATIONS:
+        raise Conflict(f"At most {MAX_CLARIFICATIONS} clarification requests per dispute", code="TOO_MANY_CLARIFICATIONS")
+    c.clarifications = [*c.clarifications, {"to": to, "question": question.strip(), "at": clock.now().isoformat()}]
+    _log(session, c, "CLARIFICATION", "Mediator", f"Asked the {to.lower()}: {question.strip()}")
+    _evt(session, E.DISPUTE_CLARIFICATION_REQUESTED, c, audience=to, question=question.strip(),
+         message=f"The mediator asks: {question.strip()} Answer by adding evidence to the dispute.")
+    await session.flush()
+    return await _out(session, actor, c, "MEDIATOR")
+
+
+COOLDOWN = timedelta(hours=24)
+
+
+async def cooldown(session: AsyncSession, actor: Actor, case_id: uuid.UUID) -> DisputeOut:
+    """Once per dispute, either side may pause the current deadline for 24 hours (Dispute resolution: cooling-off)."""
+    c = await _case(session, case_id, lock=True)
+    party = await _require_party(session, actor, c)
+    if party in c.cooldown_used_by:
+        raise Conflict("You have already used your 24-hour pause in this dispute", code="COOLDOWN_USED")
+    if c.status == "EVIDENCE_COLLECTION":
+        c.evidence_deadline = c.evidence_deadline + COOLDOWN
+        await schedule_timer(session, TIMER_EVIDENCE, str(c.id), c.evidence_deadline, {"disputeId": str(c.id)})
+    elif c.status == "DIRECT_RESOLUTION" and c.direct_deadline:
+        c.direct_deadline = c.direct_deadline + COOLDOWN
+        await schedule_timer(session, TIMER_DIRECT, str(c.id), c.direct_deadline, {"disputeId": str(c.id)})
+    else:
+        raise Conflict("A pause is possible during evidence or direct resolution only", code="COOLDOWN_NOT_AVAILABLE")
+    c.cooldown_used_by = [*c.cooldown_used_by, party]
+    _log(session, c, "COOLDOWN", await _actor_label(session, actor, party), "Paused the current deadline for 24 hours.")
+    await session.flush()
+    return await _out(session, actor, c, party)
+
+
+
+# ---- Bad-faith pattern (Dispute resolution: bad-faith disputes) --------------------------------------------------
+
+LOST = {"BUYER": {"FULL_RELEASE"}, "PROFESSIONAL": {"FULL_REFUND", "TERMINATION"}}
+PATTERN_WINDOW = timedelta(days=90)
+PATTERN_COUNT = 3
+
+
+async def _check_bad_faith(session: AsyncSession, c: DisputeCase, outcome: str) -> None:
+    """Someone who keeps opening disputes that are decided entirely against them is flagged to Trust & Safety as an
+    advisory signal (Level 0): a person reviews it; nothing is restricted automatically."""
+    if c.initiated_by is None or outcome not in LOST.get(c.initiator_party, set()):
+        return
+    since = clock.now() - PATTERN_WINDOW
+    lost = 0
+    for other in (await session.scalars(select(DisputeCase).where(
+            DisputeCase.initiated_by == c.initiated_by, DisputeCase.decided_at >= since))).all():
+        decided = (other.decision or {}).get("outcome")
+        if decided in LOST.get(other.initiator_party, set()):
+            lost += 1
+    if lost >= PATTERN_COUNT:
+        record_event(session, E.DISPUTE_PATTERN_FLAGGED, aggregate_type="DisputeCase", aggregate_id=c.id,
+                     payload={"subjectType": "IDENTITY", "subjectId": c.initiated_by, "disputesLost": lost,
+                              "reasonCode": f"DISPUTES_DECIDED_AGAINST_INITIATOR_{lost}_IN_90_DAYS", "audience": "STAFF"})
+
+
+# ---- Case record export (Dispute resolution: exportable record for regulators, courts, auditors) -----------------
+
+async def case_record(session: AsyncSession, actor: Actor, case_id: uuid.UUID, fmt: str) -> tuple[bytes, str, str]:
+    """Everything about one dispute in one attested file: metadata, timeline, evidence (with file fingerprints),
+    proposals, recommendation, decision, appeal and the dispute conversation. Its SHA-256 is recorded with the download."""
+    import hashlib
+    import json
+
+    from zoikorum.domains.messaging import facade as messaging_facade
+    from zoikorum.shared import pdf
+
+    c = await _case(session, case_id)
+    viewer = await _viewer(session, actor, c)
+    out = await _out(session, actor, c, viewer)
+    appeal = await session.scalar(select(DisputeAppeal).where(DisputeAppeal.case_id == c.id))
+    messages = await messaging_facade.export_thread(session, "DISPUTE", c.id)
+    record = {
+        "case": {"reference": c.reference, "engagement": c.contract_reference, "category": c.category, "status": c.status,
+                 "summary": c.summary, "desiredOutcome": c.desired_outcome, "initiator": c.initiator_party,
+                 "disputed": {"amountMinor": c.disputed_minor, "currency": c.currency}, "openedAt": c.created_at.isoformat(),
+                 "decidedAt": c.decided_at.isoformat() if c.decided_at else None},
+        "timeline": [{"at": t.at.isoformat(), "by": t.actor, "what": t.text, "ref": t.ref} for t in out.timeline],
+        "evidence": [{"party": e.party, "type": e.evidenceType, "description": e.description,
+                      "files": [{"name": f.name, "sha256": f.sha256} for f in e.items], "at": e.submittedAt.isoformat()}
+                     for e in out.evidence],
+        "proposals": [{"party": p.party, "outcome": p.outcome, "status": p.status, "note": p.note} for p in out.proposals],
+        "recommendation": c.recommendation, "decision": c.decision,
+        "appeal": {"grounds": appeal.grounds, "status": appeal.status, "decisionReason": appeal.decision_reason} if appeal else None,
+        "messages": [{"at": m.sent_at.isoformat(), "contentSha256": m.content_hash, "body": m.body} for m in messages],
+    }
+    body = json.dumps(record, sort_keys=True, separators=(",", ":"), default=str)
+    fingerprint = hashlib.sha256(body.encode()).hexdigest()
+    record_audit(session, "dispute.record.downloaded", object_type="DisputeCase", object_id=c.id, tenant_id=c.organization_id,
+                 evidence_hash=fingerprint, details={"format": fmt})
+    name = f"{c.reference}-record"
+    if fmt == "json":
+        return json.dumps({"fingerprintSha256": fingerprint, "record": record}, indent=2, default=str).encode(), f"{name}.json", "application/json"
+    decision = c.decision or {}
+    doc = pdf.PdfDocument(
+        title="Dispute record", reference=c.reference, issued=clock.now(), fingerprint=fingerprint,
+        subtitle=f"Engagement {c.contract_reference} · {c.category.replace('_', ' ').lower()} · {c.status.replace('_', ' ').lower()}",
+        sections=[
+            pdf.Section("The dispute", rows=[("Opened by", c.initiator_party.title()), ("Summary", c.summary),
+                                             ("Desired outcome", OUTCOME_LABEL.get(c.desired_outcome, c.desired_outcome)),
+                                             ("Money frozen", _money(c.disputed_minor, c.currency))]),
+            pdf.Section("Decision", rows=[("Outcome", OUTCOME_LABEL.get(decision.get("outcome", ""), "Not decided yet")),
+                                          ("How", decision.get("decisionPath", "—")), ("Reasoning", decision.get("plainSummary", "—"))]),
+            pdf.Section("Evidence", rows=[(f"{e['party'].title()} · {e['type'].replace('_', ' ').lower()}",
+                                           e["description"] + "".join(f" [{f['name']} {f['sha256'][:12]}…]" for f in e["files"]))
+                                          for e in record["evidence"]] or [("None", "")]),
+            pdf.Section("Timeline", rows=[(t["at"][:19].replace("T", " "), f"{t['by']}: {t['what']}") for t in record["timeline"]]),
+            pdf.Section("Dispute conversation", rows=[(m["at"][:19].replace("T", " "), m["body"][:300]) for m in record["messages"]]
+                        or [("No messages", "")]),
+            pdf.Section(text="Attestation: produced by Zoikorum from its records. Timeline and evidence are append-only; files are "
+                             "identified by SHA-256. The fingerprint below is the SHA-256 of this record and is stored with the download."),
+        ])
+    return pdf.render(doc), f"{name}.pdf", "application/pdf"
+
+
+
+# ---- Enterprise dispute controls and external arbitration (Dispute resolution: enterprise controls) ----------------
+
+async def _rules(session: AsyncSession, c: DisputeCase) -> policy_facade.ProfileSettings:
+    """The buyer organisation's effective policy (platform defaults when it has none)."""
+    return await policy_facade.get_settings_for_org(session, c.organization_id)
+
+
+async def _mediation_required(session: AsyncSession, c: DisputeCase, rules=None) -> bool:
+    rules = rules or await _rules(session, c)
+    return rules.dispute_mediation_above_minor is not None and c.disputed_minor > rules.dispute_mediation_above_minor
+
+
+async def refer_to_arbitration(session: AsyncSession, actor: Actor, case_id: uuid.UUID, body: ArbitrationReferIn) -> DisputeOut:
+    """The assigned mediator refers a case the platform should not decide (size, legal complexity, a clause naming a forum)
+    to an outside arbitrator. The money stays frozen; nothing moves until Legal records the award."""
+    c = await _case(session, case_id, lock=True)
+    await _require_mediator(session, actor, c)
+    if c.pending_decision:
+        raise Conflict("A platform decision is awaiting approval; withdraw it first", code="DECISION_PENDING")
+    c.arbitration = {"forum": body.forum.strip(), "reason": body.reason.strip(), "referredAt": clock.now().isoformat(),
+                     "referredBy": str(actor.identity_id)}
+    await cancel_timer(session, TIMER_RECOMMENDATION, f"{c.id}:{(c.recommendation or {}).get('issuedAt')}")
+    _log(session, c, "ARBITRATION_REFERRED", "Mediator", f"Referred to external arbitration ({c.arbitration['forum']}). "
+         "The money stays frozen until the award is recorded.")
+    _evt(session, E.DISPUTE_REFERRED_TO_ARBITRATION, c, forum=c.arbitration["forum"])
+    record_audit(session, "dispute.arbitration.referred", object_type="DisputeCase", object_id=c.id, tenant_id=c.organization_id,
+                 details={"forum": c.arbitration["forum"]})
+    await session.flush()
+    return await _out(session, actor, c, "MEDIATOR")
+
+
+async def record_arbitration_award(session: AsyncSession, actor: Actor, case_id: uuid.UUID, body: ArbitrationAwardIn) -> DisputeOut:
+    """Legal records the outside arbitrator's award; the platform then moves the money exactly as for any other decision."""
+    actor.require_platform_role(PlatformRole.LEGAL)
+    actor.require_step_up()
+    c = await _case(session, case_id, lock=True)
+    if c.status != "MEDIATION" or not c.arbitration:
+        raise Conflict("This case is not waiting for an arbitration award", code="NOT_IN_ARBITRATION")
+    if await _party_of(session, actor, c.organization_id, c.professional_id):
+        raise Forbidden("A party to the dispute cannot record its award", code="CONFLICT_OF_INTEREST")
+    allocations = await _allocations(session, c, body.outcome, body.allocations, body.extendDays)
+    c.arbitration = {**c.arbitration, "awardReference": body.awardReference.strip(), "recordedAt": clock.now().isoformat(),
+                     "recordedBy": str(actor.identity_id)}
+    await _resolve(session, c, body.outcome, allocations, "ARBITRATION", actor.identity_id, body.summary.strip(),
+                   [f"Arbitration award {body.awardReference.strip()} ({c.arbitration['forum']})", *body.citations])
+    record_audit(session, "dispute.arbitration.award_recorded", object_type="DisputeCase", object_id=c.id, tenant_id=c.organization_id,
+                 details={"awardReference": body.awardReference.strip(), "outcome": body.outcome})
+    await session.flush()
+    return await _out(session, actor, c, await _viewer(session, actor, c))
+
+
+
+# ---- Retention (Dispute resolution: retention rules by policy and jurisdiction) -----------------------------------
+
+# Minimum years records about a commercial dispute are kept, per country. STARTER VALUES pending confirmation by
+# counsel (GAP_AUDIT section D); the platform default (ZK_DISPUTE_RETENTION_YEARS) applies wherever it is longer.
+RETENTION_MINIMUM_YEARS = {"US": 7, "GB": 6, "IE": 6, "DE": 10, "FR": 10, "NL": 7, "ES": 6, "IT": 10, "IN": 8, "SG": 5,
+                           "AE": 5, "AU": 7, "CA": 7}
+TIMER_RETENTION = "dispute.retention_review"
+
+
+async def _set_retention(session: AsyncSession, c: DisputeCase) -> None:
+    """Keep the record for the longest of: the platform default, the buyer organisation's policy, and the minimum
+    for the countries of both parties. When that date comes, Legal reviews it; nothing is deleted automatically."""
+    from datetime import date as _date
+
+    years = {"platform default": get_settings().dispute_retention_years}
+    rules = await _rules(session, c)
+    if rules.dispute_retention_years:
+        years["organisation policy"] = rules.dispute_retention_years
+    org = await buyer_facade.get_organization(session, c.organization_id)
+    pro = await professional_facade.get_professional(session, c.professional_id)
+    for country in {x for x in ((org.country if org else None), (pro.country if pro else None)) if x}:
+        if country.upper() in RETENTION_MINIMUM_YEARS:
+            years[f"law in {country.upper()}"] = RETENTION_MINIMUM_YEARS[country.upper()]
+    basis, n = max(years.items(), key=lambda kv: kv[1])
+    closed = (c.closed_at or clock.now()).date()
+    try:
+        until = closed.replace(year=closed.year + n)
+    except ValueError:  # 29 February
+        until = _date(closed.year + n, 3, 1)
+    c.retain_until, c.retention_basis = until, f"{n} years: {basis}"
+    from datetime import datetime as _dt, time as _time, timezone as _tz
+    await schedule_timer(session, TIMER_RETENTION, str(c.id), _dt.combine(until, _time(6), tzinfo=_tz.utc), {"disputeId": str(c.id)})
+
+
+async def retention_due(session: AsyncSession, payload: dict) -> None:
+    """The retention period ended: flag the record for Legal to review (delete, keep, or anonymise). A legal hold
+    keeps it out of review until the hold is lifted."""
+    c = await session.get(DisputeCase, uuid.UUID(payload["disputeId"]), with_for_update=True)
+    if c is None or c.legal_hold or c.retention_review_due:
+        return
+    c.retention_review_due = True
+    record_event(session, E.DISPUTE_RETENTION_DUE, aggregate_type="DisputeCase", aggregate_id=c.id,
+                 payload={"disputeId": c.id, "reference": c.reference, "audience": "STAFF"})
+
+
+async def set_legal_hold(session: AsyncSession, actor: Actor, case_id: uuid.UUID, hold: bool, reason: str) -> DisputeOut:
+    """Legal places or lifts a hold (litigation, a regulator's request): the record is kept regardless of its date."""
+    actor.require_platform_role(PlatformRole.LEGAL)
+    actor.require_step_up()
+    c = await _case(session, case_id, lock=True)
+    if c.legal_hold == hold:
+        raise Conflict("The hold is already " + ("on" if hold else "off"), code="NO_CHANGE")
+    c.legal_hold = hold
+    if hold:
+        c.retention_review_due = False
+    elif c.retain_until and c.retain_until <= clock.now().date():
+        c.retention_review_due = True
+    record_audit(session, "dispute.legal_hold." + ("placed" if hold else "lifted"), object_type="DisputeCase", object_id=c.id,
+                 tenant_id=c.organization_id, details={"reason": reason})
+    await session.flush()
+    return await _out(session, actor, c, await _viewer(session, actor, c))
+
+
+async def retention_queue(session: AsyncSession, actor: Actor) -> list[dict]:
+    """Legal: closed records whose retention period has ended, and records on hold."""
+    actor.require_platform_role(PlatformRole.LEGAL, PlatformRole.PLATFORM_ADMIN)
+    rows = (await session.scalars(select(DisputeCase).where(or_(DisputeCase.retention_review_due.is_(True), DisputeCase.legal_hold.is_(True)))
+                                  .order_by(DisputeCase.retain_until))).all()
+    return [{"id": c.id, "reference": c.reference, "closedAt": c.closed_at, "retainUntil": c.retain_until, "basis": c.retention_basis,
+             "legalHold": c.legal_hold, "reviewDue": c.retention_review_due} for c in rows]

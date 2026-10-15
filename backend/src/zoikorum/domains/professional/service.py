@@ -50,6 +50,7 @@ from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_audit, record_event
 from zoikorum.shared.money import MoneyDTO
 from zoikorum.shared.state_machine import StateMachine
+from zoikorum.shared import scanning
 from zoikorum.shared.storage import get_storage
 
 PROFILE_STATES = StateMachine("Professional", {
@@ -169,13 +170,14 @@ async def _profile_out(session: AsyncSession, pro: Professional) -> ProfileOut:
         pendingSpecializations=await marketplace_facade.pending_specialization_names(session, pro.id),
         id=pro.id, photoUrl=photo_url(pro), firmId=pro.firm_id, status=pro.status, displayName=pro.display_name, legalName=pro.legal_name,
         headline=pro.headline, yearsExperienceBand=pro.years_experience_band, bio=pro.bio, languages=list(pro.languages),
+        industries=list(pro.industries),
         country=pro.country, city=pro.city, website=pro.website, primaryCategory=pro.primary_category,
         specializations=await _spec_out(session, pro), engagementTypes=list(pro.engagement_types),
         deliveryModes=list(pro.delivery_modes), pricingModels=list(pro.pricing_models), indicativeRate=_rate(pro),
         rateUnit=pro.rate_unit, availability=pro.availability, maxConcurrentEngagements=pro.max_concurrent_engagements,
         weeklyHours=pro.weekly_hours,
         temporarilyUnavailable=pro.temporarily_unavailable, servedJurisdictions=list(pro.served_jurisdictions),
-        licensedJurisdictions=list(pro.licensed_jurisdictions),
+        licensedJurisdictions=list(pro.licensed_jurisdictions), handlesRegulatedData=pro.regulated_data_attested_at is not None,
         crossBorderAcknowledged=pro.cross_border_acknowledged_at is not None, publishedAt=pro.published_at,
         version=pro.version,
     )
@@ -238,7 +240,7 @@ async def update_me(session: AsyncSession, actor: Actor, patch: ProfilePatch, if
     fields = {"displayName": "display_name", "legalName": "legal_name", "headline": "headline",
               "yearsExperienceBand": "years_experience_band", "bio": "bio", "city": "city", "country": "country",
               "website": "website", "engagementTypes": "engagement_types", "deliveryModes": "delivery_modes",
-              "pricingModels": "pricing_models", "rateUnit": "rate_unit"}
+              "pricingModels": "pricing_models", "rateUnit": "rate_unit", "industries": "industries"}
     changed: list[str] = []
     for api_name, col in fields.items():
         value = getattr(patch, api_name)
@@ -268,6 +270,11 @@ async def update_me(session: AsyncSession, actor: Actor, patch: ProfilePatch, if
         if (patch.indicativeRate.amountMinor, patch.indicativeRate.currency) != (pro.rate_minor, pro.rate_currency):
             pro.rate_minor, pro.rate_currency = patch.indicativeRate.amountMinor, patch.indicativeRate.currency
             changed.append("indicativeRate")
+    if patch.handlesRegulatedData is not None and patch.handlesRegulatedData != (pro.regulated_data_attested_at is not None):
+        pro.regulated_data_attested_at = clock.now() if patch.handlesRegulatedData else None
+        changed.append("handlesRegulatedData")
+        record_audit(session, "professional.regulated_data." + ("attested" if patch.handlesRegulatedData else "withdrawn"),
+                     object_type="Professional", object_id=pro.id)
     if changed:
         # Field names only: values (legal name, bio) stay out of the event stream and audit ledger.
         _evt(session, E.PROFILE_UPDATED, pro, changes=sorted(changed))
@@ -388,6 +395,7 @@ async def set_photo(session: AsyncSession, actor: Actor, body: PhotoIn) -> Profi
         ok = ok and data[8:12] == b"WEBP"
     if not ok:
         raise ValidationFailed("Upload a JPEG, PNG or WebP image", code="INVALID_PHOTO")
+    scanning.scan(data, "The photo")
     old = pro.photo_key
     digest = sha256_hex_bytes(data)
     key = f"professionals/{pro.id}/photo-{digest[:16]}"
@@ -691,6 +699,14 @@ async def public_profile(session: AsyncSession, actor: Actor | None, professiona
     firm = await firm_facade.get_firm(session, pro.firm_id) if pro.firm_id else None
     delivery = await contract_facade.delivery_stats(session, pro.id)
     response = await proposal_facade.response_stats(session, pro.id)
+    # Screening details stay private: restrictions never appear, a background check only as "completed".
+    public_checks = [c for c in checks if c.verification_type != "RESTRICTIONS"]
+    in_progress = sorted({c.label for c in public_checks if c.status in ("PENDING", "IN_REVIEW", "NEEDS_INFO")})
+    report = [{"check": c.label, "status": c.status, "verifiedAt": c.verified_at, "expiresAt": c.expires_at}
+              for c in sorted(public_checks, key=lambda c: c.label) if c.status in ("VERIFIED", "EXPIRED")]
+    if not own and not (actor and actor.is_operator):
+        record_event(session, E.PROFILE_VIEWED, aggregate_type="Professional", aggregate_id=pro.id,
+                     payload={"professionalId": pro.id, "viewerId": actor.identity_id if actor else None})
     history = HistoryOut(
         completedEngagements=delivery["completed"],
         onTimeRate=round(100 * delivery["onTime"] / delivery["milestonesWithDueDate"]) if delivery["milestonesWithDueDate"] else None,
@@ -698,17 +714,18 @@ async def public_profile(session: AsyncSession, actor: Actor | None, professiona
         newToPlatform=delivery["completed"] == 0 and (pro.published_at is None or (clock.now() - pro.published_at).days < 30))
     return PublicProfileOut(
         history=history, pendingSpecializations=await marketplace_facade.pending_specialization_names(session, pro.id),
+        verificationInProgress=in_progress, verificationReport=report,
         firm=PublicFirmOut(id=firm.id, name=firm.trading_name or firm.legal_name, verified=firm.status == "VERIFIED")
         if firm and firm.status != "SUSPENDED" else None,
         id=pro.id, photoUrl=photo_url(pro), displayName=pro.display_name, headline=pro.headline,
         yearsExperienceBand=pro.years_experience_band,
-        bio=pro.bio, languages=list(pro.languages), country=pro.country, city=pro.city,
+        bio=pro.bio, languages=list(pro.languages), industries=list(pro.industries), country=pro.country, city=pro.city,
         primaryCategory=pro.primary_category, primaryCategoryName=category.name if category else None,
         specializations=await _spec_out(session, pro), engagementTypes=list(pro.engagement_types),
         deliveryModes=list(pro.delivery_modes), pricingModels=list(pro.pricing_models), indicativeRate=_rate(pro),
         rateUnit=pro.rate_unit, availability=effective_availability(pro), weeklyHours=pro.weekly_hours,
         servedJurisdictions=list(pro.served_jurisdictions), licensedJurisdictions=list(pro.licensed_jurisdictions),
-        verifiedJurisdictions=verified_jurisdictions,
+        handlesRegulatedData=pro.regulated_data_attested_at is not None, verifiedJurisdictions=verified_jurisdictions,
         credentials=[PublicCredentialOut(name=c.name, issuingBody=c.issuing_body, jurisdiction=c.jurisdiction,
                                          status=c.status if c.status in ("VERIFIED", "EXPIRED") else "SELF_REPORTED",
                                          displayLabel={"VERIFIED": "Validated", "EXPIRED": "Expired"}.get(c.status, "Self-reported"))

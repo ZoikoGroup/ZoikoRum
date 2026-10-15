@@ -27,6 +27,11 @@ class SearchParams(BaseModel):
     jurisdiction: str | None = None
     experience: str | None = None  # years band, e.g. 6-10
     publishedAfter: datetime | None = None  # saved searches: "new since you last looked"
+    industry: str | None = None  # industry served
+    crossBorder: bool = False  # serves clients outside their own country
+    budgetMaxMinor: int | None = None  # starting price at or under this (in budgetCurrency); unpriced offers still show
+    budgetCurrency: str | None = None
+    language: str | None = None
     sort: Sort = "best"
     limit: int = 20
     offset: int = 0
@@ -81,6 +86,7 @@ class ResultItem(BaseModel):
     servedJurisdictions: list[str] = []  # where they take work (empty = unrestricted)
     licensedJurisdictions: list[str] = []
     whyThisResult: list[str]
+    regulatedPreview: bool = False  # offers regulated work but is below Tier A: shown, but cannot take that work yet
 
 
 class FacetValue(BaseModel):
@@ -104,3 +110,9 @@ class SearchOut(BaseModel):
     items: list[ResultItem]
     facets: dict[str, list[FacetValue]]
     policy: PolicyFilterOut | None = None
+
+
+class SuggestOut(BaseModel):
+    """Autocomplete for the search box: expertise first (it becomes a filter), then matching professionals."""
+    specializations: list[dict] = []  # {slug, name}
+    professionals: list[dict] = []  # {id, name, headline}

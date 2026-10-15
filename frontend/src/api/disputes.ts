@@ -34,15 +34,24 @@ export interface Dispute {
   mediatorAssigned: boolean
   recommendation: Resolution | null
   pendingDecision: (Resolution & { proposedBy: string }) | null
-  decision: { plainSummary: string; outcome: DisputeOutcome; allocations: RawAllocation[]; decisionPath: 'DIRECT' | 'MEDIATION' | 'PLATFORM'
+  decision: { plainSummary: string; outcome: DisputeOutcome; allocations: RawAllocation[]; decisionPath: 'DIRECT' | 'MEDIATION' | 'PLATFORM' | 'ARBITRATION'
     evidenceReferences: string[]; policyCitations: string[]; appealEligible: boolean; appealNote: string } | null
   decidedAt: string | null
   closedAt: string | null
   evidence: { id: string; party: string; evidenceType: EvidenceType; description: string; items: StoredFile[]; submittedAt: string }[]
   proposals: { id: string; party: string; outcome: DisputeOutcome; allocations: Allocation[]; note: string; status: string; createdAt: string; respondedAt: string | null; mine: boolean }[]
-  timeline: { kind: string; actor: string; text: string; at: string }[]
+  timeline: { kind: string; actor: string; text: string; at: string; ref: string | null }[]
+  prefersEarlyResolution: boolean
+  clarifications: { to: 'BUYER' | 'PROFESSIONAL'; question: string; at: string }[]
+  canCooldown: boolean
   viewerRole: 'BUYER' | 'PROFESSIONAL' | 'MEDIATOR' | 'OPERATOR'
   canEscalate: boolean
+  mediationRequired?: boolean
+  legalReviewRequired?: boolean
+  retainUntil?: string | null
+  retentionBasis?: string | null
+  legalHold?: boolean
+  arbitration?: { forum: string; reason: string; referredAt: string; awardReference?: string; recordedAt?: string } | null
   nextStep: string
   createdAt: string
 }
@@ -53,7 +62,8 @@ const idem = () => ({ 'Idempotency-Key': crypto.randomUUID() })
 export const disputeFileUrl = (disputeId: string, sha256: string) => `/v1/disputes/${disputeId}/files/${sha256}`
 
 export const disputeApi = {
-  open: (body: { contractId: string; milestoneIds: string[]; category: DisputeCategory; summary: string; desiredOutcome: DisputeOutcome; context: string }) =>
+  open: (body: { contractId: string; milestoneIds: string[]; category: DisputeCategory; summary: string; desiredOutcome: DisputeOutcome; context: string
+    prefersEarlyResolution?: boolean }) =>
     api<Dispute>(D, { method: 'POST', body, headers: idem() }),
   list: (role: 'buyer' | 'professional' | 'operator', contractId?: string) =>
     allPages<Dispute>(D, { role, ...(contractId ? { contractId } : {}) }),
@@ -61,19 +71,29 @@ export const disputeApi = {
   addEvidence: (id: string, body: { evidenceType: EvidenceType; description: string; items: Upload[] }) =>
     api<Dispute>(`${D}/${id}/evidence`, { method: 'POST', body }),
   evidenceComplete: (id: string) => api<Dispute>(`${D}/${id}/evidence/complete`, { method: 'POST' }),
-  propose: (id: string, body: { outcome: DisputeOutcome; allocations: RawAllocation[]; note: string }) =>
+  propose: (id: string, body: { outcome: DisputeOutcome; allocations: RawAllocation[]; note: string; extendDays?: number | null }) =>
     api<Dispute>(`${D}/${id}/resolution-proposals`, { method: 'POST', body }),
   acceptProposal: (pid: string) => api<Dispute>(`/v1/resolution-proposals/${pid}/accept`, { method: 'POST', headers: idem() }),
   rejectProposal: (pid: string) => api<Dispute>(`/v1/resolution-proposals/${pid}/reject`, { method: 'POST' }),
   escalate: (id: string) => api<Dispute>(`${D}/${id}/escalate`, { method: 'POST' }),
   assignMediator: (id: string, mediatorIdentityId: string) => api<Dispute>(`${D}/${id}/assign-mediator`, { method: 'POST', body: { mediatorIdentityId } }),
-  recommend: (id: string, body: { outcome: DisputeOutcome; allocations: RawAllocation[]; summary: string; citations: string[] }) =>
+  recommend: (id: string, body: { outcome: DisputeOutcome; allocations: RawAllocation[]; summary: string; citations: string[]; extendDays?: number | null }) =>
     api<Dispute>(`${D}/${id}/recommendation`, { method: 'POST', body }),
   answerRecommendation: (id: string, accept: boolean) =>
     api<Dispute>(`${D}/${id}/recommendation/${accept ? 'accept' : 'reject'}`, { method: 'POST', headers: accept ? idem() : undefined }),
-  proposeDecision: (id: string, body: { outcome: DisputeOutcome; allocations: RawAllocation[]; summary: string; citations: string[] }) =>
+  proposeDecision: (id: string, body: { outcome: DisputeOutcome; allocations: RawAllocation[]; summary: string; citations: string[]; extendDays?: number | null }) =>
     api<Dispute>(`${D}/${id}/decision`, { method: 'POST', body }),
   approveDecision: (id: string) => api<Dispute>(`${D}/${id}/decision/approve`, { method: 'POST', headers: idem() }),
+  legalHold: (id: string, hold: boolean, reason: string) => api<Dispute>(`${D}/${id}/legal-hold`, { method: 'POST', body: { hold, reason } }),
+  referToArbitration: (id: string, forum: string, reason: string) =>
+    api<Dispute>(`${D}/${id}/arbitration`, { method: 'POST', body: { forum, reason } }),
+  recordAward: (id: string, body: { outcome: DisputeOutcome; allocations: RawAllocation[]; summary: string; citations: string[]; awardReference: string }) =>
+    api<Dispute>(`${D}/${id}/arbitration/award`, { method: 'POST', body, headers: idem() }),
+  importMessages: (id: string) => api<Dispute>(`${D}/${id}/evidence/messages`, { method: 'POST' }),
+  record: (id: string, format: 'pdf' | 'json') => api<Blob>(`${D}/${id}/record`, { query: { format }, blob: true }),
+  cooldown: (id: string) => api<Dispute>(`${D}/${id}/cooldown`, { method: 'POST' }),
+  clarify: (id: string, to: 'BUYER' | 'PROFESSIONAL', question: string) =>
+    api<Dispute>(`${D}/${id}/clarification`, { method: 'POST', body: { to, question } }),
 }
 
 export const CATEGORIES: [DisputeCategory, string][] = [

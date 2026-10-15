@@ -54,6 +54,7 @@ DOMAIN_SCHEMAS = (
     "admin",
     "analytics",
     "review",
+    "support",
 )
 
 

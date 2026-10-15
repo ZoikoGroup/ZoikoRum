@@ -29,7 +29,7 @@ COPY --from=build /opt/venv /opt/venv
 COPY alembic.ini ./
 COPY alembic ./alembic
 COPY src ./src
-# Local blob storage is for development only; production uses S3 (ZK_STORAGE_PROVIDER=s3).
+# Local blob storage is for development only; production uses Google Cloud Storage (ZK_STORAGE_PROVIDER=gcs).
 RUN mkdir -p /app/var && chown zoikorum /app/var
 USER zoikorum
 EXPOSE 8000

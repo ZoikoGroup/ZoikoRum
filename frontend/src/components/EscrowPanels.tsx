@@ -33,6 +33,8 @@ export function FundDialog({ escrow, preselect, onClose, onFunded }: {
       <div className="card modal fund-modal" onClick={(e) => e.stopPropagation()}>
         <h2 id="fund-title">Fund protected payment</h2>
         <ErrorAlert error={error} />
+        {error !== null && <div className="tip" style={{ marginBottom: 12 }}><Icon name="help" /><span>Nothing was taken and your choices are kept.
+          Try again, choose another payment method below, or <Link to="/app/help?from=funding">ask us for help</Link>.</span></div>}
         <ul className="fund-list">{open.map((x) => (
           <li key={x.milestoneId}>
             <label className="checkbox"><input type="checkbox" checked={picked.includes(x.milestoneId)}
@@ -44,7 +46,7 @@ export function FundDialog({ escrow, preselect, onClose, onFunded }: {
           <dt>You pay now</dt><dd><strong>{money(amount)}</strong></dd>
           <dt>Held until</dt><dd>You accept each milestone</dd>
           <dt>Professional receives</dt><dd>{money(amount - fee)} after the {feeText(escrow.feeBps)} platform fee</dd>
-          <dt>Taxes</dt><dd>None added</dd>
+          <dt>Taxes</dt><dd>Included in the price where they apply (shown on the invoice)</dd>
         </dl>
         {configuration?.hostedCheckout ? <p>You will enter payment details on the partner’s secure checkout page. Funding is confirmed after payment completes.</p> :
           configuration?.configured ? <label className="filter-box" style={{ marginTop: 14 }}><span>Payment method (test mode: no real money moves)</span>
@@ -88,7 +90,12 @@ export function PaymentsPanel({ c, escrow, side, onFund }: { c: Contract; escrow
       <section className="card panel">
         <div className="panel-head"><h2>Milestones in escrow</h2>
           {escrow.canFund && <button className="btn btn-primary btn-sm" onClick={() => onFund([])}><Icon name="lock" /> Fund remaining</button>}</div>
-        <table className="data"><thead><tr><th>Milestone</th><th>Amount</th><th>Status</th><th>Funded</th><th>Released (net)</th><th>Fee</th></tr></thead>
+        <div className="payment-frame small">
+          <span><Icon name="shield" /> <strong>Who releases:</strong> the buyer accepts each milestone; their organisation's approvers agree where its policy asks.</span>
+          <span><Icon name="clock" /> <strong>What happens next:</strong> {escrow.held.amountMinor > 0 ? 'money held now is released when its milestone is accepted, or stays frozen if a dispute is opened.'
+            : escrow.unfunded.amountMinor > 0 ? 'the next milestone is funded before its work starts.' : 'nothing is waiting: every milestone is settled.'}</span>
+        </div>
+        <table className="data"><thead><tr><th>Milestone</th><th>Amount</th><th>Status</th><th>Funded</th><th>Released (net)</th><th>Fee</th><th>Release reference</th></tr></thead>
           <tbody>{escrow.allocations.map((x) => (
             <tr key={x.milestoneId}>
               <td>M{x.sequence} {x.title}</td><td>{formatMoney(x.amount)}</td>
@@ -96,6 +103,7 @@ export function PaymentsPanel({ c, escrow, side, onFund }: { c: Contract; escrow
               <td className="small">{fmtDate(x.fundedAt)}</td>
               <td>{x.state === 'RELEASED' ? formatMoney(x.released) : '—'}</td>
               <td className="small">{x.state === 'RELEASED' ? formatMoney(x.fee) : '—'}</td>
+              <td className="small">{x.releaseReference ? <><code>{x.releaseReference}</code><br /><span className="muted">{fmtDate(x.releasedAt)}</span></> : '—'}</td>
             </tr>))}</tbody></table>
         {side === 'professional' && <p className="muted small" style={{ marginBottom: 0 }}>Released money is paid out to your bank account. See <Link to="/app/professional/earnings">Earnings</Link>.</p>}
       </section>

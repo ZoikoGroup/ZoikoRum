@@ -7,7 +7,7 @@ import { policyApi, type Approval, type ExceptionRequest, type PolicyProfile, ty
 import { ErrorAlert, Field, useStepUp } from '../components/ui'
 import { EmptyTable, PortalHeader, StatCard, Tabs } from '../components/portal'
 import { Icon } from '../components/dashboard'
-import AutomaticDisputeControls from '../components/AutomaticDisputeControls'
+import AutomaticDisputeControls, { DisputeSettlementControls } from '../components/AutomaticDisputeControls'
 
 type PolicyTab = 'profiles' | 'approvals' | 'exceptions'
 
@@ -203,6 +203,7 @@ export default function PoliciesPage() {
               Organisation Scope:
             </span>
             <select
+              aria-label="Organisation scope"
               id="policy-org"
               className="input"
               style={{ maxWidth: 360 }}
@@ -479,6 +480,11 @@ export default function PoliciesPage() {
                 </Field>
 
                 <AutomaticDisputeControls
+                  settings={settings}
+                  onChange={setSettings}
+                  disabled={!admin || !selected.draftVersionId}
+                />
+                <DisputeSettlementControls
                   settings={settings}
                   onChange={setSettings}
                   disabled={!admin || !selected.draftVersionId}

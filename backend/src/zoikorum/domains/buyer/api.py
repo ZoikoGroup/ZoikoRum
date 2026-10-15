@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import uuid
 
+from pydantic import BaseModel
+
 from fastapi import APIRouter, status
 
 from zoikorum.domains.buyer import service
@@ -154,3 +156,13 @@ async def cost_centers(org_id: uuid.UUID, actor: CurrentActor, session: DbSessio
 @router.post("/{org_id}/cost-centers", response_model=CostCenterOut, status_code=status.HTTP_201_CREATED)
 async def create_cost_center(org_id: uuid.UUID, body: CostCenterIn, actor: CurrentActor, session: DbSession):
     return await service.create_cost_center(session, actor, org_id, body.name, body.code, body.businessUnitId, body.quarterlyBudget)
+
+
+class MergeUnitsIn(BaseModel):
+    targetId: uuid.UUID  # the unit that remains
+
+
+@router.post("/{org_id}/business-units/{unit_id}/merge", response_model=list[BusinessUnitOut])
+async def merge_business_units(org_id: uuid.UUID, unit_id: uuid.UUID, body: MergeUnitsIn, actor: CurrentActor, session: DbSession):
+    """Organisation Admin: fold this unit into another; everything it held moves to that unit."""
+    return await service.merge_business_units(session, actor, org_id, unit_id, body.targetId)

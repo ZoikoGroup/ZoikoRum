@@ -353,3 +353,14 @@ async def test_expiring_one_enforcement_case_preserves_another_active_restrictio
     assert reversed.status_code == 200, reversed.text
     await drain()
     assert (await client.get(trust_url)).json()['tier'] == 'B'
+
+
+async def test_human_decisions_on_ai_suggestions_are_recorded(client, make_user, drain, sf):
+    u = await make_user("ai-user")
+    for outcome in ("USED", "DISCARDED"):
+        r = await client.post("/v1/ai/outcomes", headers=u.h, json={"purpose": "contract-summary", "subjectId": str(uuid.uuid4()), "outcome": outcome})
+        assert r.status_code == 204
+    await drain()
+    async with sf() as session:
+        actions = (await session.scalars(select(text("action")).select_from(text("audit.audit_records")).where(text("action LIKE 'ai.suggestion.%'")))).all()
+    assert sorted(actions) == ["ai.suggestion.discarded", "ai.suggestion.used"]

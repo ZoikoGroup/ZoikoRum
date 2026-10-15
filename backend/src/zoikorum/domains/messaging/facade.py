@@ -75,3 +75,36 @@ async def export_thread(session: AsyncSession, context_type: str, context_id: uu
             )
         )
     return export
+
+
+async def message_for_report(session: AsyncSession, actor, message_id: uuid.UUID) -> tuple[uuid.UUID, str] | None:
+    """(sender, short excerpt) of a message the reporter can read in one of their conversations; None otherwise."""
+    from zoikorum.domains.messaging import service
+    from zoikorum.shared.errors import DomainError
+
+    m = await session.get(Message, message_id)
+    if m is None or m.sender_identity_id is None:
+        return None
+    try:
+        await service.checked_thread(session, actor, m.thread_id)
+    except DomainError:
+        return None
+    return m.sender_identity_id, m.body[:300]
+
+
+async def files_for_contexts(session: AsyncSession, contexts: list[tuple[str, uuid.UUID]]):
+    """Files shared in these conversations (each version is its own file)."""
+    from sqlalchemy import or_
+
+    from zoikorum.shared.uploads import FileRef
+
+    if not contexts:
+        return []
+    threads = (await session.scalars(select(Thread).where(or_(*[
+        (Thread.context_type == t) & (Thread.context_id == i) for t, i in contexts])))).all()
+    if not threads:
+        return []
+    rows = (await session.scalars(select(Attachment).where(Attachment.thread_id.in_([t.id for t in threads]))
+                                  .order_by(Attachment.created_at))).all()
+    return [FileRef("Messages", f"{a.name} (v{a.file_version})" if a.file_version > 1 else a.name, a.sha256, a.size_bytes,
+                    a.created_at, f"/v1/threads/{a.thread_id}/attachments/{a.id}") for a in rows]

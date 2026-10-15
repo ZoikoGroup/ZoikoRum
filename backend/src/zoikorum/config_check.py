@@ -8,15 +8,39 @@ In local development everything is reported for information only.
 
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 import asyncio
 import smtplib
 import ssl
 
 from pydantic import ValidationError
 
-from zoikorum.config import DEV_ENVS, Settings
+from zoikorum.config import DEV_ENVS, Settings, get_settings
 
 OK, WARN, MISSING = "OK", "WARN", "MISSING"
+
+
+def _passkey_domain(s: Settings) -> tuple[str, str, str]:
+    """Passkeys work on one domain and its sub-domains. With the customer and staff apps on different hosts, the
+    relying-party domain must be a parent of both (ZK_WEBAUTHN_RP_ID), or staff passkeys fail."""
+    hosts = {urlsplit(u).hostname or "" for u in (s.frontend_url, s.staff_frontend_url or s.frontend_url)}
+    rp = s.webauthn_rp_id or urlsplit(s.frontend_url).hostname or ""
+    if all(h == rp or h.endswith("." + rp) for h in hosts):
+        return OK, "Passkeys", "one domain for both web apps"
+    return MISSING, "Passkeys", "set ZK_WEBAUTHN_RP_ID to the parent domain of the customer and staff web apps"
+
+
+def refuse_incomplete_production(s: Settings | None = None) -> None:
+    """Production does not start while anything is MISSING (test payments, local files, console email, development
+    database, ...): a half-configured server would take sign-ups it cannot serve. Staging may run with test services."""
+    s = s or get_settings()
+    if s.env != "production":
+        return
+    missing = [f"{area}: {detail}" for status, area, detail in review(s) if status == MISSING]
+    if missing:
+        raise RuntimeError("Production settings are incomplete (details: python -m zoikorum.cli check-config):\n  "
+                           + "\n  ".join(missing))
 
 
 def review(s: Settings) -> list[tuple[str, str, str]]:
@@ -92,11 +116,29 @@ def review(s: Settings) -> list[tuple[str, str, str]]:
         add(MISSING, "Public address", "ZK_FRONTEND_URL must be the https:// address of the web app")
     else:
         add(OK, "Public address", "https")
+    if s.field_kms_key_name and s.field_active_key and s.field_active_key in s.field_data_keys:
+        add(OK, "Field encryption", "data keys wrapped by Cloud KMS")
+    elif s.env not in DEV_ENVS:
+        add(MISSING if s.env == "production" else WARN, "Field encryption",
+            "ZK_FIELD_KMS_KEY_NAME, ZK_FIELD_DATA_KEYS and ZK_FIELD_ACTIVE_KEY are needed (cli new-field-key)")
+    if s.malware_scanner == "clamav":
+        add(OK, "Virus scanning", "every upload is scanned by ClamAV")
+    else:
+        add(MISSING if s.env not in DEV_ENVS else WARN, "Virus scanning",
+            "ZK_MALWARE_SCANNER=none: uploaded files are not checked for viruses; set clamav")
+    if s.env not in DEV_ENVS and not (s.db_app_role and s.migration_database_url):
+        add(MISSING if s.env == "production" else WARN, "Database users",
+            "ZK_MIGRATION_DATABASE_URL (owner) and ZK_DB_APP_ROLE (restricted app user) are needed; then cli db-grants")
+    if s.env not in DEV_ENVS and s.database_url == type(s).model_fields["database_url"].default:
+        add(MISSING, "Database", "ZK_DATABASE_URL is still the development default")
+    add(*_passkey_domain(s))
     add(OK if s.sentry_dsn else WARN, "Error reporting", "Sentry configured" if s.sentry_dsn else "no ZK_SENTRY_DSN (optional)")
     if s.ai_provider == "anthropic":
         add(OK if s.anthropic_api_key else MISSING, "AI", "Claude configured" if s.anthropic_api_key else "ZK_ANTHROPIC_API_KEY is needed")
     else:
         add(OK, "AI", "off: keyword rules (optional)")
+    if s.env not in DEV_ENVS and not s.tax_rules:
+        add(WARN, "Tax", "no ZK_TAX_RULES: invoices show no tax (finance to confirm)")
     if s.dispute_challenge_window_days == 0:
         add(WARN, "Rules", "ZK_DISPUTE_CHALLENGE_WINDOW_DAYS=0: accepted work cannot be disputed (management to confirm)")
     return out
@@ -148,6 +190,10 @@ def connect(s: Settings) -> list[tuple[str, str, str]]:
             out.append((OK, "S3 bucket", "reachable with this server's credentials"))
         except Exception as exc:  # noqa: BLE001
             out.append((MISSING, "S3 bucket", f"not reachable ({type(exc).__name__})"))
+    if s.malware_scanner == "clamav":
+        from zoikorum.shared import scanning
+
+        out.append((OK, "ClamAV", "answering") if scanning.ping() else (MISSING, "ClamAV", "not reachable"))
     if s.email_provider == "smtp" and s.smtp_host:
         try:
             with smtplib.SMTP(s.smtp_host, s.smtp_port, timeout=15) as smtp:

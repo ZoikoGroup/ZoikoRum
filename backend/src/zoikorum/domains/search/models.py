@@ -37,6 +37,7 @@ class ProfessionalDocument(Base, UUIDPk, Timestamps):
     city: Mapped[str | None] = mapped_column(String(100))
     years_experience_band: Mapped[str | None] = mapped_column(String(10))
     languages: Mapped[list[str]] = mapped_column(ARRAY(String(40)), nullable=False, default=list)
+    industries: Mapped[list[str]] = mapped_column(ARRAY(String(40)), nullable=False, default=list, server_default="{}")
 
     categories: Mapped[list[str]] = mapped_column(ARRAY(String(120)), nullable=False, default=list)
     primary_specialization: Mapped[str | None] = mapped_column(String(120))

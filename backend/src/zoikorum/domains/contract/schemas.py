@@ -142,6 +142,31 @@ class MilestoneOut(BaseModel):
     acceptedRelease: MoneyDTO | None = None  # what was released when accepted for less than the full amount
 
 
+class TerminateIn(BaseModel):
+    """End the engagement. ``mutual``: ask the other side to agree (needed while money is in escrow); otherwise it ends
+    at once, which is allowed only when nothing is held and no dispute is open."""
+    reason: str = Field(min_length=5, max_length=1000)
+    mutual: bool = False
+
+
+class TerminationDecisionIn(BaseModel):
+    agree: bool
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class TerminationRequestOut(BaseModel):
+    id: uuid.UUID
+    requesterParty: Literal["BUYER", "PROFESSIONAL"]
+    reason: str
+    status: str
+    expiresAt: datetime
+    decisionNote: str | None
+    decidedAt: datetime | None
+    createdAt: datetime
+    canAnswer: bool  # the viewer is on the other side and may agree or decline
+    canWithdraw: bool
+
+
 class ContractOut(BaseModel):
     id: uuid.UUID
     reference: str
@@ -173,6 +198,12 @@ class ContractOut(BaseModel):
     nextAction: str  # plain language, from the viewer's side
     canSign: bool  # the viewer may sign now (still needs a fresh two-step confirmation)
     acceptedAmount: MoneyDTO
+    # Ending the engagement: at once (nothing in escrow, no dispute) or by asking the other side to agree.
+    pausedAt: datetime | None = None  # retainer paused by the buyer
+    pauseReason: str | None = None
+    canEndNow: bool = False
+    canRequestEnd: bool = False
+    terminationRequest: TerminationRequestOut | None = None
     createdAt: datetime
     version: int
 

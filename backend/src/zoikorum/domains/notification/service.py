@@ -44,7 +44,12 @@ EVENT_TITLES = {
     E.PROPOSAL_ACCEPTED: 'Proposal accepted', E.PROPOSAL_REJECTED: 'Proposal declined', E.PROPOSAL_EXPIRED: 'Proposal expired',
     E.CONTRACT_GENERATED: 'Agreement ready for signature', E.CONTRACT_SIGNED: 'Agreement signed',
     E.CONTRACT_ACTIVATED: 'Engagement activated', E.CONTRACT_COMPLETED: 'Engagement completed',
-    E.CONTRACT_TERMINATED: 'Engagement terminated', E.SIGNATURE_DEADLINE_ESCALATED: 'Signature overdue',
+    E.RETAINER_PAUSED: 'Retainer paused', E.RETAINER_RESUMED: 'Retainer resumed',
+    E.PROPOSAL_REQUEST_REMINDER: 'A request is waiting for your answer', E.PROPOSAL_REQUEST_UNANSWERED: 'No proposal yet',
+    E.CONTRACT_TERMINATED: 'Engagement terminated', E.CONTRACT_PROFESSIONAL_STATUS_CHANGED: 'Change affecting your engagement',
+    E.CONTRACT_TERMINATION_REQUESTED: 'Request to end the engagement',
+    E.CONTRACT_TERMINATION_DECLINED: 'Request to end the engagement declined',
+    E.CONTRACT_TERMINATION_WITHDRAWN: 'Request to end the engagement closed', E.SIGNATURE_DEADLINE_ESCALATED: 'Signature overdue',
     E.CHANGE_ORDER_REQUESTED: 'Contract change proposed', E.CHANGE_ORDER_APPROVED: 'Contract change approved',
     E.CHANGE_ORDER_REJECTED: 'Contract change declined', E.CONTRACT_AMENDED: 'Contract amendment signed',
     E.ESCROW_FUNDED: 'Payment held in escrow', E.ESCROW_RELEASED: 'Milestone payment released',
@@ -70,9 +75,16 @@ EVENT_TITLES = {
     E.DISPUTE_CLOSED: 'Dispute closed', E.DISPUTE_APPEALED: 'Dispute appeal filed', E.DISPUTE_APPEAL_DECIDED: 'Dispute appeal reviewed',
     E.ENFORCEMENT_ACTION_APPLIED: 'Account safety decision', E.ENFORCEMENT_ACTION_REVERSED: 'Restriction reversed',
     E.ENFORCEMENT_APPEAL_DECIDED: 'Safety appeal decided',
+    E.SAVED_PROFESSIONAL_AVAILABLE: 'A saved professional is available', E.SAVED_SEARCH_MATCHES: 'New matches for your saved search',
+    E.DISPUTE_CLARIFICATION_REQUESTED: 'The mediator has a question',
+    E.DISPUTE_REFERRED_TO_ARBITRATION: 'Dispute referred to external arbitration',
+    E.SESSION_CREATED: 'New sign-in to your account', E.TRUST_TIER_NUDGE: 'Verify to work with this buyer',
+    E.USER_REPORT_SUBMITTED: 'Report received', E.USER_REPORT_CLOSED: 'Your report was reviewed',
+    E.SUPPORT_REQUEST_ANSWERED: 'Support replied to your request', E.SUPPORT_REQUEST_RESOLVED: 'Your support request was resolved',
 }
 # Always shown in the app (email still follows the person's preferences): disputes and money that needs action.
-MUST_SEE = frozenset({E.PAYMENT_FAILED, E.MILESTONE_FUNDING_REVERSED, E.REFUND_FAILED, E.ESCROW_RELEASE_BLOCKED, E.PAYOUT_FAILED})
+MUST_SEE = frozenset({E.PAYMENT_FAILED, E.MILESTONE_FUNDING_REVERSED, E.REFUND_FAILED, E.ESCROW_RELEASE_BLOCKED, E.PAYOUT_FAILED,
+                      E.CONTRACT_PROFESSIONAL_STATUS_CHANGED})
 WEBHOOK_EVENTS = frozenset(e for e in EVENT_TITLES if domain_of(e) in {'proposal', 'contract', 'escrow', 'policy', 'dispute', 'verification'})
 
 
@@ -101,14 +113,19 @@ async def recipients(session, event):
         engagement = await contract.get_contract(session, contract_id)
         if engagement:
             org_id, pro_id = engagement.organization_id, engagement.professional_id
-    if org_id:
+    audience = 'BUYER' if p.get('buyersOnly') else p.get('audience')  # a notice for one side only
+    if org_id and audience != 'PROFESSIONAL':
         wanted = [OrgRole.APPROVER, OrgRole.BUDGET_OWNER, OrgRole.LEGAL_REVIEWER, OrgRole.ORG_ADMIN] if event.eventType in (E.APPROVAL_REQUIRED, E.APPROVAL_ESCALATED) else None
         if event.eventType == E.EXCEPTION_REQUESTED:
             wanted = [OrgRole.EXCEPTION_AUTHORITY]
         found.update(await buyer.list_member_identities(session, org_id, wanted))
     pro = await professional.get_professional(session, pro_id) if pro_id else None
-    if pro:
+    if pro and audience != 'BUYER':
         found.add(pro.identity_id)
+    if audience == 'PROFESSIONAL':  # only the professional, even when the event names the buyer
+        found = {pro.identity_id} if pro else set()
+    elif audience == 'BUYER' and pro:
+        found.discard(pro.identity_id)
     return found, org_id, pro.identity_id if pro else None
 
 
@@ -120,6 +137,12 @@ def target_url(event, recipient, professional_identity):
         return '/app/security'
     if domain_of(event.eventType) == 'admin':
         return '/app/safety'
+    if event.eventType == E.SAVED_SEARCH_MATCHES:
+        return '/app/find?' + str(p.get('query') or '')
+    if event.eventType == E.SAVED_PROFESSIONAL_AVAILABLE:
+        return f"/professionals/{p.get('professionalRef') or ''}"
+    if domain_of(event.eventType) == 'support':
+        return '/app/help?request=' + str(p.get('requestId') or '')
     if domain_of(event.eventType) == 'policy':
         return '/app/policies?orgId=' + str(p.get('organizationId') or event.tenantId or '')
     if dispute_id := p.get('disputeId'):
@@ -140,13 +163,16 @@ async def queue_event(session, event):
         return
     if event.eventType == E.AUTHENTICATION_FAILED and event.payload.get('reason') not in {'LOCKED_OUT', 'ACCOUNT_LOCKED'} and not event.payload.get('lockedUntil'):
         return
+    if event.eventType == E.SESSION_CREATED and not event.payload.get('newDevice'):
+        return
     found, org_id, pro_identity = await recipients(session, event)
     mandatory = domain_of(event.eventType) in {'identity', 'admin'}
     must_see = mandatory or domain_of(event.eventType) == 'dispute' or event.eventType in MUST_SEE
     saved_buyer = (event.eventType == E.PROPOSAL_REQUESTED and org_id and _uuid(event.payload.get('professionalId'))
                    and await professional.saved_buyer_alerts(session, _uuid(event.payload['professionalId']), org_id))
     notice = event.payload.get('notice') if domain_of(event.eventType) == 'admin' else None
-    body = '\n'.join(f'{key}: {value}' for key, value in notice.items()) if notice else 'Open your workspace to review this update and any required action.'
+    body = '\n'.join(f'{key}: {value}' for key, value in notice.items()) if notice else \
+        event.payload.get('message') or 'Open your workspace to review this update and any required action.'
     for recipient in found:
         prefs = await session.scalar(select(Preference).where(Preference.identity_id == recipient))
         priority = bool(saved_buyer and recipient == pro_identity)  # the professional asked to always hear from this buyer

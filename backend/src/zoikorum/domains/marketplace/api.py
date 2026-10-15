@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Query, status
+from pydantic import BaseModel
 
 from zoikorum.domains.marketplace import service
 from zoikorum.domains.marketplace.schemas import (
@@ -158,3 +159,14 @@ async def search_viewed(search_id: uuid.UUID, actor: CurrentActor, session: DbSe
 @router.delete("/v1/saved/searches/{search_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_search(search_id: uuid.UUID, actor: CurrentActor, session: DbSession):
     await service.delete_search(session, actor, search_id)
+
+
+
+class AlertsIn(BaseModel):
+    on: bool
+
+
+@router.post("/v1/saved/searches/{search_id}/alerts", response_model=SavedSearchOut)
+async def search_alerts(search_id: uuid.UUID, body: AlertsIn, actor: CurrentActor, session: DbSession):
+    """Turn the daily "new matches" notice for a saved search on or off."""
+    return await service.set_search_alerts(session, actor, search_id, body.on)

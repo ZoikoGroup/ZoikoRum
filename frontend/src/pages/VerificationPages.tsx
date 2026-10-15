@@ -1,13 +1,14 @@
+import type { BeneficialOwner } from '../api/verification'
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   CASE_STATUS, DIMENSION_VALUE, DIMENSIONS, evidenceFileUrl, HOSTED_NOTE, PARTNER_NAME, trustApi, verificationApi,
-  type AppealQueueItem, type DecisionReason, type EvidenceCheck, type EvidenceType, type QueueItem, type SelfServiceType, type SubjectType, type Trust, type VerificationCase,
+  type AppealQueueItem, type DecisionReason, type EvidenceCheck, type EvidenceType, type QueueItem, type SelfServiceType, type SubjectType, type Trust, type TrustHistory, type VerificationCase,
 } from '../api/verification'
 import { toUpload } from '../api/files'
 import { FileLink } from '../components/FileLink'
 import { HostedVerification } from '../components/HostedVerification'
-import { ErrorAlert, Field, useStepUp } from '../components/ui'
+import { ErrorAlert, Field, useStepUp, Loading } from '../components/ui'
 import { useMyFirm } from './FirmPages'
 import { COUNTRIES } from './Join'
 import { countryName, useMyProfile } from './ProfessionalPages'
@@ -21,6 +22,8 @@ const EVIDENCE_FOR: Record<string, { type: EvidenceType; label: string }> = {
   JURISDICTION: { type: 'LICENSE', label: 'Licence or registration for this jurisdiction' },
   INSURANCE: { type: 'INSURANCE_POLICY', label: 'Insurance policy schedule' },
   FIRM_REGISTRATION: { type: 'REGISTRATION_DOCUMENT', label: 'Certificate of incorporation or registry extract' },
+  BACKGROUND: { type: 'OTHER', label: 'Background-check report or the screening provider\'s confirmation' },
+  BENEFICIAL_OWNERSHIP: { type: 'REGISTRATION_DOCUMENT', label: 'Shareholder register or register of persons with significant control' },
 }
 
 const START_INFO: Record<SelfServiceType, { title: string; desc: string }> = {
@@ -28,7 +31,12 @@ const START_INFO: Record<SelfServiceType, { title: string; desc: string }> = {
   JURISDICTION: { title: 'Verify a professional licence for a country', desc: 'Only if you hold a licence to practise (e.g. CA, CPA, bar admission). Upload the licence, not your ID. Not needed for most technology or advisory work.' },
   INSURANCE: { title: 'Verify professional indemnity insurance', desc: 'Only for regulated work (legal, audit, tax filing). Upload the policy schedule.' },
   FIRM_REGISTRATION: { title: 'Verify the firm registration', desc: 'Confirms the firm is a registered legal entity.' },
+  BACKGROUND: { title: 'Background check', desc: 'Some enterprise buyers require it for regulated or sensitive work. Runs only with your consent; you see the result before buyers do.' },
+  BENEFICIAL_OWNERSHIP: { title: 'Declare beneficial owners', desc: 'Everyone who owns 25% or more of the firm, or controls it. Enterprise buyers and regulators ask for this.' },
 }
+const CONSENT_TEXT = 'I consent to Zoikorum, through its screening provider, checking my identity against criminal-record, '
+  + 'sanctions and professional-discipline sources where the law allows, and to the result being recorded on my verification. '
+  + 'I can withdraw before the check completes.'
 
 export function CaseStatusBadge({ status }: { status: string }) {
   const s = CASE_STATUS[status] ?? { label: status, cls: '' }
@@ -276,10 +284,13 @@ function ChecksPanel({ subjectType, subjectId, allowed, onChanged }: {
     verificationApi.hostedRefresh(returnedFrom).catch(setError).finally(() => { load(); changed.current?.() })
   }, [load, returnedFrom, setParams])
 
+  const [owners, setOwners] = useState<BeneficialOwner[]>([{ name: '', country: 'GB', percent: 100, control: false }])
   async function start(type: SelfServiceType) {
     setError(null)
     try {
-      await verificationApi.start({ verificationType: type, subjectType, subjectId, ...(type === 'JURISDICTION' ? { jurisdiction } : {}) })
+      if (type === 'BACKGROUND' && !confirm(CONSENT_TEXT)) return
+      await verificationApi.start({ verificationType: type, subjectType, subjectId, ...(type === 'JURISDICTION' ? { jurisdiction } : {}),
+        ...(type === 'BACKGROUND' ? { consent: true } : {}), ...(type === 'BENEFICIAL_OWNERSHIP' ? { owners } : {}) })
       await load()
       onChanged?.()
     } catch (err) {
@@ -299,6 +310,7 @@ function ChecksPanel({ subjectType, subjectId, allowed, onChanged }: {
             <li key={t}>
               <span><strong>{START_INFO[t].title}</strong><br /><span className="muted small">{START_INFO[t].desc}</span></span>
               <span className="row" style={{ flexWrap: 'nowrap' }}>
+                {t === 'BENEFICIAL_OWNERSHIP' && !active(t) && <OwnersEditor owners={owners} onChange={setOwners} />}
                 {t === 'JURISDICTION' && (
                   <select className="input" aria-label="Jurisdiction" value={jurisdiction} onChange={(e) => setJurisdiction(e.target.value)}>
                     {COUNTRIES.map(([c, n]) => <option key={c} value={c}>{n}</option>)}
@@ -330,14 +342,14 @@ export function ProfessionalVerificationPage() {
   const [trust, setTrust] = useState<Trust | null>(null)
   const loadTrust = useCallback(() => { if (profile) trustApi.get(profile.id).then(setTrust).catch(() => {}) }, [profile])
   useEffect(() => { loadTrust() }, [loadTrust])
-  if (loading) return <p className="muted">Loading…</p>
+  if (loading) return <Loading />
   if (!profile) return <p className="muted">Create your <Link to="/app/professional">professional profile</Link> first.</p>
   return (
     <>
       <div className="page-head"><div><h1>Verification &amp; trust</h1>
         <p className="muted" style={{ margin: 0 }}>Verified checks raise your Trust Tier. Checks are made by a verification provider or a compliance reviewer — never by AI.</p></div></div>
       {trust && <TrustSummary trust={trust} />}
-      <ChecksPanel subjectType="PROFESSIONAL" subjectId={profile.id} allowed={['IDENTITY', 'JURISDICTION', 'INSURANCE']}
+      <ChecksPanel subjectType="PROFESSIONAL" subjectId={profile.id} allowed={['IDENTITY', 'JURISDICTION', 'INSURANCE', 'BACKGROUND']}
         onChanged={() => setTimeout(loadTrust, 1500)} />
     </>
   )
@@ -345,13 +357,13 @@ export function ProfessionalVerificationPage() {
 
 export function FirmVerificationPage() {
   const { firm, loading, isAdmin } = useMyFirm()
-  if (loading) return <p className="muted">Loading…</p>
+  if (loading) return <Loading />
   if (!firm) return <p className="muted">Your firm is still being set up. Refresh in a moment.</p>
   return (
     <>
       <div className="page-head"><div><h1>Firm verification</h1>
         <p className="muted" style={{ margin: 0 }}>{firm.legalName} · {firm.status === 'VERIFIED' ? 'Verified' : 'Verification pending'}</p></div></div>
-      {isAdmin ? <ChecksPanel subjectType="FIRM" subjectId={firm.id} allowed={['FIRM_REGISTRATION']} />
+      {isAdmin ? <ChecksPanel subjectType="FIRM" subjectId={firm.id} allowed={['FIRM_REGISTRATION', 'BENEFICIAL_OWNERSHIP']} />
         : <p className="muted">Only Firm Admins can manage firm verification.</p>}
     </>
   )
@@ -484,6 +496,7 @@ export function ReviewQueuePage() {
       <div className="page-head"><div><h1>Verification reviews</h1>
         <p className="muted" style={{ margin: 0 }}>Open checks waiting for a human decision. You cannot review your own case.</p></div></div>
       <ErrorAlert error={error} />
+      <SecondLooks onDone={setNotice} onError={setError} />
       {notice && <div className="alert alert-success" role="status">{notice}</div>}
       {selected && (
         <section className="card panel">
@@ -502,6 +515,7 @@ export function ReviewQueuePage() {
                 <div key={k}>{k.replace(/([A-Z])/g, ' $1').replace(/^./, (x) => x.toUpperCase())}: <strong>{String(v)}</strong></div>)}
             </span></div>
           )}
+          {selected.subjectType === 'PROFESSIONAL' && <TierHistoryPanel professionalId={selected.subjectId} />}
           <h3>Evidence</h3>
           {selected.hostedStatus && selected.evidence.length === 0 ? (
             <div className="alert alert-info" style={{ marginBottom: 16 }}>
@@ -548,5 +562,81 @@ export function ReviewQueuePage() {
         )}
       </section>
     </>
+  )
+}
+
+
+/** Automatic partner approvals picked for a person's second look (ethics code: human oversight of every approval process). */
+function SecondLooks({ onDone, onError }: { onDone: (msg: string) => void; onError: (err: unknown) => void }) {
+  const [rows, setRows] = useState<VerificationCase[]>([])
+  const [overturning, setOverturning] = useState<VerificationCase | null>(null)
+  const [reason, setReason] = useState('')
+  const { run, modal } = useStepUp(onError)
+  const load = useCallback(() => verificationApi.secondLooks().then(setRows).catch(onError), [onError])
+  useEffect(() => { load() }, [load])
+  if (rows.length === 0) return null
+  return (
+    <section className="card panel">
+      {modal}
+      <div className="panel-head"><h2>Second looks at automatic approvals</h2><span className="badge">{rows.length}</span></div>
+      <p className="muted small" style={{ marginTop: 0 }}>The partner approved these without a person. Check them; overturning revokes the
+        check with your reason and the person can appeal.</p>
+      <table className="data"><thead><tr><th>Check</th><th>Approved</th><th><span className="sr-only">Actions</span></th></tr></thead>
+        <tbody>{rows.map((c) => <tr key={c.id}>
+          <td><strong>{c.label}</strong><div className="muted small">{c.subjectType === 'PROFESSIONAL' ? <Link to={`/professionals/${c.subjectId}`}>View professional</Link> : 'Firm'}</div></td>
+          <td className="small">{fmtDate(c.verifiedAt)}</td>
+          <td><span className="row" style={{ flexWrap: 'nowrap' }}>
+            <button className="btn btn-secondary btn-sm" onClick={() => run(async () => {
+              await verificationApi.decideSecondLook(c.id, { confirm: true }); onDone('Approval confirmed.'); await load()
+            })}>Confirm</button>
+            <button className="btn btn-ghost btn-sm" onClick={() => { setOverturning(c); setReason('') }}>Overturn…</button></span></td>
+        </tr>)}</tbody></table>
+      {overturning && <form style={{ marginTop: 12 }} onSubmit={(e) => { e.preventDefault(); run(async () => {
+        await verificationApi.decideSecondLook(overturning.id, { confirm: false, reasonCode: 'SECOND_LOOK_OVERTURNED', publicReason: reason.trim() })
+        setOverturning(null); onDone('Approval overturned; the check is revoked.'); await load()
+      }) }}>
+        <label className="label" htmlFor="second-look-reason">Message to the person: why it is overturned and what to do</label>
+        <textarea id="second-look-reason" className="input" rows={3} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} required />
+        <div className="row" style={{ marginTop: 8 }}><button className="btn btn-danger btn-sm" disabled={reason.trim().length < 10}>Overturn and revoke</button>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setOverturning(null)}>Cancel</button></div>
+      </form>}
+    </section>
+  )
+}
+
+
+/** Staff: how this professional's Trust Tier changed over time, and the signals behind it (assurance evidence). */
+function TierHistoryPanel({ professionalId }: { professionalId: string }) {
+  const [history, setHistory] = useState<TrustHistory | null>(null)
+  useEffect(() => { trustApi.history(professionalId).then(setHistory).catch(() => setHistory(null)) }, [professionalId])
+  if (!history || (history.tierChanges.length === 0 && history.signals.length === 0)) return null
+  return (
+    <details className="doc-full" style={{ marginBottom: 12 }}><summary>Trust Tier history ({history.tierChanges.length} change{history.tierChanges.length === 1 ? '' : 's'})</summary>
+      <ul className="why">{history.tierChanges.map((h, i) => <li key={i}>{fmtDate(h.at)}: Tier {h.fromTier ?? '—'} → <strong>Tier {h.toTier}</strong>
+        {h.reasons.length > 0 && <span className="muted small"> · {h.reasons.join('; ')}</span>}</li>)}</ul>
+      {history.signals.length > 0 && <><h4>Signals</h4><ul className="why">{history.signals.slice(0, 15).map((s, i) =>
+        <li key={i} className={s.adverse ? 'warn-text' : ''}>{fmtDate(s.at)}: {s.summary}</li>)}</ul></>}
+      {history.flags.length > 0 && <p className="small">Flags: {history.flags.join(', ')}</p>}
+    </details>
+  )
+}
+
+
+/** Beneficial owners of a firm: name, country, share, and whether they control it. */
+function OwnersEditor({ owners, onChange }: { owners: BeneficialOwner[]; onChange: (o: BeneficialOwner[]) => void }) {
+  const set = (i: number, patch: Partial<BeneficialOwner>) => onChange(owners.map((o, j) => j === i ? { ...o, ...patch } : o))
+  return (
+    <span className="owners" style={{ display: 'grid', gap: 4 }}>
+      {owners.map((o, i) => <span key={i} className="row" style={{ flexWrap: 'nowrap' }}>
+        <input className="input" aria-label="Owner name" placeholder="Full name" value={o.name} onChange={(e) => set(i, { name: e.target.value })} />
+        <select className="input" aria-label="Owner country" value={o.country} onChange={(e) => set(i, { country: e.target.value })}>
+          {COUNTRIES.map(([c, n]) => <option key={c} value={c}>{n}</option>)}</select>
+        <input className="input" aria-label="Share %" type="number" min={0} max={100} style={{ width: 80 }} value={o.percent}
+          onChange={(e) => set(i, { percent: Number(e.target.value) })} />
+        <label className="small"><input type="checkbox" checked={o.control} onChange={(e) => set(i, { control: e.target.checked })} /> controls</label>
+        {owners.length > 1 && <button className="btn btn-ghost btn-sm" onClick={() => onChange(owners.filter((_, j) => j !== i))}>Remove</button>}
+      </span>)}
+      <button className="btn btn-ghost btn-sm" onClick={() => onChange([...owners, { name: '', country: 'GB', percent: 0, control: false }])}>Add owner</button>
+    </span>
   )
 }

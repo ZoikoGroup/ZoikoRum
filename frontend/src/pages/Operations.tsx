@@ -2,9 +2,13 @@ import { useCallback, useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import { formatMoney, orgApi, type Organization } from '../api/orgs'
+import { paymentsApi, type OpsItem } from '../api/escrow'
+import { reportApi, type UserReport } from '../api/reports'
+import { SUPPORT_STATUS, SUPPORT_TOPICS, supportApi, type SupportRequest } from '../api/support'
+import { SupportThread } from '../components/SupportThread'
 import { useAuth } from '../auth/AuthContext'
 import { ErrorAlert, useStepUp } from '../components/ui'
-import { openStoredFile } from '../api/files'
+import { DOC_ACCEPT, openStoredFile, toUpload, type Upload } from '../api/files'
 import { EmptyTable, PortalHeader, StatCard } from '../components/portal'
 import { Icon } from '../components/dashboard'
 
@@ -22,11 +26,16 @@ interface Case {
   notice: Record<string, string> | null
   appeal: { status: string; reason: string; decisionReason?: string } | null
   expiresAt: string | null
+  triageDueAt: string | null
+  overdue: boolean
+  appealDeadline: string | null
+  canAppeal: boolean
+  remediation: { task: string; done: boolean; doneAt?: string; note?: string; confirmedBy?: string }[]
 }
 const noticeFields = ['whatHappened', 'whyItHappened', 'whatChanged', 'whatYouCanDo', 'whatHappensNext', 'howToGetHelp']
 const actions: Record<number, string[]> = {
   1: ['WARNING'],
-  2: ['VISIBILITY_REDUCTION'],
+  2: ['VISIBILITY_REDUCTION', 'DISPUTE_ACCESS_RESTRICTION'],
   3: ['ENGAGEMENT_SUSPENSION', 'CREDENTIAL_ENFORCEMENT', 'VERIFICATION_RESET'],
   4: ['SUSPEND_ACCOUNT', 'OFFBOARD'],
 }
@@ -37,6 +46,7 @@ export function SafetyPage({ operator = false }: { operator?: boolean }) {
   const [rows, setRows] = useState<Case[]>([])
   const [params] = useSearchParams()  // the Users page links here with ?subjectType=IDENTITY&subjectId=<id>
   const [offset, setOffset] = useState(0)
+  const [filter, setFilter] = useState<{ status: string; level: string; overdue: boolean }>({ status: '', level: '', overdue: false })
   const [error, setError] = useState<unknown>(null)
   const [busy, setBusy] = useState(false)
   const { run, modal } = useStepUp(setError)
@@ -45,10 +55,11 @@ export function SafetyPage({ operator = false }: { operator?: boolean }) {
     async () =>
       setRows(
         await api<Case[]>(operator ? '/v1/admin/enforcement-cases' : '/v1/enforcement-cases', {
-          query: operator ? { offset: String(offset) } : {},
+          query: operator ? { offset: String(offset), ...(filter.status ? { status: filter.status } : {}),
+            ...(filter.level ? { level: filter.level } : {}), ...(filter.overdue ? { overdue: 'true' } : {}) } : {},
         })
       ),
-    [operator, offset]
+    [operator, offset, filter]
   )
 
   useEffect(() => {
@@ -82,6 +93,7 @@ export function SafetyPage({ operator = false }: { operator?: boolean }) {
 
       <ErrorAlert error={error} />
       {modal}
+      {!operator && <MyReports />}
 
       {operator && can('TS_ANALYST') && (
         <form
@@ -137,6 +149,13 @@ export function SafetyPage({ operator = false }: { operator?: boolean }) {
         </form>
       )}
 
+      {operator && <div className="row card" style={{ padding: 12, marginBottom: 12, gap: 12 }}>
+        <label className="filter-box"><span>Status</span><select value={filter.status} onChange={(e) => setFilter({ ...filter, status: e.target.value })}>
+          <option value="">Any</option>{['TRIAGE', 'ASSESSED', 'AWAITING_APPROVAL', 'ACTIVE', 'REVERSED', 'EXPIRED', 'CLOSED_NO_ACTION'].map((s) => <option key={s} value={s}>{s.replace(/_/g, ' ').toLowerCase()}</option>)}</select></label>
+        <label className="filter-box"><span>Level</span><select value={filter.level} onChange={(e) => setFilter({ ...filter, level: e.target.value })}>
+          <option value="">Any</option>{[0, 1, 2, 3, 4].map((l) => <option key={l} value={l}>Level {l}</option>)}</select></label>
+        <label className="checkbox"><input type="checkbox" checked={filter.overdue} onChange={(e) => setFilter({ ...filter, overdue: e.target.checked })} /> <span>Past triage target only</span></label>
+      </div>}
       {rows.length === 0 ? (
         <section className="card panel">
           <EmptyTable columns={['Case Reference', 'Level', 'Subject', 'Action', 'Status']}>
@@ -154,7 +173,8 @@ export function SafetyPage({ operator = false }: { operator?: boolean }) {
                     {c.status}
                   </span>
                 </div>
-                <span className="small muted">Case: <code>{c.id.slice(0, 8)}</code></span>
+                <span className="small muted">{c.overdue && <span className="badge warn" style={{ marginRight: 6 }}>Past triage target</span>}
+                  {c.triageDueAt && !c.overdue && <>Triage by {new Date(c.triageDueAt).toLocaleString()} · </>}Case: <code>{c.id.slice(0, 8)}</code></span>
               </div>
               <p style={{ fontSize: 14.5, margin: '6px 0 10px' }}>{c.summary}</p>
               <p className="small muted" style={{ margin: 0 }}>
@@ -207,6 +227,12 @@ export function SafetyPage({ operator = false }: { operator?: boolean }) {
                 </dl>
               )}
 
+              {operator && c.signalSource === 'USER_REPORT' && <CaseReports caseId={c.id} />}
+              {operator && can('TS_ANALYST', 'RISK_LEAD') && ['TRIAGE', 'ASSESSED'].includes(c.status) && (
+                <div style={{ marginTop: 10 }}>
+                  <ReasonForm label="Close: no action needed" busy={busy} submit={(reason) => act(`/v1/admin/enforcement-cases/${c.id}/close`, { reason })} />
+                </div>
+              )}
               {operator && can('RISK_LEAD') && ['TRIAGE', 'ASSESSED'].includes(c.status) && (
                 <form
                   onSubmit={(e) => {
@@ -246,6 +272,7 @@ export function SafetyPage({ operator = false }: { operator?: boolean }) {
                       action: d.get('action'),
                       durationDays: d.get('durationDays') ? Number(d.get('durationDays')) : null,
                       notice: Object.fromEntries(noticeFields.map((key) => [key, d.get(key)])),
+                      remediation: String(d.get('remediation') ?? '').split('\n').map((t) => t.trim()).filter(Boolean),
                     })
                   }}
                   style={{ marginTop: 14, background: 'var(--zk-bg-soft)', padding: 14, borderRadius: 'var(--radius-sm)' }}
@@ -273,6 +300,8 @@ export function SafetyPage({ operator = false }: { operator?: boolean }) {
                       </div>
                     ))}
                   </div>
+                  {c.level === 2 && <div className="field"><label htmlFor={`remediation-${c.id}`}>Remediation the person must complete (one per line, optional)</label>
+                    <textarea id={`remediation-${c.id}`} className="input" name="remediation" rows={2} /></div>}
                   <button className="btn btn-primary btn-sm" disabled={busy}>Propose Action with Notice</button>
                 </form>
               )}
@@ -293,10 +322,20 @@ export function SafetyPage({ operator = false }: { operator?: boolean }) {
 
               {!operator && c.status === 'ACTIVE' && c.level >= 2 && !c.appeal && (
                 <div style={{ marginTop: 12 }}>
-                  <ReasonForm label="File Appeal" busy={busy} submit={(reason) => act(`/v1/enforcement-cases/${c.id}/appeal`, { reason })} />
+                  <AppealForm c={c} busy={busy} submit={(reason, evidence) => act(`/v1/enforcement-cases/${c.id}/appeal`, { reason, evidence })} />
                 </div>
               )}
 
+              {c.remediation.length > 0 && <div style={{ marginTop: 12 }}><span className="small muted" style={{ fontWeight: 600 }}>Remediation</span>
+                <ul className="why">{c.remediation.map((t, i) => <li key={i}>{t.task}{' '}
+                  {t.confirmedBy ? <span className="badge green">Confirmed</span> : t.done ? <span className="badge">Done{t.note ? `: ${t.note}` : ''}</span> : <span className="badge warn">To do</span>}
+                  {!operator && !t.done && c.status === 'ACTIVE' && <button className="link-button small" style={{ marginLeft: 6 }} onClick={() => {
+                    const note = prompt('What did you do?'); if (note && note.trim().length >= 5) act(`/v1/enforcement-cases/${c.id}/remediation/${i}/done`, { note: note.trim() })
+                  }}>Mark done</button>}
+                  {operator && can('TS_ANALYST', 'RISK_LEAD') && t.done && !t.confirmedBy && <button className="link-button small" style={{ marginLeft: 6 }}
+                    onClick={() => act(`/v1/admin/enforcement-cases/${c.id}/remediation/${i}/confirm`)}>Confirm</button>}</li>)}</ul></div>}
+              {operator && can('EXECUTIVE') && c.status === 'ACTIVE' && <div style={{ marginTop: 10 }}>
+                <ReasonForm label="Executive override: end this action" busy={busy} submit={(reason) => act(`/v1/admin/enforcement-cases/${c.id}/executive-override`, { reason })} /></div>}
               {c.appeal && (
                 <div style={{ marginTop: 14, background: 'var(--zk-bg-soft)', padding: 12, borderRadius: 'var(--radius-sm)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
@@ -1059,6 +1098,257 @@ export function SwitchesPage() {
           </tbody>
         </table>
       </section>
+    </>
+  )
+}
+
+
+const OPS_KIND: Record<OpsItem['kind'], string> = { PAYOUT: 'Payout to a professional', REFUND: 'Refund to a buyer', CHARGEBACK_LOSS: 'Chargeback loss' }
+
+/** Financial Operations: payouts and refunds that failed after the automatic retries, and chargebacks the platform paid. */
+export function MoneyProblemsPage() {
+  const [items, setItems] = useState<OpsItem[] | null>(null)
+  const [history, setHistory] = useState(false)
+  const [closing, setClosing] = useState<OpsItem | null>(null)
+  const [outcome, setOutcome] = useState<'RECOVERED' | 'WRITTEN_OFF' | 'SETTLED_OUTSIDE'>('SETTLED_OUTSIDE')
+  const [note, setNote] = useState('')
+  const [notice, setNotice] = useState<string | null>(null)
+  const [error, setError] = useState<unknown>(null)
+  const { run, modal } = useStepUp(setError)
+  const reload = useCallback(async () => setItems((await paymentsApi.opsWorklist(history)).items), [history])
+  useEffect(() => { reload().catch(setError) }, [reload])
+  const open = (items ?? []).filter((i) => !i.resolution)
+
+  return (
+    <>
+      {modal}
+      <PortalHeader eyebrow="Financial operations" title="Money problems"
+        subtitle="Payouts and refunds that still failed after the automatic retries, and chargebacks the platform paid for. Retry them, or close them with what happened."
+        actions={<label className="checkbox"><input type="checkbox" checked={history} onChange={(e) => setHistory(e.target.checked)} /> <span>Show closed</span></label>} />
+      {notice && <div className="alert alert-success" role="status">{notice}</div>}
+      <ErrorAlert error={error} />
+      <div className="stat-row four">
+        <StatCard icon="wallet" tone="amber" value={String(open.filter((i) => i.kind === 'PAYOUT').length)} label="Payouts" sub="Failed or waiting too long" />
+        <StatCard icon="download" tone="amber" value={String(open.filter((i) => i.kind === 'REFUND').length)} label="Refunds" sub="Provider refused" />
+        <StatCard icon="lock" tone="violet" value={String(open.filter((i) => i.kind === 'CHARGEBACK_LOSS').length)} label="Chargeback losses" sub="Carried by the platform" />
+        <StatCard icon="check" tone="green" value={String((items ?? []).length - open.length)} label="Closed" sub={history ? 'Shown below' : 'Tick “Show closed”'} />
+      </div>
+      <section className="card panel">
+        {items && items.length === 0 ? (
+          <EmptyTable columns={['Problem', 'Engagement', 'Amount', 'Since', 'Actions']}><strong>Nothing needs attention.</strong> Failed payouts and refunds
+            are retried automatically first; only what still fails shows here.</EmptyTable>
+        ) : (
+          <table className="data"><thead><tr><th>Problem</th><th>Engagement</th><th>Amount</th><th>Since</th><th><span className="sr-only">Actions</span></th></tr></thead>
+            <tbody>{(items ?? []).map((i) => (
+              <tr key={i.kind + i.id}>
+                <td><strong>{OPS_KIND[i.kind]}</strong><div className="small">{i.problem}</div>
+                  {i.resolution && <div className="muted small">Closed {i.resolvedAt ? new Date(i.resolvedAt).toLocaleDateString() : ''}: {i.resolution}</div>}</td>
+                <td className="small"><code>{i.engagement}</code><div className="muted">{i.buyer} · {i.professional}</div></td>
+                <td>{formatMoney(i.amount)}</td>
+                <td className="small">{new Date(i.since).toLocaleDateString()}</td>
+                <td>{!i.resolution && <span className="row" style={{ flexWrap: 'nowrap' }}>
+                  {i.canRetry && i.kind !== 'CHARGEBACK_LOSS' && <button className="btn btn-secondary btn-sm" onClick={() => run(async () => {
+                    setItems((await paymentsApi.opsRetry(i.kind as 'PAYOUT' | 'REFUND', i.id)).items); setNotice('Sent again.')
+                  })}>Retry now</button>}
+                  <button className="btn btn-ghost btn-sm" onClick={() => { setClosing(i); setNote(''); setOutcome(i.kind === 'CHARGEBACK_LOSS' ? 'WRITTEN_OFF' : 'SETTLED_OUTSIDE') }}>Close…</button>
+                </span>}</td>
+              </tr>))}</tbody></table>
+        )}
+      </section>
+      {closing && <section className="card panel" style={{ maxWidth: 640 }}>
+        <h2>Close: {OPS_KIND[closing.kind].toLowerCase()} · {formatMoney(closing.amount)}</h2>
+        <p className="muted small">Record what happened. This cannot be changed later and goes into the audit trail.</p>
+        <form onSubmit={(e) => { e.preventDefault(); run(async () => {
+          setItems((await paymentsApi.opsResolve(closing.kind, closing.id, outcome, note.trim())).items)
+          setClosing(null); setNotice('Closed and recorded.')
+        }) }}>
+          <label className="label" htmlFor="ops-outcome">Outcome</label>
+          <select id="ops-outcome" className="input" value={outcome} onChange={(e) => setOutcome(e.target.value as typeof outcome)}>
+            <option value="SETTLED_OUTSIDE">Settled another way (e.g. bank transfer)</option>
+            <option value="RECOVERED">Money recovered</option>
+            <option value="WRITTEN_OFF">Written off</option>
+          </select>
+          <label className="label" htmlFor="ops-note" style={{ marginTop: 10 }}>What happened</label>
+          <textarea id="ops-note" className="input" rows={3} maxLength={1000} value={note} onChange={(e) => setNote(e.target.value)} required />
+          <div className="row" style={{ marginTop: 10 }}>
+            <button className="btn btn-primary" disabled={note.trim().length < 5}>Close and record</button>
+            <button type="button" className="btn btn-ghost" onClick={() => setClosing(null)}>Cancel</button>
+          </div>
+        </form>
+      </section>}
+    </>
+  )
+}
+
+
+/** The user reports behind a case (staff). Confidential reporters are named only to Risk Lead and Legal. */
+function CaseReports({ caseId }: { caseId: string }) {
+  const [rows, setRows] = useState<UserReport[] | null>(null)
+  const [error, setError] = useState<unknown>(null)
+  if (rows === null) return <div style={{ marginTop: 10 }}><ErrorAlert error={error} />
+    <button className="btn btn-ghost btn-sm" onClick={() => reportApi.forCase(caseId).then(setRows).catch(setError)}>Show the reports</button></div>
+  return (
+    <ul className="why" style={{ marginTop: 10 }}>{rows.map((r) => (
+      <li key={r.id}><strong>{r.categoryLabel}</strong> · {r.reporter} · {new Date(r.createdAt).toLocaleDateString()}
+        {r.possibleRetaliation && <span className="badge warn" style={{ marginLeft: 6 }}>In an open dispute with the subject</span>}
+        <div className="small">{r.description}</div></li>))}</ul>
+  )
+}
+
+/** A person's own reports and what came of them (no details about the other person). */
+export function MyReports() {
+  const [rows, setRows] = useState<UserReport[] | null>(null)
+  useEffect(() => { reportApi.mine().then(setRows).catch(() => setRows([])) }, [])
+  if (!rows || rows.length === 0) return null
+  return (
+    <section className="card panel">
+      <div className="panel-head"><h2>Your reports</h2></div>
+      <table className="data"><thead><tr><th>Sent</th><th>About</th><th>Problem</th><th>Status</th></tr></thead>
+        <tbody>{rows.map((r) => <tr key={r.id}><td className="small">{new Date(r.createdAt).toLocaleDateString()}</td>
+          <td className="small">{r.subjectType.toLowerCase()}</td><td className="small">{r.categoryLabel}</td>
+          <td><span className={`badge ${r.status === 'CLOSED' ? 'green' : ''}`}>{r.status === 'RECEIVED' ? 'Being reviewed'
+            : r.outcome === 'ACTION_TAKEN' ? 'Reviewed: action taken' : 'Reviewed: no action needed'}</span></td></tr>)}</tbody></table>
+      <p className="muted small" style={{ margin: 0 }}>For the other person's privacy we do not share what action was taken.</p>
+    </section>
+  )
+}
+
+
+/** Support agents: open help requests, late first answers first; answer in the request's conversation. */
+export function SupportQueuePage() {
+  const [rows, setRows] = useState<SupportRequest[] | null>(null)
+  const [status, setStatus] = useState('')
+  const [selected, setSelected] = useState<SupportRequest | null>(null)
+  const [error, setError] = useState<unknown>(null)
+  const reload = useCallback(async () => setRows(await supportApi.queue(status || undefined)), [status])
+  useEffect(() => { reload().catch(setError) }, [reload])
+  return (
+    <>
+      <PortalHeader eyebrow="Support" title="Help requests" subtitle="Answer within one business day. Explain and point to the right place; money, verification and safety decisions stay with their teams."
+        actions={<select className="input" aria-label="Show" value={status} onChange={(e) => setStatus(e.target.value)}>
+          <option value="">Open</option><option value="RESOLVED">Resolved</option></select>} />
+      <ErrorAlert error={error} />
+      {selected && <SupportThread request={selected} agent onReply={async (m, resolve) => {
+        setSelected(await supportApi.agentReply(selected.id, m, resolve)); await reload()
+      }} />}
+      <section className="card panel">
+        {rows && rows.length === 0 ? <EmptyTable columns={['Request', 'From', 'Topic', 'Status', 'First answer due']}><strong>No requests here.</strong></EmptyTable> : (
+          <table className="data"><thead><tr><th>Request</th><th>From</th><th>Topic</th><th>Status</th><th>First answer due</th></tr></thead>
+            <tbody>{(rows ?? []).map((r) => <tr key={r.id}>
+              <td><button className="link-button" onClick={() => supportApi.agentGet(r.id).then(setSelected).catch(setError)}><strong>{r.subject}</strong></button>
+                <div className="muted small"><code>{r.reference}</code></div></td>
+              <td className="small">{r.requesterName}</td><td className="small">{SUPPORT_TOPICS.find(([v]) => v === r.topic)?.[1]}</td>
+              <td><span className={`badge ${SUPPORT_STATUS[r.status].tone}`}>{SUPPORT_STATUS[r.status].label}</span></td>
+              <td className="small">{r.firstRespondedAt ? 'Answered' : <span className={r.overdue ? 'badge warn' : ''}>{new Date(r.firstResponseDueAt).toLocaleString()}{r.overdue ? ' · late' : ''}</span>}</td>
+            </tr>)}</tbody></table>
+        )}
+      </section>
+    </>
+  )
+}
+
+
+/** Appeal within the window, with reasons and up to 5 documents. */
+function AppealForm({ c, busy, submit }: { c: Case; busy: boolean; submit: (reason: string, evidence: Upload[]) => void }) {
+  const [reason, setReason] = useState('')
+  const [files, setFiles] = useState<Upload[]>([])
+  const [fileError, setFileError] = useState('')
+  if (!c.canAppeal) return c.appealDeadline ? <p className="muted small">The appeal window closed on {new Date(c.appealDeadline).toLocaleDateString()}.</p> : null
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); submit(reason.trim(), files) }}>
+      <p className="small" style={{ marginTop: 0 }}>You can appeal until <strong>{c.appealDeadline ? new Date(c.appealDeadline).toLocaleDateString() : ''}</strong>.
+        An independent reviewer decides.</p>
+      <label className="label" htmlFor={`appeal-${c.id}`}>Why should this be reconsidered?</label>
+      <textarea id={`appeal-${c.id}`} className="input" rows={3} minLength={20} maxLength={4000} value={reason} onChange={(e) => setReason(e.target.value)} required />
+      <label className="label" htmlFor={`appeal-files-${c.id}`} style={{ marginTop: 8 }}>Documents (optional, up to 5)</label>
+      <input id={`appeal-files-${c.id}`} type="file" multiple accept={DOC_ACCEPT} onChange={async (e) => {
+        setFileError('')
+        try { setFiles(await Promise.all([...(e.target.files ?? [])].slice(0, 5).map((f) => toUpload(f)))) } catch (err) { setFileError(String(err)) }
+      }} />
+      {fileError && <p className="small warn-text">{fileError}</p>}
+      <button className="btn btn-primary btn-sm" style={{ marginTop: 8 }} disabled={busy || reason.trim().length < 20}>File appeal</button>
+    </form>
+  )
+}
+
+
+interface Incident {
+  id: string; reference: string; title: string; kind: string; severity: 'SEV1' | 'SEV2' | 'SEV3' | 'SEV4'; status: string; summary: string
+  detectedAt: string; containedAt: string | null; resolvedAt: string | null; closedAt: string | null; owner: string
+  timeline: { at: string; note: string }[]; notifications: { party: string; note: string; at: string }[]
+  rootCause: string | null; remediation: { task: string; done: boolean }[]; review: string | null
+}
+const NEXT_STEP: Record<string, string> = { OPEN: 'CONTAINED', CONTAINED: 'RESOLVED', RESOLVED: 'CLOSED' }
+
+/** Incident register (RUNBOOKS.md): what happened, who was told, root cause, remediation, post-incident review. */
+export function IncidentsPage() {
+  const [rows, setRows] = useState<Incident[]>([])
+  const [open, setOpen] = useState<string | null>(null)
+  const [error, setError] = useState<unknown>(null)
+  const reload = useCallback(async () => setRows(await api<Incident[]>('/v1/admin/incidents')), [])
+  useEffect(() => { reload().catch(setError) }, [reload])
+  const patch = (id: string, body: Record<string, unknown>) =>
+    api(`/v1/admin/incidents/${id}`, { method: 'PATCH', body }).then(reload).catch(setError)
+  return (
+    <>
+      <PortalHeader eyebrow="Operations" title="Incident register" subtitle="Open an incident as soon as something goes wrong. SEV1/SEV2 incidents close only with a root cause, finished remediation and a review." />
+      <ErrorAlert error={error} />
+      <form className="card panel" onSubmit={(e) => {
+        e.preventDefault(); const d = new FormData(e.currentTarget); const form = e.currentTarget
+        api('/v1/admin/incidents', { method: 'POST', body: { title: d.get('title'), kind: d.get('kind'), severity: d.get('severity'), summary: d.get('summary') } })
+          .then(() => { form.reset(); return reload() }).catch(setError)
+      }}>
+        <div className="panel-head"><h2>Open an incident</h2></div>
+        <div className="row">
+          <div className="field" style={{ flex: 2 }}><label htmlFor="inc-title">Title</label><input id="inc-title" name="title" className="input" required minLength={5} maxLength={200} /></div>
+          <div className="field"><label htmlFor="inc-kind">Kind</label><select id="inc-kind" name="kind" className="input">
+            {['SECURITY', 'DATA', 'PAYMENTS', 'OUTAGE', 'SAFETY', 'OTHER'].map((k) => <option key={k}>{k}</option>)}</select></div>
+          <div className="field"><label htmlFor="inc-sev">Severity</label><select id="inc-sev" name="severity" className="input" defaultValue="SEV3">
+            {['SEV1', 'SEV2', 'SEV3', 'SEV4'].map((k) => <option key={k}>{k}</option>)}</select></div>
+        </div>
+        <div className="field"><label htmlFor="inc-summary">What is happening?</label><textarea id="inc-summary" name="summary" className="input" rows={2} required minLength={10} /></div>
+        <button className="btn btn-primary btn-sm">Open incident</button>
+      </form>
+      {rows.length === 0 ? <section className="card panel"><EmptyTable columns={['Incident', 'Severity', 'Status', 'Owner', 'Detected']}>No incidents recorded.</EmptyTable></section> : (
+        <div style={{ display: 'grid', gap: 12 }}>{rows.map((i) => (
+          <section key={i.id} className="card panel">
+            <div className="panel-head"><h2 style={{ margin: 0 }}><code>{i.reference}</code> {i.title}</h2>
+              <span><span className={`badge ${i.severity === 'SEV1' || i.severity === 'SEV2' ? 'prio-high' : 'warn'}`}>{i.severity}</span>{' '}
+                <span className={`badge ${i.status === 'CLOSED' ? 'green' : ''}`}>{i.status.toLowerCase()}</span></span></div>
+            <p className="small" style={{ margin: 0 }}>{i.kind.toLowerCase()} · owner {i.owner} · detected {new Date(i.detectedAt).toLocaleString()}</p>
+            <button className="link-button small" onClick={() => setOpen(open === i.id ? null : i.id)}>{open === i.id ? 'Hide' : 'Open'}</button>
+            {open === i.id && <div style={{ marginTop: 10 }}>
+              <h3>Timeline</h3><ul className="why">{i.timeline.map((t, n) => <li key={n}>{new Date(t.at).toLocaleString()}: {t.note}</li>)}</ul>
+              {i.notifications.length > 0 && <><h3>Who was told</h3><ul className="why">{i.notifications.map((t, n) => <li key={n}>{t.party}: {t.note}</li>)}</ul></>}
+              <h3>Remediation</h3><ul className="why">{i.remediation.map((t, n) => <li key={n}>{t.task} {t.done ? <span className="badge green">done</span>
+                : i.status !== 'CLOSED' && <button className="link-button small" onClick={() => patch(i.id, { completeRemediation: [n] })}>Mark done</button>}</li>)}</ul>
+              {i.rootCause && <p><strong>Root cause:</strong> {i.rootCause}</p>}
+              {i.review && <p><strong>Post-incident review:</strong> {i.review}</p>}
+              {i.status !== 'CLOSED' && <form onSubmit={(e) => {
+                e.preventDefault(); const d = new FormData(e.currentTarget)
+                const body: Record<string, unknown> = {}
+                for (const k of ['note', 'rootCause', 'review']) if (String(d.get(k) ?? '').trim()) body[k] = String(d.get(k)).trim()
+                const task = String(d.get('task') ?? '').trim(); if (task) body.addRemediation = [task]
+                const party = String(d.get('party') ?? '').trim(); if (party) body.notified = [{ party, note: String(d.get('partyNote') ?? '') }]
+                if (d.get('advance')) body.advanceTo = NEXT_STEP[i.status]
+                patch(i.id, body); e.currentTarget.reset()
+              }}>
+                <div className="row">
+                  <div className="field" style={{ flex: 2 }}><label htmlFor={`n-${i.id}`}>Update (timeline)</label><input id={`n-${i.id}`} name="note" className="input" /></div>
+                  <div className="field" style={{ flex: 2 }}><label htmlFor={`t-${i.id}`}>Add remediation task</label><input id={`t-${i.id}`} name="task" className="input" /></div>
+                </div>
+                <div className="row">
+                  <div className="field"><label htmlFor={`p-${i.id}`}>Told (who)</label><input id={`p-${i.id}`} name="party" className="input" placeholder="e.g. Regulator, affected buyers" /></div>
+                  <div className="field" style={{ flex: 2 }}><label htmlFor={`pn-${i.id}`}>How / what</label><input id={`pn-${i.id}`} name="partyNote" className="input" /></div>
+                </div>
+                <div className="field"><label htmlFor={`rc-${i.id}`}>Root cause</label><textarea id={`rc-${i.id}`} name="rootCause" className="input" rows={2} defaultValue={i.rootCause ?? ''} /></div>
+                <div className="field"><label htmlFor={`rv-${i.id}`}>Post-incident review</label><textarea id={`rv-${i.id}`} name="review" className="input" rows={2} defaultValue={i.review ?? ''} /></div>
+                <label className="checkbox"><input type="checkbox" name="advance" /> <span>Move to {NEXT_STEP[i.status]?.toLowerCase()}</span></label>
+                <button className="btn btn-secondary btn-sm" style={{ marginLeft: 12 }}>Save</button>
+              </form>}
+            </div>}
+          </section>))}</div>
+      )}
     </>
   )
 }

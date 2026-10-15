@@ -55,7 +55,9 @@ def load_domains() -> list[str]:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    from zoikorum.config_check import refuse_incomplete_production
     from zoikorum.shared.schema_guard import ensure_schema_current
+    refuse_incomplete_production()
     try:
         await ensure_schema_current()
         yield

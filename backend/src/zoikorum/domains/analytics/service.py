@@ -9,7 +9,7 @@ from zoikorum.shared.event_catalog import E, ALL_EVENTS, domain_of
 from zoikorum.shared.events import record_audit
 from zoikorum.shared import clock
 
-EVENTS = {e for e in ALL_EVENTS if domain_of(e) in {"proposal", "contract", "escrow", "search", "trust", "verification", "policy", "dispute", "payments", "marketplace"}}
+EVENTS = {e for e in ALL_EVENTS if domain_of(e) in {"proposal", "contract", "escrow", "search", "trust", "verification", "policy", "dispute", "payments", "marketplace"}} | {E.PROFILE_VIEWED}
 PROJECTION_LOCK = 7310992
 
 

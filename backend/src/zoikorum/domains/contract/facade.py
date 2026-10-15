@@ -120,3 +120,27 @@ async def engagements_by_organization(session: AsyncSession, professional_id: uu
         Contract.organization_id, func.count(), func.count().filter(Contract.status == "COMPLETED"), func.max(Contract.updated_at))
         .where(Contract.professional_id == professional_id).group_by(Contract.organization_id))).all()
     return {org: {"engagements": n, "completed": done, "lastEngagementAt": last} for org, n, done, last in rows}
+
+
+async def disputed_between(session: AsyncSession, professional_id: uuid.UUID, organization_ids: list[uuid.UUID]) -> bool:
+    """Is any engagement between this professional and one of these organisations in a dispute right now?"""
+    if not organization_ids:
+        return False
+    return bool(await session.scalar(select(Contract.id).where(
+        Contract.professional_id == professional_id, Contract.organization_id.in_(organization_ids),
+        Contract.status == "DISPUTED").limit(1)))
+
+
+async def retainer_paused(session: AsyncSession, contract_id: uuid.UUID) -> bool:
+    c = await session.get(Contract, contract_id)
+    return bool(c and c.paused_at)
+
+
+async def first_pass_stats(session: AsyncSession, professional_id: uuid.UUID) -> dict[str, int]:
+    """Accepted milestones and how many were accepted without a revision request (own performance insights)."""
+    from sqlalchemy import func
+
+    total, first = (await session.execute(select(func.count(), func.count().filter(Milestone.revision_count == 0))
+        .select_from(Milestone).join(Contract, Contract.id == Milestone.contract_id)
+        .where(Contract.professional_id == professional_id, Milestone.status == "ACCEPTED"))).one()
+    return {"accepted": total or 0, "firstPass": first or 0}

@@ -47,13 +47,14 @@ export interface CompareItem {
   languages: string[]
 }
 
-export interface SavedSearch { id: string; name: string; params: Record<string, string>; lastViewedAt: string; createdAt: string }
+export interface SavedSearch { id: string; name: string; params: Record<string, string>; lastViewedAt: string; alertsOn: boolean; createdAt: string }
 
 export const savedApi = {
   searches: () => api<SavedSearch[]>('/v1/saved/searches'),
   saveSearch: (name: string, params: Record<string, string>) => api<SavedSearch>('/v1/saved/searches', { method: 'POST', body: { name, params } }),
   searchViewed: (id: string) => api<SavedSearch>(`/v1/saved/searches/${id}/viewed`, { method: 'POST' }),
   deleteSearch: (id: string) => api<void>(`/v1/saved/searches/${id}`, { method: 'DELETE' }),
+  searchAlerts: (id: string, on: boolean) => api<SavedSearch>(`/v1/saved/searches/${id}/alerts`, { method: 'POST', body: { on } }),
   list: () => allPages<SavedProfessional>('/v1/saved/professionals'),
   save: (professionalId: string) => api<void>('/v1/saved/professionals', { method: 'POST', body: { professionalId } }),
   remove: (professionalId: string) => api<void>(`/v1/saved/professionals/${professionalId}`, { method: 'DELETE' }),

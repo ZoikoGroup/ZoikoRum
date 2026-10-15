@@ -14,14 +14,16 @@ from datetime import timedelta
 from sqlalchemy import select
 from zoikorum.domains.admin.models import EnforcementCase
 from zoikorum.domains.buyer import facade as buyer_facade
+from zoikorum.config import get_settings
 from zoikorum.shared import clock
+from zoikorum.shared.uploads import store_uploads
 from zoikorum.shared.errors import Conflict, Forbidden, NotFound, ValidationFailed
 from zoikorum.shared.events import record_event, record_audit
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.relay import schedule_timer, cancel_timer
 
 EXPIRY_TIMER = "admin.restriction_expiry"
-ACTION_LEVEL = {"WARNING": 1, "VISIBILITY_REDUCTION": 2, "ENGAGEMENT_SUSPENSION": 3,
+ACTION_LEVEL = {"WARNING": 1, "VISIBILITY_REDUCTION": 2, "DISPUTE_ACCESS_RESTRICTION": 2, "ENGAGEMENT_SUSPENSION": 3,
                 "CREDENTIAL_ENFORCEMENT": 3, "VERIFICATION_RESET": 3, "SUSPEND_ACCOUNT": 4, "OFFBOARD": 4}
 
 
@@ -41,11 +43,25 @@ async def staff(session, actor, *roles):
         raise Forbidden("Your staff authority has changed")
 
 
+def triage_due(c):
+    return c.created_at + timedelta(hours=get_settings().enforcement_triage_hours)
+
+
+def appeal_deadline(c):
+    return c.applied_at + timedelta(days=get_settings().enforcement_appeal_days) if c.applied_at else None
+
+
 def case_out(c):
+    open_ = c.status in ("TRIAGE", "ASSESSED")
+    deadline = appeal_deadline(c)
     return {"id": str(c.id), "subjectType": c.subject_type, "subjectId": str(c.subject_id), "signalSource": c.signal_source,
             "summary": c.summary, "evidenceRefs": c.evidence_refs, "level": c.level, "reasonCode": c.reason_code,
             "status": c.status, "action": c.action, "notice": c.notice, "approvals": c.approvals,
-            "expiresAt": c.expires_at, "appliedAt": c.applied_at, "appeal": c.appeal, "createdAt": c.created_at}
+            "expiresAt": c.expires_at, "appliedAt": c.applied_at, "appeal": c.appeal, "createdAt": c.created_at,
+            "triageDueAt": triage_due(c) if open_ else None, "overdue": open_ and triage_due(c) < clock.now(),
+            "appealDeadline": deadline, "canAppeal": c.level >= 2 and c.status == "ACTIVE" and not c.appeal
+            and deadline is not None and clock.now() <= deadline,
+            "remediation": c.remediation or []}
 
 
 async def case_get(session, case_id, lock=False):
@@ -56,11 +72,14 @@ async def case_get(session, case_id, lock=False):
 
 
 def event(session, kind, c, **extra):
+    # Every enforcement record names its evidence and the playbook version it was decided under (Governance s.10).
+    policy = get_settings().enforcement_policy_version
     record_event(session, kind, aggregate_type="EnforcementCase", aggregate_id=c.id,
                  payload={"caseId": c.id, "subjectType": c.subject_type, "subjectId": c.subject_id,
                           "level": c.level, "action": c.action, "reasonCode": c.reason_code, "notice": c.notice,
-                          "expiresAt": c.expires_at,
-                          "organizationId": c.subject_id if c.subject_type == "ORGANIZATION" else None, **extra})
+                          "expiresAt": c.expires_at, "evidenceRefs": c.evidence_refs, "policyVersion": policy,
+                          "organizationId": c.subject_id if c.subject_type == "ORGANIZATION" else None, **extra},
+                 policy_version=policy)
 
 
 async def open_case(session, actor, body):
@@ -73,6 +92,22 @@ async def open_case(session, actor, body):
                         summary=body.summary.strip(), evidence_refs=body.evidenceRefs, opened_by=actor.identity_id)
     session.add(c); await session.flush()
     event(session, E.ENFORCEMENT_CASE_OPENED, c)
+    return case_out(c)
+
+
+async def close_case(session, actor, case_id, reason):
+    """Reviewed and no action is needed (Level 0: no breach, or an education message is enough). Recorded with the
+    reason; reporters are told it was reviewed. A case with a proposed or applied action is reversed instead."""
+    await staff(session, actor, PlatformRole.TS_ANALYST, PlatformRole.RISK_LEAD)
+    c = await case_get(session, case_id, True)
+    if c.status not in ("TRIAGE", "ASSESSED"):
+        raise Conflict("Only a case without a proposed or applied action can be closed this way", code="CASE_NOT_OPEN")
+    if await is_subject(session, actor, c):
+        raise Forbidden("You cannot close your own case")
+    c.status = "CLOSED_NO_ACTION"
+    record_audit(session, "admin.case.closed", object_type="EnforcementCase", object_id=c.id, details={"reason": reason.strip()})
+    record_event(session, E.ENFORCEMENT_CASE_CLOSED, aggregate_type="EnforcementCase", aggregate_id=c.id,
+                 payload={"caseId": c.id, "level": c.level, "reason": reason.strip()})
     return case_out(c)
 
 
@@ -103,7 +138,10 @@ async def propose_action(session, actor, case_id, body):
         raise ValidationFailed("This action requires a professional subject")
     if c.level == 2 and body.durationDays is None:
         raise ValidationFailed("Temporary restrictions require a duration")
+    if not c.evidence_refs:
+        raise ValidationFailed("Record the evidence this action rests on before proposing it", code="EVIDENCE_REQUIRED")
     c.action, c.notice, c.duration_days = body.action, body.notice.model_dump(), body.durationDays
+    c.remediation = [{"task": t.strip(), "done": False} for t in body.remediation if t.strip()]
     c.proposed_by, c.status, c.approvals = actor.identity_id, "AWAITING_APPROVAL", []
     record_audit(session, "admin.action.proposed", object_type="EnforcementCase", object_id=c.id,
                  details={"action": c.action, "notice": c.notice, "durationDays": c.duration_days})
@@ -168,13 +206,17 @@ async def reverse(session, c, actor_id, reason):
     event(session, E.ENFORCEMENT_ACTION_REVERSED, c, reversalReason=reason, notice=notice)
 
 
-async def file_appeal(session, actor, case_id, reason):
+async def file_appeal(session, actor, case_id, reason, evidence=None):
     c = await case_get(session, case_id, True)
     if not await is_subject(session, actor, c):
         raise NotFound("Enforcement case not found")
     if c.level < 2 or c.status != "ACTIVE" or c.appeal:
         raise Conflict("This action cannot receive another appeal")
-    c.appeal = {"reason": reason, "filedBy": str(actor.identity_id), "filedAt": clock.now().isoformat(), "status": "PENDING"}
+    if clock.now() > appeal_deadline(c):
+        raise Conflict(f"The {get_settings().enforcement_appeal_days}-day appeal window has closed", code="APPEAL_WINDOW_CLOSED")
+    files = store_uploads(f"admin/appeals/{c.id}", evidence or [])
+    c.appeal = {"reason": reason, "filedBy": str(actor.identity_id), "filedAt": clock.now().isoformat(), "status": "PENDING",
+                "evidence": files}
     event(session, E.ENFORCEMENT_APPEAL_FILED, c)
     return case_out(c)
 
@@ -222,3 +264,73 @@ async def overview(session: AsyncSession, actor: Actor) -> dict:
         "professionalProfiles": profiles,
         "verification": checks,
     }
+
+
+
+# ---- Remediation, executive override, queue ------------------------------------------------------------------------
+
+async def remediation_done(session, actor, case_id, index: int, note: str):
+    """The person marks a remediation task done; staff confirm it."""
+    c = await case_get(session, case_id, True)
+    if not await is_subject(session, actor, c):
+        raise NotFound("Enforcement case not found")
+    tasks = list(c.remediation or [])
+    if not 0 <= index < len(tasks):
+        raise NotFound("Task not found")
+    tasks[index] = {**tasks[index], "done": True, "doneAt": clock.now().isoformat(), "note": note.strip()}
+    c.remediation = tasks
+    record_audit(session, "admin.remediation.done", object_type="EnforcementCase", object_id=c.id, details={"task": index})
+    return case_out(c)
+
+
+async def remediation_confirm(session, actor, case_id, index: int):
+    """Staff confirm a completed task. When all are confirmed, the restriction may end early (reverse with a reason)."""
+    await staff(session, actor, PlatformRole.TS_ANALYST, PlatformRole.RISK_LEAD)
+    c = await case_get(session, case_id, True)
+    if await is_subject(session, actor, c):
+        raise Forbidden("You cannot confirm your own remediation")
+    tasks = list(c.remediation or [])
+    if not 0 <= index < len(tasks) or not tasks[index].get("done"):
+        raise Conflict("The task is not marked done yet", code="TASK_NOT_DONE")
+    tasks[index] = {**tasks[index], "confirmedBy": str(actor.identity_id), "confirmedAt": clock.now().isoformat()}
+    c.remediation = tasks
+    record_audit(session, "admin.remediation.confirmed", object_type="EnforcementCase", object_id=c.id, details={"task": index})
+    if all(t.get("confirmedBy") for t in tasks):
+        event(session, E.ENFORCEMENT_REMEDIATION_COMPLETED, c)
+    return case_out(c)
+
+
+async def executive_override(session, actor, case_id, reason: str):
+    """Final authority (Governance playbook): an Executive ends an active action. Justified, step-up, audited, and never
+    by someone involved in the case."""
+    await staff(session, actor, PlatformRole.EXECUTIVE)
+    actor.require_step_up()
+    c = await case_get(session, case_id, True)
+    involved = {str(c.opened_by), str(c.proposed_by), *(v["identityId"] for v in c.approvals)}
+    if str(actor.identity_id) in involved or await is_subject(session, actor, c):
+        raise Forbidden("An executive not involved in the case must make an override", code="FOUR_EYES")
+    record_audit(session, "admin.executive_override", object_type="EnforcementCase", object_id=c.id,
+                 details={"reason": reason, "previousStatus": c.status})
+    await reverse(session, c, actor.identity_id, "Executive override: " + reason)
+    return case_out(c)
+
+
+async def queue(session, actor, status: str | None, level: int | None, overdue: bool, source: str | None,
+                limit: int, offset: int):
+    """Staff queue: filters, and cases past their triage target first."""
+    from sqlalchemy import case as sql_case
+
+    await staff(session, actor, *PlatformRole.ALL)
+    stmt = select(EnforcementCase)
+    if status:
+        stmt = stmt.where(EnforcementCase.status == status)
+    if level is not None:
+        stmt = stmt.where(EnforcementCase.level == level)
+    if source:
+        stmt = stmt.where(EnforcementCase.signal_source == source)
+    due = clock.now() - timedelta(hours=get_settings().enforcement_triage_hours)
+    is_overdue = EnforcementCase.status.in_(("TRIAGE", "ASSESSED")) & (EnforcementCase.created_at < due)
+    if overdue:
+        stmt = stmt.where(is_overdue)
+    stmt = stmt.order_by(sql_case((is_overdue, 0), else_=1), EnforcementCase.created_at.desc()).limit(limit).offset(offset)
+    return [case_out(c) for c in (await session.scalars(stmt)).all()]

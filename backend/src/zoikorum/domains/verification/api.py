@@ -8,7 +8,7 @@ from fastapi import APIRouter, Query, Request, Response, status
 from zoikorum.domains.verification import service
 from zoikorum.domains.verification.schemas import (
     AppealDecisionIn, AppealIn, AppealOut, AppealQueueItemOut, CaseIn, CaseOut, DecisionIn, EvidenceIn, HostedSimulateIn, QueueItemOut,
-    RevokeIn,
+    RevokeIn, SecondLookIn,
 )
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
@@ -132,3 +132,15 @@ async def appeal_queue(actor: CurrentActor, session: DbSession,
 async def decide_appeal(appeal_id: uuid.UUID, body: AppealDecisionIn, actor: CurrentActor, session: DbSession):
     """One final decision by an independent compliance officer (step-up). Overturned -> the check becomes verified."""
     return await service.decide_appeal(session, actor, appeal_id, body)
+
+
+
+@router.get("/second-looks", response_model=list[CaseOut])
+async def second_looks(actor: CurrentActor, session: DbSession):
+    """Compliance: checks the partner approved automatically that were picked for a person's second look."""
+    return await service.second_looks(session, actor)
+
+
+@router.post("/cases/{case_id}/second-look", response_model=CaseOut)
+async def decide_second_look(case_id: uuid.UUID, body: SecondLookIn, actor: CurrentActor, session: DbSession):
+    return await service.decide_second_look(session, actor, case_id, body)

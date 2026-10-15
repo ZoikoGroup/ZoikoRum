@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
-import { useDialog } from './ui'
+import { useDialog, Loading } from './ui'
 import type { StoredFile } from '../api/files'
 
 /** A stored document's name; clicking opens it in a viewer inside the dashboard (every opening is audited).
@@ -50,7 +50,7 @@ export function DocumentViewer({ name, url, onClose }: { name: string; url: stri
         </div>
         <div className="doc-frame">
           {error ? <p className="small" style={{ color: 'var(--zk-danger)' }}>{error}</p>
-            : !doc ? <p className="muted">Loading…</p>
+            : !doc ? <Loading />
               : pdf ? <iframe title={name} src={doc.href} />
                 : image ? <img src={doc.href} alt={name} />
                   : <p className="muted">This file type can't be previewed here. Use <strong>Download</strong> to open it.</p>}

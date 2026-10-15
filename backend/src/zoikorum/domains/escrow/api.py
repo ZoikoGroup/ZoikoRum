@@ -5,13 +5,25 @@ import uuid
 from fastapi import APIRouter
 
 from zoikorum.domains.escrow import service
-from zoikorum.domains.escrow.schemas import EscrowOut, FundIn, LedgerLineOut
+from zoikorum.domains.escrow.schemas import BulkFundIn, EscrowOut, FundIn, LedgerLineOut
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
 from zoikorum.shared.idempotency import IdempotencyKey
 
 router = APIRouter(prefix="/v1/escrow", tags=["escrow"])
 # Deliberately no endpoint releases money: release happens only when a milestone is accepted (MILESTONE_ACCEPTED).
+
+
+@router.get("/organization/{org_id}/overview")
+async def organization_overview(org_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> dict:
+    """Enterprise payments dashboard: money held and frozen per vendor, what awaits funding, the release timeline."""
+    return await service.organization_overview(session, actor, org_id)
+
+
+@router.post("/bulk-fund")
+async def bulk_fund(body: BulkFundIn, actor: CurrentActor, session: DbSession, idem: IdempotencyKey) -> dict:
+    """Fund milestones on several engagements at once; each one is checked and funded separately."""
+    return await idem.run(session, actor, lambda: service.bulk_fund(session, actor, body))
 
 
 @router.get("/by-contract/{contract_id}", response_model=EscrowOut)

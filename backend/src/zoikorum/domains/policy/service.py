@@ -46,6 +46,8 @@ SETTING_NAMES = {
     "requiredClauses": "required_clauses", "stepUpForApprovals": "step_up_for_approvals",
     "autoDisputeMissedDeadline": "auto_dispute_missed_deadline", "autoDisputeRejectionCount": "auto_dispute_rejection_count",
     "autoDisputeComplianceFlag": "auto_dispute_compliance_flag",
+    "disputeMediationAboveMinor": "dispute_mediation_above_minor", "disputeLegalReviewAboveMinor": "dispute_legal_review_above_minor",
+    "disputeEscalationRoles": "dispute_escalation_roles", "disputeRetentionYears": "dispute_retention_years",
 }
 
 
@@ -95,6 +97,14 @@ async def attributes_for(session, org_id, professional_id, *, amount=0, currency
         if not center or center.organization_id != org_id:
             raise NotFound("Cost center not found in this organization")
         attrs[Attr.COST_CENTER_ID] = str(center.id)
+        if center.quarterly_budget is not None:
+            from zoikorum.domains.proposal import facade as proposal_facade
+            now = clock.now()
+            quarter = now.replace(month=3 * ((now.month - 1) // 3) + 1, day=1, hour=0, minute=0, second=0, microsecond=0)
+            attrs["costCenter.quarterBudgetMinor"] = center.quarterly_budget.minor
+            attrs["costCenter.currency"] = center.quarterly_budget.currency
+            attrs["costCenter.quarterCommittedMinor"] = await proposal_facade.committed_for_cost_center(
+                session, center.id, quarter, center.quarterly_budget.currency)
     return {**attrs, **(extra or {})}
 
 
@@ -263,6 +273,12 @@ async def activate(session, actor, profile_id):
     SettingsIn(**draft.settings)
     for raw in draft.rules:
         RuleIn(**raw)
+    from zoikorum.domains.policy import insights
+    errors = [c for c in insights.checks(draft.settings, draft.rules, await insights.roles_held(session, profile.organization_id))
+              if c["severity"] == "ERROR"]
+    if errors:
+        raise Conflict("Fix these before activating: " + " ".join(c["message"] for c in errors), code="POLICY_CHECKS_FAILED",
+                       extra={"checks": errors})
     # Serialize activation per organization, including competing business-unit profiles.
     others = (await session.scalars(select(PolicyProfile).where(
         PolicyProfile.organization_id == profile.organization_id, PolicyProfile.id != profile.id,
@@ -350,6 +366,13 @@ async def evaluate(session, ctx, *, dry_run=False, preview_profile_id=None):
                                                  "See the notice in your account for details and how to appeal.")
     if ctx.action in (PolicyAction.PROPOSAL_SUBMIT, PolicyAction.PROPOSAL_ACCEPT) and attrs.get(Attr.PRO_TIER) == "C":
         fail(Decision.BLOCK, "MINIMUM_PLATFORM_TIER", "Tier C professionals cannot submit or receive accepted proposals")
+    # The cost centre's quarterly budget is the organisation's own limit: it applies with or without a policy profile.
+    budget = attrs.get("costCenter.quarterBudgetMinor")
+    if (ctx.action == PolicyAction.PROPOSAL_ACCEPT and budget is not None
+            and attrs.get("costCenter.currency") == attrs.get(Attr.ENGAGEMENT_CURRENCY)
+            and int(attrs.get("costCenter.quarterCommittedMinor") or 0) + int(attrs.get(Attr.AMOUNT_MINOR) or 0) > budget):
+        fail(Decision.REQUIRE_EXCEPTION, "COST_CENTER_BUDGET_EXCEEDED",
+             "This would take the cost centre over its budget for the quarter; an Exception Authority can allow it")
     if version:
         minimum = settings.get("minTrustTier", "B")
         if TIER_RANK.get(attrs.get(Attr.PRO_TIER), -1) < TIER_RANK[minimum]:
@@ -535,6 +558,7 @@ def exception_out(request):
         "subjectId": request.subject_id, "action": request.action, "policyVersionId": request.policy_version_id,
         "requesterIdentityId": request.requester_identity_id, "justification": request.justification,
         "documents": [file_out(d).model_dump() for d in request.documents], "status": request.status,
+        "emergency": (request.justification or "").startswith("[EMERGENCY]"),
         "expiresAt": request.expires_at, "decidedBy": request.decided_by,
         "decisionReason": request.decision_reason, "decidedAt": request.decided_at, "createdAt": request.created_at}
 
@@ -543,6 +567,10 @@ async def create_exception(session, actor, body):
     await require_member(session, actor, body.orgId)
     if body.expiresAt.tzinfo is None or not clock.now() < body.expiresAt <= clock.now() + timedelta(days=90):
         raise ValidationFailed("Exception expiry must be within the next 90 days")
+    if body.emergency and body.expiresAt > clock.now() + timedelta(hours=72):
+        raise ValidationFailed("An emergency exception lasts 72 hours at most", code="EMERGENCY_TOO_LONG")
+    if body.emergency and len(body.justification.strip()) < 40:
+        raise ValidationFailed("Explain the emergency: what cannot wait, and why (40 characters or more)", code="EMERGENCY_REASON_REQUIRED")
     # Bind to a real, recorded commercial evaluation, never client-supplied facts.
     evaluation = await session.scalar(select(PolicyEvaluation).where(
         PolicyEvaluation.organization_id == body.orgId, PolicyEvaluation.subject_type == body.subjectType,
@@ -559,14 +587,16 @@ async def create_exception(session, actor, body):
     request = ExceptionRequest(id=request_id, organization_id=body.orgId, policy_version_id=evaluation.policy_version_id,
         subject_type=body.subjectType, subject_id=body.subjectId, action=body.action,
         context_hash=evaluation.context_hash, requester_identity_id=actor.identity_id,
-        justification=body.justification, documents=store_uploads(f"policy/exceptions/{request_id}", body.documents),
+        justification=("[EMERGENCY] " if body.emergency else "") + body.justification,
+        documents=store_uploads(f"policy/exceptions/{request_id}", body.documents),
         expires_at=body.expiresAt, status="PENDING", created_at=clock.now())
     session.add(request)
     await schedule_timer(session, EXCEPTION_TIMER, str(request.id), request.expires_at)
     record_event(session, E.EXCEPTION_REQUESTED, aggregate_type="ExceptionRequest", aggregate_id=request.id,
         tenant_id=body.orgId, payload={"organizationId": body.orgId, "exceptionRequestId": request.id,
             "requesterIdentityId": actor.identity_id, "subjectId": request.subject_id, "action": request.action,
-            "expiresAt": request.expires_at})
+            "expiresAt": request.expires_at, "emergency": body.emergency,
+            **({"message": "Emergency exception requested: it needs a decision now. " + body.justification[:200]} if body.emergency else {})})
     await session.flush()
     return exception_out(request)
 
@@ -600,3 +630,13 @@ async def exception_expiry(session, key):
     record_event(session, E.EXCEPTION_EXPIRED, aggregate_type="ExceptionRequest", aggregate_id=request.id,
         tenant_id=request.organization_id, payload={"organizationId": request.organization_id,
             "exceptionRequestId": request.id, "subjectId": request.subject_id, "action": request.action})
+
+
+
+async def business_units_merged(session, payload):
+    """A merged business unit: policies that applied to it now apply to the unit it was folded into."""
+    source, target = str(payload["sourceId"]), str(payload["targetId"])  # stored as text in the profile
+    for profile in (await session.scalars(select(PolicyProfile).where(
+            PolicyProfile.organization_id == uuid.UUID(str(payload["organizationId"]))).with_for_update())).all():
+        if source in [str(b) for b in profile.business_unit_ids]:
+            profile.business_unit_ids = list(dict.fromkeys(target if str(b) == source else str(b) for b in profile.business_unit_ids))

@@ -18,9 +18,9 @@ Migrations: `backend/alembic/versions/` (`alembic upgrade head`).
 - [marketplace](#schema-marketplace) — 6 tables
 - [search](#schema-search) — 1 tables
 - [proposal](#schema-proposal) — 2 tables
-- [contract](#schema-contract) — 6 tables
+- [contract](#schema-contract) — 7 tables
 - [escrow](#schema-escrow) — 5 tables
-- [payments](#schema-payments) — 7 tables
+- [payments](#schema-payments) — 8 tables
 - [verification](#schema-verification) — 6 tables
 - [trust](#schema-trust) — 3 tables
 - [policy](#schema-policy) — 6 tables
@@ -29,9 +29,10 @@ Migrations: `backend/alembic/versions/` (`alembic upgrade head`).
 - [messaging](#schema-messaging) — 5 tables
 - [notification](#schema-notification) — 5 tables
 - [ai](#schema-ai) — 3 tables
-- [admin](#schema-admin) — 2 tables
+- [admin](#schema-admin) — 4 tables
 - [analytics](#schema-analytics) — 1 tables
 - [review](#schema-review) — 1 tables
+- [support](#schema-support) — 2 tables
 
 <a id="schema-platform"></a>
 ## Schema `platform`
@@ -190,6 +191,7 @@ Aggregate root: one ZoikoID per human or service actor.
 | `signup_organization_name` | varchar(200) | yes |  |
 | `mfa_secret_enc` | varchar(500) | yes |  |
 | `mfa_enabled_at` | DATETIME | yes |  |
+| `mfa_totp_last_step` | BIGINT | yes |  |
 | `mfa_recovery_hashes` | JSONB | yes |  |
 | `failed_login_count` | INTEGER | no |  |
 | `locked_until` | DATETIME | yes |  |
@@ -519,6 +521,7 @@ Aggregate root. Lifecycle: DRAFT -> PUBLISHED <-> UNPUBLISHED; any -> SUSPENDED 
 | `years_experience_band` | varchar(10) | yes |  |
 | `bio` | TEXT | yes |  |
 | `languages` | ARRAY | no |  |
+| `industries` | ARRAY | no |  |
 | `country` | varchar(2) | no |  |
 | `city` | varchar(100) | yes |  |
 | `website` | varchar(300) | yes |  |
@@ -539,6 +542,7 @@ Aggregate root. Lifecycle: DRAFT -> PUBLISHED <-> UNPUBLISHED; any -> SUSPENDED 
 | `served_jurisdictions` | ARRAY | no |  |
 | `licensed_jurisdictions` | ARRAY | no |  |
 | `cross_border_acknowledged_at` | DATETIME | yes |  |
+| `regulated_data_attested_at` | DATETIME | yes |  |
 | `accuracy_attested_at` | DATETIME | yes |  |
 | `published_at` | DATETIME | yes |  |
 | `visibility_reduced` | BOOLEAN | no |  |
@@ -619,6 +623,8 @@ A buyer's saved search (Buyer Dashboard s.13): filters persist; "new since you l
 | `name` | varchar(80) | no |  |
 | `params` | JSONB | no |  |
 | `last_viewed_at` | DATETIME | no |  |
+| `alerts_on` | BOOLEAN | no |  |
+| `last_alerted_at` | DATETIME | yes |  |
 | `id` | UUID | no | PK |
 | `updated_at` | DATETIME | no |  |
 | `created_at` | DATETIME | no |  |
@@ -690,6 +696,7 @@ Base class used for declarative class definitions.  The :class:`_orm.Declarative
 | `city` | varchar(100) | yes |  |
 | `years_experience_band` | varchar(10) | yes |  |
 | `languages` | ARRAY | no |  |
+| `industries` | ARRAY | no |  |
 | `categories` | ARRAY | no |  |
 | `primary_specialization` | varchar(120) | yes |  |
 | `specializations` | ARRAY | no |  |
@@ -796,6 +803,7 @@ DRAFT -> OPEN -> PROPOSAL_RECEIVED -> CLOSED; OPEN -> DECLINED; any open state -
 | `nda_accepted_at` | DATETIME | yes |  |
 | `attachments` | JSONB | no |  |
 | `deliverables` | JSONB | no |  |
+| `custom_deliverables` | JSONB | no |  |
 | `dependencies` | JSONB | no |  |
 | `pricing_preferences` | JSONB | no |  |
 | `payment_cadence` | varchar(20) | yes |  |
@@ -887,6 +895,8 @@ PENDING_SIGNATURE -> ACTIVE -> COMPLETED | TERMINATED; ACTIVE <-> DISPUTED. One 
 | `signature_deadline` | DATETIME | no |  |
 | `activated_at` | DATETIME | yes |  |
 | `completed_at` | DATETIME | yes |  |
+| `paused_at` | DATETIME | yes |  |
+| `pause_reason` | varchar(500) | yes |  |
 | `pending_change_order_id` | UUID | yes | FK → contract.change_orders.id |
 | `id` | UUID | no | PK |
 | `updated_at` | DATETIME | no |  |
@@ -957,6 +967,25 @@ A professional's delivery for a milestone: a note plus file fingerprints. Never 
 | `note` | varchar(2000) | no |  |
 | `files` | JSONB | no |  |
 | `id` | UUID | no | PK |
+| `created_at` | DATETIME | no |  |
+
+### `contract.termination_requests`
+
+One side asks to end the engagement by agreement (needed while money is in escrow). PENDING -> AGREED | DECLINED | WITHDRAWN | LAPSED | CANCELLED (a dispute was opened). Kept as history, never deleted.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `contract_id` | UUID | no | FK → contract.contracts.id |
+| `requested_by_identity_id` | UUID | no |  |
+| `requester_party` | varchar(20) | no |  |
+| `reason` | varchar(1000) | no |  |
+| `status` | varchar(20) | no |  |
+| `expires_at` | DATETIME | no |  |
+| `decided_by_identity_id` | UUID | yes |  |
+| `decision_note` | varchar(1000) | yes |  |
+| `decided_at` | DATETIME | yes |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
 | `created_at` | DATETIME | no |  |
 
 <a id="schema-escrow"></a>
@@ -1087,6 +1116,22 @@ Buyer receipt for released work. Numbers are sequential (database sequence payme
 | `updated_at` | DATETIME | no |  |
 | `created_at` | DATETIME | no |  |
 
+### `payments.ops_resolutions`
+
+Financial Operations closing a money problem by hand (append-only): a failed payout or refund settled outside the platform, or a chargeback loss recovered or written off. Who, when, what and why.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `item_kind` | varchar(30) | no |  |
+| `item_id` | UUID | no |  |
+| `outcome` | varchar(30) | no |  |
+| `note` | varchar(1000) | no |  |
+| `resolved_by` | UUID | no |  |
+| `id` | UUID | no | PK |
+| `created_at` | DATETIME | no |  |
+
+Unique together: (item_kind, item_id)
+
 ### `payments.payment_intents`
 
 CREATED -> CAPTURED | FAILED; CAPTURED -> CHARGED_BACK if the card issuer reverses it. One per escrow funding.
@@ -1189,6 +1234,7 @@ Money returned to the buyer's original payment method. One per escrow refund (id
 | `status` | varchar(20) | no |  |
 | `provider_ref` | varchar(100) | yes |  |
 | `settled_at` | DATETIME | yes |  |
+| `failure_message` | varchar(300) | yes |  |
 | `id` | UUID | no | PK |
 | `updated_at` | DATETIME | no |  |
 | `created_at` | DATETIME | no |  |
@@ -1248,6 +1294,9 @@ One check of one subject. PENDING -> IN_REVIEW -> NEEDS_INFO -> VERIFIED | FAILE
 | `specialization` | varchar(120) | yes |  |
 | `details` | JSONB | no |  |
 | `provider_result` | varchar(20) | yes |  |
+| `second_look` | varchar(20) | yes | indexed |
+| `second_look_by` | UUID | yes |  |
+| `second_look_at` | DATETIME | yes |  |
 | `estimated_completion` | DATETIME | yes |  |
 | `reviewer_id` | UUID | yes |  |
 | `decided_at` | DATETIME | yes |  |
@@ -1558,6 +1607,14 @@ EVIDENCE_COLLECTION -> DIRECT_RESOLUTION -> MEDIATION -> DECIDED -> ENFORCED -> 
 | `decision` | JSONB | yes |  |
 | `decided_at` | DATETIME | yes |  |
 | `closed_at` | DATETIME | yes |  |
+| `prefers_early_resolution` | BOOLEAN | no |  |
+| `cooldown_used_by` | JSONB | no |  |
+| `clarifications` | JSONB | no |  |
+| `arbitration` | JSONB | yes |  |
+| `retain_until` | DATE | yes |  |
+| `retention_basis` | varchar(200) | yes |  |
+| `legal_hold` | BOOLEAN | no |  |
+| `retention_review_due` | BOOLEAN | no |  |
 | `id` | UUID | no | PK |
 | `updated_at` | DATETIME | no |  |
 | `created_at` | DATETIME | no |  |
@@ -1606,6 +1663,7 @@ What both parties see on the visual timeline (Dispute doc s.15).
 | `kind` | varchar(40) | no |  |
 | `actor` | varchar(200) | no |  |
 | `text` | varchar(500) | no |  |
+| `ref` | varchar(100) | yes |  |
 | `id` | UUID | no | PK |
 | `created_at` | DATETIME | no |  |
 
@@ -1710,7 +1768,7 @@ Base class used for declarative class definitions.  The :class:`_orm.Declarative
 | `id` | UUID | no | PK |
 | `created_at` | DATETIME | no |  |
 
-Unique together: (thread_id, source_event_id); (thread_id, sequence)
+Unique together: (thread_id, sequence); (thread_id, source_event_id)
 
 ### `messaging.read_positions`
 
@@ -1920,6 +1978,7 @@ Base class used for declarative class definitions.  The :class:`_orm.Declarative
 | `applied_at` | DATETIME | yes |  |
 | `reversed_by` | UUID | yes |  |
 | `appeal` | JSONB | yes |  |
+| `remediation` | JSONB | no |  |
 | `id` | UUID | no | PK |
 | `updated_at` | DATETIME | no |  |
 | `created_at` | DATETIME | no |  |
@@ -1935,6 +1994,52 @@ An operational switch (admin/switches.py): while ``paused``, its kind of action 
 | `paused` | BOOLEAN | no |  |
 | `reason` | varchar(500) | yes |  |
 | `changed_by` | UUID | yes |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+
+### `admin.incidents`
+
+Incident register (Regulator assurance s.11): what happened, severity, containment, who was notified, root cause, remediation, and the post-incident review. OPEN -> CONTAINED -> RESOLVED -> CLOSED.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `reference` | varchar(20) | no | unique |
+| `title` | varchar(200) | no |  |
+| `kind` | varchar(30) | no |  |
+| `severity` | varchar(10) | no |  |
+| `status` | varchar(20) | no |  |
+| `summary` | varchar(4000) | no |  |
+| `detected_at` | DATETIME | no |  |
+| `contained_at` | DATETIME | yes |  |
+| `resolved_at` | DATETIME | yes |  |
+| `closed_at` | DATETIME | yes |  |
+| `owner_id` | UUID | no |  |
+| `timeline` | JSONB | no |  |
+| `notifications` | JSONB | no |  |
+| `root_cause` | varchar(4000) | yes |  |
+| `remediation` | JSONB | no |  |
+| `review` | varchar(8000) | yes |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+
+### `admin.user_reports`
+
+A buyer or professional reporting a profile, person, organisation, review or message (Trust & Safety Charter: user reporting pathway). Each report feeds an enforcement case; the reported person is never told who reported. ``confidential``: the reporter's name is hidden from case handlers too (only Risk Lead and Legal can see it).
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `reporter_identity_id` | UUID | no | indexed |
+| `subject_type` | varchar(30) | no |  |
+| `subject_id` | UUID | no |  |
+| `category` | varchar(40) | no |  |
+| `description` | varchar(2000) | no |  |
+| `confidential` | BOOLEAN | no |  |
+| `possible_retaliation` | BOOLEAN | no |  |
+| `case_id` | UUID | no | indexed |
+| `status` | varchar(20) | no |  |
+| `outcome` | varchar(20) | yes |  |
 | `id` | UUID | no | PK |
 | `updated_at` | DATETIME | no |  |
 | `created_at` | DATETIME | no |  |
@@ -1978,4 +2083,40 @@ Base class used for declarative class definitions.  The :class:`_orm.Declarative
 | `comment` | varchar(2000) | no |  |
 | `engagement_reference` | varchar(40) | no |  |
 | `id` | UUID | no | PK |
+| `created_at` | DATETIME | no |  |
+
+<a id="schema-support"></a>
+## Schema `support`
+
+### `support.messages`
+
+Append-only conversation on a request.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `request_id` | UUID | no | FK → support.requests.id |
+| `author_identity_id` | UUID | no |  |
+| `from_staff` | BOOLEAN | no |  |
+| `body` | TEXT | no |  |
+| `id` | UUID | no | PK |
+| `created_at` | DATETIME | no |  |
+
+### `support.requests`
+
+OPEN -> WAITING_ON_YOU (staff replied) -> OPEN (the person replied) ... -> RESOLVED. A first answer is due within one business day (``first_response_due_at``); late requests show first in the staff queue.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `reference` | varchar(20) | no | unique |
+| `requester_identity_id` | UUID | no | indexed |
+| `topic` | varchar(30) | no |  |
+| `subject` | varchar(200) | no |  |
+| `context` | JSONB | no |  |
+| `status` | varchar(20) | no |  |
+| `assigned_to` | UUID | yes |  |
+| `first_response_due_at` | DATETIME | no |  |
+| `first_responded_at` | DATETIME | yes |  |
+| `resolved_at` | DATETIME | yes |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
 | `created_at` | DATETIME | no |  |

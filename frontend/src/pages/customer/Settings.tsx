@@ -5,7 +5,7 @@ import { authApi } from '../../api/auth'
 import { useAuth } from '../../auth/AuthContext'
 import { Icon } from '../../components/dashboard'
 import { PortalHeader, SidePanel, Tabs } from '../../components/portal'
-import { ErrorAlert, Field, useStepUp } from '../../components/ui'
+import { ErrorAlert, Field, useStepUp, Loading } from '../../components/ui'
 import { countryName } from '../ProfessionalPages'
 
 type Tab = 'account' | 'security' | 'notifications' | 'privacy' | 'payments' | 'platform' | 'linked'
@@ -24,7 +24,7 @@ export default function SettingsPage() {
   useEffect(() => { accountApi.me().then(setMe).catch(setError) }, [])
 
   const saved = (p: ProfileDetails, msg: string) => { setMe(p); setNotice(msg); setError(null); reloadUser().catch(() => {}) }
-  if (!me) return error ? <ErrorAlert error={error} /> : <p className="muted">Loading…</p>
+  if (!me) return error ? <ErrorAlert error={error} /> : <Loading />
 
   return (
     <>
@@ -116,7 +116,7 @@ function SecurityTab({ me }: { me: ProfileDetails }) {
       </section>
       <section className="card panel">
         <div className="panel-head"><h2>Signed-in devices</h2></div>
-        {!sessions ? <p className="muted">Loading…</p> : (
+        {!sessions ? <Loading /> : (
           <table className="data"><thead><tr><th>Device</th><th>Signed in</th><th>Strength</th><th><span className="sr-only">Actions</span></th></tr></thead>
             <tbody>{sessions.map((s) => (
               <tr key={s.id}><td>{deviceName(s.device)} {s.current && <span className="badge green">This device</span>}</td>
@@ -134,7 +134,7 @@ function NotificationsTab({ onSaved }: { onSaved: () => void }) {
   const [prefs, setPrefs] = useState<NotificationPreferences | null>(null)
   const [error, setError] = useState<unknown>(null)
   useEffect(() => { accountApi.notifications().then(setPrefs).catch(setError) }, [])
-  if (!prefs) return error ? <ErrorAlert error={error} /> : <p className="muted">Loading…</p>
+  if (!prefs) return error ? <ErrorAlert error={error} /> : <Loading />
   const rows: [keyof NotificationPreferences, string, string][] = [
     ['email', 'Email', 'Proposals, approvals, deliverables and payment updates.'],
     ['inApp', 'In-app', 'Notifications in the bell menu.'],

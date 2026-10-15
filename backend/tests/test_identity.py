@@ -124,3 +124,57 @@ async def test_staff_users_list(client, make_user, drain, sf):
     async with sf() as s:
         audited = await s.scalar(text("SELECT count(*) FROM audit.audit_records WHERE action LIKE '%users_listed%'"))
     assert audited >= 4  # every staff read of the users list is recorded
+
+
+async def test_an_authenticator_code_works_only_once(client, make_user):
+    """RFC 6238 s.5.2: a code seen over someone's shoulder or replayed cannot be used again, even within its window."""
+    u = await make_user("otto")
+    await u.enable_mfa()
+    code = u.totp()
+    first = await client.post("/v1/auth/step-up", headers=u.h, json={"totpCode": code})
+    assert first.status_code == 200
+    again = await client.post("/v1/auth/step-up", headers=u.h, json={"totpCode": code})
+    assert again.status_code in (400, 401) and again.json()["code"] == "MFA_INVALID" and "already used" in again.json()["detail"]
+    assert (await client.post("/v1/auth/step-up", headers=u.h, json={"totpCode": u.totp()})).status_code == 200  # the next code works
+
+
+async def test_the_web_app_keeps_its_refresh_token_in_an_httponly_cookie(client, make_user):
+    """Page scripts cannot read the refresh token: it is set as an HttpOnly cookie for /v1/auth only and never put in a
+    response body for the web app. API clients without the header keep the token in the body."""
+    u = await make_user("cora")
+    web = {"X-Zk-Client": "web"}
+    r = await client.post("/v1/auth/login", headers=web, json={"email": u.email, "password": u.password})
+    assert r.status_code == 200 and r.json()["tokens"]["refreshToken"] == "" and r.json()["tokens"]["accessToken"]
+    cookie = r.headers["set-cookie"]
+    assert cookie.startswith("zk_refresh=") and "HttpOnly" in cookie and "Path=/v1/auth" in cookie and "SameSite=strict" in cookie
+
+    # The cookie alone refreshes, and the rotated token is again only in the cookie.
+    r = await client.post("/v1/auth/refresh", headers=web, json={})
+    assert r.status_code == 200 and r.json()["refreshToken"] == "" and r.json()["accessToken"]
+    assert "zk_refresh=" in r.headers["set-cookie"]
+    access = r.json()["accessToken"]
+
+    # Signing out deletes the cookie; a refresh then has nothing to work with.
+    r = await client.post("/v1/auth/logout", headers={**web, "Authorization": f"Bearer {access}"})
+    assert r.status_code == 204 and 'zk_refresh=""' in r.headers["set-cookie"]
+    client.cookies.clear()
+    r = await client.post("/v1/auth/refresh", headers=web, json={})
+    assert r.status_code == 401 and r.json()["code"] == "SESSION_EXPIRED"
+
+    # Other API clients: the token stays in the body and no cookie is set.
+    r = await client.post("/v1/auth/login", json={"email": u.email, "password": u.password})
+    assert r.json()["tokens"]["refreshToken"] and "set-cookie" not in r.headers
+
+
+async def test_a_sign_in_from_a_new_device_is_announced(client, make_user, drain):
+    u = await make_user("nina")
+    chrome = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0 Safari/537.36"}
+    iphone = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Safari/604.1"}
+    login = {"email": u.email, "password": u.password}
+    await client.post("/v1/auth/login", headers=chrome, json=login)
+    await client.post("/v1/auth/login", headers=chrome, json=login)  # same device again: no alert
+    await client.post("/v1/auth/login", headers=iphone, json=login)
+    await drain()
+    alerts = [n for n in (await client.get("/v1/notifications", headers=u.h)).json()["items"] if n["title"] == "New sign-in to your account"]
+    assert len(alerts) == 2  # Chrome on Windows (first after sign-up) and Safari on iPhone
+    assert any("Safari on iPhone" in n["body"] for n in alerts) and all("change your password" in n["body"] for n in alerts)

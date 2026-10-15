@@ -56,6 +56,10 @@ class VerificationCase(Base, UUIDPk, Timestamps, Versioned):
     specialization: Mapped[str | None] = mapped_column(String(120))
     details: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     provider_result: Mapped[str | None] = mapped_column(String(20))  # PASS | REVIEW | FAIL
+    # Human oversight of automatic approvals: SAMPLED (waiting for a person) -> CONFIRMED | OVERTURNED.
+    second_look: Mapped[str | None] = mapped_column(String(20), index=True)
+    second_look_by: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    second_look_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     estimated_completion: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reviewer_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

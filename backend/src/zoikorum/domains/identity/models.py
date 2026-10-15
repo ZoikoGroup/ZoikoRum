@@ -35,6 +35,8 @@ class Identity(Base, UUIDPk, Timestamps, Versioned):
     signup_organization_name: Mapped[str | None] = mapped_column(String(200))
     mfa_secret_enc: Mapped[str | None] = mapped_column(String(500))  # AES-GCM encrypted TOTP secret
     mfa_enabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The 30-second time step of the last authenticator code accepted: a code is good once (RFC 6238 section 5.2).
+    mfa_totp_last_step: Mapped[int | None] = mapped_column(BigInteger)
     # One-time recovery codes for a lost authenticator: SHA-256 hashes only; each is removed when used.
     mfa_recovery_hashes: Mapped[list | None] = mapped_column(JSONB)
     failed_login_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

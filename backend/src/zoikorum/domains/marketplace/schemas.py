@@ -119,6 +119,7 @@ class SavedSearchOut(BaseModel):
     name: str
     params: dict[str, str]
     lastViewedAt: datetime
+    alertsOn: bool = True  # daily notice when new professionals match
     createdAt: datetime
 
 

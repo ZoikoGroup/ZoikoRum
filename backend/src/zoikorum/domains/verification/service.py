@@ -6,6 +6,7 @@ Charter). Reviewers are COMPLIANCE_OFFICERs with a fresh MFA step-up, and never 
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import uuid
@@ -15,6 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.config import get_settings
+from zoikorum.domains.admin import facade as admin_facade
 from zoikorum.domains.firm import facade as firm_facade
 from zoikorum.domains.professional import facade as professional_facade
 from zoikorum.domains.ai import facade as ai_facade
@@ -22,8 +24,9 @@ from zoikorum.domains.verification.models import Appeal, EvidenceCheck, Evidence
 from zoikorum.domains.verification.providers import get_provider
 from zoikorum.domains.verification.reasons import ESCALATE
 from zoikorum.domains.verification.schemas import (
+    BACKGROUND_CONSENT_VERSION,
     AppealDecisionIn, AppealIn, AppealOut, AppealQueueItemOut, CaseIn, CaseOut, DecisionIn, EvidenceCheckOut, EvidenceIn, EvidenceOut,
-    QueueItemOut, RevokeIn,
+    QueueItemOut, RevokeIn, SecondLookIn,
 )
 from zoikorum.shared import clock
 from zoikorum.shared.auth import Actor, FirmRole, PlatformRole
@@ -33,6 +36,7 @@ from zoikorum.shared.events import record_audit, record_event
 from zoikorum.shared.http import next_cursor, page_of, paginate
 from zoikorum.shared.relay import cancel_timer, schedule_timer
 from zoikorum.shared.state_machine import StateMachine
+from zoikorum.shared import scanning
 from zoikorum.shared.storage import get_storage
 
 CASE_STATES = StateMachine("VerificationCase", {
@@ -55,7 +59,8 @@ REVIEWERS = (PlatformRole.COMPLIANCE_OFFICER,)
 VIEWERS = (PlatformRole.COMPLIANCE_OFFICER, PlatformRole.PLATFORM_ADMIN, PlatformRole.TS_ANALYST)
 LABELS = {"IDENTITY": "Identity", "JURISDICTION": "Jurisdiction eligibility", "INSURANCE": "Professional indemnity insurance",
           "RESTRICTIONS": "Sanctions & restrictions screening", "BACKGROUND": "Background check",
-          "FIRM_REGISTRATION": "Firm registration"}
+          "FIRM_REGISTRATION": "Firm registration", "BENEFICIAL_OWNERSHIP": "Beneficial ownership"}
+FIRM_ONLY = ("FIRM_REGISTRATION", "BENEFICIAL_OWNERSHIP")
 TIMER_REMINDER = "verification.expiry_reminder"
 TIMER_EXPIRY = "verification.expiry"
 
@@ -127,6 +132,7 @@ async def _out(session: AsyncSession, case: VerificationCase, is_mine: bool) -> 
     deadline = _appeal_deadline(case) if is_mine and appeal is None else None
     return CaseOut(
         id=case.id, subjectType=case.subject_type, subjectId=case.subject_id, verificationType=case.verification_type,
+        secondLook=None if is_mine else case.second_look,
         status=case.status, label=case.label, jurisdiction=case.jurisdiction, credentialClaimId=case.credential_claim_id,
         specialization=case.specialization, estimatedCompletion=case.estimated_completion, verifiedAt=case.verified_at,
         expiresAt=case.expires_at, reasonCode=case.reason_code, publicReason=case.public_reason, isMine=is_mine,
@@ -153,6 +159,17 @@ def _hosted_fields(ps: ProviderSession | None) -> dict:
 
 # A partner answer that leaves the decision to a compliance officer; the documents are in the partner's dashboard.
 PARTNER_REVIEW = ("declined", "failed", "needs_review", "completed", "resubmission_requested")
+
+
+def _owners(owners) -> list[dict]:
+    """Beneficial ownership (Firm onboarding): everyone with 25% or more, or control, is declared; shares add up to 100% at most."""
+    if not owners:
+        raise ValidationFailed("Declare at least one person who owns or controls the firm", code="OWNERS_REQUIRED")
+    if sum(o.percent for o in owners) > 100.0001:
+        raise ValidationFailed("Ownership shares add up to more than 100%", code="OWNERSHIP_OVER_100")
+    if not any(o.percent >= 25 or o.control for o in owners):
+        raise ValidationFailed("Include each person with 25% or more, or who controls the firm", code="NO_BENEFICIAL_OWNER")
+    return [{"name": o.name.strip(), "country": o.country, "percent": round(o.percent, 2), "control": o.control} for o in owners]
 
 
 def _clean_details(details: dict) -> dict:
@@ -190,7 +207,7 @@ async def _open(session: AsyncSession, *, subject_type: str, subject_id: uuid.UU
 async def start_case(session: AsyncSession, actor: Actor, body: CaseIn) -> CaseOut:
     if not await _is_owner(session, actor, body.subjectType, body.subjectId):
         raise Forbidden("You can only request verification for your own profile or a firm you administer")
-    if (body.verificationType == "FIRM_REGISTRATION") != (body.subjectType == "FIRM"):
+    if (body.verificationType in FIRM_ONLY) != (body.subjectType == "FIRM"):
         raise ValidationFailed("Firm registration checks apply to firms only; firms cannot request personal checks",
                                code="WRONG_SUBJECT_TYPE")
     jurisdiction = body.jurisdiction.upper() if body.jurisdiction else None
@@ -209,9 +226,18 @@ async def start_case(session: AsyncSession, actor: Actor, body: CaseIn) -> CaseO
         if existing.expires_at is None or existing.expires_at > renew_from:
             raise Conflict("This check is verified. You can renew it in the two months before it expires.", code="CASE_EXISTS")
     label = LABELS[body.verificationType] + (f" ({jurisdiction})" if jurisdiction else "")
+    details = _clean_details(body.details)
+    if body.verificationType == "BACKGROUND":
+        if not body.consent:
+            raise ValidationFailed("A background check needs your consent first", code="CONSENT_REQUIRED")
+        details = {**details, "consentAt": clock.now().isoformat(), "consentVersion": BACKGROUND_CONSENT_VERSION}
+    if body.verificationType == "BENEFICIAL_OWNERSHIP":
+        details = {**details, "owners": _owners(body.owners)}
     case = await _open(session, subject_type=body.subjectType, subject_id=body.subjectId, owner_identity_id=actor.identity_id,
-                       verification_type=body.verificationType, label=label, jurisdiction=jurisdiction,
-                       details=_clean_details(body.details))
+                       verification_type=body.verificationType, label=label, jurisdiction=jurisdiction, details=details)
+    if body.verificationType == "BACKGROUND":
+        record_audit(session, "verification.background.consent_given", object_type="VerificationCase", object_id=case.id,
+                     details={"consentVersion": BACKGROUND_CONSENT_VERSION})
     return await _out(session, case, True)
 
 
@@ -334,7 +360,9 @@ async def add_evidence(session: AsyncSession, actor: Actor, case_id: uuid.UUID, 
         raise Conflict("Evidence can only be added while the check is open", code="CASE_CLOSED")
     if case.verification_type == "IDENTITY":
         body = body.model_copy(update={"evidenceType": "ID_DOCUMENT"})
-    stored = [(f, _checked_file(f)) for f in body.items]  # validate every file before storing any
+    stored = [(f, _checked_file(f)) for f in body.items]  # validate and scan every file before storing any
+    for f, data in stored:
+        scanning.scan(data, f.name)
     for f, data in stored:
         key = f"verification/{case.id}/{f.sha256}"
         storage_version = get_storage().put(key, data)
@@ -370,25 +398,56 @@ EXPECTED_DOCUMENT = {
     "FIRM_REGISTRATION": "a company registration certificate or extract from the official company register",
     "INSURANCE": "a professional indemnity insurance certificate or policy schedule",
     "JURISDICTION": "proof of the right to practise in {jurisdiction}: a licence, registration or regulator letter",
+    "BACKGROUND": "a background-check report or a screening provider's confirmation for the named person",
+    "BENEFICIAL_OWNERSHIP": "a shareholder register, a register of persons with significant control, or an equivalent official extract",
 }
 FLAGGED = ("UNRELATED", "UNREADABLE")
 
 
-async def check_evidence(session: AsyncSession, payload: dict) -> None:
-    """After an upload: look at each new file once and store the hint for the reviewer. Never changes the case."""
+async def _unchecked(session: AsyncSession, payload: dict) -> tuple[VerificationCase | None, list[EvidenceItem]]:
     case = await session.get(VerificationCase, uuid.UUID(str(payload["caseId"])))
     hashes = [f["sha256"] for f in payload.get("files", [])]
     if case is None or not hashes:
-        return
+        return case, []
     done = select(EvidenceCheck.evidence_id).where(EvidenceCheck.case_id == case.id)
-    items = (await session.scalars(select(EvidenceItem).where(
-        EvidenceItem.case_id == case.id, EvidenceItem.sha256.in_(hashes), EvidenceItem.id.not_in(done)))).all()
-    expected = EXPECTED_DOCUMENT.get(case.verification_type, "{label}").format(
-        label=case.label, jurisdiction=(case.jurisdiction or "the jurisdiction").upper())
+    return case, list((await session.scalars(select(EvidenceItem).where(
+        EvidenceItem.case_id == case.id, EvidenceItem.sha256.in_(hashes), EvidenceItem.id.not_in(done)))).all())
+
+
+async def prepare_evidence_checks(sf, payload: dict) -> tuple[dict, list[dict]]:
+    """The slow part of the first look, with no transaction open: read each new file (in a worker thread) and ask the
+    model about it. Returns {evidence id: DocumentCheck} and the inference records to store with the results."""
+    async with sf() as session:
+        case, items = await _unchecked(session, payload)
+        paused = bool(items) and await admin_facade.is_paused(session, "AI_ASSIST")
+        if case is not None:
+            expected = EXPECTED_DOCUMENT.get(case.verification_type, "{label}").format(
+                label=case.label, jurisdiction=(case.jurisdiction or "the jurisdiction").upper())
+            work = [(i.id, i.storage_key, i.storage_version, i.content_type or "", i.uploaded_by) for i in items]
+    results: dict = {}
+    records: list[dict] = []
+    for evidence_id, key, version, content_type, uploaded_by in (work if case is not None else []):
+        if not key:
+            results[evidence_id] = ai_facade.not_checked("The file is not stored, so it was not checked.")
+        elif paused:  # staff switched AI assistance off
+            results[evidence_id] = ai_facade.not_checked("Automatic document check is switched off. Review the file yourself.")
+        else:
+            data = await asyncio.to_thread(get_storage().get, key, version)
+            results[evidence_id] = await ai_facade.assess_document(data, content_type, expected, subject_id=case.id,
+                                                                   requested_by=uploaded_by, inference_log=records)
+    return results, records
+
+
+async def check_evidence(session: AsyncSession, payload: dict, prepared: tuple[dict, list[dict]]) -> None:
+    """After an upload: store the first-look hint for each new file (worked out by prepare_evidence_checks) for the
+    reviewer. Never changes the case."""
+    results, records = prepared
+    ai_facade.save_inference_logs(session, records)
+    case, items = await _unchecked(session, payload)
     for item in items:
-        data = get_storage().get(item.storage_key, item.storage_version) if item.storage_key else None
-        result = await ai_facade.assess_document(data, item.content_type or "", expected, session=session, subject_id=case.id,
-                                                 requested_by=item.uploaded_by) if data else             ai_facade.DocumentCheck("NOT_CHECKED", None, "The file is not stored, so it was not checked.", "none")
+        result = results.get(item.id)
+        if result is None:  # uploaded again while the slow step ran: the next delivery looks at it
+            continue
         session.add(EvidenceCheck(evidence_id=item.id, case_id=case.id, verdict=result.verdict, seen=result.seen,
                                   note=result.note, source=result.source))
         if result.verdict in FLAGGED:
@@ -435,7 +494,49 @@ async def _verify(session: AsyncSession, case: VerificationCase, *, reviewer_id:
             if fire > now:
                 await schedule_timer(session, TIMER_REMINDER, f"{case.id}:{days}", fire, {"caseId": str(case.id), "days": days})
         await schedule_timer(session, TIMER_EXPIRY, str(case.id), case.expires_at, {"caseId": str(case.id)})
+    if reviewer_id is None and _sampled(case):  # automatic approval: a person looks again (ethics code)
+        case.second_look = "SAMPLED"
     _evt(session, E.VERIFICATION_COMPLETED, case, expiresAt=case.expires_at, decidedBy=reviewer_id or "PROVIDER")
+
+
+def _sampled(case: VerificationCase) -> bool:
+    """Spread evenly and decided by the case id, so the same case is always in or out of the sample."""
+    return int(case.id.hex[:8], 16) % 100 < get_settings().verification_second_look_pct
+
+
+async def second_looks(session: AsyncSession, actor: Actor) -> list[CaseOut]:
+    """Automatic approvals waiting for a person, oldest first."""
+    actor.require_platform_role(*REVIEWERS)
+    rows = (await session.scalars(select(VerificationCase).where(VerificationCase.second_look == "SAMPLED")
+                                  .order_by(VerificationCase.verified_at).limit(200))).all()
+    return [await _out(session, c, False) for c in rows]
+
+
+async def decide_second_look(session: AsyncSession, actor: Actor, case_id: uuid.UUID, body: SecondLookIn) -> CaseOut:
+    """Confirm the partner's approval, or overturn it: the check is revoked with a reason (the person can appeal)."""
+    actor.require_platform_role(*REVIEWERS)
+    actor.require_step_up()
+    case = await _case(session, case_id, lock=True)
+    if case.second_look != "SAMPLED":
+        raise Conflict("This check is not waiting for a second look", code="NO_SECOND_LOOK")
+    if case.owner_identity_id == actor.identity_id:
+        raise Forbidden("You cannot review your own check")
+    case.second_look_by, case.second_look_at = actor.identity_id, clock.now()
+    if body.confirm:
+        case.second_look = "CONFIRMED"
+        record_audit(session, "verification.second_look.confirmed", object_type="VerificationCase", object_id=case.id)
+    else:
+        if not body.reasonCode or not body.publicReason:
+            raise ValidationFailed("Say why the approval is overturned (reason and message to the person)", code="REASON_REQUIRED")
+        case.second_look = "OVERTURNED"
+        CASE_STATES.assert_can(case.status, "REVOKED")
+        case.status, case.reason_code, case.public_reason = "REVOKED", body.reasonCode, body.publicReason
+        case.reviewer_id, case.decided_at = actor.identity_id, clock.now()
+        await _cancel_expiry_timers(session, case)
+        _evt(session, E.VERIFICATION_REVOKED, case, reasonCode=body.reasonCode, publicReason=body.publicReason,
+             secondLook=True)
+    await session.flush()
+    return await _out(session, case, False)
 
 
 def _fail(session: AsyncSession, case: VerificationCase, *, reviewer_id: uuid.UUID | None, reason_code: str, public_reason: str) -> None:
@@ -474,6 +575,11 @@ async def decide(session: AsyncSession, actor: Actor, case_id: uuid.UUID, body: 
         if captured_by_partner and case.status == "NEEDS_INFO":
             case.status = "IN_REVIEW"  # the reviewer accepts the partner's capture instead of waiting for a new one
         await _verify(session, case, reviewer_id=actor.identity_id, expires_at=body.expiresAt)
+        flagged = (await session.scalars(select(EvidenceCheck).where(EvidenceCheck.case_id == case.id,
+                                                                     EvidenceCheck.verdict.in_(FLAGGED)))).all()
+        if flagged:  # a person decided against the automatic hint: kept as an AI override record (assurance s.7)
+            record_audit(session, "ai.hint_overridden", object_type="VerificationCase", object_id=case.id,
+                         details={"purpose": "document-check", "hints": [c.verdict for c in flagged], "decision": "VERIFIED"})
     elif body.decision == "FAILED":
         _fail(session, case, reviewer_id=actor.identity_id, reason_code=body.reasonCode, public_reason=body.publicReason)
     else:

@@ -20,11 +20,11 @@ from zoikorum.domains.buyer import facade as buyer_facade
 from zoikorum.domains.contract import facade as contract_facade
 from zoikorum.domains.policy import facade as policy_facade
 from zoikorum.domains.escrow.models import Allocation, EscrowAccount, Funding, LedgerEntry, Release
-from zoikorum.domains.escrow.schemas import AllocationOut, EscrowOut, FundingOut, FundIn, LedgerLineOut
+from zoikorum.domains.escrow.schemas import AllocationOut, BulkFundIn, EscrowOut, FundingOut, FundIn, LedgerLineOut
 from zoikorum.domains.professional import facade as professional_facade
 from zoikorum.shared import clock
 from zoikorum.shared.auth import Actor, OrgRole, PlatformRole
-from zoikorum.shared.errors import Conflict, Forbidden, NotFound, PolicyBlocked
+from zoikorum.shared.errors import Conflict, DomainError, Forbidden, NotFound, PolicyBlocked
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_event
 from zoikorum.shared.money import Money, MoneyDTO
@@ -126,15 +126,18 @@ async def _out(session: AsyncSession, actor: Actor, a: EscrowAccount, viewer: st
     waiting = {m.id for m in contract.milestones if m.status == "PENDING_FUNDING"} if contract else set()
     can_fund = viewer == "BUYER" and contract is not None and contract.status == FUNDABLE_CONTRACT and any(
         x.state == "UNFUNDED" and x.milestone_id in waiting for x in allocs) and bool(
-        (await buyer_facade.get_member_roles(session, a.organization_id, actor.identity_id)).intersection(FUNDERS))
+        (await buyer_facade.get_member_roles(session, a.organization_id, actor.identity_id)).intersection(FUNDERS)) and not (
+        await contract_facade.retainer_paused(session, a.contract_id))
     ccy = a.currency
     unfunded = sum(x.amount_minor for x in allocs if x.state == "UNFUNDED")
+    releases = {r.milestone_id: r.id for r in (await session.scalars(select(Release).where(Release.account_id == a.id))).all()}
     return EscrowOut(
         id=a.id, contractId=a.contract_id, status=a.status, currency=ccy, total=_m(a.total_minor, ccy), funded=_m(a.funded_minor, ccy),
         held=_m(a.held_minor, ccy), released=_m(a.released_minor, ccy), fees=_m(a.fees_minor, ccy), refunded=_m(a.refunded_minor, ccy),
         unfunded=_m(unfunded, ccy), feeBps=_fee_bps(a),
         allocations=[AllocationOut(milestoneId=x.milestone_id, sequence=x.sequence, title=x.title, amount=_m(x.amount_minor, ccy), state=x.state,
-                                   released=_m(x.released_minor, ccy), fee=_m(x.fee_minor, ccy), fundedAt=x.funded_at, releasedAt=x.released_at)
+                                   released=_m(x.released_minor, ccy), fee=_m(x.fee_minor, ccy), fundedAt=x.funded_at, releasedAt=x.released_at,
+                                   releaseReference=f"ZK-REL-{releases[x.milestone_id].hex[:8].upper()}" if x.milestone_id in releases else None)
                      for x in allocs],
         fundings=[FundingOut(id=f.id, amount=_m(f.amount_minor, f.currency), milestoneIds=[uuid.UUID(str(i)) for i in f.milestone_ids],
                              status=f.status, failureMessage=f.failure_message, createdAt=f.created_at, capturedAt=f.captured_at)
@@ -231,6 +234,8 @@ async def fund(session: AsyncSession, actor: Actor, account_id: uuid.UUID, body:
     if not roles.intersection(FUNDERS):
         raise Forbidden("Funding needs the Requester, Approver or Budget Owner role", code="ROLE_REQUIRED")
     contract = await contract_facade.get_contract(session, a.contract_id)
+    if contract is not None and await contract_facade.retainer_paused(session, a.contract_id):
+        raise Conflict("This retainer is paused. Resume it to fund the next cycle.", code="RETAINER_PAUSED")
     if contract is None or contract.status != FUNDABLE_CONTRACT:
         why = {"DISPUTED": "while a dispute is open", "PENDING_SIGNATURE": "until both parties sign the latest version",
                "COMPLETED": "because the engagement is complete", "TERMINATED": "because the engagement has ended"}
@@ -685,3 +690,74 @@ async def totals(session: AsyncSession, since, until) -> dict[str, int]:
         .where(LedgerEntry.created_at >= since, LedgerEntry.created_at < until)
         .group_by(LedgerEntry.entry_type, LedgerEntry.currency))).all()
     return {f"{t}:{c}": int(v) for t, c, v in rows}
+
+
+
+# ---- Enterprise payments overview and bulk funding (Payments & Escrow: enterprise dashboard) ---------------------------
+
+async def organization_overview(session: AsyncSession, actor: Actor, org_id: uuid.UUID) -> dict:
+    """For any member of the buyer organisation: money held per vendor, what is frozen in disputes, what still needs
+    funding, and when held money is expected to be released (by milestone due date)."""
+    if not await buyer_facade.get_member_roles(session, org_id, actor.identity_id):
+        raise NotFound("Organization not found")
+    accounts = (await session.scalars(select(EscrowAccount).where(EscrowAccount.organization_id == org_id))).all()
+    allocs = (await session.scalars(select(Allocation).where(Allocation.account_id.in_([a.id for a in accounts])))).all() if accounts else []
+    by_account: dict[uuid.UUID, list[Allocation]] = {}
+    for x in allocs:
+        by_account.setdefault(x.account_id, []).append(x)
+
+    vendors: dict[tuple[uuid.UUID, str], dict] = {}
+    totals: dict[str, dict] = {}
+    timeline: list[dict] = []
+    fundable: list[dict] = []
+    for a in accounts:
+        contract = await contract_facade.get_contract(session, a.contract_id)
+        if contract is None:
+            continue
+        due = {m.id: m for m in contract.milestones}
+        pro = await professional_facade.get_professional(session, a.professional_id)
+        v = vendors.setdefault((a.professional_id, a.currency), {
+            "professionalId": a.professional_id, "name": pro.display_name if pro else "Professional", "currency": a.currency,
+            "engagements": 0, "heldMinor": 0, "frozenMinor": 0, "awaitingFundingMinor": 0, "releasedMinor": 0})
+        t = totals.setdefault(a.currency, {"currency": a.currency, "heldMinor": 0, "frozenMinor": 0, "awaitingFundingMinor": 0, "releasedMinor": 0})
+        v["engagements"] += 1
+        for x in by_account.get(a.id, []):
+            m = due.get(x.milestone_id)
+            if x.state == "HELD":
+                bucket = "heldMinor"
+                timeline.append({"accountId": a.id, "contractId": a.contract_id, "reference": contract.reference, "vendor": v["name"],
+                                 "milestone": f"M{x.sequence} {x.title}", "amountMinor": x.amount_minor, "currency": a.currency,
+                                 "dueDate": m.due_date if m else None, "status": m.status if m else None})
+            elif x.state == "ON_HOLD":
+                bucket = "frozenMinor"
+            elif x.state == "UNFUNDED" and contract.status == FUNDABLE_CONTRACT and m and m.status == "PENDING_FUNDING":
+                bucket = "awaitingFundingMinor"
+                fundable.append({"accountId": a.id, "contractId": a.contract_id, "reference": contract.reference, "vendor": v["name"],
+                                 "milestoneId": x.milestone_id, "milestone": f"M{x.sequence} {x.title}", "amountMinor": x.amount_minor,
+                                 "currency": a.currency, "dueDate": m.due_date})
+            else:
+                bucket = None
+            if bucket:
+                v[bucket] += x.amount_minor
+                t[bucket] += x.amount_minor
+            v["releasedMinor"] += x.released_minor
+            t["releasedMinor"] += x.released_minor
+    timeline.sort(key=lambda r: (r["dueDate"] is None, r["dueDate"] or clock.now().date()))
+    fundable.sort(key=lambda r: (r["dueDate"] is None, r["dueDate"] or clock.now().date()))
+    return {"organizationId": org_id, "totals": list(totals.values()),
+            "vendors": sorted(vendors.values(), key=lambda v: -(v["heldMinor"] + v["frozenMinor"])),
+            "releaseTimeline": timeline[:100], "awaitingFunding": fundable[:100]}
+
+
+async def bulk_fund(session: AsyncSession, actor: Actor, body: BulkFundIn) -> dict:
+    """Fund several engagements in one go. Each is a separate funding with every usual check; results say which
+    worked and why any did not."""
+    results = []
+    for item in body.items:
+        try:
+            async with session.begin_nested():
+                out = await fund(session, actor, item.accountId, FundIn(milestoneIds=item.milestoneIds, paymentMethodToken=body.paymentMethodToken))
+            results.append({"accountId": item.accountId, "ok": True, "status": out.status})
+        except DomainError as e:
+            results.append({"accountId": item.accountId, "ok": False, "code": e.code, "detail": str(e.detail) if getattr(e, "detail", None) else e.code})
+    return {"results": results, "funded": sum(1 for r in results if r["ok"]), "failed": sum(1 for r in results if not r["ok"])}
