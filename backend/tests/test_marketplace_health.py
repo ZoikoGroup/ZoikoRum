@@ -40,3 +40,23 @@ async def test_marketplace_health_window_and_daily_series(client, make_user, dra
 
     assert (await client.get('/v1/analytics/marketplace-health', headers=buyer.h)).status_code == 403
     assert (await client.post('/v1/admin/analytics/rebuild', headers=analyst.h)).status_code == 403
+
+
+async def test_rebuild_reproduces_marketplace_health(client, make_user, drain):
+    from test_dispute import funded_contract
+    pro_user, _, buyer, c = await funded_contract(client, make_user, drain, both=True)
+    for m in c['milestones']:
+        assert (await client.post(f"/v1/milestones/{m['id']}/submit", headers=pro_user.idem(), json={'note': 'Completed agreed deliverables', 'files': []})).status_code == 200
+        assert (await client.post(f"/v1/milestones/{m['id']}/accept", headers=buyer.idem())).status_code == 200
+        await drain()
+    admin = await make_user('health-admin', platform_roles=('PLATFORM_ADMIN',))
+    await admin.step_up()
+    await drain()
+
+    before = (await client.get('/v1/analytics/marketplace-health', headers=admin.h)).json()
+    rebuilt = await client.post('/v1/admin/analytics/rebuild', headers=admin.h)
+    assert rebuilt.status_code == 200, rebuilt.text
+    assert rebuilt.json()['projectedEvents'] == sum(before['eventCounts'].values())
+    after = (await client.get('/v1/analytics/marketplace-health', headers=admin.h)).json()
+    assert after == before
+    assert after['activations'] >= 1 and after['medianReleaseLatencySeconds'] is not None

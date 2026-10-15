@@ -900,6 +900,7 @@ export function PlatformAnalyticsPage() {
   const [data, setData] = useState<MarketplaceHealth | null>(null)
   const [error, setError] = useState<unknown>(null)
   const [busy, setBusy] = useState(false)
+  const [rebuilt, setRebuilt] = useState<{ projectedEvents: number; at: Date } | null>(null)
   const [preset, setPreset] = useState<HealthPreset>('30')
   const [since, setSince] = useState(() => addDays(utcToday(), -29))
   const [until, setUntil] = useState(utcToday)
@@ -970,12 +971,14 @@ export function PlatformAnalyticsPage() {
               <button
                 className="btn btn-primary"
                 disabled={busy}
-                onClick={() =>
+                onClick={() => {
+                  setRebuilt(null)
                   run(async () => {
-                    await api('/v1/admin/analytics/rebuild', { method: 'POST' })
+                    const result = await api<{ projectedEvents: number }>('/v1/admin/analytics/rebuild', { method: 'POST' })
                     await reload()
+                    setRebuilt({ projectedEvents: result.projectedEvents, at: new Date() })
                   })
-                }
+                }}
               >
                 Rebuild Projections from Audit Ledger
               </button>
@@ -986,6 +989,12 @@ export function PlatformAnalyticsPage() {
 
       <ErrorAlert error={error} />
       {modal}
+      {rebuilt && (
+        <div className="alert alert-success" role="status" style={{ marginBottom: 16 }}>
+          Projections rebuilt from the audit ledger at {rebuilt.at.toLocaleTimeString()}: {rebuilt.projectedEvents.toLocaleString()} event
+          {rebuilt.projectedEvents === 1 ? '' : 's'} replayed. The figures below are the rebuilt values.
+        </div>
+      )}
 
       <div className="card panel" style={{ marginBottom: 20 }}>
         <div className="row" style={{ alignItems: 'flex-end', gap: 14 }}>
