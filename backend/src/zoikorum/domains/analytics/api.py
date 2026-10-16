@@ -48,11 +48,10 @@ async def professional_dashboard(actor: CurrentActor, session: DbSession):
 
 @router.get("/v1/analytics/marketplace-health")
 async def marketplace_health(actor: CurrentActor, session: AnalyticsSession, since: datetime | None = Query(None, alias="from"), until: datetime | None = Query(None, alias="to")):
-    """Platform health from the analytics projection. Totals are computed in the database, so the cost does not grow
-    with the number of events kept."""
-    actor.require_platform_role(*PlatformRole.ALL)
     """Marketplace health for the window [from, to): totals, a per-day (UTC) series of the key counts, and the current
-    trust tier distribution, which is a snapshot rather than windowed."""
+    trust tier distribution, which is a snapshot rather than windowed. Totals are computed in the database, so the cost
+    does not grow with the number of events kept."""
+    actor.require_platform_role(*PlatformRole.ALL)
     validate_dates(since, until)
     return await service.marketplace_health(session, since, until)
 
