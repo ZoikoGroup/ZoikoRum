@@ -6,7 +6,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-SubjectType = Literal["PROFESSIONAL", "FIRM"]
+# IDENTITY: a person's own identity check, for someone who acts without a professional profile
+# (a firm's authorized representative).
+SubjectType = Literal["PROFESSIONAL", "FIRM", "IDENTITY"]
 # Types a subject owner may start themselves. CREDENTIAL cases open from credential claims and
 # RESTRICTIONS (sanctions screening) opens automatically at registration.
 SelfServiceType = Literal["IDENTITY", "JURISDICTION", "INSURANCE", "FIRM_REGISTRATION", "BACKGROUND", "BENEFICIAL_OWNERSHIP"]

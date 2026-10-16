@@ -29,6 +29,8 @@ export function ResultCard({ r, saved, onToggle }: { r: SearchResult; saved?: bo
           <div className="name-row"><Avatar name={r.displayName} photoUrl={r.photoUrl} size={44} />
             <h3><Link to={`/professionals/${r.professionalId}`}>{r.displayName}</Link></h3></div>
           {r.headline && <div className="headline">{r.headline}</div>}
+          {r.firm && <div className="small">Practises with <Link to={`/firms/${r.firm.id}`}>{r.firm.name}</Link>
+            {r.firm.verified && <span className="badge green" style={{ marginLeft: 6 }}>Firm verified</span>}</div>}
           <div className="muted small">{[r.city, countryName(r.country)].filter(Boolean).join(', ')}
             {' · '}{LABEL[r.availability] ?? r.availability}</div>
         </div>

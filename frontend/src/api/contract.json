@@ -648,6 +648,7 @@
  "FirmOut": [
   "createdAt",
   "hasAuthorizedRepresentative",
+  "hasVerifiedRepresentative",
   "hqCountry",
   "id",
   "legalName",
@@ -655,10 +656,39 @@
   "myRoles",
   "primaryCategory",
   "registrationNumber",
+  "representatives",
   "sizeBand",
   "status",
   "tradingName",
   "version",
+  "website"
+ ],
+ "FirmOverviewOut": [
+  "activeContracts",
+  "awaitingSignature",
+  "completedContracts",
+  "money",
+  "openRequests",
+  "professionals"
+ ],
+ "FirmPageMember": [
+  "displayName",
+  "headline",
+  "photoUrl",
+  "professionalId",
+  "tier"
+ ],
+ "FirmPageOut": [
+  "hasVerifiedRepresentative",
+  "hqCountry",
+  "id",
+  "legalName",
+  "name",
+  "primaryCategory",
+  "professionals",
+  "sizeBand",
+  "verified",
+  "verifiedCredentials",
   "website"
  ],
  "FirmPatch": [
@@ -669,6 +699,22 @@
   "sizeBand",
   "tradingName",
   "website"
+ ],
+ "FirmProfessionalWork": [
+  "activeContracts",
+  "awaitingSignature",
+  "completedContracts",
+  "displayName",
+  "headline",
+  "money",
+  "openRequests",
+  "professionalId",
+  "published"
+ ],
+ "FirmRef": [
+  "id",
+  "name",
+  "verified"
  ],
  "FlagIn": [
   "organizationIds",
@@ -972,6 +1018,11 @@
  "MoneyDTO": [
   "amountMinor",
   "currency"
+ ],
+ "MoneyTotal": [
+  "currency",
+  "heldMinor",
+  "releasedMinor"
  ],
  "NoticeIn": [
   "howToGetHelp",
@@ -1487,6 +1538,11 @@
   "subjectId",
   "subjectType"
  ],
+ "RepresentativeOut": [
+  "displayName",
+  "identityId",
+  "identityVerified"
+ ],
  "RequestOut": [
   "attachments",
   "budget",
@@ -1559,6 +1615,7 @@
   "displayName",
   "engagementTypes",
   "enterpriseReady",
+  "firm",
   "headline",
   "languages",
   "licensedJurisdictions",

@@ -120,6 +120,13 @@ async def list_offerings(session: AsyncSession, professional_id: uuid.UUID, acti
     return [_offering(o) for o in (await session.scalars(stmt)).all()]
 
 
+async def list_by_firm(session: AsyncSession, firm_id: uuid.UUID) -> list[ProfessionalSummary]:
+    """Professionals who practise under this firm (any status), by name."""
+    rows = (await session.scalars(select(Professional).where(Professional.firm_id == firm_id)
+                                  .order_by(Professional.display_name))).all()
+    return [_summary(p) for p in rows]
+
+
 async def list_professional_ids(session: AsyncSession) -> list[uuid.UUID]:
     """Every professional (any status). Used to rebuild read models such as the search index."""
     return list((await session.scalars(select(Professional.id).order_by(Professional.created_at))).all())

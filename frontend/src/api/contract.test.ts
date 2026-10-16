@@ -16,6 +16,7 @@ const MIRRORS: Record<string, string | string[]> = {
   MessageThread: 'ThreadOut', ConversationMessage: 'MessageOut', MessageHit: 'MessageHitOut',
   Organization: 'OrganizationOut', BillingContact: 'BillingContactOut', OrgMember: 'MemberOut', Invitation: ['InvitationOut', 'FirmInvitationOut'],
   BusinessUnit: 'BusinessUnitOut', CostCenter: 'CostCenterOut', LegalEntity: 'LegalEntityOut', Firm: 'FirmOut', FirmMember: 'FirmMemberOut',
+  FirmOverview: 'FirmOverviewOut', FirmProfessionalWork: 'FirmProfessionalWork', FirmMoney: 'MoneyTotal', PublicFirm: 'FirmPageOut',
   Profile: 'ProfileOut', Readiness: 'ReadinessOut', Credential: 'CredentialOut', Offering: 'OfferingOut', PublicProfile: 'PublicProfileOut',
   SavedBuyer: 'SavedBuyerOut', BuyerCandidate: 'BuyerCandidateOut', ProposalRequest: 'RequestOut', RequestSummary: 'RequestSummaryOut',
   SavedSearch: 'SavedSearchOut', SearchResult: 'ResultItem', SearchResponse: 'SearchOut', IntentResponse: 'IntentOut',

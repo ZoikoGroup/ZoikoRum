@@ -10,6 +10,12 @@ FirmRoleName = Literal["FIRM_ADMIN", "FIRM_MEMBER", "AUTHORIZED_REPRESENTATIVE"]
 SizeBand = Literal["1-5", "6-20", "21-100", "100+"]
 
 
+class RepresentativeOut(BaseModel):
+    identityId: uuid.UUID
+    displayName: str
+    identityVerified: bool
+
+
 class FirmOut(BaseModel):
     id: uuid.UUID
     legalName: str
@@ -23,8 +29,62 @@ class FirmOut(BaseModel):
     myRoles: list[str]
     memberCount: int
     hasAuthorizedRepresentative: bool
+    # At least one representative whose own identity check is verified (needed for regulated firm work).
+    hasVerifiedRepresentative: bool
+    representatives: list[RepresentativeOut]
     version: int
     createdAt: datetime
+
+
+class MoneyTotal(BaseModel):
+    currency: str
+    heldMinor: int
+    releasedMinor: int
+
+
+class FirmProfessionalWork(BaseModel):
+    """One member professional's work, as counts and totals only: no buyers, contract terms or documents."""
+    professionalId: uuid.UUID
+    displayName: str
+    headline: str | None
+    published: bool
+    openRequests: int
+    awaitingSignature: int
+    activeContracts: int
+    completedContracts: int
+    money: list[MoneyTotal]
+
+
+class FirmOverviewOut(BaseModel):
+    professionals: list[FirmProfessionalWork]
+    openRequests: int
+    awaitingSignature: int
+    activeContracts: int
+    completedContracts: int
+    money: list[MoneyTotal]  # per currency, never converted
+
+
+class FirmPageMember(BaseModel):
+    professionalId: uuid.UUID
+    displayName: str
+    headline: str | None
+    photoUrl: str | None
+    tier: str
+
+
+class FirmPageOut(BaseModel):
+    """What buyers see about a firm (no registration number, people's emails or internal roles)."""
+    id: uuid.UUID
+    name: str
+    legalName: str
+    hqCountry: str
+    sizeBand: str | None
+    primaryCategory: str | None
+    website: str | None
+    verified: bool
+    hasVerifiedRepresentative: bool
+    verifiedCredentials: list[str]
+    professionals: list[FirmPageMember]
 
 
 class FirmPatch(BaseModel):

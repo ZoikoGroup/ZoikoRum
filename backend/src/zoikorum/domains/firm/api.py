@@ -13,7 +13,9 @@ from zoikorum.domains.firm.schemas import (
     FirmMemberOut,
     FirmMemberPatch,
     FirmOut,
+    FirmOverviewOut,
     FirmPatch,
+    FirmPageOut,
 )
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
@@ -49,6 +51,18 @@ async def decline(invitation_id: uuid.UUID, actor: CurrentActor, session: DbSess
 @router.get("/{firm_id}", response_model=FirmOut)
 async def get_firm(firm_id: uuid.UUID, actor: CurrentActor, session: DbSession):
     return await service.get_firm(session, actor, firm_id)
+
+
+@router.get("/{firm_id}/public", response_model=FirmPageOut)
+async def public_firm(firm_id: uuid.UUID, session: DbSession):
+    """The firm as buyers see it. Works without signing in."""
+    return await service.public_firm(session, firm_id)
+
+
+@router.get("/{firm_id}/overview", response_model=FirmOverviewOut)
+async def overview(firm_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    """Firm Admins: requests, contracts and protected money across the firm's professionals (counts and totals only)."""
+    return await service.overview(session, actor, firm_id)
 
 
 @router.patch("/{firm_id}", response_model=FirmOut)

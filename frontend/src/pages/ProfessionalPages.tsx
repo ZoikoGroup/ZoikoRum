@@ -12,7 +12,8 @@ import { paymentsApi, type Earnings } from '../api/escrow'
 import { budgetText, proposalApi, requestStatus, type ProposalRequest } from '../api/proposals'
 import { DIMENSION_VALUE, DIMENSIONS, trustApi, verificationApi, type Trust, type VerificationCase } from '../api/verification'
 import { useAuth } from '../auth/AuthContext'
-import { ActionList, Avatar, greeting, Icon, Kpi, type Action } from '../components/dashboard'
+import { ActionList, Avatar, DataFreshness, greeting, Icon, Kpi, type Action } from '../components/dashboard'
+import { dashboardApi, moneyOf, type DashboardSummary } from '../api/dashboards'
 import { HoursSlider } from '../components/HoursSlider'
 import { CantFindSpecialization } from '../components/CantFindSpecialization'
 import { DraftSaved, ResumeDraft } from '../components/ResumeDraft'
@@ -150,6 +151,7 @@ export function ProfessionalDashboard() {
   const [requests, setRequests] = useState<ProposalRequest[]>([])
   const [contracts, setContracts] = useState<Contract[]>([])
   const [earnings, setEarnings] = useState<Earnings | null>(null)
+  const [summary, setSummary] = useState<DashboardSummary | null>(null)
   const [actionError, setActionError] = useState<unknown>(null)
   const [now] = useState(() => Date.now())  // read the clock once, not on every render
 
@@ -161,6 +163,7 @@ export function ProfessionalDashboard() {
     setRequests(await proposalApi.list('professional').catch(() => []))
     setContracts(await contractApi.list('professional').catch(() => []))
     setEarnings(await paymentsApi.earnings().catch(() => null))
+    setSummary(await dashboardApi.professional().catch(() => null))
   }, [profile])
   useEffect(() => { load().catch(() => {}) }, [load])
 
@@ -252,10 +255,13 @@ export function ProfessionalDashboard() {
               .flatMap((k) => k.milestones).filter((m) => ['IN_PROGRESS', 'REVISION_REQUESTED'].includes(m.status)
                 && (!m.dueDate || new Date(`${m.dueDate}T00:00:00`).getTime() <= soon14)).length}
               note="Open, due in the next 14 days" /></Link>
-            <Link to="/app/professional/earnings"><Kpi icon="check" tone="green" label="Earnings This Month (UTC)" value={monthPaid} note="Paid out, after fees" /></Link>
+            <Link to="/app/professional/earnings"><Kpi icon="check" tone="green" label="Earnings This Month (UTC)" value={monthPaid}
+              note={summary && moneyOf(summary.pendingReleaseMinor).length ? `Paid out, after fees · ${formatCurrencies(moneyOf(summary.pendingReleaseMinor))} held in escrow for you`
+                : 'Paid out, after fees'} /></Link>
             <a href="#verification"><Kpi icon="shield" tone={trust?.tier === 'C' ? 'amber' : 'green'} label="Verification Status"
               value={trust ? `Tier ${trust.tier}` : '—'} note={trust?.tierLabel ?? 'Loading…'} /></a>
           </div>
+          <DataFreshness at={summary?.lastEventAt} />
 
           <div className="home-grid">
             <div>

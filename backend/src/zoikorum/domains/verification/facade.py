@@ -6,7 +6,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.domains.verification.models import VerificationCase
@@ -27,7 +27,7 @@ class CheckStatus:
 
 
 async def get_checks(session: AsyncSession, subject_type: str, subject_id: uuid.UUID) -> list[CheckStatus]:
-    """subject_type: PROFESSIONAL | FIRM. Latest case per (type, credential)."""
+    """subject_type: PROFESSIONAL | FIRM | IDENTITY. Latest case per (type, credential)."""
     rows = (await session.scalars(select(VerificationCase).where(
         VerificationCase.subject_type == subject_type, VerificationCase.subject_id == subject_id)
         .order_by(VerificationCase.created_at.desc()))).all()
@@ -36,6 +36,15 @@ async def get_checks(session: AsyncSession, subject_type: str, subject_id: uuid.
         latest.setdefault((c.verification_type, c.credential_claim_id, c.jurisdiction if c.credential_claim_id is None else None), c)
     return [CheckStatus(c.id, c.verification_type, c.status, c.label, c.jurisdiction, c.verified_at, c.expires_at,
                         c.public_reason, c.credential_claim_id, c.specialization) for c in latest.values()]
+
+
+async def identity_verified(session: AsyncSession, identity_id: uuid.UUID, professional_id: uuid.UUID | None = None) -> bool:
+    """Whether a person's identity is verified: their own check, or the identity check on their professional profile."""
+    subjects = [(VerificationCase.subject_type == "IDENTITY") & (VerificationCase.subject_id == identity_id)]
+    if professional_id:
+        subjects.append((VerificationCase.subject_type == "PROFESSIONAL") & (VerificationCase.subject_id == professional_id))
+    return bool(await session.scalar(select(VerificationCase.id).where(
+        or_(*subjects), VerificationCase.verification_type == "IDENTITY", VerificationCase.status == "VERIFIED").limit(1)))
 
 
 async def open_case_counts(session: AsyncSession) -> dict[str, int]:

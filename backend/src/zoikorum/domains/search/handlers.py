@@ -42,3 +42,13 @@ async def on_professional_fact(session: AsyncSession, event: EventEnvelope) -> N
 
 for _event_type in _EVENTS:
     subscribe(_event_type, consumer="search.professional_document")(on_professional_fact)
+
+
+@subscribe(E.FIRM_VERIFIED, consumer="search.firm_documents")
+@subscribe(E.FIRM_PROFILE_UPDATED, consumer="search.firm_documents")
+async def on_firm_changed(session: AsyncSession, event: EventEnvelope) -> None:
+    """The firm's name or verification shows on each of its professionals' results."""
+    from zoikorum.domains.professional import facade as professional
+
+    for pro in await professional.list_by_firm(session, uuid.UUID(str(event.payload["firmId"]))):
+        await service.rebuild(session, pro.id, event.occurredAt)

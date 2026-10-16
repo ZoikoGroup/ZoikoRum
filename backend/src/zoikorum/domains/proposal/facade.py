@@ -94,6 +94,18 @@ async def response_stats(session: AsyncSession, professional_id: uuid.UUID) -> d
     return {"requests": len(reqs), "responded": len(hours), "medianHours": round(median(hours), 1) if hours else None}
 
 
+async def open_request_counts(session: AsyncSession, professional_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
+    """Requests sent to each professional and still open (awaiting or holding a proposal)."""
+    from sqlalchemy import func
+
+    if not professional_ids:
+        return {}
+    rows = (await session.execute(select(ProposalRequest.professional_id, func.count()).where(
+        ProposalRequest.professional_id.in_(professional_ids), ProposalRequest.status.in_(("OPEN", "PROPOSAL_RECEIVED")))
+        .group_by(ProposalRequest.professional_id))).all()
+    return dict(rows)
+
+
 async def buyer_relationships(session: AsyncSession, professional_id: uuid.UUID) -> dict[uuid.UUID, dict]:
     """Organisations that have sent this professional a request: how many, and when last (saved buyers)."""
     from sqlalchemy import func

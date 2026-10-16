@@ -38,6 +38,22 @@ class EscrowSummary:
     allocations: tuple[AllocationSummary, ...]
 
 
+async def money_by_professional(session: AsyncSession, professional_ids: list[uuid.UUID]) -> dict[uuid.UUID, dict[str, dict[str, int]]]:
+    """Per professional and currency: funds held in escrow now, and released to date. Never converted between currencies."""
+    from sqlalchemy import func
+
+    if not professional_ids:
+        return {}
+    out: dict[uuid.UUID, dict[str, dict[str, int]]] = {}
+    for pid, currency, held, released in (await session.execute(
+            select(EscrowAccount.professional_id, EscrowAccount.currency, func.sum(EscrowAccount.held_minor),
+                   func.sum(EscrowAccount.released_minor))
+            .where(EscrowAccount.professional_id.in_(professional_ids))
+            .group_by(EscrowAccount.professional_id, EscrowAccount.currency))).all():
+        out.setdefault(pid, {})[currency] = {"held": int(held or 0), "released": int(released or 0)}
+    return out
+
+
 async def get_by_contract(session: AsyncSession, contract_id: uuid.UUID) -> EscrowSummary | None:
     a = await session.scalar(select(EscrowAccount).where(EscrowAccount.contract_id == contract_id))
     if a is None:

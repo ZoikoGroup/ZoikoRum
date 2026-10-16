@@ -8,9 +8,11 @@ export interface TaxonomySpecialization {
   name: string
   requiresCredential: boolean
   regulated: boolean
+  requiresInsurance?: boolean
   deliverableTemplates: string[]
   credentialHints: string[]
 }
+export interface SpecializationFlags { requiresCredential: boolean; regulated: boolean; requiresInsurance: boolean }
 export interface TaxonomyGroup extends TaxonomySpecialization { specializations: TaxonomySpecialization[] }
 export interface TaxonomyCategory extends TaxonomySpecialization { version: number; groups: TaxonomyGroup[] }
 
@@ -32,6 +34,15 @@ export const taxonomyApi = {
   queue: () => allPages<SpecializationSuggestion>('/v1/admin/taxonomy/suggestions'),
   decide: (id: string, body: { action: 'APPROVE' | 'MERGE' | 'REJECT'; name?: string; groupSlug?: string; requiresCredential?: boolean; regulated?: boolean; mergeSlug?: string; note?: string }) =>
     api<SpecializationSuggestion>(`/v1/admin/taxonomy/suggestions/${id}/decision`, { method: 'POST', body }),
+  // Platform Admin: every change makes a new taxonomy version of the category; specializations are retired, never deleted.
+  createSpecialization: (body: { groupSlug: string; name: string } & SpecializationFlags) =>
+    api<TaxonomySpecialization>('/v1/admin/taxonomy/specializations', { method: 'POST', body }),
+  updateSpecialization: (slug: string, body: Partial<{ name: string } & SpecializationFlags>) =>
+    api<TaxonomySpecialization>(`/v1/admin/taxonomy/specializations/${slug}`, { method: 'PATCH', body }),
+  retireSpecialization: (slug: string) =>
+    api<TaxonomySpecialization>(`/v1/admin/taxonomy/specializations/${slug}/deprecate`, { method: 'POST' }),
+  /** Loads the default list; never overwrites entries that were edited. */
+  seedDefaults: () => api<{ specializations: number }>('/v1/admin/taxonomy/seed', { method: 'POST' }),
 }
 
 // ---- Professional profile ----------------------------------------------------

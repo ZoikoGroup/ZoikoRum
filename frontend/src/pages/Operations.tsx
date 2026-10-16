@@ -425,6 +425,51 @@ interface Prompt {
   status: string
 }
 
+interface BuiltInPrompt {
+  promptKey: string
+  version: number
+  purpose: string
+  owner: string
+  targetModel: string
+  goldenTests: string
+  fallback: string
+  status: 'ACTIVE' | 'OFF' | 'NOT_CONFIGURED'
+}
+
+const BUILT_IN_STATUS: Record<BuiltInPrompt['status'], [string, string]> = {
+  ACTIVE: ['Active', 'green'], OFF: ['Switched off', 'warn'], NOT_CONFIGURED: ['No AI provider: rules only', ''],
+}
+
+/** Prompts that ship with the platform: changed only through code review with their golden tests, and switched off
+    with ZK_AI_DISABLED_PROMPTS (the feature then uses its non-AI rules). */
+function BuiltInPrompts({ onError }: { onError: (err: unknown) => void }) {
+  const [rows, setRows] = useState<BuiltInPrompt[] | null>(null)
+  useEffect(() => { api<BuiltInPrompt[]>('/v1/ai/prompts/built-in').then(setRows).catch(onError) }, [onError])
+  return (
+    <section className="card panel" style={{ marginBottom: 20 }}>
+      <div className="panel-head"><h2>Built-in prompts</h2>
+        <span className="small muted">{rows ? `${rows.length} shipped with the platform` : 'Loading…'}</span></div>
+      {rows && rows.length === 0 ? <EmptyTable columns={['Prompt', 'Purpose', 'Without AI', 'Status']}>No built-in prompts.</EmptyTable> : (
+        <table className="data">
+          <thead><tr><th>Prompt</th><th>Purpose</th><th>Without AI</th><th>Status</th></tr></thead>
+          <tbody>{(rows ?? []).map((p) => {
+            const [label, tone] = BUILT_IN_STATUS[p.status] ?? [p.status, '']
+            return (
+              <tr key={p.promptKey}>
+                <td><strong>{p.promptKey}</strong><div className="muted small">v{p.version} · {p.targetModel} · owner {p.owner}</div>
+                  <div className="muted small">Golden tests: <code>{p.goldenTests}</code></div></td>
+                <td className="small">{p.purpose}</td>
+                <td className="small">{p.fallback}</td>
+                <td><span className={`badge ${tone}`}>{label}</span></td>
+              </tr>
+            )
+          })}</tbody>
+        </table>
+      )}
+    </section>
+  )
+}
+
 export function AIAdminPage() {
   const [rows, setRows] = useState<Prompt[]>([])
   const [error, setError] = useState<unknown>(null)
@@ -450,6 +495,7 @@ export function AIAdminPage() {
 
       <ErrorAlert error={error} />
       {modal}
+      <BuiltInPrompts onError={setError} />
 
       <form
         className="card panel"

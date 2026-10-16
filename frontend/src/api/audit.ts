@@ -22,6 +22,12 @@ export const auditApi = {
 export const platformActivity = (limit = 30) =>
   api<{ items: AuditRecord[] }>('/v1/audit/records', { query: { limit: String(limit), newestFirst: 'true' } }).then((r) => r.items)
 
+export interface ChainCheck { valid: boolean; checked: number; headHash?: string; brokenAtSeq?: number }
+
+/** Compliance Officers and Platform Admins: recompute every hash of the audit ledger, in order. A broken link also
+    raises a HashChainBroken incident. */
+export const verifyAuditChain = () => api<ChainCheck>('/v1/audit/chain/verify', { method: 'POST' })
+
 /** Org Admins / Legal Reviewers: export the organisation's audit records as CSV (hash-chained ledger). */
 export async function exportAuditCsv(tenantId: string): Promise<string> {
   const job = await api<{ id: string }>('/v1/audit/exports', { method: 'POST', body: { tenantId, format: 'csv' } })

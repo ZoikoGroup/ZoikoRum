@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from zoikorum.domains.marketplace import facade as marketplace_facade
 from zoikorum.domains.buyer import facade as buyer_facade
 from zoikorum.domains.contract import facade as contract_facade
+from zoikorum.domains.firm import facade as firm_facade
 from zoikorum.domains.identity import facade as identity_facade
 from zoikorum.domains.policy import facade as policy_facade
 from zoikorum.domains.professional import facade as professional_facade
@@ -26,7 +27,7 @@ from zoikorum.domains.proposal import facade as proposal_facade
 from zoikorum.domains.review import facade as review_facade
 from zoikorum.domains.search import concepts
 from zoikorum.domains.search.models import ProfessionalDocument as Doc
-from zoikorum.domains.search.schemas import (FacetValue, IntentFilters, IntentIn, IntentOut, PolicyFilterOut, ResultItem, SearchOut,
+from zoikorum.domains.search.schemas import (FacetValue, FirmRef, IntentFilters, IntentIn, IntentOut, PolicyFilterOut, ResultItem, SearchOut,
                                             SearchParams, SpecRef)
 from zoikorum.domains.trust import facade as trust_facade
 from zoikorum.domains.verification import facade as verification_facade
@@ -87,11 +88,15 @@ async def rebuild(session: AsyncSession, professional_id: uuid.UUID, occurred_at
     delivery = await contract_facade.delivery_stats(session, pro.id)
     reviews = await review_facade.rating_stats(session, pro.id)
     response = await proposal_facade.response_stats(session, pro.id)
+    firm = await firm_facade.get_firm(session, pro.firm_id) if pro.firm_id else None
+    if firm and firm.status == "SUSPENDED":
+        firm = None
+    firm_name = (firm.trading_name or firm.legal_name) if firm else None
 
     text_a = " ".join(filter(None, [pro.display_name, pro.headline]))
     text_b = " ".join(names.values())
     text_c = " ".join(filter(None, [pro.bio, *(o.title for o in offerings), *(d for o in offerings for d in o.deliverables),
-                                    *verified_credentials]))
+                                    *verified_credentials, firm_name]))
     values = dict(
         professional_id=pro.id, visible=pro.status == "PUBLISHED" and await _account_active(session, pro.identity_id)
         and not set(await admin_facade.active_restrictions(session, "IDENTITY", pro.identity_id)).intersection({"SUSPEND_ACCOUNT", "OFFBOARD"}),
@@ -114,6 +119,7 @@ async def rebuild(session: AsyncSession, professional_id: uuid.UUID, occurred_at
         completed_engagements=delivery["completed"], milestones_due=delivery["milestonesWithDueDate"],
         milestones_on_time=delivery["onTime"], review_count=reviews["reviewCount"], review_average=reviews["averageRating"],
         response_median_hours=response["medianHours"],
+        firm_id=firm.id if firm else None, firm_name=firm_name, firm_verified=bool(firm and firm.status == "VERIFIED"),
         document=_weighted(text_a, "A").op("||")(_weighted(text_b, "B")).op("||")(_weighted(text_c, "C")),
     )
     stmt = pg_insert(Doc).values(id=uuid.uuid4(), **values)
@@ -331,6 +337,7 @@ def _item(doc: Doc, why: list[str], regulated: set[str] = frozenset()) -> Result
         servedJurisdictions=list(doc.served_jurisdictions), licensedJurisdictions=list(doc.licensed_jurisdictions),
         dimensions={**doc.dimensions, **({"restrictions": "UNKNOWN"} if doc.dimensions.get("restrictions") not in (None, "CLEAR") else {})},
         regulatedPreview=doc.tier != "A" and bool(regulated.intersection(doc.specializations)), enterpriseReady=doc.enterprise_ready,
+        firm=FirmRef(id=doc.firm_id, name=doc.firm_name, verified=doc.firm_verified) if doc.firm_id and doc.firm_name else None,
     )
 
 

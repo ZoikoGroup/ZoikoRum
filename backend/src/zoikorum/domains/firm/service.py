@@ -10,9 +10,18 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.config import get_settings
+from zoikorum.domains.admin import facade as admin_facade
+from zoikorum.domains.contract import facade as contract_facade
+from zoikorum.domains.escrow import facade as escrow_facade
+from zoikorum.domains.firm import facade as firm_facade
 from zoikorum.domains.firm.models import Firm, FirmInvitation, FirmMember
-from zoikorum.domains.firm.schemas import FirmInvitationOut, FirmMemberOut, FirmOut, FirmPatch
+from zoikorum.domains.firm.schemas import (FirmInvitationOut, FirmMemberOut, FirmOut, FirmOverviewOut, FirmPatch, FirmProfessionalWork,
+                                           MoneyTotal, FirmPageMember, FirmPageOut, RepresentativeOut)
 from zoikorum.domains.identity import facade as identity_facade
+from zoikorum.domains.professional import facade as professional_facade
+from zoikorum.domains.proposal import facade as proposal_facade
+from zoikorum.domains.trust import facade as trust_facade
+from zoikorum.domains.verification import facade as verification_facade
 from zoikorum.shared import clock
 from zoikorum.shared.auth import Actor, AuthStrength, FirmRole
 from zoikorum.shared.crypto import sha256_hex
@@ -94,13 +103,70 @@ async def _count(session: AsyncSession, firm_id: uuid.UUID, role: str | None = N
 
 
 async def _out(session: AsyncSession, firm: Firm, my_roles: list[str]) -> FirmOut:
+    reps = await firm_facade.representatives(session, firm.id)
     return FirmOut(
         id=firm.id, legalName=firm.legal_name, tradingName=firm.trading_name, registrationNumber=firm.registration_number,
         hqCountry=firm.hq_country, sizeBand=firm.size_band, primaryCategory=firm.primary_category, website=firm.website,
         status=firm.status, myRoles=sorted(my_roles), memberCount=await _count(session, firm.id),
-        hasAuthorizedRepresentative=await _count(session, firm.id, FirmRole.AUTHORIZED_REPRESENTATIVE) > 0,
+        hasAuthorizedRepresentative=bool(reps), hasVerifiedRepresentative=any(r.identity_verified for r in reps),
+        representatives=[RepresentativeOut(identityId=r.identity_id, displayName=r.display_name, identityVerified=r.identity_verified)
+                         for r in reps],
         version=firm.version, createdAt=firm.created_at,
     )
+
+
+def _money(by_currency: dict[str, dict[str, int]]) -> list[MoneyTotal]:
+    return [MoneyTotal(currency=c, heldMinor=v["held"], releasedMinor=v["released"]) for c, v in sorted(by_currency.items())]
+
+
+async def overview(session: AsyncSession, actor: Actor, firm_id: uuid.UUID) -> FirmOverviewOut:
+    """The firm's work across its member professionals, for Firm Admins. Counts and money totals only: buyers,
+    contract terms and documents stay between each professional and their client."""
+    await _require_member(session, actor, firm_id, FirmRole.FIRM_ADMIN)
+    await _firm(session, firm_id)
+    pros = await professional_facade.list_by_firm(session, firm_id)
+    ids = [p.id for p in pros]
+    open_requests = await proposal_facade.open_request_counts(session, ids)
+    contracts = await contract_facade.contract_counts(session, ids)
+    money = await escrow_facade.money_by_professional(session, ids)
+    rows, totals = [], {}
+    for p in pros:
+        c = contracts.get(p.id, {"awaitingSignature": 0, "active": 0, "completed": 0})
+        for currency, v in money.get(p.id, {}).items():
+            t = totals.setdefault(currency, {"held": 0, "released": 0})
+            t["held"] += v["held"]
+            t["released"] += v["released"]
+        rows.append(FirmProfessionalWork(
+            professionalId=p.id, displayName=p.display_name, headline=p.headline, published=p.status == "PUBLISHED",
+            openRequests=open_requests.get(p.id, 0), awaitingSignature=c["awaitingSignature"], activeContracts=c["active"],
+            completedContracts=c["completed"], money=_money(money.get(p.id, {}))))
+    return FirmOverviewOut(
+        professionals=rows, openRequests=sum(r.openRequests for r in rows), awaitingSignature=sum(r.awaitingSignature for r in rows),
+        activeContracts=sum(r.activeContracts for r in rows), completedContracts=sum(r.completedContracts for r in rows),
+        money=_money(totals))
+
+
+async def public_firm(session: AsyncSession, firm_id: uuid.UUID) -> FirmPageOut:
+    """The firm as buyers see it: who it is, what is verified, and its published professionals. Works without signing in."""
+    firm = await _firm(session, firm_id)
+    checks = await verification_facade.get_checks(session, "FIRM", firm.id)
+    members = []
+    pros = [p for p in await professional_facade.list_by_firm(session, firm.id) if p.status == "PUBLISHED"]
+    trust = await trust_facade.get_trust_many(session, [p.id for p in pros])
+    for p in pros:
+        who = await identity_facade.get_identity(session, p.identity_id)
+        restricted = set(await admin_facade.active_restrictions(session, "IDENTITY", p.identity_id)) & {"SUSPEND_ACCOUNT", "OFFBOARD"}
+        if who is None or who.status != "ACTIVE" or restricted:
+            continue
+        members.append(FirmPageMember(professionalId=p.id, displayName=p.display_name, headline=p.headline,
+                                        photoUrl=p.photo_url, tier=trust[p.id].tier if p.id in trust else "C"))
+    summary = await firm_facade.get_firm(session, firm.id)
+    return FirmPageOut(
+        id=firm.id, name=firm.trading_name or firm.legal_name, legalName=firm.legal_name, hqCountry=firm.hq_country,
+        sizeBand=firm.size_band, primaryCategory=firm.primary_category, website=firm.website,
+        verified=firm.status == "VERIFIED", hasVerifiedRepresentative=bool(summary and summary.has_verified_representative),
+        verifiedCredentials=sorted(c.label for c in checks if c.status == "VERIFIED" and c.verification_type != "FIRM_REGISTRATION"),
+        professionals=members)
 
 
 async def my_firms(session: AsyncSession, actor: Actor) -> list[FirmOut]:

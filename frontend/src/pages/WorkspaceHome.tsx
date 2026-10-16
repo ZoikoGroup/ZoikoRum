@@ -8,7 +8,8 @@ import { proposalApi, requestStatus, type ProposalRequest } from '../api/proposa
 import { savedApi, type SavedProfessional } from '../api/saved'
 import { messagingApi, type MessageThread } from '../api/messaging'
 import { useAuth } from '../auth/AuthContext'
-import { ActionList, Avatar, greeting, Icon, type Action } from '../components/dashboard'
+import { ActionList, Avatar, DataFreshness, greeting, Icon, type Action } from '../components/dashboard'
+import { dashboardApi, moneyOf, type DashboardSummary } from '../api/dashboards'
 import { EmptyTable, PortalHeader, StatCard, Tabs } from '../components/portal'
 import { AccountAlerts } from './Dashboards'
 import { formatCurrencies } from '../lib/money'
@@ -78,6 +79,10 @@ export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
   }, [kind])
 
   const isAdmin = !!org?.myRoles.includes('ORG_ADMIN')
+  const [summary, setSummary] = useState<DashboardSummary | null>(null)
+  useEffect(() => {
+    if (org) dashboardApi.buyer(org.id).then(setSummary).catch(() => {})
+  }, [org])
   useEffect(() => {
     if (!org || kind !== 'enterprise') return
     orgApi.businessUnits(org.id).then((u) => setUnits(u.length)).catch(() => {})
@@ -129,8 +134,10 @@ export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
         <StatCard icon="briefcase" tone="green" label="Active Engagements" value={contracts.filter((c) => c.status === 'ACTIVE').length}
           sub={toSign.length ? `${toSign.length} awaiting your signature` : 'In progress'} to="/app/engagements" />
         <StatCard icon="lock" tone="teal" label="Protected Funds" to="/app/payments" sub="In escrow, until you accept"
-          value={formatCurrencies(contracts.flatMap(c => c.milestones.filter(m => ['IN_PROGRESS', 'SUBMITTED', 'REVISION_REQUESTED', 'ACCEPTANCE_PENDING_APPROVAL', 'DISPUTED'].includes(m.status)).map(m => m.amount)))} />
+          value={summary ? formatCurrencies(moneyOf(summary.fundsInProtectionMinor))
+            : formatCurrencies(contracts.flatMap(c => c.milestones.filter(m => ['IN_PROGRESS', 'SUBMITTED', 'REVISION_REQUESTED', 'ACCEPTANCE_PENDING_APPROVAL', 'DISPUTED'].includes(m.status)).map(m => m.amount)))} />
       </div>
+      <DataFreshness at={summary?.lastEventAt} />
 
       {urgent.length > 0 && !hideBanner && (
         <div className="attention-banner" role="status">

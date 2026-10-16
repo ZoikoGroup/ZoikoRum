@@ -140,6 +140,14 @@ accept), roles FIRM_ADMIN/FIRM_MEMBER/AUTHORIZED_REPRESENTATIVE, firm verificati
 subjectType FIRM and verificationType FIRM_REGISTRATION → FIRM_VERIFIED). Invariant: firm-level regulated offerings
 require ≥1 verified authorized representative + verified firm.
 - `POST /v1/firms`, `GET /v1/firms/{id}`, `POST /v1/firms/{id}/invitations` {email, roles}, `POST /v1/firm-invitations/{id}/accept`, `DELETE /v1/firms/{id}/members/{identityId}`.
+- A representative counts as verified only when their own IDENTITY check is verified: on their professional profile, or a
+  person check (`subjectType` IDENTITY, subjectId = their identity, started by themselves). `GET /v1/firms/{id}` returns
+  `representatives` and `hasVerifiedRepresentative`.
+- Firm credentials: a firm may also request JURISDICTION (firm licence) and INSURANCE checks.
+- `GET /v1/firms/{id}/overview` (Firm Admins): per member professional, open requests, contracts and escrow money per
+  currency; counts and totals only, never buyers, terms or documents.
+- `GET /v1/firms/{id}/public` (no sign-in): firm details, what is verified, published professionals. Search results and
+  the public profile carry the firm (`firm` {id, name, verified}); firm renames and verification rebuild members' documents.
 
 ### professional
 Onboarding (wireframe "Professional Onboarding"): profile basics, specializations (1 primary + ≤5 secondary, taxonomy

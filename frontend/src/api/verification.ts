@@ -1,7 +1,8 @@
 import { allPages, api } from './client'
 import type { Upload } from './files'
 
-export type SubjectType = 'PROFESSIONAL' | 'FIRM'
+/** IDENTITY: a person's own identity check (a firm's authorized representative without a professional profile). */
+export type SubjectType = 'PROFESSIONAL' | 'FIRM' | 'IDENTITY'
 export type SelfServiceType = 'IDENTITY' | 'JURISDICTION' | 'INSURANCE' | 'FIRM_REGISTRATION' | 'BACKGROUND' | 'BENEFICIAL_OWNERSHIP'
 export interface BeneficialOwner { name: string; country: string; percent: number; control: boolean }
 export type EvidenceType = 'ID_DOCUMENT' | 'PROOF_OF_ADDRESS' | 'LICENSE' | 'CERTIFICATE' | 'INSURANCE_POLICY' | 'REGISTRATION_DOCUMENT' | 'OTHER'
