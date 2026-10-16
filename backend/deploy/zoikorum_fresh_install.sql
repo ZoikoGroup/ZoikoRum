@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict uXKOftTRdfUAppBkg4x9ndVqL7qHsbX2jcYP79auMRhw3iPMmlmLq80avF3FUoA
+\restrict wHxQz2TLE5ga65Qbj9VJIW4CErE8OfEt0jvl8I1WW6zhzMOjZLGDR0YTDZSmVFa
 
 -- Dumped from database version 16.13
 -- Dumped by pg_dump version 16.13
@@ -935,6 +935,25 @@ CREATE TABLE contract.submissions (
 
 
 --
+-- Name: tasks; Type: TABLE; Schema: contract; Owner: -
+--
+
+CREATE TABLE contract.tasks (
+    contract_id uuid NOT NULL,
+    milestone_id uuid,
+    title character varying(200) NOT NULL,
+    owner character varying(20) NOT NULL,
+    due_date date,
+    done_at timestamp with time zone,
+    done_by uuid,
+    created_by uuid NOT NULL,
+    id uuid NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: termination_requests; Type: TABLE; Schema: contract; Owner: -
 --
 
@@ -1576,6 +1595,24 @@ CREATE TABLE messaging.dispute_contexts (
     is_open boolean NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: meetings; Type: TABLE; Schema: messaging; Owner: -
+--
+
+CREATE TABLE messaging.meetings (
+    thread_id uuid NOT NULL,
+    title character varying(200) NOT NULL,
+    starts_at timestamp with time zone NOT NULL,
+    duration_minutes integer NOT NULL,
+    join_url character varying(500) NOT NULL,
+    created_by uuid NOT NULL,
+    status character varying(20) NOT NULL,
+    id uuid NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -2274,6 +2311,44 @@ CREATE TABLE professional.saved_buyers (
 
 
 --
+-- Name: brief_interests; Type: TABLE; Schema: proposal; Owner: -
+--
+
+CREATE TABLE proposal.brief_interests (
+    brief_id uuid NOT NULL,
+    professional_id uuid NOT NULL,
+    note character varying(500) NOT NULL,
+    id uuid NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: open_briefs; Type: TABLE; Schema: proposal; Owner: -
+--
+
+CREATE TABLE proposal.open_briefs (
+    organization_id uuid NOT NULL,
+    buyer_identity_id uuid NOT NULL,
+    country character varying(2) NOT NULL,
+    service character varying(200) NOT NULL,
+    specialization character varying(120) NOT NULL,
+    objective character varying(300) NOT NULL,
+    details character varying(1200) NOT NULL,
+    desired_start_date date,
+    estimated_duration character varying(30),
+    budget_max_minor bigint,
+    budget_currency character varying(3),
+    status character varying(20) NOT NULL,
+    closes_at timestamp with time zone NOT NULL,
+    id uuid NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: proposals; Type: TABLE; Schema: proposal; Owner: -
 --
 
@@ -2858,6 +2933,14 @@ COPY contract.submissions (milestone_id, submitted_by, note, files, id, created_
 
 
 --
+-- Data for Name: tasks; Type: TABLE DATA; Schema: contract; Owner: -
+--
+
+COPY contract.tasks (contract_id, milestone_id, title, owner, due_date, done_at, done_by, created_by, id, updated_at, created_at) FROM stdin;
+\.
+
+
+--
 -- Data for Name: termination_requests; Type: TABLE DATA; Schema: contract; Owner: -
 --
 
@@ -3102,139 +3185,153 @@ COPY marketplace.specialization_suggestions (identity_id, professional_id, text,
 --
 
 COPY marketplace.taxonomy_nodes (slug, name, level, parent_id, category_slug, sort_order, requires_credential, regulated, deliverable_templates, credential_hints, status, taxonomy_version, id, updated_at, created_at, requires_insurance) FROM stdin;
-finance-and-accounting	Finance & Accounting	CATEGORY	\N	finance-and-accounting	1	f	f	{}	{CPA,CA,ACCA,CMA,CFA,CIA,CGMA,CFE}	ACTIVE	1	44e95ddb-ec34-57a1-b1e7-696ac2336767	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-accounting-and-reporting	Accounting & Reporting	GROUP	44e95ddb-ec34-57a1-b1e7-696ac2336767	finance-and-accounting	1	f	f	{"Monthly management accounts","Reconciliations pack","Close checklist and timetable"}	{}	ACTIVE	1	6f2c6789-c2e8-5237-9e16-d4ae28f1490e	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-financial-accounting	Financial Accounting	SPECIALIZATION	6f2c6789-c2e8-5237-9e16-d4ae28f1490e	finance-and-accounting	1	f	f	{"Monthly management accounts","Reconciliations pack","Close checklist and timetable"}	{}	ACTIVE	1	da8d7a0d-7abb-57f8-a6c8-f676393d7c23	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-management-accounting	Management Accounting	SPECIALIZATION	6f2c6789-c2e8-5237-9e16-d4ae28f1490e	finance-and-accounting	2	f	f	{"Monthly management accounts","Reconciliations pack","Close checklist and timetable"}	{}	ACTIVE	1	6ccda730-0d1e-53bd-90e9-d77db35cf240	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-bookkeeping-and-accounting-services	Bookkeeping & Accounting Services	SPECIALIZATION	6f2c6789-c2e8-5237-9e16-d4ae28f1490e	finance-and-accounting	3	f	f	{"Monthly bookkeeping","Bank and card reconciliations","Year-end pack for accountant"}	{}	ACTIVE	1	1a625c1d-de0a-509c-bcd6-47968e5f70a1	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-month-end-quarter-end-close	Month-End / Quarter-End Close	SPECIALIZATION	6f2c6789-c2e8-5237-9e16-d4ae28f1490e	finance-and-accounting	4	f	f	{"Monthly management accounts","Reconciliations pack","Close checklist and timetable"}	{}	ACTIVE	1	4cdc2b25-9a59-5373-90ad-18f03f2b88fe	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-group-consolidation-and-reporting	Group Consolidation & Reporting	SPECIALIZATION	6f2c6789-c2e8-5237-9e16-d4ae28f1490e	finance-and-accounting	5	f	f	{"Monthly management accounts","Reconciliations pack","Close checklist and timetable"}	{}	ACTIVE	1	5249f9b3-d81a-5f20-8437-a7952e44919b	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-technical-accounting-advisory	Technical Accounting Advisory	SPECIALIZATION	6f2c6789-c2e8-5237-9e16-d4ae28f1490e	finance-and-accounting	6	t	f	{"Monthly management accounts","Reconciliations pack","Close checklist and timetable"}	{CPA,CA,ACCA,CMA,CFA,CIA,CGMA,CFE}	ACTIVE	1	99353595-1044-505d-90a8-417124efa2bd	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-ifrs-reporting	IFRS Reporting	SPECIALIZATION	6f2c6789-c2e8-5237-9e16-d4ae28f1490e	finance-and-accounting	7	t	f	{"Monthly management accounts","Reconciliations pack","Close checklist and timetable"}	{CPA,CA,ACCA,CMA,CFA,CIA,CGMA,CFE}	ACTIVE	1	d7535b92-43eb-5159-b716-d362693eed76	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-us-gaap-reporting	US GAAP Reporting	SPECIALIZATION	6f2c6789-c2e8-5237-9e16-d4ae28f1490e	finance-and-accounting	8	t	f	{"Monthly management accounts","Reconciliations pack","Close checklist and timetable"}	{CPA,CA,ACCA,CMA,CFA,CIA,CGMA,CFE}	ACTIVE	1	a6824680-394d-53a0-9f96-fe5db810791b	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-taxation	Taxation	GROUP	44e95ddb-ec34-57a1-b1e7-696ac2336767	finance-and-accounting	2	f	f	{"Tax computation and return","Advisory memo","Filing calendar"}	{}	ACTIVE	1	e2b2b59d-0f03-5d46-90c2-2b55fa579b22	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-corporate-tax-advisory	Corporate Tax Advisory	SPECIALIZATION	e2b2b59d-0f03-5d46-90c2-2b55fa579b22	finance-and-accounting	1	t	f	{"Tax computation and return","Advisory memo","Filing calendar"}	{CPA,CA,ACCA,CMA,CFA,CIA,CGMA,CFE}	ACTIVE	1	05494f7a-5782-5c74-a0dc-408573688ec2	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-personal-tax-planning	Personal Tax Planning	SPECIALIZATION	e2b2b59d-0f03-5d46-90c2-2b55fa579b22	finance-and-accounting	2	f	f	{"Tax computation and return","Advisory memo","Filing calendar"}	{}	ACTIVE	1	fad83eff-f7d3-525d-af71-d120545031b5	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-international-tax-strategy	International Tax Strategy	SPECIALIZATION	e2b2b59d-0f03-5d46-90c2-2b55fa579b22	finance-and-accounting	3	t	f	{"Tax computation and return","Advisory memo","Filing calendar"}	{CPA,CA,ACCA,CMA,CFA,CIA,CGMA,CFE}	ACTIVE	1	f4bcc0f2-1b04-5090-b69e-ad6e957be4ce	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-transfer-pricing	Transfer Pricing	SPECIALIZATION	e2b2b59d-0f03-5d46-90c2-2b55fa579b22	finance-and-accounting	4	t	f	{"Tax computation and return","Advisory memo","Filing calendar"}	{CPA,CA,ACCA,CMA,CFA,CIA,CGMA,CFE}	ACTIVE	1	2f54a9b7-89d8-536a-a318-6f8af58c2f94	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-vat-gst-sales-tax	VAT / GST / Sales Tax	SPECIALIZATION	e2b2b59d-0f03-5d46-90c2-2b55fa579b22	finance-and-accounting	5	f	f	{"Tax computation and return","Advisory memo","Filing calendar"}	{}	ACTIVE	1	15cc8141-0b76-5df9-b12e-732271e5b555	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-tax-compliance-and-filings	Tax Compliance & Filings	SPECIALIZATION	e2b2b59d-0f03-5d46-90c2-2b55fa579b22	finance-and-accounting	6	t	t	{"Tax computation and return","Advisory memo","Filing calendar"}	{CPA,CA,ACCA,CMA,CFA,CIA,CGMA,CFE}	ACTIVE	1	6e15e4c8-779b-5b23-a8c6-701a03a8dfb0	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	t
-r-and-d-credits-and-incentives	R&D Credits & Incentives	SPECIALIZATION	e2b2b59d-0f03-5d46-90c2-2b55fa579b22	finance-and-accounting	7	f	f	{"Tax computation and return","Advisory memo","Filing calendar"}	{}	ACTIVE	1	50a17810-701d-5568-b8f3-ae45de47b732	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-finance-leadership	Finance Leadership	GROUP	44e95ddb-ec34-57a1-b1e7-696ac2336767	finance-and-accounting	3	f	f	{"13-week cash flow forecast","Board reporting pack","Annual budget and KPI dashboard"}	{}	ACTIVE	1	dc50e165-9bf2-5c4f-94e5-f22afd9d7234	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-fractional-cfo	Fractional CFO	SPECIALIZATION	dc50e165-9bf2-5c4f-94e5-f22afd9d7234	finance-and-accounting	1	f	f	{"Financial strategy and operating plan","Investor and board reporting","Fundraising support materials"}	{}	ACTIVE	1	e1cb1dab-07d0-5239-95fd-17f6f1b0e4d8	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-fractional-controller	Fractional Controller	SPECIALIZATION	dc50e165-9bf2-5c4f-94e5-f22afd9d7234	finance-and-accounting	2	f	f	{"13-week cash flow forecast","Board reporting pack","Annual budget and KPI dashboard"}	{}	ACTIVE	1	8c668c85-6628-5d5a-a56b-799bdecba7ad	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-virtual-finance-director	Virtual Finance Director	SPECIALIZATION	dc50e165-9bf2-5c4f-94e5-f22afd9d7234	finance-and-accounting	3	f	f	{"13-week cash flow forecast","Board reporting pack","Annual budget and KPI dashboard"}	{}	ACTIVE	1	8b4b2a05-ea96-5866-b5ff-d1815a4ee882	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-fp-and-a-and-financial-planning	FP&A & Financial Planning	SPECIALIZATION	dc50e165-9bf2-5c4f-94e5-f22afd9d7234	finance-and-accounting	4	f	f	{"13-week cash flow forecast","Board reporting pack","Annual budget and KPI dashboard"}	{}	ACTIVE	1	dd41b6ec-3931-525c-9300-4557635a0034	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-budgeting-and-forecasting	Budgeting & Forecasting	SPECIALIZATION	dc50e165-9bf2-5c4f-94e5-f22afd9d7234	finance-and-accounting	5	f	f	{"13-week cash flow forecast","Board reporting pack","Annual budget and KPI dashboard"}	{}	ACTIVE	1	dc54c690-4261-5197-9bee-d9d684f36e4f	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-treasury-and-cash-management	Treasury & Cash Management	SPECIALIZATION	dc50e165-9bf2-5c4f-94e5-f22afd9d7234	finance-and-accounting	6	f	f	{"13-week cash flow forecast","Board reporting pack","Annual budget and KPI dashboard"}	{}	ACTIVE	1	b5bebd90-1985-5989-a7e6-04fe8fb35109	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-capital-strategy-and-structuring	Capital Strategy & Structuring	SPECIALIZATION	dc50e165-9bf2-5c4f-94e5-f22afd9d7234	finance-and-accounting	7	f	f	{"13-week cash flow forecast","Board reporting pack","Annual budget and KPI dashboard"}	{}	ACTIVE	1	318c2f1e-45ba-5f55-bb02-af7ea651eb82	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-audit-and-assurance	Audit & Assurance	GROUP	44e95ddb-ec34-57a1-b1e7-696ac2336767	finance-and-accounting	4	f	f	{"Audit plan","Controls testing workpapers","Findings report with remediation plan"}	{}	ACTIVE	1	c976a480-afeb-578b-b312-944b96b362ad	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-internal-audit	Internal Audit	SPECIALIZATION	c976a480-afeb-578b-b312-944b96b362ad	finance-and-accounting	1	f	f	{"Audit plan","Controls testing workpapers","Findings report with remediation plan"}	{}	ACTIVE	1	e1d977fa-e3c2-53c3-9bbe-86a2d0925ac8	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-external-audit-support	External Audit Support	SPECIALIZATION	c976a480-afeb-578b-b312-944b96b362ad	finance-and-accounting	2	t	t	{"Audit plan","Controls testing workpapers","Findings report with remediation plan"}	{CPA,CA,ACCA,CMA,CFA,CIA,CGMA,CFE}	ACTIVE	1	6caf4f94-6b98-5d2d-89a9-868c21475deb	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	t
-audit-readiness-and-preparation	Audit Readiness & Preparation	SPECIALIZATION	c976a480-afeb-578b-b312-944b96b362ad	finance-and-accounting	3	f	f	{"Audit plan","Controls testing workpapers","Findings report with remediation plan"}	{}	ACTIVE	1	9d705b4d-5828-5c41-a530-c718ed973343	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-sox-compliance-and-testing	SOX Compliance & Testing	SPECIALIZATION	c976a480-afeb-578b-b312-944b96b362ad	finance-and-accounting	4	t	t	{"Risk and control matrix","Walkthrough documentation","Testing results and deficiency log"}	{CPA,CA,ACCA,CMA,CFA,CIA,CGMA,CFE}	ACTIVE	1	1ab5f9e2-9d44-5f33-9dd6-5a41f9d50b1e	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	t
-internal-controls-design-and-testing	Internal Controls Design & Testing	SPECIALIZATION	c976a480-afeb-578b-b312-944b96b362ad	finance-and-accounting	5	f	f	{"Audit plan","Controls testing workpapers","Findings report with remediation plan"}	{}	ACTIVE	1	fab0de75-c5c9-59b0-9bf1-8bce70f4fbed	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-risk-and-controls-assessment	Risk & Controls Assessment	SPECIALIZATION	c976a480-afeb-578b-b312-944b96b362ad	finance-and-accounting	6	f	f	{"Audit plan","Controls testing workpapers","Findings report with remediation plan"}	{}	ACTIVE	1	eb1565d6-0b96-5eb2-baf4-3d19cbf2d294	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-transaction-and-advisory	Transaction & Advisory	GROUP	44e95ddb-ec34-57a1-b1e7-696ac2336767	finance-and-accounting	5	f	f	{"Due diligence report","Financial model","Valuation summary"}	{}	ACTIVE	1	0ce00274-7a67-5b04-9548-8384f861dc64	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-m-and-a-financial-due-diligence	M&A Financial Due Diligence	SPECIALIZATION	0ce00274-7a67-5b04-9548-8384f861dc64	finance-and-accounting	1	f	f	{"Due diligence report","Financial model","Valuation summary"}	{}	ACTIVE	1	0d08971b-f6be-5df4-9584-5072bae9a9d5	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-valuation-services	Valuation Services	SPECIALIZATION	0ce00274-7a67-5b04-9548-8384f861dc64	finance-and-accounting	2	t	f	{"Due diligence report","Financial model","Valuation summary"}	{CPA,CA,ACCA,CMA,CFA,CIA,CGMA,CFE}	ACTIVE	1	37139b34-147a-5b42-a2ea-ac0df4b611ec	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-restructuring-and-turnaround	Restructuring & Turnaround	SPECIALIZATION	0ce00274-7a67-5b04-9548-8384f861dc64	finance-and-accounting	3	f	f	{"Due diligence report","Financial model","Valuation summary"}	{}	ACTIVE	1	9736bd51-5cef-5302-8074-7f803b1b320d	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-investment-analysis-and-modeling	Investment Analysis & Modeling	SPECIALIZATION	0ce00274-7a67-5b04-9548-8384f861dc64	finance-and-accounting	4	f	f	{"Due diligence report","Financial model","Valuation summary"}	{}	ACTIVE	1	d8e74fea-b3a7-5719-8c06-cd13b4a0f571	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-carve-out-and-integration-support	Carve-Out & Integration Support	SPECIALIZATION	0ce00274-7a67-5b04-9548-8384f861dc64	finance-and-accounting	5	f	f	{"Due diligence report","Financial model","Valuation summary"}	{}	ACTIVE	1	50a014a5-8706-5778-8f3b-da0ca208805b	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-regulatory-and-compliance-finance	Regulatory & Compliance Finance	GROUP	44e95ddb-ec34-57a1-b1e7-696ac2336767	finance-and-accounting	6	f	f	{"Regulatory return","Compliance testing report","Policy and procedure documentation"}	{}	ACTIVE	1	a2fbef40-ba2e-58f2-9630-fc76a68573dd	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-regulatory-reporting	Regulatory Reporting	SPECIALIZATION	a2fbef40-ba2e-58f2-9630-fc76a68573dd	finance-and-accounting	1	t	t	{"Regulatory return","Compliance testing report","Policy and procedure documentation"}	{CPA,CA,ACCA,CMA,CFA,CIA,CGMA,CFE}	ACTIVE	1	204c9bcb-bbe7-57e7-a80a-ce7a478ba576	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	t
-financial-risk-management	Financial Risk Management	SPECIALIZATION	a2fbef40-ba2e-58f2-9630-fc76a68573dd	finance-and-accounting	2	f	f	{"Regulatory return","Compliance testing report","Policy and procedure documentation"}	{}	ACTIVE	1	a1b84f82-f1a1-523c-a01c-5018245ed152	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-aml-financial-crime-controls	AML / Financial Crime Controls	SPECIALIZATION	a2fbef40-ba2e-58f2-9630-fc76a68573dd	finance-and-accounting	3	t	t	{"Regulatory return","Compliance testing report","Policy and procedure documentation"}	{CPA,CA,ACCA,CMA,CFA,CIA,CGMA,CFE}	ACTIVE	1	9f927fb3-44a7-530f-a5b2-dcfc8ada18bf	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	t
-compliance-documentation-and-testing	Compliance Documentation & Testing	SPECIALIZATION	a2fbef40-ba2e-58f2-9630-fc76a68573dd	finance-and-accounting	4	f	f	{"Regulatory return","Compliance testing report","Policy and procedure documentation"}	{}	ACTIVE	1	83bb6d31-33f4-5ba2-93d1-0f1616e59402	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-ifrs-9-ifrs-17-implementation	IFRS 9 / IFRS 17 Implementation	SPECIALIZATION	a2fbef40-ba2e-58f2-9630-fc76a68573dd	finance-and-accounting	5	t	f	{"Regulatory return","Compliance testing report","Policy and procedure documentation"}	{CPA,CA,ACCA,CMA,CFA,CIA,CGMA,CFE}	ACTIVE	1	8f930b90-0d0d-52a2-94f4-929ca8760455	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-finance-systems-and-technology	Finance Systems & Technology	GROUP	44e95ddb-ec34-57a1-b1e7-696ac2336767	finance-and-accounting	7	f	f	{"Requirements and design document","Configured system with test evidence","User training and handover"}	{}	ACTIVE	1	e751c543-496b-5750-a3ff-88f650449229	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-accounting-systems-implementation	Accounting Systems Implementation	SPECIALIZATION	e751c543-496b-5750-a3ff-88f650449229	finance-and-accounting	1	f	f	{"Requirements and design document","Configured system with test evidence","User training and handover"}	{}	ACTIVE	1	e24ec60d-b02c-54b1-abf6-89cdb1f644be	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-erp-finance-modules	ERP Finance Modules	SPECIALIZATION	e751c543-496b-5750-a3ff-88f650449229	finance-and-accounting	2	f	f	{"Requirements and design document","Configured system with test evidence","User training and handover"}	{}	ACTIVE	1	71cdc05c-7755-5476-98c9-8f359802e74b	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-finance-process-automation	Finance Process Automation	SPECIALIZATION	e751c543-496b-5750-a3ff-88f650449229	finance-and-accounting	3	f	f	{"Requirements and design document","Configured system with test evidence","User training and handover"}	{}	ACTIVE	1	d88c47e6-a521-5563-b05d-4ad7ebb23714	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-financial-reporting-and-bi-tools	Financial Reporting & BI Tools	SPECIALIZATION	e751c543-496b-5750-a3ff-88f650449229	finance-and-accounting	4	f	f	{"Requirements and design document","Configured system with test evidence","User training and handover"}	{}	ACTIVE	1	61ad8cbc-ec9b-5e3d-9909-e01f5a271221	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-finance-data-integration	Finance Data Integration	SPECIALIZATION	e751c543-496b-5750-a3ff-88f650449229	finance-and-accounting	5	f	f	{"Requirements and design document","Configured system with test evidence","User training and handover"}	{}	ACTIVE	1	ae767b3a-1459-56ac-a721-fd014acb54e3	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-technology-and-software-development	Technology & Software Development	CATEGORY	\N	technology-and-software-development	2	f	f	{}	{AWS,Azure,GCP,CISSP,CEH,OSCP,"ISO 27001 LA",PMP}	ACTIVE	1	f164158e-8dbb-535e-a386-66cafa5106ec	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-software-development	Software Development	GROUP	f164158e-8dbb-535e-a386-66cafa5106ec	technology-and-software-development	1	f	f	{"Technical specification","Working software with source code","Deployment and handover notes"}	{}	ACTIVE	1	a5179888-aad9-50c8-80d6-803fac03667d	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-web-development	Web Development	SPECIALIZATION	a5179888-aad9-50c8-80d6-803fac03667d	technology-and-software-development	1	f	f	{"Technical specification","Working software with source code","Deployment and handover notes"}	{}	ACTIVE	1	2e804d72-bf38-5f2d-9356-efdf10fe407e	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-mobile-app-development	Mobile App Development	SPECIALIZATION	a5179888-aad9-50c8-80d6-803fac03667d	technology-and-software-development	2	f	f	{"Technical specification","Working software with source code","Deployment and handover notes"}	{}	ACTIVE	1	29084371-8b5f-5ac2-b31b-bafeb25423a0	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-backend-and-api-development	Backend & API Development	SPECIALIZATION	a5179888-aad9-50c8-80d6-803fac03667d	technology-and-software-development	3	f	f	{"Technical specification","Working software with source code","Deployment and handover notes"}	{}	ACTIVE	1	36a53dc8-5990-58da-b5ee-fa0f14ee7d7d	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-full-stack-development	Full-Stack Development	SPECIALIZATION	a5179888-aad9-50c8-80d6-803fac03667d	technology-and-software-development	4	f	f	{"Technical specification","Working software with source code","Deployment and handover notes"}	{}	ACTIVE	1	2dad45e9-1386-5128-a671-b2b896daac1c	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-software-architecture	Software Architecture	SPECIALIZATION	a5179888-aad9-50c8-80d6-803fac03667d	technology-and-software-development	5	f	f	{"Technical specification","Working software with source code","Deployment and handover notes"}	{}	ACTIVE	1	8001846c-7dac-553f-8350-2207f0265459	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-legacy-system-modernization	Legacy System Modernization	SPECIALIZATION	a5179888-aad9-50c8-80d6-803fac03667d	technology-and-software-development	6	f	f	{"Technical specification","Working software with source code","Deployment and handover notes"}	{}	ACTIVE	1	a8f17db4-9926-555c-a223-15a03ad455b0	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-ai-and-data	AI & Data	GROUP	f164158e-8dbb-535e-a386-66cafa5106ec	technology-and-software-development	2	f	f	{"Data assessment and approach","Model or pipeline with evaluation results","Documentation and handover"}	{}	ACTIVE	1	49f9a083-3b6c-5a85-bb0f-4052418371b2	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-ai-machine-learning-engineering	AI / Machine Learning Engineering	SPECIALIZATION	49f9a083-3b6c-5a85-bb0f-4052418371b2	technology-and-software-development	1	f	f	{"Data assessment and approach","Model or pipeline with evaluation results","Documentation and handover"}	{}	ACTIVE	1	526a2c3f-5f7d-57e8-83f2-d083ef8262a7	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-generative-ai-and-llm-applications	Generative AI & LLM Applications	SPECIALIZATION	49f9a083-3b6c-5a85-bb0f-4052418371b2	technology-and-software-development	2	f	f	{"Data assessment and approach","Model or pipeline with evaluation results","Documentation and handover"}	{}	ACTIVE	1	9d1ffab6-24e4-5f76-9dd6-29cfc2d6b3c2	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-data-engineering	Data Engineering	SPECIALIZATION	49f9a083-3b6c-5a85-bb0f-4052418371b2	technology-and-software-development	3	f	f	{"Data assessment and approach","Model or pipeline with evaluation results","Documentation and handover"}	{}	ACTIVE	1	f02c2601-923b-5e3a-a17f-1ac6e8586a98	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-data-analytics-and-business-intelligence	Data Analytics & Business Intelligence	SPECIALIZATION	49f9a083-3b6c-5a85-bb0f-4052418371b2	technology-and-software-development	4	f	f	{"Data assessment and approach","Model or pipeline with evaluation results","Documentation and handover"}	{}	ACTIVE	1	e61e23c9-78ca-592e-8ec0-cc63eca1e37e	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-data-science-and-statistical-modeling	Data Science & Statistical Modeling	SPECIALIZATION	49f9a083-3b6c-5a85-bb0f-4052418371b2	technology-and-software-development	5	f	f	{"Data assessment and approach","Model or pipeline with evaluation results","Documentation and handover"}	{}	ACTIVE	1	d2af4021-1352-5532-af60-68119d7c5313	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-cloud-and-devops	Cloud & DevOps	GROUP	f164158e-8dbb-535e-a386-66cafa5106ec	technology-and-software-development	3	f	f	{"Architecture design","Infrastructure as code and pipelines","Runbook and handover"}	{}	ACTIVE	1	6bc796a0-1509-55b6-829f-829a19a9213e	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-cloud-architecture	Cloud Architecture	SPECIALIZATION	6bc796a0-1509-55b6-829f-829a19a9213e	technology-and-software-development	1	f	f	{"Architecture design","Infrastructure as code and pipelines","Runbook and handover"}	{}	ACTIVE	1	71f5d2d5-518b-530a-a617-944f4598d85f	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-devops-and-ci-cd	DevOps & CI/CD	SPECIALIZATION	6bc796a0-1509-55b6-829f-829a19a9213e	technology-and-software-development	2	f	f	{"Architecture design","Infrastructure as code and pipelines","Runbook and handover"}	{}	ACTIVE	1	86145d70-6c2a-57ca-89dd-23e91bd4a1d8	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-site-reliability-engineering	Site Reliability Engineering	SPECIALIZATION	6bc796a0-1509-55b6-829f-829a19a9213e	technology-and-software-development	3	f	f	{"Architecture design","Infrastructure as code and pipelines","Runbook and handover"}	{}	ACTIVE	1	dd5693fe-e09d-5bef-b387-21ce9e2ff2cf	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-cloud-migration	Cloud Migration	SPECIALIZATION	6bc796a0-1509-55b6-829f-829a19a9213e	technology-and-software-development	4	f	f	{"Architecture design","Infrastructure as code and pipelines","Runbook and handover"}	{}	ACTIVE	1	521be22a-c0a0-5450-ac33-a3cb91551dd4	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-cybersecurity	Cybersecurity	GROUP	f164158e-8dbb-535e-a386-66cafa5106ec	technology-and-software-development	4	f	f	{"Assessment scope and plan","Findings report with risk ratings","Remediation plan"}	{}	ACTIVE	1	e93e39b1-fff0-500b-9158-eb4a9e021ed7	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-application-security	Application Security	SPECIALIZATION	e93e39b1-fff0-500b-9158-eb4a9e021ed7	technology-and-software-development	1	f	f	{"Assessment scope and plan","Findings report with risk ratings","Remediation plan"}	{}	ACTIVE	1	f64e37dc-06b4-54ef-b8a6-d20d8e4fecc7	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-penetration-testing	Penetration Testing	SPECIALIZATION	e93e39b1-fff0-500b-9158-eb4a9e021ed7	technology-and-software-development	2	t	f	{"Assessment scope and plan","Findings report with risk ratings","Remediation plan"}	{AWS,Azure,GCP,CISSP,CEH,OSCP,"ISO 27001 LA",PMP}	ACTIVE	1	e0fce7e0-72b8-5a4e-bf70-c6fcdbeec60a	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-security-compliance-iso-27001-soc-2	Security Compliance (ISO 27001 / SOC 2)	SPECIALIZATION	e93e39b1-fff0-500b-9158-eb4a9e021ed7	technology-and-software-development	3	t	f	{"Assessment scope and plan","Findings report with risk ratings","Remediation plan"}	{AWS,Azure,GCP,CISSP,CEH,OSCP,"ISO 27001 LA",PMP}	ACTIVE	1	66868d43-78b1-5b8d-971b-509517527364	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-identity-and-access-management	Identity & Access Management	SPECIALIZATION	e93e39b1-fff0-500b-9158-eb4a9e021ed7	technology-and-software-development	4	f	f	{"Assessment scope and plan","Findings report with risk ratings","Remediation plan"}	{}	ACTIVE	1	10e8b54d-86c6-5bde-9e06-cdbb1616c17a	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-product-design-and-quality	Product, Design & Quality	GROUP	f164158e-8dbb-535e-a386-66cafa5106ec	technology-and-software-development	5	f	f	{"Discovery findings","Designs or test suite","Handover and recommendations"}	{}	ACTIVE	1	7251d738-fc78-5469-b087-809957f5726f	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-ux-ui-design	UX / UI Design	SPECIALIZATION	7251d738-fc78-5469-b087-809957f5726f	technology-and-software-development	1	f	f	{"Discovery findings","Designs or test suite","Handover and recommendations"}	{}	ACTIVE	1	e9323f01-6fda-56d9-9f38-c1ec16ce9cfc	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-product-management	Product Management	SPECIALIZATION	7251d738-fc78-5469-b087-809957f5726f	technology-and-software-development	2	f	f	{"Discovery findings","Designs or test suite","Handover and recommendations"}	{}	ACTIVE	1	c7f36323-1b4c-516c-9869-e24982e779a3	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-qa-and-test-automation	QA & Test Automation	SPECIALIZATION	7251d738-fc78-5469-b087-809957f5726f	technology-and-software-development	3	f	f	{"Discovery findings","Designs or test suite","Handover and recommendations"}	{}	ACTIVE	1	5ff31033-7354-59e2-9008-f6f684d5487e	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-technical-project-management	Technical Project Management	SPECIALIZATION	7251d738-fc78-5469-b087-809957f5726f	technology-and-software-development	4	f	f	{"Discovery findings","Designs or test suite","Handover and recommendations"}	{}	ACTIVE	1	4a5d1e25-f81b-5dcb-90e8-ce78108ceb98	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-legal-services	Legal Services	CATEGORY	\N	legal-services	3	f	f	{}	{"Bar admission",Solicitor,Attorney,Advocate}	ACTIVE	1	81cc1079-1f58-5cb6-b991-ee7ef9269c9c	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-corporate-and-commercial-law	Corporate & Commercial Law	GROUP	81cc1079-1f58-5cb6-b991-ee7ef9269c9c	legal-services	1	f	f	{"Legal advice memo","Drafted or reviewed agreement","Negotiation support notes"}	{}	ACTIVE	1	ff4a2593-d043-549f-9bbc-c01b4914e057	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-commercial-contracts	Commercial Contracts	SPECIALIZATION	ff4a2593-d043-549f-9bbc-c01b4914e057	legal-services	1	t	t	{"Legal advice memo","Drafted or reviewed agreement","Negotiation support notes"}	{"Bar admission",Solicitor,Attorney,Advocate}	ACTIVE	1	bbf7544d-3e50-5181-b158-f3557991edf2	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	t
-corporate-governance-and-company-secretarial	Corporate Governance & Company Secretarial	SPECIALIZATION	ff4a2593-d043-549f-9bbc-c01b4914e057	legal-services	2	t	t	{"Legal advice memo","Drafted or reviewed agreement","Negotiation support notes"}	{"Bar admission",Solicitor,Attorney,Advocate}	ACTIVE	1	bcecba2c-6531-5103-92c4-89aff720cd4a	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	t
-m-and-a-legal-advisory	M&A Legal Advisory	SPECIALIZATION	ff4a2593-d043-549f-9bbc-c01b4914e057	legal-services	3	t	t	{"Legal advice memo","Drafted or reviewed agreement","Negotiation support notes"}	{"Bar admission",Solicitor,Attorney,Advocate}	ACTIVE	1	a11af046-62c3-539c-b298-62fc006c90c5	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	t
-employment-and-immigration-law	Employment & Immigration Law	GROUP	81cc1079-1f58-5cb6-b991-ee7ef9269c9c	legal-services	2	f	f	{"Legal advice memo","Drafted policies or contracts","Filing or application pack"}	{}	ACTIVE	1	cac6e07b-319f-5eb3-af3f-13fcb5a414cc	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-employment-law	Employment Law	SPECIALIZATION	cac6e07b-319f-5eb3-af3f-13fcb5a414cc	legal-services	1	t	t	{"Legal advice memo","Drafted policies or contracts","Filing or application pack"}	{"Bar admission",Solicitor,Attorney,Advocate}	ACTIVE	1	7f3df228-920f-5170-9423-02db30a99df1	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	t
-immigration-law	Immigration Law	SPECIALIZATION	cac6e07b-319f-5eb3-af3f-13fcb5a414cc	legal-services	2	t	t	{"Legal advice memo","Drafted policies or contracts","Filing or application pack"}	{"Bar admission",Solicitor,Attorney,Advocate}	ACTIVE	1	830c52a7-1a9e-5313-9411-e0b633f026f6	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	t
-intellectual-property	Intellectual Property	GROUP	81cc1079-1f58-5cb6-b991-ee7ef9269c9c	legal-services	3	f	f	{"Clearance or search report","Filing documents","Licence agreement"}	{}	ACTIVE	1	0d40eac5-f146-51eb-be98-5c43c789bd67	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-trademarks-and-patents	Trademarks & Patents	SPECIALIZATION	0d40eac5-f146-51eb-be98-5c43c789bd67	legal-services	1	t	t	{"Clearance or search report","Filing documents","Licence agreement"}	{"Bar admission",Solicitor,Attorney,Advocate}	ACTIVE	1	86a7f336-cdfa-58ac-9ecc-29f7daccbd0b	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	t
-technology-licensing-agreements	Technology Licensing Agreements	SPECIALIZATION	0d40eac5-f146-51eb-be98-5c43c789bd67	legal-services	2	t	t	{"Clearance or search report","Filing documents","Licence agreement"}	{"Bar admission",Solicitor,Attorney,Advocate}	ACTIVE	1	85111db9-da3a-5c96-ace6-bc2f08bf82a8	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	t
-privacy-and-regulatory-law	Privacy & Regulatory Law	GROUP	81cc1079-1f58-5cb6-b991-ee7ef9269c9c	legal-services	4	f	f	{"Gap assessment","Policies and notices","Compliance roadmap"}	{}	ACTIVE	1	b1de7dae-4efa-5090-b3b4-373b80df9de0	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-data-privacy-and-gdpr	Data Privacy & GDPR	SPECIALIZATION	b1de7dae-4efa-5090-b3b4-373b80df9de0	legal-services	1	t	f	{"Gap assessment","Policies and notices","Compliance roadmap"}	{"Bar admission",Solicitor,Attorney,Advocate}	ACTIVE	1	40ae9be6-e1f2-55be-9491-34f803151716	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-regulatory-compliance-advisory	Regulatory Compliance Advisory	SPECIALIZATION	b1de7dae-4efa-5090-b3b4-373b80df9de0	legal-services	2	t	f	{"Gap assessment","Policies and notices","Compliance roadmap"}	{"Bar admission",Solicitor,Attorney,Advocate}	ACTIVE	1	9756a0f8-2df6-51e8-b7b0-5d3cecf0dbb0	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-hr-and-people	HR & People	CATEGORY	\N	hr-and-people	4	f	f	{}	{CIPD,SHRM-CP,SHRM-SCP}	ACTIVE	1	afbc2141-8840-513d-8fb9-57830d9bbe36	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-talent-acquisition	Talent Acquisition	GROUP	afbc2141-8840-513d-8fb9-57830d9bbe36	hr-and-people	1	f	f	{"Role profile and search plan","Shortlist with assessments","Offer and onboarding support"}	{}	ACTIVE	1	5062ed1f-a37d-54bc-bab9-716b11ce0c9f	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-recruitment-and-talent-acquisition	Recruitment & Talent Acquisition	SPECIALIZATION	5062ed1f-a37d-54bc-bab9-716b11ce0c9f	hr-and-people	1	f	f	{"Role profile and search plan","Shortlist with assessments","Offer and onboarding support"}	{}	ACTIVE	1	f1526727-2d04-5b03-9070-d0d5571a248f	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-executive-search	Executive Search	SPECIALIZATION	5062ed1f-a37d-54bc-bab9-716b11ce0c9f	hr-and-people	2	f	f	{"Role profile and search plan","Shortlist with assessments","Offer and onboarding support"}	{}	ACTIVE	1	2c16ee99-6961-5596-b371-0f3c6b1ba4f3	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-people-operations	People Operations	GROUP	afbc2141-8840-513d-8fb9-57830d9bbe36	hr-and-people	2	f	f	{"Policy pack","Process documentation","Compliance checklist"}	{}	ACTIVE	1	39f6cd9f-bbd9-5bbe-81ac-9f20a10d76d9	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-hr-policy-and-compliance	HR Policy & Compliance	SPECIALIZATION	39f6cd9f-bbd9-5bbe-81ac-9f20a10d76d9	hr-and-people	1	f	f	{"Policy pack","Process documentation","Compliance checklist"}	{}	ACTIVE	1	92998e66-4143-5d34-b60b-ce263163443f	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-payroll-administration	Payroll Administration	SPECIALIZATION	39f6cd9f-bbd9-5bbe-81ac-9f20a10d76d9	hr-and-people	2	f	f	{"Policy pack","Process documentation","Compliance checklist"}	{}	ACTIVE	1	86f40a56-214b-5b5c-8b39-1a33e88111ca	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-compensation-and-benefits	Compensation & Benefits	SPECIALIZATION	39f6cd9f-bbd9-5bbe-81ac-9f20a10d76d9	hr-and-people	3	f	f	{"Policy pack","Process documentation","Compliance checklist"}	{}	ACTIVE	1	6bdbefbf-1ab7-5328-8d05-5de43e4de690	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-organisation-development	Organisation Development	GROUP	afbc2141-8840-513d-8fb9-57830d9bbe36	hr-and-people	3	f	f	{"Assessment findings","Programme or structure design","Implementation plan"}	{}	ACTIVE	1	0d6d6e53-e7c5-5e0e-b50b-347e0103cd4b	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-learning-and-development	Learning & Development	SPECIALIZATION	0d6d6e53-e7c5-5e0e-b50b-347e0103cd4b	hr-and-people	1	f	f	{"Assessment findings","Programme or structure design","Implementation plan"}	{}	ACTIVE	1	d606e033-f909-5640-840d-de5c2b92264a	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-organisational-design	Organisational Design	SPECIALIZATION	0d6d6e53-e7c5-5e0e-b50b-347e0103cd4b	hr-and-people	2	f	f	{"Assessment findings","Programme or structure design","Implementation plan"}	{}	ACTIVE	1	3d21695b-4931-561d-81cf-ad7d49bce15f	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-fractional-hr-leadership	Fractional HR Leadership	SPECIALIZATION	0d6d6e53-e7c5-5e0e-b50b-347e0103cd4b	hr-and-people	3	f	f	{"Assessment findings","Programme or structure design","Implementation plan"}	{}	ACTIVE	1	1de44aa8-1436-5b9e-85cf-41ea56cb22d9	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-marketing-and-growth	Marketing & Growth	CATEGORY	\N	marketing-and-growth	5	f	f	{}	{}	ACTIVE	1	99523256-ac1a-5210-81cb-0b3e940eda43	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-digital-marketing	Digital Marketing	GROUP	99523256-ac1a-5210-81cb-0b3e940eda43	marketing-and-growth	1	f	f	{"Channel audit","Campaign plan and setup","Performance report"}	{}	ACTIVE	1	64c860c4-ea85-53a0-912d-e8ab262bfc0c	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-search-engine-optimization-seo	Search Engine Optimization (SEO)	SPECIALIZATION	64c860c4-ea85-53a0-912d-e8ab262bfc0c	marketing-and-growth	1	f	f	{"Channel audit","Campaign plan and setup","Performance report"}	{}	ACTIVE	1	2192c315-c070-5e4d-a4d0-013cc3fa99e9	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-paid-media-and-performance-marketing	Paid Media & Performance Marketing	SPECIALIZATION	64c860c4-ea85-53a0-912d-e8ab262bfc0c	marketing-and-growth	2	f	f	{"Channel audit","Campaign plan and setup","Performance report"}	{}	ACTIVE	1	808ac3dc-3cca-56b0-be9c-74a90c0319e1	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-social-media-marketing	Social Media Marketing	SPECIALIZATION	64c860c4-ea85-53a0-912d-e8ab262bfc0c	marketing-and-growth	3	f	f	{"Channel audit","Campaign plan and setup","Performance report"}	{}	ACTIVE	1	7870c1c7-4e26-5c13-88d9-fafca1e0e611	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-email-and-lifecycle-marketing	Email & Lifecycle Marketing	SPECIALIZATION	64c860c4-ea85-53a0-912d-e8ab262bfc0c	marketing-and-growth	4	f	f	{"Channel audit","Campaign plan and setup","Performance report"}	{}	ACTIVE	1	8b24c03b-266b-558e-93db-8899056d5109	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-brand-and-content	Brand & Content	GROUP	99523256-ac1a-5210-81cb-0b3e940eda43	marketing-and-growth	2	f	f	{"Brand or content strategy","Content assets",Guidelines}	{}	ACTIVE	1	9f17e580-1502-58fa-b287-cd1552fe7f6d	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-brand-strategy	Brand Strategy	SPECIALIZATION	9f17e580-1502-58fa-b287-cd1552fe7f6d	marketing-and-growth	1	f	f	{"Brand or content strategy","Content assets",Guidelines}	{}	ACTIVE	1	a3a7a66a-12ec-530d-8bee-0ee9b21e9d0b	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-content-strategy-and-copywriting	Content Strategy & Copywriting	SPECIALIZATION	9f17e580-1502-58fa-b287-cd1552fe7f6d	marketing-and-growth	2	f	f	{"Brand or content strategy","Content assets",Guidelines}	{}	ACTIVE	1	c377bde0-cd8a-55ec-82bc-f82082cfb668	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-pr-and-communications	PR & Communications	SPECIALIZATION	9f17e580-1502-58fa-b287-cd1552fe7f6d	marketing-and-growth	3	f	f	{"Brand or content strategy","Content assets",Guidelines}	{}	ACTIVE	1	bba0743d-a7c3-5166-8184-27c0f2714e55	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-growth-and-analytics	Growth & Analytics	GROUP	99523256-ac1a-5210-81cb-0b3e940eda43	marketing-and-growth	3	f	f	{"Growth plan","Measurement framework and dashboards","Experiment results"}	{}	ACTIVE	1	624ea078-104a-5350-a747-6b7895658ed3	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-growth-strategy	Growth Strategy	SPECIALIZATION	624ea078-104a-5350-a747-6b7895658ed3	marketing-and-growth	1	f	f	{"Growth plan","Measurement framework and dashboards","Experiment results"}	{}	ACTIVE	1	fa715e35-0224-5c74-aadf-8d608f8e552c	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-marketing-analytics	Marketing Analytics	SPECIALIZATION	624ea078-104a-5350-a747-6b7895658ed3	marketing-and-growth	2	f	f	{"Growth plan","Measurement framework and dashboards","Experiment results"}	{}	ACTIVE	1	a213d1a9-42e6-52c2-86ce-e94e2858c5f0	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-fractional-cmo	Fractional CMO	SPECIALIZATION	624ea078-104a-5350-a747-6b7895658ed3	marketing-and-growth	3	f	f	{"Growth plan","Measurement framework and dashboards","Experiment results"}	{}	ACTIVE	1	04bc9b49-95e6-56cd-8fe3-651521369cbe	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-management-consulting	Management Consulting	CATEGORY	\N	management-consulting	6	f	f	{}	{PMP,"Lean Six Sigma",PRINCE2}	ACTIVE	1	3fd78747-8949-52fc-a01e-2e46adfc9e86	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-strategy	Strategy	GROUP	3fd78747-8949-52fc-a01e-2e46adfc9e86	management-consulting	1	f	f	{"Situation analysis","Strategy options and recommendation",Roadmap}	{}	ACTIVE	1	8dccb06a-1b7d-5d84-9145-f180fcac19da	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-business-strategy	Business Strategy	SPECIALIZATION	8dccb06a-1b7d-5d84-9145-f180fcac19da	management-consulting	1	f	f	{"Situation analysis","Strategy options and recommendation",Roadmap}	{}	ACTIVE	1	ad05482d-01e7-50ef-8b6d-0e794dbe54f6	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-market-entry-strategy	Market Entry Strategy	SPECIALIZATION	8dccb06a-1b7d-5d84-9145-f180fcac19da	management-consulting	2	f	f	{"Situation analysis","Strategy options and recommendation",Roadmap}	{}	ACTIVE	1	af8a3eaf-eaa3-52df-9dfe-9b2d7871d684	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-commercial-due-diligence	Commercial Due Diligence	SPECIALIZATION	8dccb06a-1b7d-5d84-9145-f180fcac19da	management-consulting	3	f	f	{"Situation analysis","Strategy options and recommendation",Roadmap}	{}	ACTIVE	1	7edf4a3c-d77a-566b-b002-cde852cc80e6	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-operations	Operations	GROUP	3fd78747-8949-52fc-a01e-2e46adfc9e86	management-consulting	2	f	f	{"Current-state assessment","Improvement plan","Implementation support report"}	{}	ACTIVE	1	d96d3b6b-0a2a-52c3-9a30-71f35ca1c952	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-operations-improvement	Operations Improvement	SPECIALIZATION	d96d3b6b-0a2a-52c3-9a30-71f35ca1c952	management-consulting	1	f	f	{"Current-state assessment","Improvement plan","Implementation support report"}	{}	ACTIVE	1	a811ccfe-3ac4-591d-a8aa-6902a0cdff22	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-supply-chain-consulting	Supply Chain Consulting	SPECIALIZATION	d96d3b6b-0a2a-52c3-9a30-71f35ca1c952	management-consulting	2	f	f	{"Current-state assessment","Improvement plan","Implementation support report"}	{}	ACTIVE	1	1034904b-dc5b-5aff-84a6-dc74598d1ee8	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-lean-six-sigma-process-excellence	Lean / Six Sigma Process Excellence	SPECIALIZATION	d96d3b6b-0a2a-52c3-9a30-71f35ca1c952	management-consulting	3	f	f	{"Current-state assessment","Improvement plan","Implementation support report"}	{}	ACTIVE	1	bca9a59c-478e-5ea6-b62e-f29e6e67174f	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-transformation	Transformation	GROUP	3fd78747-8949-52fc-a01e-2e46adfc9e86	management-consulting	3	f	f	{"Transformation roadmap","Governance and change plan","Progress reporting"}	{}	ACTIVE	1	6e18fbd8-29b7-5ea6-bdb1-98c6c456a3c7	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-digital-transformation	Digital Transformation	SPECIALIZATION	6e18fbd8-29b7-5ea6-bdb1-98c6c456a3c7	management-consulting	1	f	f	{"Transformation roadmap","Governance and change plan","Progress reporting"}	{}	ACTIVE	1	1a9d8c36-d708-5e9d-b79f-e4762e7e8305	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-change-management	Change Management	SPECIALIZATION	6e18fbd8-29b7-5ea6-bdb1-98c6c456a3c7	management-consulting	2	f	f	{"Transformation roadmap","Governance and change plan","Progress reporting"}	{}	ACTIVE	1	a47ac0f9-aec4-50c7-a8e4-2158b3872cf1	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
-programme-management-pmo	Programme Management (PMO)	SPECIALIZATION	6e18fbd8-29b7-5ea6-bdb1-98c6c456a3c7	management-consulting	3	f	f	{"Transformation roadmap","Governance and change plan","Progress reporting"}	{}	ACTIVE	1	bcbc41d7-08a5-5be4-b062-656de022a130	2026-10-15 10:00:53.227185+00	2026-10-15 10:00:53.227185+00	f
+finance-and-accounting	Finance & Accounting	CATEGORY	\N	finance-and-accounting	1	f	f	{}	{CPA,CA,ACCA,CMA,CFA,CIA,CGMA,CFE}	ACTIVE	1	44e95ddb-ec34-57a1-b1e7-696ac2336767	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+accounting-and-reporting	Accounting & Reporting	GROUP	44e95ddb-ec34-57a1-b1e7-696ac2336767	finance-and-accounting	1	f	f	{"Monthly management accounts","Reconciliations pack","Close checklist and timetable"}	{}	ACTIVE	1	6f2c6789-c2e8-5237-9e16-d4ae28f1490e	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+financial-accounting	Financial Accounting	SPECIALIZATION	6f2c6789-c2e8-5237-9e16-d4ae28f1490e	finance-and-accounting	1	f	f	{"Monthly management accounts","Reconciliations pack","Close checklist and timetable"}	{}	ACTIVE	1	da8d7a0d-7abb-57f8-a6c8-f676393d7c23	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+management-accounting	Management Accounting	SPECIALIZATION	6f2c6789-c2e8-5237-9e16-d4ae28f1490e	finance-and-accounting	2	f	f	{"Monthly management accounts","Reconciliations pack","Close checklist and timetable"}	{}	ACTIVE	1	6ccda730-0d1e-53bd-90e9-d77db35cf240	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+bookkeeping-and-accounting-services	Bookkeeping & Accounting Services	SPECIALIZATION	6f2c6789-c2e8-5237-9e16-d4ae28f1490e	finance-and-accounting	3	f	f	{"Monthly bookkeeping","Bank and card reconciliations","Year-end pack for accountant"}	{}	ACTIVE	1	1a625c1d-de0a-509c-bcd6-47968e5f70a1	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+month-end-quarter-end-close	Month-End / Quarter-End Close	SPECIALIZATION	6f2c6789-c2e8-5237-9e16-d4ae28f1490e	finance-and-accounting	4	f	f	{"Monthly management accounts","Reconciliations pack","Close checklist and timetable"}	{}	ACTIVE	1	4cdc2b25-9a59-5373-90ad-18f03f2b88fe	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+group-consolidation-and-reporting	Group Consolidation & Reporting	SPECIALIZATION	6f2c6789-c2e8-5237-9e16-d4ae28f1490e	finance-and-accounting	5	f	f	{"Monthly management accounts","Reconciliations pack","Close checklist and timetable"}	{}	ACTIVE	1	5249f9b3-d81a-5f20-8437-a7952e44919b	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+qa-and-test-automation	QA & Test Automation	SPECIALIZATION	7251d738-fc78-5469-b087-809957f5726f	technology-and-software-development	3	f	f	{"Discovery findings","Designs or test suite","Handover and recommendations"}	{}	ACTIVE	1	5ff31033-7354-59e2-9008-f6f684d5487e	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+technical-accounting-advisory	Technical Accounting Advisory	SPECIALIZATION	6f2c6789-c2e8-5237-9e16-d4ae28f1490e	finance-and-accounting	6	t	f	{"Monthly management accounts","Reconciliations pack","Close checklist and timetable"}	{CPA,CA,ACCA,CMA,CFA,CIA,CGMA,CFE}	ACTIVE	1	99353595-1044-505d-90a8-417124efa2bd	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+ifrs-reporting	IFRS Reporting	SPECIALIZATION	6f2c6789-c2e8-5237-9e16-d4ae28f1490e	finance-and-accounting	7	t	f	{"Monthly management accounts","Reconciliations pack","Close checklist and timetable"}	{CPA,CA,ACCA,CMA,CFA,CIA,CGMA,CFE}	ACTIVE	1	d7535b92-43eb-5159-b716-d362693eed76	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+us-gaap-reporting	US GAAP Reporting	SPECIALIZATION	6f2c6789-c2e8-5237-9e16-d4ae28f1490e	finance-and-accounting	8	t	f	{"Monthly management accounts","Reconciliations pack","Close checklist and timetable"}	{CPA,CA,ACCA,CMA,CFA,CIA,CGMA,CFE}	ACTIVE	1	a6824680-394d-53a0-9f96-fe5db810791b	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+taxation	Taxation	GROUP	44e95ddb-ec34-57a1-b1e7-696ac2336767	finance-and-accounting	2	f	f	{"Tax computation and return","Advisory memo","Filing calendar"}	{}	ACTIVE	1	e2b2b59d-0f03-5d46-90c2-2b55fa579b22	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+corporate-tax-advisory	Corporate Tax Advisory	SPECIALIZATION	e2b2b59d-0f03-5d46-90c2-2b55fa579b22	finance-and-accounting	1	t	f	{"Tax computation and return","Advisory memo","Filing calendar"}	{CPA,CA,ACCA,CMA,CFA,CIA,CGMA,CFE}	ACTIVE	1	05494f7a-5782-5c74-a0dc-408573688ec2	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+personal-tax-planning	Personal Tax Planning	SPECIALIZATION	e2b2b59d-0f03-5d46-90c2-2b55fa579b22	finance-and-accounting	2	f	f	{"Tax computation and return","Advisory memo","Filing calendar"}	{}	ACTIVE	1	fad83eff-f7d3-525d-af71-d120545031b5	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+international-tax-strategy	International Tax Strategy	SPECIALIZATION	e2b2b59d-0f03-5d46-90c2-2b55fa579b22	finance-and-accounting	3	t	f	{"Tax computation and return","Advisory memo","Filing calendar"}	{CPA,CA,ACCA,CMA,CFA,CIA,CGMA,CFE}	ACTIVE	1	f4bcc0f2-1b04-5090-b69e-ad6e957be4ce	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+transfer-pricing	Transfer Pricing	SPECIALIZATION	e2b2b59d-0f03-5d46-90c2-2b55fa579b22	finance-and-accounting	4	t	f	{"Tax computation and return","Advisory memo","Filing calendar"}	{CPA,CA,ACCA,CMA,CFA,CIA,CGMA,CFE}	ACTIVE	1	2f54a9b7-89d8-536a-a318-6f8af58c2f94	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+vat-gst-sales-tax	VAT / GST / Sales Tax	SPECIALIZATION	e2b2b59d-0f03-5d46-90c2-2b55fa579b22	finance-and-accounting	5	f	f	{"Tax computation and return","Advisory memo","Filing calendar"}	{}	ACTIVE	1	15cc8141-0b76-5df9-b12e-732271e5b555	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+tax-compliance-and-filings	Tax Compliance & Filings	SPECIALIZATION	e2b2b59d-0f03-5d46-90c2-2b55fa579b22	finance-and-accounting	6	t	t	{"Tax computation and return","Advisory memo","Filing calendar"}	{CPA,CA,ACCA,CMA,CFA,CIA,CGMA,CFE}	ACTIVE	1	6e15e4c8-779b-5b23-a8c6-701a03a8dfb0	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	t
+r-and-d-credits-and-incentives	R&D Credits & Incentives	SPECIALIZATION	e2b2b59d-0f03-5d46-90c2-2b55fa579b22	finance-and-accounting	7	f	f	{"Tax computation and return","Advisory memo","Filing calendar"}	{}	ACTIVE	1	50a17810-701d-5568-b8f3-ae45de47b732	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+finance-leadership	Finance Leadership	GROUP	44e95ddb-ec34-57a1-b1e7-696ac2336767	finance-and-accounting	3	f	f	{"13-week cash flow forecast","Board reporting pack","Annual budget and KPI dashboard"}	{}	ACTIVE	1	dc50e165-9bf2-5c4f-94e5-f22afd9d7234	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+fractional-cfo	Fractional CFO	SPECIALIZATION	dc50e165-9bf2-5c4f-94e5-f22afd9d7234	finance-and-accounting	1	f	f	{"Financial strategy and operating plan","Investor and board reporting","Fundraising support materials"}	{}	ACTIVE	1	e1cb1dab-07d0-5239-95fd-17f6f1b0e4d8	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+fractional-controller	Fractional Controller	SPECIALIZATION	dc50e165-9bf2-5c4f-94e5-f22afd9d7234	finance-and-accounting	2	f	f	{"13-week cash flow forecast","Board reporting pack","Annual budget and KPI dashboard"}	{}	ACTIVE	1	8c668c85-6628-5d5a-a56b-799bdecba7ad	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+virtual-finance-director	Virtual Finance Director	SPECIALIZATION	dc50e165-9bf2-5c4f-94e5-f22afd9d7234	finance-and-accounting	3	f	f	{"13-week cash flow forecast","Board reporting pack","Annual budget and KPI dashboard"}	{}	ACTIVE	1	8b4b2a05-ea96-5866-b5ff-d1815a4ee882	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+fp-and-a-and-financial-planning	FP&A & Financial Planning	SPECIALIZATION	dc50e165-9bf2-5c4f-94e5-f22afd9d7234	finance-and-accounting	4	f	f	{"13-week cash flow forecast","Board reporting pack","Annual budget and KPI dashboard"}	{}	ACTIVE	1	dd41b6ec-3931-525c-9300-4557635a0034	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+budgeting-and-forecasting	Budgeting & Forecasting	SPECIALIZATION	dc50e165-9bf2-5c4f-94e5-f22afd9d7234	finance-and-accounting	5	f	f	{"13-week cash flow forecast","Board reporting pack","Annual budget and KPI dashboard"}	{}	ACTIVE	1	dc54c690-4261-5197-9bee-d9d684f36e4f	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+treasury-and-cash-management	Treasury & Cash Management	SPECIALIZATION	dc50e165-9bf2-5c4f-94e5-f22afd9d7234	finance-and-accounting	6	f	f	{"13-week cash flow forecast","Board reporting pack","Annual budget and KPI dashboard"}	{}	ACTIVE	1	b5bebd90-1985-5989-a7e6-04fe8fb35109	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+capital-strategy-and-structuring	Capital Strategy & Structuring	SPECIALIZATION	dc50e165-9bf2-5c4f-94e5-f22afd9d7234	finance-and-accounting	7	f	f	{"13-week cash flow forecast","Board reporting pack","Annual budget and KPI dashboard"}	{}	ACTIVE	1	318c2f1e-45ba-5f55-bb02-af7ea651eb82	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+audit-and-assurance	Audit & Assurance	GROUP	44e95ddb-ec34-57a1-b1e7-696ac2336767	finance-and-accounting	4	f	f	{"Audit plan","Controls testing workpapers","Findings report with remediation plan"}	{}	ACTIVE	1	c976a480-afeb-578b-b312-944b96b362ad	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+internal-audit	Internal Audit	SPECIALIZATION	c976a480-afeb-578b-b312-944b96b362ad	finance-and-accounting	1	f	f	{"Audit plan","Controls testing workpapers","Findings report with remediation plan"}	{}	ACTIVE	1	e1d977fa-e3c2-53c3-9bbe-86a2d0925ac8	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+external-audit-support	External Audit Support	SPECIALIZATION	c976a480-afeb-578b-b312-944b96b362ad	finance-and-accounting	2	t	t	{"Audit plan","Controls testing workpapers","Findings report with remediation plan"}	{CPA,CA,ACCA,CMA,CFA,CIA,CGMA,CFE}	ACTIVE	1	6caf4f94-6b98-5d2d-89a9-868c21475deb	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	t
+audit-readiness-and-preparation	Audit Readiness & Preparation	SPECIALIZATION	c976a480-afeb-578b-b312-944b96b362ad	finance-and-accounting	3	f	f	{"Audit plan","Controls testing workpapers","Findings report with remediation plan"}	{}	ACTIVE	1	9d705b4d-5828-5c41-a530-c718ed973343	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+sox-compliance-and-testing	SOX Compliance & Testing	SPECIALIZATION	c976a480-afeb-578b-b312-944b96b362ad	finance-and-accounting	4	t	t	{"Risk and control matrix","Walkthrough documentation","Testing results and deficiency log"}	{CPA,CA,ACCA,CMA,CFA,CIA,CGMA,CFE}	ACTIVE	1	1ab5f9e2-9d44-5f33-9dd6-5a41f9d50b1e	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	t
+internal-controls-design-and-testing	Internal Controls Design & Testing	SPECIALIZATION	c976a480-afeb-578b-b312-944b96b362ad	finance-and-accounting	5	f	f	{"Audit plan","Controls testing workpapers","Findings report with remediation plan"}	{}	ACTIVE	1	fab0de75-c5c9-59b0-9bf1-8bce70f4fbed	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+risk-and-controls-assessment	Risk & Controls Assessment	SPECIALIZATION	c976a480-afeb-578b-b312-944b96b362ad	finance-and-accounting	6	f	f	{"Audit plan","Controls testing workpapers","Findings report with remediation plan"}	{}	ACTIVE	1	eb1565d6-0b96-5eb2-baf4-3d19cbf2d294	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+transaction-and-advisory	Transaction & Advisory	GROUP	44e95ddb-ec34-57a1-b1e7-696ac2336767	finance-and-accounting	5	f	f	{"Due diligence report","Financial model","Valuation summary"}	{}	ACTIVE	1	0ce00274-7a67-5b04-9548-8384f861dc64	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+m-and-a-financial-due-diligence	M&A Financial Due Diligence	SPECIALIZATION	0ce00274-7a67-5b04-9548-8384f861dc64	finance-and-accounting	1	f	f	{"Due diligence report","Financial model","Valuation summary"}	{}	ACTIVE	1	0d08971b-f6be-5df4-9584-5072bae9a9d5	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+valuation-services	Valuation Services	SPECIALIZATION	0ce00274-7a67-5b04-9548-8384f861dc64	finance-and-accounting	2	t	f	{"Due diligence report","Financial model","Valuation summary"}	{CPA,CA,ACCA,CMA,CFA,CIA,CGMA,CFE}	ACTIVE	1	37139b34-147a-5b42-a2ea-ac0df4b611ec	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+restructuring-and-turnaround	Restructuring & Turnaround	SPECIALIZATION	0ce00274-7a67-5b04-9548-8384f861dc64	finance-and-accounting	3	f	f	{"Due diligence report","Financial model","Valuation summary"}	{}	ACTIVE	1	9736bd51-5cef-5302-8074-7f803b1b320d	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+investment-analysis-and-modeling	Investment Analysis & Modeling	SPECIALIZATION	0ce00274-7a67-5b04-9548-8384f861dc64	finance-and-accounting	4	f	f	{"Due diligence report","Financial model","Valuation summary"}	{}	ACTIVE	1	d8e74fea-b3a7-5719-8c06-cd13b4a0f571	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+carve-out-and-integration-support	Carve-Out & Integration Support	SPECIALIZATION	0ce00274-7a67-5b04-9548-8384f861dc64	finance-and-accounting	5	f	f	{"Due diligence report","Financial model","Valuation summary"}	{}	ACTIVE	1	50a014a5-8706-5778-8f3b-da0ca208805b	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+regulatory-and-compliance-finance	Regulatory & Compliance Finance	GROUP	44e95ddb-ec34-57a1-b1e7-696ac2336767	finance-and-accounting	6	f	f	{"Regulatory return","Compliance testing report","Policy and procedure documentation"}	{}	ACTIVE	1	a2fbef40-ba2e-58f2-9630-fc76a68573dd	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+regulatory-reporting	Regulatory Reporting	SPECIALIZATION	a2fbef40-ba2e-58f2-9630-fc76a68573dd	finance-and-accounting	1	t	t	{"Regulatory return","Compliance testing report","Policy and procedure documentation"}	{CPA,CA,ACCA,CMA,CFA,CIA,CGMA,CFE}	ACTIVE	1	204c9bcb-bbe7-57e7-a80a-ce7a478ba576	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	t
+financial-risk-management	Financial Risk Management	SPECIALIZATION	a2fbef40-ba2e-58f2-9630-fc76a68573dd	finance-and-accounting	2	f	f	{"Regulatory return","Compliance testing report","Policy and procedure documentation"}	{}	ACTIVE	1	a1b84f82-f1a1-523c-a01c-5018245ed152	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+aml-financial-crime-controls	AML / Financial Crime Controls	SPECIALIZATION	a2fbef40-ba2e-58f2-9630-fc76a68573dd	finance-and-accounting	3	t	t	{"Regulatory return","Compliance testing report","Policy and procedure documentation"}	{CPA,CA,ACCA,CMA,CFA,CIA,CGMA,CFE}	ACTIVE	1	9f927fb3-44a7-530f-a5b2-dcfc8ada18bf	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	t
+compliance-documentation-and-testing	Compliance Documentation & Testing	SPECIALIZATION	a2fbef40-ba2e-58f2-9630-fc76a68573dd	finance-and-accounting	4	f	f	{"Regulatory return","Compliance testing report","Policy and procedure documentation"}	{}	ACTIVE	1	83bb6d31-33f4-5ba2-93d1-0f1616e59402	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+ifrs-9-ifrs-17-implementation	IFRS 9 / IFRS 17 Implementation	SPECIALIZATION	a2fbef40-ba2e-58f2-9630-fc76a68573dd	finance-and-accounting	5	t	f	{"Regulatory return","Compliance testing report","Policy and procedure documentation"}	{CPA,CA,ACCA,CMA,CFA,CIA,CGMA,CFE}	ACTIVE	1	8f930b90-0d0d-52a2-94f4-929ca8760455	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+finance-systems-and-technology	Finance Systems & Technology	GROUP	44e95ddb-ec34-57a1-b1e7-696ac2336767	finance-and-accounting	7	f	f	{"Requirements and design document","Configured system with test evidence","User training and handover"}	{}	ACTIVE	1	e751c543-496b-5750-a3ff-88f650449229	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+accounting-systems-implementation	Accounting Systems Implementation	SPECIALIZATION	e751c543-496b-5750-a3ff-88f650449229	finance-and-accounting	1	f	f	{"Requirements and design document","Configured system with test evidence","User training and handover"}	{}	ACTIVE	1	e24ec60d-b02c-54b1-abf6-89cdb1f644be	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+erp-finance-modules	ERP Finance Modules	SPECIALIZATION	e751c543-496b-5750-a3ff-88f650449229	finance-and-accounting	2	f	f	{"Requirements and design document","Configured system with test evidence","User training and handover"}	{}	ACTIVE	1	71cdc05c-7755-5476-98c9-8f359802e74b	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+finance-process-automation	Finance Process Automation	SPECIALIZATION	e751c543-496b-5750-a3ff-88f650449229	finance-and-accounting	3	f	f	{"Requirements and design document","Configured system with test evidence","User training and handover"}	{}	ACTIVE	1	d88c47e6-a521-5563-b05d-4ad7ebb23714	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+financial-reporting-and-bi-tools	Financial Reporting & BI Tools	SPECIALIZATION	e751c543-496b-5750-a3ff-88f650449229	finance-and-accounting	4	f	f	{"Requirements and design document","Configured system with test evidence","User training and handover"}	{}	ACTIVE	1	61ad8cbc-ec9b-5e3d-9909-e01f5a271221	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+finance-data-integration	Finance Data Integration	SPECIALIZATION	e751c543-496b-5750-a3ff-88f650449229	finance-and-accounting	5	f	f	{"Requirements and design document","Configured system with test evidence","User training and handover"}	{}	ACTIVE	1	ae767b3a-1459-56ac-a721-fd014acb54e3	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+technology-and-software-development	Technology & Software Development	CATEGORY	\N	technology-and-software-development	2	f	f	{}	{AWS,Azure,GCP,CISSP,CEH,OSCP,"ISO 27001 LA",PMP}	ACTIVE	1	f164158e-8dbb-535e-a386-66cafa5106ec	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+software-development	Software Development	GROUP	f164158e-8dbb-535e-a386-66cafa5106ec	technology-and-software-development	1	f	f	{"Technical specification","Working software with source code","Deployment and handover notes"}	{}	ACTIVE	1	a5179888-aad9-50c8-80d6-803fac03667d	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+web-development	Web Development	SPECIALIZATION	a5179888-aad9-50c8-80d6-803fac03667d	technology-and-software-development	1	f	f	{"Technical specification","Working software with source code","Deployment and handover notes"}	{}	ACTIVE	1	2e804d72-bf38-5f2d-9356-efdf10fe407e	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+mobile-app-development	Mobile App Development	SPECIALIZATION	a5179888-aad9-50c8-80d6-803fac03667d	technology-and-software-development	2	f	f	{"Technical specification","Working software with source code","Deployment and handover notes"}	{}	ACTIVE	1	29084371-8b5f-5ac2-b31b-bafeb25423a0	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+backend-and-api-development	Backend & API Development	SPECIALIZATION	a5179888-aad9-50c8-80d6-803fac03667d	technology-and-software-development	3	f	f	{"Technical specification","Working software with source code","Deployment and handover notes"}	{}	ACTIVE	1	36a53dc8-5990-58da-b5ee-fa0f14ee7d7d	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+full-stack-development	Full-Stack Development	SPECIALIZATION	a5179888-aad9-50c8-80d6-803fac03667d	technology-and-software-development	4	f	f	{"Technical specification","Working software with source code","Deployment and handover notes"}	{}	ACTIVE	1	2dad45e9-1386-5128-a671-b2b896daac1c	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+software-architecture	Software Architecture	SPECIALIZATION	a5179888-aad9-50c8-80d6-803fac03667d	technology-and-software-development	5	f	f	{"Technical specification","Working software with source code","Deployment and handover notes"}	{}	ACTIVE	1	8001846c-7dac-553f-8350-2207f0265459	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+legacy-system-modernization	Legacy System Modernization	SPECIALIZATION	a5179888-aad9-50c8-80d6-803fac03667d	technology-and-software-development	6	f	f	{"Technical specification","Working software with source code","Deployment and handover notes"}	{}	ACTIVE	1	a8f17db4-9926-555c-a223-15a03ad455b0	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+ai-and-data	AI & Data	GROUP	f164158e-8dbb-535e-a386-66cafa5106ec	technology-and-software-development	2	f	f	{"Data assessment and approach","Model or pipeline with evaluation results","Documentation and handover"}	{}	ACTIVE	1	49f9a083-3b6c-5a85-bb0f-4052418371b2	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+ai-machine-learning-engineering	AI / Machine Learning Engineering	SPECIALIZATION	49f9a083-3b6c-5a85-bb0f-4052418371b2	technology-and-software-development	1	f	f	{"Data assessment and approach","Model or pipeline with evaluation results","Documentation and handover"}	{}	ACTIVE	1	526a2c3f-5f7d-57e8-83f2-d083ef8262a7	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+generative-ai-and-llm-applications	Generative AI & LLM Applications	SPECIALIZATION	49f9a083-3b6c-5a85-bb0f-4052418371b2	technology-and-software-development	2	f	f	{"Data assessment and approach","Model or pipeline with evaluation results","Documentation and handover"}	{}	ACTIVE	1	9d1ffab6-24e4-5f76-9dd6-29cfc2d6b3c2	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+data-engineering	Data Engineering	SPECIALIZATION	49f9a083-3b6c-5a85-bb0f-4052418371b2	technology-and-software-development	3	f	f	{"Data assessment and approach","Model or pipeline with evaluation results","Documentation and handover"}	{}	ACTIVE	1	f02c2601-923b-5e3a-a17f-1ac6e8586a98	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+data-analytics-and-business-intelligence	Data Analytics & Business Intelligence	SPECIALIZATION	49f9a083-3b6c-5a85-bb0f-4052418371b2	technology-and-software-development	4	f	f	{"Data assessment and approach","Model or pipeline with evaluation results","Documentation and handover"}	{}	ACTIVE	1	e61e23c9-78ca-592e-8ec0-cc63eca1e37e	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+data-science-and-statistical-modeling	Data Science & Statistical Modeling	SPECIALIZATION	49f9a083-3b6c-5a85-bb0f-4052418371b2	technology-and-software-development	5	f	f	{"Data assessment and approach","Model or pipeline with evaluation results","Documentation and handover"}	{}	ACTIVE	1	d2af4021-1352-5532-af60-68119d7c5313	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+cloud-and-devops	Cloud & DevOps	GROUP	f164158e-8dbb-535e-a386-66cafa5106ec	technology-and-software-development	3	f	f	{"Architecture design","Infrastructure as code and pipelines","Runbook and handover"}	{}	ACTIVE	1	6bc796a0-1509-55b6-829f-829a19a9213e	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+cloud-architecture	Cloud Architecture	SPECIALIZATION	6bc796a0-1509-55b6-829f-829a19a9213e	technology-and-software-development	1	f	f	{"Architecture design","Infrastructure as code and pipelines","Runbook and handover"}	{}	ACTIVE	1	71f5d2d5-518b-530a-a617-944f4598d85f	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+devops-and-ci-cd	DevOps & CI/CD	SPECIALIZATION	6bc796a0-1509-55b6-829f-829a19a9213e	technology-and-software-development	2	f	f	{"Architecture design","Infrastructure as code and pipelines","Runbook and handover"}	{}	ACTIVE	1	86145d70-6c2a-57ca-89dd-23e91bd4a1d8	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+site-reliability-engineering	Site Reliability Engineering	SPECIALIZATION	6bc796a0-1509-55b6-829f-829a19a9213e	technology-and-software-development	3	f	f	{"Architecture design","Infrastructure as code and pipelines","Runbook and handover"}	{}	ACTIVE	1	dd5693fe-e09d-5bef-b387-21ce9e2ff2cf	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+cloud-migration	Cloud Migration	SPECIALIZATION	6bc796a0-1509-55b6-829f-829a19a9213e	technology-and-software-development	4	f	f	{"Architecture design","Infrastructure as code and pipelines","Runbook and handover"}	{}	ACTIVE	1	521be22a-c0a0-5450-ac33-a3cb91551dd4	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+cybersecurity	Cybersecurity	GROUP	f164158e-8dbb-535e-a386-66cafa5106ec	technology-and-software-development	4	f	f	{"Assessment scope and plan","Findings report with risk ratings","Remediation plan"}	{}	ACTIVE	1	e93e39b1-fff0-500b-9158-eb4a9e021ed7	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+application-security	Application Security	SPECIALIZATION	e93e39b1-fff0-500b-9158-eb4a9e021ed7	technology-and-software-development	1	f	f	{"Assessment scope and plan","Findings report with risk ratings","Remediation plan"}	{}	ACTIVE	1	f64e37dc-06b4-54ef-b8a6-d20d8e4fecc7	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+penetration-testing	Penetration Testing	SPECIALIZATION	e93e39b1-fff0-500b-9158-eb4a9e021ed7	technology-and-software-development	2	t	f	{"Assessment scope and plan","Findings report with risk ratings","Remediation plan"}	{AWS,Azure,GCP,CISSP,CEH,OSCP,"ISO 27001 LA",PMP}	ACTIVE	1	e0fce7e0-72b8-5a4e-bf70-c6fcdbeec60a	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+security-compliance-iso-27001-soc-2	Security Compliance (ISO 27001 / SOC 2)	SPECIALIZATION	e93e39b1-fff0-500b-9158-eb4a9e021ed7	technology-and-software-development	3	t	f	{"Assessment scope and plan","Findings report with risk ratings","Remediation plan"}	{AWS,Azure,GCP,CISSP,CEH,OSCP,"ISO 27001 LA",PMP}	ACTIVE	1	66868d43-78b1-5b8d-971b-509517527364	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+identity-and-access-management	Identity & Access Management	SPECIALIZATION	e93e39b1-fff0-500b-9158-eb4a9e021ed7	technology-and-software-development	4	f	f	{"Assessment scope and plan","Findings report with risk ratings","Remediation plan"}	{}	ACTIVE	1	10e8b54d-86c6-5bde-9e06-cdbb1616c17a	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+product-design-and-quality	Product, Design & Quality	GROUP	f164158e-8dbb-535e-a386-66cafa5106ec	technology-and-software-development	5	f	f	{"Discovery findings","Designs or test suite","Handover and recommendations"}	{}	ACTIVE	1	7251d738-fc78-5469-b087-809957f5726f	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+ux-ui-design	UX / UI Design	SPECIALIZATION	7251d738-fc78-5469-b087-809957f5726f	technology-and-software-development	1	f	f	{"Discovery findings","Designs or test suite","Handover and recommendations"}	{}	ACTIVE	1	e9323f01-6fda-56d9-9f38-c1ec16ce9cfc	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+product-management	Product Management	SPECIALIZATION	7251d738-fc78-5469-b087-809957f5726f	technology-and-software-development	2	f	f	{"Discovery findings","Designs or test suite","Handover and recommendations"}	{}	ACTIVE	1	c7f36323-1b4c-516c-9869-e24982e779a3	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+technical-project-management	Technical Project Management	SPECIALIZATION	7251d738-fc78-5469-b087-809957f5726f	technology-and-software-development	4	f	f	{"Discovery findings","Designs or test suite","Handover and recommendations"}	{}	ACTIVE	1	4a5d1e25-f81b-5dcb-90e8-ce78108ceb98	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+legal-services	Legal Services	CATEGORY	\N	legal-services	3	f	f	{}	{"Bar admission",Solicitor,Attorney,Advocate}	ACTIVE	1	81cc1079-1f58-5cb6-b991-ee7ef9269c9c	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+corporate-and-commercial-law	Corporate & Commercial Law	GROUP	81cc1079-1f58-5cb6-b991-ee7ef9269c9c	legal-services	1	f	f	{"Legal advice memo","Drafted or reviewed agreement","Negotiation support notes"}	{}	ACTIVE	1	ff4a2593-d043-549f-9bbc-c01b4914e057	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+commercial-contracts	Commercial Contracts	SPECIALIZATION	ff4a2593-d043-549f-9bbc-c01b4914e057	legal-services	1	t	t	{"Legal advice memo","Drafted or reviewed agreement","Negotiation support notes"}	{"Bar admission",Solicitor,Attorney,Advocate}	ACTIVE	1	bbf7544d-3e50-5181-b158-f3557991edf2	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	t
+corporate-governance-and-company-secretarial	Corporate Governance & Company Secretarial	SPECIALIZATION	ff4a2593-d043-549f-9bbc-c01b4914e057	legal-services	2	t	t	{"Legal advice memo","Drafted or reviewed agreement","Negotiation support notes"}	{"Bar admission",Solicitor,Attorney,Advocate}	ACTIVE	1	bcecba2c-6531-5103-92c4-89aff720cd4a	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	t
+m-and-a-legal-advisory	M&A Legal Advisory	SPECIALIZATION	ff4a2593-d043-549f-9bbc-c01b4914e057	legal-services	3	t	t	{"Legal advice memo","Drafted or reviewed agreement","Negotiation support notes"}	{"Bar admission",Solicitor,Attorney,Advocate}	ACTIVE	1	a11af046-62c3-539c-b298-62fc006c90c5	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	t
+employment-and-immigration-law	Employment & Immigration Law	GROUP	81cc1079-1f58-5cb6-b991-ee7ef9269c9c	legal-services	2	f	f	{"Legal advice memo","Drafted policies or contracts","Filing or application pack"}	{}	ACTIVE	1	cac6e07b-319f-5eb3-af3f-13fcb5a414cc	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+employment-law	Employment Law	SPECIALIZATION	cac6e07b-319f-5eb3-af3f-13fcb5a414cc	legal-services	1	t	t	{"Legal advice memo","Drafted policies or contracts","Filing or application pack"}	{"Bar admission",Solicitor,Attorney,Advocate}	ACTIVE	1	7f3df228-920f-5170-9423-02db30a99df1	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	t
+immigration-law	Immigration Law	SPECIALIZATION	cac6e07b-319f-5eb3-af3f-13fcb5a414cc	legal-services	2	t	t	{"Legal advice memo","Drafted policies or contracts","Filing or application pack"}	{"Bar admission",Solicitor,Attorney,Advocate}	ACTIVE	1	830c52a7-1a9e-5313-9411-e0b633f026f6	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	t
+intellectual-property	Intellectual Property	GROUP	81cc1079-1f58-5cb6-b991-ee7ef9269c9c	legal-services	3	f	f	{"Clearance or search report","Filing documents","Licence agreement"}	{}	ACTIVE	1	0d40eac5-f146-51eb-be98-5c43c789bd67	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+trademarks-and-patents	Trademarks & Patents	SPECIALIZATION	0d40eac5-f146-51eb-be98-5c43c789bd67	legal-services	1	t	t	{"Clearance or search report","Filing documents","Licence agreement"}	{"Bar admission",Solicitor,Attorney,Advocate}	ACTIVE	1	86a7f336-cdfa-58ac-9ecc-29f7daccbd0b	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	t
+technology-licensing-agreements	Technology Licensing Agreements	SPECIALIZATION	0d40eac5-f146-51eb-be98-5c43c789bd67	legal-services	2	t	t	{"Clearance or search report","Filing documents","Licence agreement"}	{"Bar admission",Solicitor,Attorney,Advocate}	ACTIVE	1	85111db9-da3a-5c96-ace6-bc2f08bf82a8	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	t
+privacy-and-regulatory-law	Privacy & Regulatory Law	GROUP	81cc1079-1f58-5cb6-b991-ee7ef9269c9c	legal-services	4	f	f	{"Gap assessment","Policies and notices","Compliance roadmap"}	{}	ACTIVE	1	b1de7dae-4efa-5090-b3b4-373b80df9de0	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+data-privacy-and-gdpr	Data Privacy & GDPR	SPECIALIZATION	b1de7dae-4efa-5090-b3b4-373b80df9de0	legal-services	1	t	f	{"Gap assessment","Policies and notices","Compliance roadmap"}	{"Bar admission",Solicitor,Attorney,Advocate}	ACTIVE	1	40ae9be6-e1f2-55be-9491-34f803151716	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+regulatory-compliance-advisory	Regulatory Compliance Advisory	SPECIALIZATION	b1de7dae-4efa-5090-b3b4-373b80df9de0	legal-services	2	t	f	{"Gap assessment","Policies and notices","Compliance roadmap"}	{"Bar admission",Solicitor,Attorney,Advocate}	ACTIVE	1	9756a0f8-2df6-51e8-b7b0-5d3cecf0dbb0	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+hr-and-people	HR & People	CATEGORY	\N	hr-and-people	4	f	f	{}	{CIPD,SHRM-CP,SHRM-SCP}	ACTIVE	1	afbc2141-8840-513d-8fb9-57830d9bbe36	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+talent-acquisition	Talent Acquisition	GROUP	afbc2141-8840-513d-8fb9-57830d9bbe36	hr-and-people	1	f	f	{"Role profile and search plan","Shortlist with assessments","Offer and onboarding support"}	{}	ACTIVE	1	5062ed1f-a37d-54bc-bab9-716b11ce0c9f	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+recruitment-and-talent-acquisition	Recruitment & Talent Acquisition	SPECIALIZATION	5062ed1f-a37d-54bc-bab9-716b11ce0c9f	hr-and-people	1	f	f	{"Role profile and search plan","Shortlist with assessments","Offer and onboarding support"}	{}	ACTIVE	1	f1526727-2d04-5b03-9070-d0d5571a248f	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+executive-search	Executive Search	SPECIALIZATION	5062ed1f-a37d-54bc-bab9-716b11ce0c9f	hr-and-people	2	f	f	{"Role profile and search plan","Shortlist with assessments","Offer and onboarding support"}	{}	ACTIVE	1	2c16ee99-6961-5596-b371-0f3c6b1ba4f3	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+people-operations	People Operations	GROUP	afbc2141-8840-513d-8fb9-57830d9bbe36	hr-and-people	2	f	f	{"Policy pack","Process documentation","Compliance checklist"}	{}	ACTIVE	1	39f6cd9f-bbd9-5bbe-81ac-9f20a10d76d9	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+hr-policy-and-compliance	HR Policy & Compliance	SPECIALIZATION	39f6cd9f-bbd9-5bbe-81ac-9f20a10d76d9	hr-and-people	1	f	f	{"Policy pack","Process documentation","Compliance checklist"}	{}	ACTIVE	1	92998e66-4143-5d34-b60b-ce263163443f	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+payroll-administration	Payroll Administration	SPECIALIZATION	39f6cd9f-bbd9-5bbe-81ac-9f20a10d76d9	hr-and-people	2	f	f	{"Policy pack","Process documentation","Compliance checklist"}	{}	ACTIVE	1	86f40a56-214b-5b5c-8b39-1a33e88111ca	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+compensation-and-benefits	Compensation & Benefits	SPECIALIZATION	39f6cd9f-bbd9-5bbe-81ac-9f20a10d76d9	hr-and-people	3	f	f	{"Policy pack","Process documentation","Compliance checklist"}	{}	ACTIVE	1	6bdbefbf-1ab7-5328-8d05-5de43e4de690	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+organisation-development	Organisation Development	GROUP	afbc2141-8840-513d-8fb9-57830d9bbe36	hr-and-people	3	f	f	{"Assessment findings","Programme or structure design","Implementation plan"}	{}	ACTIVE	1	0d6d6e53-e7c5-5e0e-b50b-347e0103cd4b	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+learning-and-development	Learning & Development	SPECIALIZATION	0d6d6e53-e7c5-5e0e-b50b-347e0103cd4b	hr-and-people	1	f	f	{"Assessment findings","Programme or structure design","Implementation plan"}	{}	ACTIVE	1	d606e033-f909-5640-840d-de5c2b92264a	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+organisational-design	Organisational Design	SPECIALIZATION	0d6d6e53-e7c5-5e0e-b50b-347e0103cd4b	hr-and-people	2	f	f	{"Assessment findings","Programme or structure design","Implementation plan"}	{}	ACTIVE	1	3d21695b-4931-561d-81cf-ad7d49bce15f	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+fractional-hr-leadership	Fractional HR Leadership	SPECIALIZATION	0d6d6e53-e7c5-5e0e-b50b-347e0103cd4b	hr-and-people	3	f	f	{"Assessment findings","Programme or structure design","Implementation plan"}	{}	ACTIVE	1	1de44aa8-1436-5b9e-85cf-41ea56cb22d9	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+marketing-and-growth	Marketing & Growth	CATEGORY	\N	marketing-and-growth	5	f	f	{}	{}	ACTIVE	1	99523256-ac1a-5210-81cb-0b3e940eda43	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+digital-marketing	Digital Marketing	GROUP	99523256-ac1a-5210-81cb-0b3e940eda43	marketing-and-growth	1	f	f	{"Channel audit","Campaign plan and setup","Performance report"}	{}	ACTIVE	1	64c860c4-ea85-53a0-912d-e8ab262bfc0c	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+search-engine-optimization-seo	Search Engine Optimization (SEO)	SPECIALIZATION	64c860c4-ea85-53a0-912d-e8ab262bfc0c	marketing-and-growth	1	f	f	{"Channel audit","Campaign plan and setup","Performance report"}	{}	ACTIVE	1	2192c315-c070-5e4d-a4d0-013cc3fa99e9	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+paid-media-and-performance-marketing	Paid Media & Performance Marketing	SPECIALIZATION	64c860c4-ea85-53a0-912d-e8ab262bfc0c	marketing-and-growth	2	f	f	{"Channel audit","Campaign plan and setup","Performance report"}	{}	ACTIVE	1	808ac3dc-3cca-56b0-be9c-74a90c0319e1	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+social-media-marketing	Social Media Marketing	SPECIALIZATION	64c860c4-ea85-53a0-912d-e8ab262bfc0c	marketing-and-growth	3	f	f	{"Channel audit","Campaign plan and setup","Performance report"}	{}	ACTIVE	1	7870c1c7-4e26-5c13-88d9-fafca1e0e611	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+email-and-lifecycle-marketing	Email & Lifecycle Marketing	SPECIALIZATION	64c860c4-ea85-53a0-912d-e8ab262bfc0c	marketing-and-growth	4	f	f	{"Channel audit","Campaign plan and setup","Performance report"}	{}	ACTIVE	1	8b24c03b-266b-558e-93db-8899056d5109	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+brand-and-content	Brand & Content	GROUP	99523256-ac1a-5210-81cb-0b3e940eda43	marketing-and-growth	2	f	f	{"Brand or content strategy","Content assets",Guidelines}	{}	ACTIVE	1	9f17e580-1502-58fa-b287-cd1552fe7f6d	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+brand-strategy	Brand Strategy	SPECIALIZATION	9f17e580-1502-58fa-b287-cd1552fe7f6d	marketing-and-growth	1	f	f	{"Brand or content strategy","Content assets",Guidelines}	{}	ACTIVE	1	a3a7a66a-12ec-530d-8bee-0ee9b21e9d0b	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+content-strategy-and-copywriting	Content Strategy & Copywriting	SPECIALIZATION	9f17e580-1502-58fa-b287-cd1552fe7f6d	marketing-and-growth	2	f	f	{"Brand or content strategy","Content assets",Guidelines}	{}	ACTIVE	1	c377bde0-cd8a-55ec-82bc-f82082cfb668	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+pr-and-communications	PR & Communications	SPECIALIZATION	9f17e580-1502-58fa-b287-cd1552fe7f6d	marketing-and-growth	3	f	f	{"Brand or content strategy","Content assets",Guidelines}	{}	ACTIVE	1	bba0743d-a7c3-5166-8184-27c0f2714e55	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+growth-and-analytics	Growth & Analytics	GROUP	99523256-ac1a-5210-81cb-0b3e940eda43	marketing-and-growth	3	f	f	{"Growth plan","Measurement framework and dashboards","Experiment results"}	{}	ACTIVE	1	624ea078-104a-5350-a747-6b7895658ed3	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+growth-strategy	Growth Strategy	SPECIALIZATION	624ea078-104a-5350-a747-6b7895658ed3	marketing-and-growth	1	f	f	{"Growth plan","Measurement framework and dashboards","Experiment results"}	{}	ACTIVE	1	fa715e35-0224-5c74-aadf-8d608f8e552c	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+marketing-analytics	Marketing Analytics	SPECIALIZATION	624ea078-104a-5350-a747-6b7895658ed3	marketing-and-growth	2	f	f	{"Growth plan","Measurement framework and dashboards","Experiment results"}	{}	ACTIVE	1	a213d1a9-42e6-52c2-86ce-e94e2858c5f0	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+fractional-cmo	Fractional CMO	SPECIALIZATION	624ea078-104a-5350-a747-6b7895658ed3	marketing-and-growth	3	f	f	{"Growth plan","Measurement framework and dashboards","Experiment results"}	{}	ACTIVE	1	04bc9b49-95e6-56cd-8fe3-651521369cbe	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+management-consulting	Management Consulting	CATEGORY	\N	management-consulting	6	f	f	{}	{PMP,"Lean Six Sigma",PRINCE2}	ACTIVE	1	3fd78747-8949-52fc-a01e-2e46adfc9e86	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+strategy	Strategy	GROUP	3fd78747-8949-52fc-a01e-2e46adfc9e86	management-consulting	1	f	f	{"Situation analysis","Strategy options and recommendation",Roadmap}	{}	ACTIVE	1	8dccb06a-1b7d-5d84-9145-f180fcac19da	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+business-strategy	Business Strategy	SPECIALIZATION	8dccb06a-1b7d-5d84-9145-f180fcac19da	management-consulting	1	f	f	{"Situation analysis","Strategy options and recommendation",Roadmap}	{}	ACTIVE	1	ad05482d-01e7-50ef-8b6d-0e794dbe54f6	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+market-entry-strategy	Market Entry Strategy	SPECIALIZATION	8dccb06a-1b7d-5d84-9145-f180fcac19da	management-consulting	2	f	f	{"Situation analysis","Strategy options and recommendation",Roadmap}	{}	ACTIVE	1	af8a3eaf-eaa3-52df-9dfe-9b2d7871d684	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+commercial-due-diligence	Commercial Due Diligence	SPECIALIZATION	8dccb06a-1b7d-5d84-9145-f180fcac19da	management-consulting	3	f	f	{"Situation analysis","Strategy options and recommendation",Roadmap}	{}	ACTIVE	1	7edf4a3c-d77a-566b-b002-cde852cc80e6	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+operations	Operations	GROUP	3fd78747-8949-52fc-a01e-2e46adfc9e86	management-consulting	2	f	f	{"Current-state assessment","Improvement plan","Implementation support report"}	{}	ACTIVE	1	d96d3b6b-0a2a-52c3-9a30-71f35ca1c952	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+operations-improvement	Operations Improvement	SPECIALIZATION	d96d3b6b-0a2a-52c3-9a30-71f35ca1c952	management-consulting	1	f	f	{"Current-state assessment","Improvement plan","Implementation support report"}	{}	ACTIVE	1	a811ccfe-3ac4-591d-a8aa-6902a0cdff22	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+supply-chain-consulting	Supply Chain Consulting	SPECIALIZATION	d96d3b6b-0a2a-52c3-9a30-71f35ca1c952	management-consulting	2	f	f	{"Current-state assessment","Improvement plan","Implementation support report"}	{}	ACTIVE	1	1034904b-dc5b-5aff-84a6-dc74598d1ee8	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+lean-six-sigma-process-excellence	Lean / Six Sigma Process Excellence	SPECIALIZATION	d96d3b6b-0a2a-52c3-9a30-71f35ca1c952	management-consulting	3	f	f	{"Current-state assessment","Improvement plan","Implementation support report"}	{}	ACTIVE	1	bca9a59c-478e-5ea6-b62e-f29e6e67174f	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+transformation	Transformation	GROUP	3fd78747-8949-52fc-a01e-2e46adfc9e86	management-consulting	3	f	f	{"Transformation roadmap","Governance and change plan","Progress reporting"}	{}	ACTIVE	1	6e18fbd8-29b7-5ea6-bdb1-98c6c456a3c7	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+digital-transformation	Digital Transformation	SPECIALIZATION	6e18fbd8-29b7-5ea6-bdb1-98c6c456a3c7	management-consulting	1	f	f	{"Transformation roadmap","Governance and change plan","Progress reporting"}	{}	ACTIVE	1	1a9d8c36-d708-5e9d-b79f-e4762e7e8305	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+change-management	Change Management	SPECIALIZATION	6e18fbd8-29b7-5ea6-bdb1-98c6c456a3c7	management-consulting	2	f	f	{"Transformation roadmap","Governance and change plan","Progress reporting"}	{}	ACTIVE	1	a47ac0f9-aec4-50c7-a8e4-2158b3872cf1	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+programme-management-pmo	Programme Management (PMO)	SPECIALIZATION	6e18fbd8-29b7-5ea6-bdb1-98c6c456a3c7	management-consulting	3	f	f	{"Transformation roadmap","Governance and change plan","Progress reporting"}	{}	ACTIVE	1	bcbc41d7-08a5-5be4-b062-656de022a130	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+creative-and-design	Creative & Design	CATEGORY	\N	creative-and-design	7	f	f	{}	{}	ACTIVE	1	2347710f-7d1b-55e4-b258-de8e599beb72	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+visual-design	Visual Design	GROUP	2347710f-7d1b-55e4-b258-de8e599beb72	creative-and-design	1	f	f	{"Concepts and moodboard","Final design files","Usage guidelines"}	{}	ACTIVE	1	afe69537-3917-52fd-9780-be912e902ddf	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+graphic-design	Graphic Design	SPECIALIZATION	afe69537-3917-52fd-9780-be912e902ddf	creative-and-design	1	f	f	{"Concepts and moodboard","Final design files","Usage guidelines"}	{}	ACTIVE	1	4f4bfd5b-9ead-54f0-a117-57fe1362bcda	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+illustration	Illustration	SPECIALIZATION	afe69537-3917-52fd-9780-be912e902ddf	creative-and-design	2	f	f	{"Concepts and moodboard","Final design files","Usage guidelines"}	{}	ACTIVE	1	872554ac-c0a2-5575-b957-c7be657b5db3	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+presentation-and-pitch-deck-design	Presentation & Pitch Deck Design	SPECIALIZATION	afe69537-3917-52fd-9780-be912e902ddf	creative-and-design	3	f	f	{"Concepts and moodboard","Final design files","Usage guidelines"}	{}	ACTIVE	1	56477e14-74c2-5bc8-aa42-d8a8a7c57898	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+packaging-and-print-design	Packaging & Print Design	SPECIALIZATION	afe69537-3917-52fd-9780-be912e902ddf	creative-and-design	4	f	f	{"Concepts and moodboard","Final design files","Usage guidelines"}	{}	ACTIVE	1	ef189987-46c8-570a-b5c0-da22ee506f5b	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+video-and-audio	Video & Audio	GROUP	2347710f-7d1b-55e4-b258-de8e599beb72	creative-and-design	2	f	f	{"Script or storyboard","Edited final cut","Source files and formats"}	{}	ACTIVE	1	248d1a25-78e3-5bc7-86ec-573d9a704c6e	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+video-production-and-editing	Video Production & Editing	SPECIALIZATION	248d1a25-78e3-5bc7-86ec-573d9a704c6e	creative-and-design	1	f	f	{"Script or storyboard","Edited final cut","Source files and formats"}	{}	ACTIVE	1	0ab740d0-9297-5d64-bc52-ad4d64392d7e	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+motion-graphics-and-animation	Motion Graphics & Animation	SPECIALIZATION	248d1a25-78e3-5bc7-86ec-573d9a704c6e	creative-and-design	2	f	f	{"Script or storyboard","Edited final cut","Source files and formats"}	{}	ACTIVE	1	60bca59b-07f3-5bd9-971a-901983318bc8	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+podcast-and-audio-production	Podcast & Audio Production	SPECIALIZATION	248d1a25-78e3-5bc7-86ec-573d9a704c6e	creative-and-design	3	f	f	{"Script or storyboard","Edited final cut","Source files and formats"}	{}	ACTIVE	1	c8648def-0cec-58ea-a0fe-23db6e9c6f03	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+writing-and-translation	Writing & Translation	GROUP	2347710f-7d1b-55e4-b258-de8e599beb72	creative-and-design	3	f	f	{"Outline or glossary","Final text","Revision notes"}	{}	ACTIVE	1	d1d9d748-a25a-5582-a967-9ec9a8540aee	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+technical-and-business-writing	Technical & Business Writing	SPECIALIZATION	d1d9d748-a25a-5582-a967-9ec9a8540aee	creative-and-design	1	f	f	{"Outline or glossary","Final text","Revision notes"}	{}	ACTIVE	1	478c6440-c153-5e12-8ec4-b11266d07c53	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+translation-and-localisation	Translation & Localisation	SPECIALIZATION	d1d9d748-a25a-5582-a967-9ec9a8540aee	creative-and-design	2	f	f	{"Outline or glossary","Final text","Revision notes"}	{}	ACTIVE	1	12ea4b72-1a78-5371-853e-8715b94e1593	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
+editing-and-proofreading	Editing & Proofreading	SPECIALIZATION	d1d9d748-a25a-5582-a967-9ec9a8540aee	creative-and-design	3	f	f	{"Outline or glossary","Final text","Revision notes"}	{}	ACTIVE	1	95548b84-3aac-551c-bed2-b04e49dfc384	2026-10-16 04:41:55.054186+00	2026-10-16 04:41:55.054186+00	f
 \.
 
 
@@ -3251,6 +3348,14 @@ COPY messaging.attachments (thread_id, uploaded_by, name, content_type, size_byt
 --
 
 COPY messaging.dispute_contexts (dispute_id, contract_id, category, initiated_by_identity_id, is_open, created_at, updated_at) FROM stdin;
+\.
+
+
+--
+-- Data for Name: meetings; Type: TABLE DATA; Schema: messaging; Owner: -
+--
+
+COPY messaging.meetings (thread_id, title, starts_at, duration_minutes, join_url, created_by, status, id, updated_at, created_at) FROM stdin;
 \.
 
 
@@ -3395,7 +3500,7 @@ COPY payments.webhook_events (provider, event_id, event_type, payload, outcome, 
 --
 
 COPY platform.alembic_version (version_num) FROM stdin;
-f4a5b6c7d8e9
+c7d8e9f0a1b2
 \.
 
 
@@ -3508,6 +3613,22 @@ COPY professional.professionals (identity_id, firm_id, status, display_name, leg
 --
 
 COPY professional.saved_buyers (professional_id, organization_id, note, alerts, id, updated_at, created_at) FROM stdin;
+\.
+
+
+--
+-- Data for Name: brief_interests; Type: TABLE DATA; Schema: proposal; Owner: -
+--
+
+COPY proposal.brief_interests (brief_id, professional_id, note, id, updated_at, created_at) FROM stdin;
+\.
+
+
+--
+-- Data for Name: open_briefs; Type: TABLE DATA; Schema: proposal; Owner: -
+--
+
+COPY proposal.open_briefs (organization_id, buyer_identity_id, country, service, specialization, objective, details, desired_start_date, estimated_duration, budget_max_minor, budget_currency, status, closes_at, id, updated_at, created_at) FROM stdin;
 \.
 
 
@@ -4051,6 +4172,14 @@ ALTER TABLE ONLY contract.submissions
 
 
 --
+-- Name: tasks pk_tasks; Type: CONSTRAINT; Schema: contract; Owner: -
+--
+
+ALTER TABLE ONLY contract.tasks
+    ADD CONSTRAINT pk_tasks PRIMARY KEY (id);
+
+
+--
 -- Name: termination_requests pk_termination_requests; Type: CONSTRAINT; Schema: contract; Owner: -
 --
 
@@ -4536,6 +4665,14 @@ ALTER TABLE ONLY messaging.attachments
 
 ALTER TABLE ONLY messaging.dispute_contexts
     ADD CONSTRAINT pk_dispute_contexts PRIMARY KEY (dispute_id);
+
+
+--
+-- Name: meetings pk_meetings; Type: CONSTRAINT; Schema: messaging; Owner: -
+--
+
+ALTER TABLE ONLY messaging.meetings
+    ADD CONSTRAINT pk_meetings PRIMARY KEY (id);
 
 
 --
@@ -5027,6 +5164,22 @@ ALTER TABLE ONLY professional.saved_buyers
 
 
 --
+-- Name: brief_interests pk_brief_interests; Type: CONSTRAINT; Schema: proposal; Owner: -
+--
+
+ALTER TABLE ONLY proposal.brief_interests
+    ADD CONSTRAINT pk_brief_interests PRIMARY KEY (id);
+
+
+--
+-- Name: open_briefs pk_open_briefs; Type: CONSTRAINT; Schema: proposal; Owner: -
+--
+
+ALTER TABLE ONLY proposal.open_briefs
+    ADD CONSTRAINT pk_open_briefs PRIMARY KEY (id);
+
+
+--
 -- Name: proposals pk_proposals; Type: CONSTRAINT; Schema: proposal; Owner: -
 --
 
@@ -5040,6 +5193,14 @@ ALTER TABLE ONLY proposal.proposals
 
 ALTER TABLE ONLY proposal.requests
     ADD CONSTRAINT pk_requests PRIMARY KEY (id);
+
+
+--
+-- Name: brief_interests uq_brief_interests_brief_id_professional_id; Type: CONSTRAINT; Schema: proposal; Owner: -
+--
+
+ALTER TABLE ONLY proposal.brief_interests
+    ADD CONSTRAINT uq_brief_interests_brief_id_professional_id UNIQUE (brief_id, professional_id);
 
 
 --
@@ -5439,6 +5600,13 @@ CREATE INDEX ix_contracts_professional ON contract.contracts USING btree (profes
 
 
 --
+-- Name: ix_tasks_contract; Type: INDEX; Schema: contract; Owner: -
+--
+
+CREATE INDEX ix_tasks_contract ON contract.tasks USING btree (contract_id, created_at);
+
+
+--
 -- Name: ix_termination_requests_contract; Type: INDEX; Schema: contract; Owner: -
 --
 
@@ -5705,6 +5873,13 @@ CREATE INDEX ix_marketplace_taxonomy_nodes_category_slug ON marketplace.taxonomy
 
 
 --
+-- Name: ix_meetings_thread_starts; Type: INDEX; Schema: messaging; Owner: -
+--
+
+CREATE INDEX ix_meetings_thread_starts ON messaging.meetings USING btree (thread_id, starts_at);
+
+
+--
 -- Name: ix_messages_thread_created; Type: INDEX; Schema: messaging; Owner: -
 --
 
@@ -5856,6 +6031,34 @@ CREATE INDEX ix_professional_offerings_professional_id ON professional.offerings
 --
 
 CREATE INDEX ix_professional_saved_buyers_professional_id ON professional.saved_buyers USING btree (professional_id);
+
+
+--
+-- Name: ix_open_briefs_match; Type: INDEX; Schema: proposal; Owner: -
+--
+
+CREATE INDEX ix_open_briefs_match ON proposal.open_briefs USING btree (specialization, status, closes_at);
+
+
+--
+-- Name: ix_open_briefs_org; Type: INDEX; Schema: proposal; Owner: -
+--
+
+CREATE INDEX ix_open_briefs_org ON proposal.open_briefs USING btree (organization_id, created_at);
+
+
+--
+-- Name: ix_proposal_brief_interests_brief_id; Type: INDEX; Schema: proposal; Owner: -
+--
+
+CREATE INDEX ix_proposal_brief_interests_brief_id ON proposal.brief_interests USING btree (brief_id);
+
+
+--
+-- Name: ix_proposal_brief_interests_professional_id; Type: INDEX; Schema: proposal; Owner: -
+--
+
+CREATE INDEX ix_proposal_brief_interests_professional_id ON proposal.brief_interests USING btree (professional_id);
 
 
 --
@@ -6298,6 +6501,14 @@ ALTER TABLE ONLY contract.submissions
 
 
 --
+-- Name: tasks fk_tasks_contract_id_contracts; Type: FK CONSTRAINT; Schema: contract; Owner: -
+--
+
+ALTER TABLE ONLY contract.tasks
+    ADD CONSTRAINT fk_tasks_contract_id_contracts FOREIGN KEY (contract_id) REFERENCES contract.contracts(id);
+
+
+--
 -- Name: termination_requests fk_termination_requests_contract_id_contracts; Type: FK CONSTRAINT; Schema: contract; Owner: -
 --
 
@@ -6458,6 +6669,14 @@ ALTER TABLE ONLY messaging.attachments
 
 
 --
+-- Name: meetings fk_meetings_thread_id_threads; Type: FK CONSTRAINT; Schema: messaging; Owner: -
+--
+
+ALTER TABLE ONLY messaging.meetings
+    ADD CONSTRAINT fk_meetings_thread_id_threads FOREIGN KEY (thread_id) REFERENCES messaging.threads(id);
+
+
+--
 -- Name: messages fk_messages_thread_id_threads; Type: FK CONSTRAINT; Schema: messaging; Owner: -
 --
 
@@ -6530,6 +6749,14 @@ ALTER TABLE ONLY professional.saved_buyers
 
 
 --
+-- Name: brief_interests fk_brief_interests_brief_id_open_briefs; Type: FK CONSTRAINT; Schema: proposal; Owner: -
+--
+
+ALTER TABLE ONLY proposal.brief_interests
+    ADD CONSTRAINT fk_brief_interests_brief_id_open_briefs FOREIGN KEY (brief_id) REFERENCES proposal.open_briefs(id);
+
+
+--
 -- Name: proposals fk_proposals_request_id_requests; Type: FK CONSTRAINT; Schema: proposal; Owner: -
 --
 
@@ -6589,5 +6816,5 @@ ALTER TABLE ONLY verification.provider_sessions
 -- PostgreSQL database dump complete
 --
 
-\unrestrict uXKOftTRdfUAppBkg4x9ndVqL7qHsbX2jcYP79auMRhw3iPMmlmLq80avF3FUoA
+\unrestrict wHxQz2TLE5ga65Qbj9VJIW4CErE8OfEt0jvl8I1WW6zhzMOjZLGDR0YTDZSmVFa
 

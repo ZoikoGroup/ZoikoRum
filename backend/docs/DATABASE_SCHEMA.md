@@ -17,8 +17,8 @@ Migrations: `backend/alembic/versions/` (`alembic upgrade head`).
 - [professional](#schema-professional) — 4 tables
 - [marketplace](#schema-marketplace) — 6 tables
 - [search](#schema-search) — 1 tables
-- [proposal](#schema-proposal) — 2 tables
-- [contract](#schema-contract) — 9 tables
+- [proposal](#schema-proposal) — 4 tables
+- [contract](#schema-contract) — 10 tables
 - [escrow](#schema-escrow) — 5 tables
 - [payments](#schema-payments) — 8 tables
 - [verification](#schema-verification) — 6 tables
@@ -26,7 +26,7 @@ Migrations: `backend/alembic/versions/` (`alembic upgrade head`).
 - [policy](#schema-policy) — 6 tables
 - [dispute](#schema-dispute) — 5 tables
 - [audit](#schema-audit) — 3 tables
-- [messaging](#schema-messaging) — 5 tables
+- [messaging](#schema-messaging) — 6 tables
 - [notification](#schema-notification) — 6 tables
 - [ai](#schema-ai) — 3 tables
 - [admin](#schema-admin) — 5 tables
@@ -809,6 +809,44 @@ Base class used for declarative class definitions.  The :class:`_orm.Declarative
 <a id="schema-proposal"></a>
 ## Schema `proposal`
 
+### `proposal.brief_interests`
+
+Base class used for declarative class definitions.  The :class:`_orm.DeclarativeBase` allows for the creation of new declarative bases in such a way that is compatible with type checkers::       from sqlalchemy.orm import DeclarativeBase       class Base(DeclarativeBase):         pass  The above ``Base`` class is now usable as the base for new declarative mappings.  The superclass makes use of the ``__init_subclass__()`` method to set up new classes and metaclasses aren't used.  When first used, the :class:`_orm.DeclarativeBase` class instantiates a new :class:`_orm.registry` to be used with the base, assuming one was not provided explicitly. The :class:`_orm.DeclarativeBase` class supports class-level attributes which act as parameters for the construction of this registry; such as to indicate a specific :class:`_schema.MetaData` collection as well as a specific value for :paramref:`_orm.registry.type_annotation_map`::      from typing import Annotated      from sqlalchemy import BigInteger     from sqlalchemy import MetaData     from sqlalchemy import String     from sqlalchemy.orm import DeclarativeBase      bigint = Annotated[int, "bigint"]     my_metadata = MetaData()       class Base(DeclarativeBase):         metadata = my_metadata         type_annotation_map = {             str: String().with_variant(String(255), "mysql", "mariadb"),             bigint: BigInteger(),         }  Class-level attributes which may be specified include:  :param metadata: optional :class:`_schema.MetaData` collection.  If a :class:`_orm.registry` is constructed automatically, this  :class:`_schema.MetaData` collection will be used to construct it.  Otherwise, the local :class:`_schema.MetaData` collection will supersede  that used by an existing :class:`_orm.registry` passed using the  :paramref:`_orm.DeclarativeBase.registry` parameter. :param type_annotation_map: optional type annotation map that will be  passed to the :class:`_orm.registry` as  :paramref:`_orm.registry.type_annotation_map`. :param registry: supply a pre-existing :class:`_orm.registry` directly.  .. versionadded:: 2.0  Added :class:`.DeclarativeBase`, so that declarative    base classes may be constructed in such a way that is also recognized    by :pep:`484` type checkers.   As a result, :class:`.DeclarativeBase`    and other subclassing-oriented APIs should be seen as    superseding previous "class returned by a function" APIs, namely    :func:`_orm.declarative_base` and :meth:`_orm.registry.generate_base`,    where the base class returned cannot be recognized by type checkers    without using plugins.  **__init__ behavior**  In a plain Python class, the base-most ``__init__()`` method in the class hierarchy is ``object.__init__()``, which accepts no arguments. However, when the :class:`_orm.DeclarativeBase` subclass is first declared, the class is given an ``__init__()`` method that links to the :paramref:`_orm.registry.constructor` constructor function, if no ``__init__()`` method is already present; this is the usual declarative constructor that will assign keyword arguments as attributes on the instance, assuming those attributes are established at the class level (i.e. are mapped, or are linked to a descriptor). This constructor is **never accessed by a mapped class without being called explicitly via super()**, as mapped classes are themselves given an ``__init__()`` method directly which calls :paramref:`_orm.registry.constructor`, so in the default case works independently of what the base-most ``__init__()`` method does.  .. versionchanged:: 2.0.1  :class:`_orm.DeclarativeBase` has a default    constructor that links to :paramref:`_orm.registry.constructor` by    default, so that calls to ``super().__init__()`` can access this    constructor. Previously, due to an implementation mistake, this default    constructor was missing, and calling ``super().__init__()`` would invoke    ``object.__init__()``.  The :class:`_orm.DeclarativeBase` subclass may also declare an explicit ``__init__()`` method which will replace the use of the :paramref:`_orm.registry.constructor` function at this level::      class Base(DeclarativeBase):         def __init__(self, id=None):             self.id = id  Mapped classes still will not invoke this constructor implicitly; it remains only accessible by calling ``super().__init__()``::      class MyClass(Base):         def __init__(self, id=None, name=None):             self.name = name             super().__init__(id=id)  Note that this is a different behavior from what functions like the legacy :func:`_orm.declarative_base` would do; the base created by those functions would always install :paramref:`_orm.registry.constructor` for ``__init__()``.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `brief_id` | UUID | no | FK → proposal.open_briefs.id, indexed |
+| `professional_id` | UUID | no | indexed |
+| `note` | varchar(500) | no |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+
+Unique together: (brief_id, professional_id)
+
+### `proposal.open_briefs`
+
+OPEN -> CLOSED (by the buyer, or when closes_at passes).
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `organization_id` | UUID | no |  |
+| `buyer_identity_id` | UUID | no |  |
+| `country` | varchar(2) | no |  |
+| `service` | varchar(200) | no |  |
+| `specialization` | varchar(120) | no |  |
+| `objective` | varchar(300) | no |  |
+| `details` | varchar(1200) | no |  |
+| `desired_start_date` | DATE | yes |  |
+| `estimated_duration` | varchar(30) | yes |  |
+| `budget_max_minor` | BIGINT | yes |  |
+| `budget_currency` | varchar(3) | yes |  |
+| `status` | varchar(20) | no |  |
+| `closes_at` | DATETIME | no |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+
 ### `proposal.proposals`
 
 One per request. DRAFT -> SUBMITTED -> REVISION_REQUESTED -> SUBMITTED ... -> ACCEPTED | REJECTED | WITHDRAWN | EXPIRED.
@@ -1076,6 +1114,24 @@ A professional's delivery for a milestone, item by item against the contract's d
 | `declaration` | JSONB | yes |  |
 | `late_reason` | varchar(500) | yes |  |
 | `id` | UUID | no | PK |
+| `created_at` | DATETIME | no |  |
+
+### `contract.tasks`
+
+A shared to-do on an engagement (tasks.py): who does what by when. Not part of the signed terms.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `contract_id` | UUID | no | FK → contract.contracts.id |
+| `milestone_id` | UUID | yes |  |
+| `title` | varchar(200) | no |  |
+| `owner` | varchar(20) | no |  |
+| `due_date` | DATE | yes |  |
+| `done_at` | DATETIME | yes |  |
+| `done_by` | UUID | yes |  |
+| `created_by` | UUID | no |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
 | `created_at` | DATETIME | no |  |
 
 ### `contract.termination_requests`
@@ -1879,6 +1935,23 @@ Event projection used to bind dispute threads without depending on dispute inter
 | `created_at` | DATETIME | no |  |
 | `updated_at` | DATETIME | no |  |
 
+### `messaging.meetings`
+
+A call scheduled in a conversation (meetings.py). SCHEDULED -> CANCELLED. The link is to an outside video service.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `thread_id` | UUID | no | FK → messaging.threads.id |
+| `title` | varchar(200) | no |  |
+| `starts_at` | DATETIME | no |  |
+| `duration_minutes` | INTEGER | no |  |
+| `join_url` | varchar(500) | no |  |
+| `created_by` | UUID | no |  |
+| `status` | varchar(20) | no |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+
 ### `messaging.messages` — append-only
 
 Base class used for declarative class definitions.  The :class:`_orm.DeclarativeBase` allows for the creation of new declarative bases in such a way that is compatible with type checkers::       from sqlalchemy.orm import DeclarativeBase       class Base(DeclarativeBase):         pass  The above ``Base`` class is now usable as the base for new declarative mappings.  The superclass makes use of the ``__init_subclass__()`` method to set up new classes and metaclasses aren't used.  When first used, the :class:`_orm.DeclarativeBase` class instantiates a new :class:`_orm.registry` to be used with the base, assuming one was not provided explicitly. The :class:`_orm.DeclarativeBase` class supports class-level attributes which act as parameters for the construction of this registry; such as to indicate a specific :class:`_schema.MetaData` collection as well as a specific value for :paramref:`_orm.registry.type_annotation_map`::      from typing import Annotated      from sqlalchemy import BigInteger     from sqlalchemy import MetaData     from sqlalchemy import String     from sqlalchemy.orm import DeclarativeBase      bigint = Annotated[int, "bigint"]     my_metadata = MetaData()       class Base(DeclarativeBase):         metadata = my_metadata         type_annotation_map = {             str: String().with_variant(String(255), "mysql", "mariadb"),             bigint: BigInteger(),         }  Class-level attributes which may be specified include:  :param metadata: optional :class:`_schema.MetaData` collection.  If a :class:`_orm.registry` is constructed automatically, this  :class:`_schema.MetaData` collection will be used to construct it.  Otherwise, the local :class:`_schema.MetaData` collection will supersede  that used by an existing :class:`_orm.registry` passed using the  :paramref:`_orm.DeclarativeBase.registry` parameter. :param type_annotation_map: optional type annotation map that will be  passed to the :class:`_orm.registry` as  :paramref:`_orm.registry.type_annotation_map`. :param registry: supply a pre-existing :class:`_orm.registry` directly.  .. versionadded:: 2.0  Added :class:`.DeclarativeBase`, so that declarative    base classes may be constructed in such a way that is also recognized    by :pep:`484` type checkers.   As a result, :class:`.DeclarativeBase`    and other subclassing-oriented APIs should be seen as    superseding previous "class returned by a function" APIs, namely    :func:`_orm.declarative_base` and :meth:`_orm.registry.generate_base`,    where the base class returned cannot be recognized by type checkers    without using plugins.  **__init__ behavior**  In a plain Python class, the base-most ``__init__()`` method in the class hierarchy is ``object.__init__()``, which accepts no arguments. However, when the :class:`_orm.DeclarativeBase` subclass is first declared, the class is given an ``__init__()`` method that links to the :paramref:`_orm.registry.constructor` constructor function, if no ``__init__()`` method is already present; this is the usual declarative constructor that will assign keyword arguments as attributes on the instance, assuming those attributes are established at the class level (i.e. are mapped, or are linked to a descriptor). This constructor is **never accessed by a mapped class without being called explicitly via super()**, as mapped classes are themselves given an ``__init__()`` method directly which calls :paramref:`_orm.registry.constructor`, so in the default case works independently of what the base-most ``__init__()`` method does.  .. versionchanged:: 2.0.1  :class:`_orm.DeclarativeBase` has a default    constructor that links to :paramref:`_orm.registry.constructor` by    default, so that calls to ``super().__init__()`` can access this    constructor. Previously, due to an implementation mistake, this default    constructor was missing, and calling ``super().__init__()`` would invoke    ``object.__init__()``.  The :class:`_orm.DeclarativeBase` subclass may also declare an explicit ``__init__()`` method which will replace the use of the :paramref:`_orm.registry.constructor` function at this level::      class Base(DeclarativeBase):         def __init__(self, id=None):             self.id = id  Mapped classes still will not invoke this constructor implicitly; it remains only accessible by calling ``super().__init__()``::      class MyClass(Base):         def __init__(self, id=None, name=None):             self.name = name             super().__init__(id=id)  Note that this is a different behavior from what functions like the legacy :func:`_orm.declarative_base` would do; the base created by those functions would always install :paramref:`_orm.registry.constructor` for ``__init__()``.
@@ -1897,7 +1970,7 @@ Base class used for declarative class definitions.  The :class:`_orm.Declarative
 | `id` | UUID | no | PK |
 | `created_at` | DATETIME | no |  |
 
-Unique together: (thread_id, sequence); (thread_id, source_event_id)
+Unique together: (thread_id, source_event_id); (thread_id, sequence)
 
 ### `messaging.read_positions`
 

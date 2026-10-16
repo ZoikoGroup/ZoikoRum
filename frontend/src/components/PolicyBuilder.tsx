@@ -11,7 +11,8 @@ const DIMENSIONS: [string, string][] = [['identity', 'Identity'], ['credentials'
 const CLAUSES: [string, string][] = [['CONFIDENTIALITY', 'Confidentiality'], ['IP_OWNERSHIP', 'IP ownership'], ['TERMINATION', 'Termination'],
   ['GOVERNING_LAW', 'Governing law']]
 const DEADLINES: [string, string][] = [['acceptanceWindowDays', 'Days to review submitted work'], ['autoAcceptAfterDays', 'Accept automatically after (days)'],
-  ['signatureDeadlineDays', 'Days to sign a contract'], ['disputeEvidenceDays', 'Days to add dispute evidence']]
+  ['signatureDeadlineDays', 'Days to sign a contract'], ['disputeEvidenceDays', 'Days to add dispute evidence'],
+  ['challengeWindowDays', 'Days after acceptance to raise a problem (payment waits)']]
 export const ACTIONS: [string, string][] = [['ENGAGEMENT_ELIGIBILITY', 'Sending a request'], ['PROPOSAL_SUBMIT', 'Receiving a proposal'],
   ['PROPOSAL_ACCEPT', 'Accepting a proposal'], ['CONTRACT_SIGN', 'Signing the contract'], ['CHANGE_ORDER_APPROVE', 'Approving a change order'],
   ['ESCROW_FUND', 'Funding escrow'], ['MILESTONE_ACCEPT', 'Accepting work'], ['ESCROW_RELEASE', 'Releasing payment']]

@@ -115,6 +115,8 @@ class E:
     PROPOSAL_REQUEST_REMINDER = _t("proposal", "request", "reminder")  # to the professional: answer is due soon
     PROPOSAL_REQUEST_UNANSWERED = _t("proposal", "request", "unanswered")  # to the buyer: the time to answer passed
     PROPOSAL_REQUEST_CANCELLED = _t("proposal", "request", "cancelled")
+    OPEN_BRIEF_POSTED = _t("proposal", "brief", "posted")  # a buyer described a need for matching professionals to see
+    OPEN_BRIEF_INTEREST = _t("proposal", "brief", "interest")  # a professional said they are interested (to the buyer)
     NDA_ACCEPTED = _t("proposal", "request", "nda_accepted")
     PROPOSAL_SUBMITTED = _t("proposal", "proposal", "submitted")
     PROPOSAL_REVISION_REQUESTED = _t("proposal", "proposal", "revision_requested")
@@ -169,6 +171,7 @@ class E:
     ESCROW_HOLD_RELEASED = _t("escrow", "account", "hold_released")
     ESCROW_RELEASE_EVALUATED = _t("escrow", "account", "release_evaluated")
     ESCROW_RELEASE_BLOCKED = _t("escrow", "account", "release_blocked")  # accepted work, release approval denied or expired
+    ESCROW_RELEASE_ESCALATED = _t("escrow", "account", "release_escalated")  # ...and still not released some days later
     ESCROW_RELEASE_PENDING_APPROVAL = _t("escrow", "account", "release_pending_approval")
     ESCROW_RELEASED = _t("escrow", "account", "released")
     ESCROW_REFUNDED = _t("escrow", "account", "refunded")

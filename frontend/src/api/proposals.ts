@@ -5,6 +5,9 @@ import type { Money } from './orgs'
 /* Requests & proposals (Step 6). A buyer sends one requirement to 1–3 chosen professionals; each answers with a
    structured proposal or declines. Commercial actions carry an Idempotency-Key so a double click never doubles up. */
 
+/** How many professionals one request can go to (backend setting max_professionals_per_request). */
+export const MAX_REQUEST_PROFESSIONALS = 5
+
 export type RequestStatus = 'DRAFT' | 'OPEN' | 'PROPOSAL_RECEIVED' | 'CLOSED' | 'DECLINED' | 'CANCELLED'
 export type ProposalStatus = 'DRAFT' | 'SUBMITTED' | 'UNDER_REVIEW' | 'REVISION_REQUESTED' | 'PENDING_APPROVAL' | 'ACCEPTED'
   | 'REJECTED' | 'WITHDRAWN' | 'EXPIRED'

@@ -24,7 +24,7 @@ from zoikorum.domains.policy.models import (
 )
 from zoikorum.domains.policy.rules import DIMENSION_OK, matches, template
 from zoikorum.domains.policy.schemas import DraftIn, ProfileIn, RuleIn, SettingsIn
-from zoikorum.shared import clock
+from zoikorum.shared import clock, fx
 from zoikorum.shared.auth import OrgRole
 from zoikorum.shared.crypto import canonical_json, sha256_hex
 from zoikorum.shared.errors import Conflict, Forbidden, NotFound, ValidationFailed, VersionConflict
@@ -330,7 +330,7 @@ async def valid_votes(session, request):
         amount = request.attributes.get(Attr.AMOUNT_MINOR, request.attributes.get(Attr.ENGAGEMENT_VALUE_MINOR, 0))
         currency = request.attributes.get(Attr.ENGAGEMENT_CURRENCY)
         authorized = (limit is None and OrgRole.ORG_ADMIN in roles) or (
-            limit is not None and limit.currency == currency and amount <= limit.minor)
+            limit is not None and fx.within_limit(amount, currency, limit.minor, limit.currency))
         if account and await identity.account_is_active(session, vote.identity_id) and vote.authority_role in roles and authorized:
             valid.append(vote)
     return valid
@@ -497,7 +497,7 @@ async def decide_approval(session, actor, request_id, body):
     limit = await buyer.get_member_spend_limit(session, request.organization_id, actor.identity_id)
     amount = request.attributes.get(Attr.AMOUNT_MINOR, request.attributes.get(Attr.ENGAGEMENT_VALUE_MINOR, 0))
     currency = request.attributes.get(Attr.ENGAGEMENT_CURRENCY)
-    if (limit is None and OrgRole.ORG_ADMIN not in roles) or (limit is not None and (limit.currency != currency or amount > limit.minor)):
+    if (limit is None and OrgRole.ORG_ADMIN not in roles) or (limit is not None and not fx.within_limit(amount, currency, limit.minor, limit.currency)):
         raise Forbidden("This action exceeds your spend authority", code="SPEND_LIMIT_EXCEEDED")
     votes = await valid_votes(session, request)
     previous_vote = await session.scalar(select(ApprovalVote.id).where(ApprovalVote.request_id == request.id,

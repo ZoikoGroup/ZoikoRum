@@ -123,6 +123,18 @@ const EMPTY = (currency: string): ProposalInput => ({
   pricingModel: 'FIXED', currency, startDate: null, endDate: null, assumptions: [], exclusions: [], validUntil: plusDays(14),
 })
 
+/** Quick reply to a request made from one of your fixed-price services: its deliverables, one milestone at its listed price. */
+const fromOffering = (o: Offering, current: ProposalInput): ProposalInput => {
+  const deliverables = (o.deliverables.length ? o.deliverables : [o.title]).map((title, i) => ({
+    key: `d${i + 1}`, title, description: '', acceptanceCriteria: `Delivered as described in your “${o.title}” service` }))
+  return {
+    ...current, summary: o.summary || o.title, scopeAlignment: 'CONFIRMED', scopeNotes: null, pricingModel: 'FIXED',
+    currency: o.startingPrice?.currency ?? current.currency, deliverables,
+    milestones: [{ title: o.title, description: o.typicalDuration ? `Typical duration: ${o.typicalDuration}` : '',
+      amountMinor: o.startingPrice?.amountMinor ?? 0, dueDate: null, deliverableKeys: deliverables.map((d) => d.key) }],
+  }
+}
+
 const fromProposal = (p: Proposal): ProposalInput => ({
   summary: p.summary, scopeAlignment: p.scopeAlignment, scopeNotes: p.scopeNotes, deliverables: p.deliverables, milestones: p.milestones,
   pricingModel: p.pricingModel, currency: p.currency || p.total.currency || 'USD', startDate: p.startDate, endDate: p.endDate, assumptions: p.assumptions,
@@ -392,7 +404,15 @@ export function ProfessionalRequestDetail() {
             </dl>
             {req.jurisdictionConflict && <div className="tip" style={{ marginTop: 12 }}><Icon name="globe" /><span>This buyer is in a country you do not list as served.
               An engagement cannot be agreed unless you serve it. Update <Link to="/app/professional/profile?step=jurisdictions">your jurisdictions</Link> if you can.</span></div>}
-            {alignment && <div className={`tip ${alignment.ok ? '' : 'muted'}`} style={{ marginTop: 12 }}><Icon name="check" /><span>{alignment.text}</span></div>}
+            {alignment && <div className={`tip ${alignment.ok ? '' : 'muted'}`} style={{ marginTop: 12 }}><Icon name="check" /><span>{alignment.text}
+              {editable && matched && matched.pricingModel === 'FIXED' && matched.startingPrice && <>{' '}
+                <button type="button" className="btn btn-secondary btn-sm" style={{ marginLeft: 6 }} onClick={() => {
+                  const hasText = form.deliverables.some((d) => d.title.trim()) || form.milestones.some((m) => m.title.trim())
+                  if (hasText && !confirm('Replace what you have written with your service’s deliverables and price?')) return
+                  const next = fromOffering(matched, form)
+                  setForm(next)
+                  setAmounts(next.milestones.map((m) => (m.amountMinor ? String(m.amountMinor / 100) : '')))
+                }}>Fill from my service ({formatMoney(matched.startingPrice)})</button></>}</span></div>}
             {!req.detailsHidden && req.deliverables.length > 0 && <><h3 style={{ margin: '12px 0 4px' }}>Deliverables requested</h3>
               <ul className="why" style={{ margin: 0 }}>{req.deliverables.map((d) => <li key={d}>{d}
                 {req.customDeliverables?.includes(d) && <span className="badge warn" style={{ marginLeft: 6 }} title="Written by the buyer, not from a service template">Buyer's own wording: confirm what is meant</span>}</li>)}</ul></>}

@@ -68,6 +68,5 @@ async def test_a_buyer_cannot_accept_once_the_professional_is_at_capacity(client
     assert r.status_code == 409 and r.json()["code"] == "PROFESSIONAL_AT_CAPACITY"
 
 
-def test_a_challenge_window_is_refused_until_it_can_be_honoured():
-    with pytest.raises(ValueError, match="not available yet"):
-        SettingsIn(challengeWindowDays=14)
+def test_a_challenge_window_can_be_set_now_that_it_is_honoured():
+    assert SettingsIn(challengeWindowDays=14).challengeWindowDays == 14  # escrow holds the payment until it ends

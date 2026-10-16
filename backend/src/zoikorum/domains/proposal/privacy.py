@@ -7,7 +7,7 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.domains.professional import facade as professional_facade
-from zoikorum.domains.proposal.models import Proposal, ProposalRequest
+from zoikorum.domains.proposal.models import BriefInterest, OpenBrief, Proposal, ProposalRequest
 from zoikorum.shared import privacy
 
 
@@ -15,7 +15,9 @@ async def export(session: AsyncSession, identity_id: uuid.UUID) -> dict:
     pro = await professional_facade.get_professional_by_identity(session, identity_id)
     return {"requestsSent": await privacy.rows(session, ProposalRequest, ProposalRequest.buyer_identity_id == identity_id),
             "requestsReceived": await privacy.rows(session, ProposalRequest, ProposalRequest.professional_id == pro.id) if pro else [],
-            "proposalsWritten": await privacy.rows(session, Proposal, Proposal.professional_id == pro.id) if pro else []}
+            "proposalsWritten": await privacy.rows(session, Proposal, Proposal.professional_id == pro.id) if pro else [],
+            "openBriefsPosted": await privacy.rows(session, OpenBrief, OpenBrief.buyer_identity_id == identity_id),
+            "briefInterests": await privacy.rows(session, BriefInterest, BriefInterest.professional_id == pro.id) if pro else []}
 
 
 privacy.register("proposal", export=export,

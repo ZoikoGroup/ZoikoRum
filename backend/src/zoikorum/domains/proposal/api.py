@@ -6,7 +6,7 @@ from typing import Literal
 from fastapi import APIRouter, Query, Response, status
 from pydantic import BaseModel
 
-from zoikorum.domains.proposal import service
+from zoikorum.domains.proposal import briefs, service
 from zoikorum.domains.proposal.schemas import (
     ProposalAttachmentsIn,
     CancelIn, DeclineIn, ProposalIn, ProposalOut, RejectIn, RequestIn, RequestOut, RequestSummaryOut, RevisionIn,
@@ -39,6 +39,37 @@ async def create_requests(body: RequestIn, actor: CurrentActor, session: DbSessi
 async def list_requests(actor: CurrentActor, session: DbSession, role: Role = "buyer", status_: str | None = Query(default=None, alias="status"),
                         cursor: str | None = None, limit: int | None = Query(default=None, ge=1, le=100)):
     return await service.list_requests(session, actor, role, status_, cursor, limit)
+
+
+# ---- Open briefs (briefs.py) -----------------------------------------------------------
+B = "/v1/open-briefs"
+
+
+@router.post(B, response_model=briefs.BriefOut, status_code=status.HTTP_201_CREATED)
+async def post_brief(body: briefs.BriefIn, actor: CurrentActor, session: DbSession, idem: IdempotencyKey):
+    """Buyer: describe a need once; professionals in that specialization who serve your country can say they are interested."""
+    return await idem.run(session, actor, lambda: briefs.post(session, actor, body), status_code=201)
+
+
+@router.get(f"{B}/mine", response_model=list[briefs.BriefOut])
+async def my_briefs(organizationId: uuid.UUID, actor: CurrentActor, session: DbSession):
+    return await briefs.mine(session, actor, organizationId)
+
+
+@router.get(f"{B}/matching", response_model=list[briefs.BriefOut])
+async def matching_briefs(actor: CurrentActor, session: DbSession):
+    """Professional: open briefs in your specializations and served countries (no buyer names)."""
+    return await briefs.matching(session, actor)
+
+
+@router.post(f"{B}/{{brief_id}}/close", response_model=briefs.BriefOut)
+async def close_brief(brief_id: uuid.UUID, actor: CurrentActor, session: DbSession, idem: IdempotencyKey):
+    return await idem.run(session, actor, lambda: briefs.close(session, actor, brief_id))
+
+
+@router.post(f"{B}/{{brief_id}}/interest", response_model=briefs.BriefOut)
+async def brief_interest(brief_id: uuid.UUID, body: briefs.InterestIn, actor: CurrentActor, session: DbSession, idem: IdempotencyKey):
+    return await idem.run(session, actor, lambda: briefs.interest(session, actor, brief_id, body))
 
 
 @router.get(f"{R}/summary", response_model=RequestSummaryOut)

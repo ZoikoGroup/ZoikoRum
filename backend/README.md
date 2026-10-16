@@ -1,7 +1,6 @@
 # Zoikorum Backend
 
 FastAPI + PostgreSQL modular monolith for the Zoikorum governed professional-services marketplace.
-Current status and merge validation: [docs/CURRENT_STATUS.md](docs/CURRENT_STATUS.md).
 
 Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · Domain contracts: [docs/BUILD_SPEC.md](docs/BUILD_SPEC.md)
 

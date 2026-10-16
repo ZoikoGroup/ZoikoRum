@@ -1,11 +1,11 @@
 # Customer (buyer) data: what we store and why
 
 Audience: the Zoikorum engineering and product team. "Customer" means the buying side: individual buyers,
-business and enterprise organizations, and their team members. Sources are the product documents in
-[`docs/product/`](../../docs/product/README.md); the live column list is in [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md).
+business and enterprise organizations, and their team members. Sources are the product documents (kept
+outside this repository); the live column list is in [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md).
 
 Short answer: the core customer data the documents require is stored today (account, organization, team roles
-and spend limits, business units, cost centers, consents, audit). Engagement, payment, policy and safety records are also stored by their owning domains. Remaining identity/buyer gaps are listed in §3; see [current implementation status](CURRENT_STATUS.md) for validation limits.
+and spend limits, business units, cost centers, consents, audit). Engagement, payment, policy and safety records are also stored by their owning domains. Remaining identity/buyer gaps are listed in §3.
 
 ## 1. Stored today
 

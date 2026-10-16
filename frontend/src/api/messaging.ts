@@ -57,7 +57,14 @@ const idem = () => ({ 'Idempotency-Key': crypto.randomUUID() })
 
 export interface MessageHit { threadId: string; threadTitle: string; sequence: number | null; senderName: string | null; snippet: string; sentAt: string }
 
+/** A call scheduled in a conversation; the link is the person's own or a generated video room. */
+export interface Meeting { id: string; threadId: string; title: string; startsAt: string; durationMinutes: number; joinUrl: string; status: 'SCHEDULED' | 'CANCELLED'; createdAt: string }
+
 export const messagingApi = {
+  meetings: (threadId: string) => api<Meeting[]>(`${T}/${threadId}/meetings`),
+  scheduleMeeting: (threadId: string, body: { title: string; startsAt: string; durationMinutes: number; joinUrl: string | null }) =>
+    api<Meeting>(`${T}/${threadId}/meetings`, { method: 'POST', body, headers: idem() }),
+  cancelMeeting: (meetingId: string) => api<Meeting>(`/v1/meetings/${meetingId}/cancel`, { method: 'POST', headers: idem() }),
   summary: () => api<{ unreadThreads: number; unreadMessages: number }>(`${T}/summary`),
   /** Messages and conversations the viewer can open, newest first (Global Search). */
   search: (q: string) => api<MessageHit[]>('/v1/messaging/search', { query: { q, limit: '5' } }),

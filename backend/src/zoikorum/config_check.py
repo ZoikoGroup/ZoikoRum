@@ -140,7 +140,8 @@ def review(s: Settings) -> list[tuple[str, str, str]]:
     if s.env not in DEV_ENVS and not s.tax_rules:
         add(WARN, "Tax", "no ZK_TAX_RULES: invoices show no tax (finance to confirm)")
     if s.dispute_challenge_window_days == 0:
-        add(WARN, "Rules", "ZK_DISPUTE_CHALLENGE_WINDOW_DAYS=0: accepted work cannot be disputed (management to confirm)")
+        add(WARN, "Rules", "ZK_DISPUTE_CHALLENGE_WINDOW_DAYS=0: accepted work is paid out at once and cannot be disputed "
+                           "for defects (management to confirm)")
     return out
 
 

@@ -55,6 +55,17 @@ async def on_release_not_approved(session: AsyncSession, event: EventEnvelope) -
         await service.release_not_approved(session, event.payload, event.eventType)
 
 
+@on_timer(service.TIMER_RELEASE_AFTER_WINDOW)
+async def on_release_after_window(session: AsyncSession, key: str, payload: dict) -> None:
+    """The challenge window after acceptance is over: release now (a dispute raised in it holds the money instead)."""
+    await service.milestone_accepted(session, {"milestoneId": key})
+
+
+@on_timer(service.TIMER_RELEASE_ESCALATION)
+async def on_release_escalation(session: AsyncSession, key: str, payload: dict) -> None:
+    await service.release_escalation(session, payload)
+
+
 @subscribe(E.PAYMENT_CHARGED_BACK, consumer="escrow.chargeback")
 async def on_payment_charged_back(session: AsyncSession, event: EventEnvelope) -> None:
     await service.payment_charged_back(session, event.payload)

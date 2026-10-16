@@ -4,9 +4,8 @@ What has to happen before real customers and real money go through Zoikorum. The
 nearly everything left is an account, a contract, a decision or a check that people outside the codebase own.
 Tick each line and write who did it and when. "Owner" is the role responsible, not necessarily the person who does it.
 
-Status on 2026-10-12: every feature in the build specification is in the code, with 332 backend tests, 28 frontend
-tests and 8 browser journeys passing locally. See [CURRENT_STATUS.md](CURRENT_STATUS.md) for detail and
-[DEPLOYMENT.md](DEPLOYMENT.md) for how to run it.
+Every feature in the build specification is in the code and tested in CI. See [DEPLOYMENT.md](DEPLOYMENT.md) for how
+to run it.
 
 ## 1. Accounts and keys with outside services
 

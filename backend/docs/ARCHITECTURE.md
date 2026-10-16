@@ -1,18 +1,11 @@
 # Zoikorum Backend Architecture
 
 Audience: the Zoikorum engineering team and the CTO office. This explains what was built from the
-18 source documents, why it is shaped this way, where it intentionally differs from the
-long-term target, and what still needs a business decision.
+18 product documents (kept outside this repository), why it is shaped this way, where it intentionally differs
+from the long-term target, and what still needs a business decision.
 
 Companion documents: [BUILD_SPEC.md](BUILD_SPEC.md) (per-domain contracts), [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md)
-(generated table list), [CUSTOMER_DATA.md](CUSTOMER_DATA.md) (customer data vs. the documents) and the source docs in
-[`docs/product/`](../../docs/product/README.md).
-
-## Current checkout (2026-10-09)
-
-See [CURRENT_STATUS.md](CURRENT_STATUS.md) for the merged implementation, migration head `f1360ce42a96` and test limitations. Messaging, change orders and Steps 12–18 have implementations; they are no longer deferred solely because they are absent from the original Steps 0–9 status table. Hosted Stripe/Persona and optional S3 adapter code also exists, but live integrations are unverified.
-
-The dated audit tables below preserve earlier observations. In particular, the 2026-10-08 audit lists frontend work that did not arrive with the backend-only dev merge: quick view, shareable comparison, weekly hours, verification appeals, partial acceptance, taxonomy suggestions and retainer controls must be checked against the actual frontend before claiming completion.
+(generated table list) and [CUSTOMER_DATA.md](CUSTOMER_DATA.md) (customer data vs. the documents).
 
 ## 1. What the documents ask for
 
@@ -235,7 +228,7 @@ Each product document was checked again against the code. Gaps that belong to St
 | Company policy in search | Search applies the buyer organisation's policy (minimum tier, required verifications, allowed jurisdictions; `policy.facade.search_eligibility`) for its members: automatically when the person belongs to one organisation, or for `organizationId` (membership checked, 403 otherwise). Results now carry `policy`: organisation, the rules applied and how many matching professionals they left out, so a smaller list is explained, not hidden. The public directory is never filtered by one company. Find Professionals shows the note and, for people in several organisations, a "Searching for" choice (enterprise first) |
 | Deployment | `backend/Dockerfile` (one image: API, worker, migrate job; non-root; runs from `/app/src` beside `/app/alembic`; settings validated before the web workers start), `frontend/Dockerfile` + `nginx.conf.template` (built app, `/v1` `/health` `/ready` forwarded to the API: one origin; web security headers; hashed assets cached a year, the page never), `docker-compose.prod.yml` (single host), CI job `images` builds both. Staging and production refuse to start with the development secrets or a non-https `ZK_FRONTEND_URL`; configuration errors never print configuration values (`hide_input_in_errors`). See [DEPLOYMENT.md](DEPLOYMENT.md) |
 
-Current gaps include authorised retainer auto-funding, enterprise federation/provisioning, and live provider verification. Messaging, notifications, change orders, policies/approvals, enforcement, dispute appeals and scoped report exports now have implementations. See [current status](CURRENT_STATUS.md) for the limits of those implementations.
+Messaging, notifications, change orders, policies/approvals, enforcement, dispute appeals, scoped report exports, retainer auto-funding and enterprise single sign-on with SCIM provisioning have implementations. The main remaining gap is live verification against the outside providers (payments, identity checks, email); [LAUNCH_CHECKLIST.md](LAUNCH_CHECKLIST.md) lists it.
 
 ## 7. Running it
 

@@ -29,7 +29,7 @@ def catalog() -> list[ai.CatalogEntry]:
 def test_taxonomy_covers_more_than_finance_with_unique_slugs():
     rows = default_taxonomy_rows()
     cats = [r["name"] for r in rows if r["level"] == "CATEGORY"]
-    assert cats[0] == "Finance & Accounting" and "Technology & Software Development" in cats and len(cats) == 6
+    assert cats[0] == "Finance & Accounting" and "Technology & Software Development" in cats and "Creative & Design" in cats and len(cats) == 7
     slugs = [r["slug"] for r in rows]
     assert len(slugs) == len(set(slugs))
     legal = [r for r in rows if r["category_slug"] == "legal-services" and r["level"] == "SPECIALIZATION"]
