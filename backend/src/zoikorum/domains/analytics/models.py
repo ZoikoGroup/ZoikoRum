@@ -1,7 +1,7 @@
 from __future__ import annotations
 import uuid
 from datetime import datetime
-from sqlalchemy import BigInteger, DateTime, Identity, String
+from sqlalchemy import BigInteger, DateTime, Identity, Index, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from zoikorum.shared.db import Base, UUIDPk, CreatedAt
@@ -10,7 +10,11 @@ from zoikorum.shared.db import Base, UUIDPk, CreatedAt
 class EventFact(Base, UUIDPk, CreatedAt):
     """Rebuildable reporting facts sourced exclusively from domain events."""
     __tablename__ = "event_facts"
-    __table_args__ = {"schema": "analytics"}
+    __table_args__ = (
+        Index("ix_analytics_event_facts_occurred_at", "occurred_at"),
+        Index("ix_analytics_event_facts_event_type_occurred_at", "event_type", "occurred_at"),
+        {"schema": "analytics"},
+    )
     source_event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), unique=True, nullable=False)
     seq: Mapped[int] = mapped_column(BigInteger, Identity(), nullable=False, unique=True)
     event_type: Mapped[str] = mapped_column(String(200), nullable=False)

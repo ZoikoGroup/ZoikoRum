@@ -414,5 +414,7 @@ Rebuildable read projections from events only (CQRS, Handbook ch. 5):
 - `analytics.marketplace_daily` (operators): searches, zero results, proposal→contract conversion, activations, disputes opened/resolved,
   median release latency, trust tier distribution.
 - `GET /v1/dashboards/buyer?organizationId=` (org member), `GET /v1/dashboards/professional` (self),
-  `GET /v1/analytics/marketplace-health?from&to` (operators), `POST /v1/admin/analytics/rebuild` (replays audit ledger).
+  `GET /v1/analytics/marketplace-health?from&to` (operators; window is [from, to), totals plus a `daily` UTC series of the
+  key counts, aggregated in SQL; trust tier distribution is a current snapshot), `POST /v1/admin/analytics/rebuild`
+  (PLATFORM_ADMIN + step-up; replays audit ledger).
 - Each projection row stores `lastEventAt` so UIs can show staleness.
