@@ -34,7 +34,7 @@ os.environ.setdefault("ZK_STORAGE_DIR", tempfile.mkdtemp(prefix="zk-storage-")) 
 os.environ["ZK_VERIFICATION_PROVIDER"] = "fake"  # a developer .env must not change tests; partner tests swap in their own settings
 
 ADMIN_URL = os.environ.get("ZK_TEST_ADMIN_URL", "postgresql+asyncpg://zoikorum:zoikorum@localhost:5434/zoikorum")
-TEST_DB = os.environ.get("ZK_TEST_DATABASE", "zoikorum_test")
+TEST_DB = os.environ.get("ZK_TEST_DATABASE", "zoikorum_test") + (f"_{os.environ['PYTEST_XDIST_WORKER']}" if os.environ.get("PYTEST_XDIST_WORKER") else "")
 TEST_URL = ADMIN_URL.rsplit("/", 1)[0] + f"/{TEST_DB}"
 os.environ["ZK_DATABASE_URL"] = TEST_URL
 

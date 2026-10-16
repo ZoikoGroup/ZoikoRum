@@ -12,6 +12,7 @@ import { SupportThread } from '../components/SupportThread'
 import { useAuth } from '../auth/AuthContext'
 import { ErrorAlert, useStepUp } from '../components/ui'
 import { DOC_ACCEPT, openStoredFile, toUpload, type Upload } from '../api/files'
+import { downloadFile } from '../lib/exports'
 import { EmptyTable, PortalHeader, StatCard } from '../components/portal'
 import { Icon } from '../components/dashboard'
 
@@ -843,15 +844,157 @@ export function ReportsPage() {
   )
 }
 
+interface DailyHealth {
+  date: string
+  searches: number
+  zeroResultSearches: number
+  proposalsSubmitted: number
+  contractsGenerated: number
+  activations: number
+  releases: number
+  disputesOpened: number
+  disputesResolved: number
+}
+
+interface MarketplaceHealth {
+  window: { from: string | null; to: string | null }
+  eventCounts: Record<string, number>
+  searches: number
+  daily: DailyHealth[]
+  activations: number
+  disputesOpened: number
+  disputesResolved: number
+  zeroResultSearches: number
+  proposalContractConversionBps: number | null
+  medianReleaseLatencySeconds: number | null
+  trustTierDistribution: Record<string, number>
+  lastEventAt: string | null
+}
+
+const EVENT_AREAS: [string, string][] = [
+  ['search', 'Search'],
+  ['verification', 'Verification'],
+  ['trust', 'Trust'],
+  ['policy', 'Policy'],
+  ['proposal', 'Proposals'],
+  ['contract', 'Contracts & Milestones'],
+  ['escrow', 'Escrow'],
+  ['payments', 'Payments'],
+  ['dispute', 'Disputes'],
+  ['marketplace', 'Marketplace'],
+]
+
+const sentence = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+
+/** "zoikorum.escrow.account.funding_requested.v1" -> area "escrow", label "Account funding requested". */
+function readableEvent(name: string) {
+  const [, area = 'other', ...rest] = name.split('.')
+  const words = rest.filter((part) => !/^v\d+$/.test(part)).join(' ').replaceAll('_', ' ')
+  return { area, label: sentence(words || name) }
+}
+
+function groupEventCounts(counts: Record<string, number>) {
+  const groups = new Map<string, { name: string; label: string; count: number }[]>()
+  for (const [name, count] of Object.entries(counts)) {
+    const { area, label } = readableEvent(name)
+    groups.set(area, [...(groups.get(area) ?? []), { name, label, count }])
+  }
+  const order = EVENT_AREAS.map(([key]) => key)
+  return [...groups.entries()]
+    .sort(([a], [b]) => (order.indexOf(a) + 1 || order.length + 1) - (order.indexOf(b) + 1 || order.length + 1))
+    .map(([area, events]) => ({
+      area,
+      title: EVENT_AREAS.find(([key]) => key === area)?.[1] ?? sentence(area),
+      events,
+      total: events.reduce((sum, e) => sum + e.count, 0),
+    }))
+}
+
+const duration = (s: number) => (s < 5400 ? ago(s) : s < 172800 ? `${(s / 3600).toFixed(1)} h` : `${(s / 86400).toFixed(1)} days`)
+
+const percent = (part: number, whole: number) => `${(Math.round((1000 * part) / whole) / 10).toLocaleString()}%`
+
+const DAILY_COLUMNS: [keyof Omit<DailyHealth, 'date'>, string][] = [
+  ['searches', 'Searches'],
+  ['zeroResultSearches', 'Zero Results'],
+  ['proposalsSubmitted', 'Proposals'],
+  ['contractsGenerated', 'Contracts'],
+  ['activations', 'Activations'],
+  ['releases', 'Releases'],
+  ['disputesOpened', 'Disputes Opened'],
+  ['disputesResolved', 'Disputes Resolved'],
+]
+
+type HealthPreset = '7' | '30' | '90' | 'all' | 'custom'
+const HEALTH_PRESETS: [HealthPreset, string][] = [['7', 'Last 7 days'], ['30', 'Last 30 days'], ['90', 'Last 90 days'], ['all', 'All time'], ['custom', 'Custom range']]
+
+/** Dates are whole UTC days, matching how the server buckets the daily series. */
+const utcToday = () => new Date().toISOString().slice(0, 10)
+function addDays(date: string, days: number) {
+  const d = new Date(`${date}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + days)
+  return d.toISOString().slice(0, 10)
+}
+const utcDayLabel = (date: string) => new Date(`${date}T00:00:00Z`).toLocaleDateString(undefined, { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' })
+
 export function PlatformAnalyticsPage() {
-  const [data, setData] = useState<Record<string, unknown> | null>(null)
+  const { user } = useAuth()
+  const isPlatformAdmin = !!user?.platformRoles.includes('PLATFORM_ADMIN')
+  const [data, setData] = useState<MarketplaceHealth | null>(null)
   const [error, setError] = useState<unknown>(null)
+  const [busy, setBusy] = useState(false)
+  const [rebuilt, setRebuilt] = useState<{ projectedEvents: number; at: Date } | null>(null)
+  const [preset, setPreset] = useState<HealthPreset>('30')
+  const [since, setSince] = useState(() => addDays(utcToday(), -29))
+  const [until, setUntil] = useState(utcToday)
   const { run, modal } = useStepUp(setError)
 
-  const reload = useCallback(async () => setData(await api('/v1/analytics/marketplace-health')), [])
+  const bounded = preset !== 'all'
+  const invalidRange = bounded && (!since || !until || since > until)
+
+  const reload = useCallback(async () => {
+    if (invalidRange) return
+    setBusy(true)
+    try {
+      setData(await api<MarketplaceHealth>('/v1/analytics/marketplace-health', {
+        query: bounded ? { from: `${since}T00:00:00Z`, to: `${addDays(until, 1)}T00:00:00Z` } : {},
+      }))
+      setError(null)
+    } finally {
+      setBusy(false)
+    }
+  }, [bounded, invalidRange, since, until])
+
   useEffect(() => {
     reload().catch(setError)
   }, [reload])
+
+  function choosePreset(next: HealthPreset) {
+    setPreset(next)
+    if (next === '7' || next === '30' || next === '90') {
+      setUntil(utcToday())
+      setSince(addDays(utcToday(), 1 - Number(next)))
+    }
+  }
+
+  const windowLabel = !bounded
+    ? 'All time'
+    : preset === 'custom'
+      ? `${utcDayLabel(since)} – ${utcDayLabel(until)}`
+      : HEALTH_PRESETS.find(([key]) => key === preset)?.[1] ?? ''
+  const tiers = Object.entries(data?.trustTierDistribution ?? {}).sort(([a], [b]) => a.localeCompare(b))
+  const tieredProfessionals = tiers.reduce((sum, [, n]) => sum + n, 0)
+
+  function downloadJson() {
+    if (!data) return
+    const exportedAt = new Date().toISOString()
+    const range = bounded ? `${since}_to_${until}` : 'all-time'
+    downloadFile(
+      `zoikorum-marketplace-health-${range}.json`,
+      JSON.stringify({ exportedAt, ...data }, null, 2),
+      'application/json'
+    )
+  }
 
   return (
     <>
@@ -861,20 +1004,28 @@ export function PlatformAnalyticsPage() {
         subtitle="Marketplace liquidity, search conversion, and system health projections."
         actions={
           <div className="row" style={{ gap: 8 }}>
-            <button className="btn btn-secondary" onClick={() => reload().catch(setError)}>
+            <button className="btn btn-secondary" onClick={() => reload().catch(setError)} disabled={busy || invalidRange}>
               <Icon name="clock" /> Refresh
             </button>
-            <button
-              className="btn btn-primary"
-              onClick={() =>
-                run(async () => {
-                  await api('/v1/admin/analytics/rebuild', { method: 'POST' })
-                  await reload()
-                })
-              }
-            >
-              Rebuild Projections from Audit Ledger
+            <button className="btn btn-secondary" onClick={downloadJson} disabled={!data}>
+              <Icon name="download" /> Download JSON
             </button>
+            {isPlatformAdmin && (
+              <button
+                className="btn btn-primary"
+                disabled={busy}
+                onClick={() => {
+                  setRebuilt(null)
+                  run(async () => {
+                    const result = await api<{ projectedEvents: number }>('/v1/admin/analytics/rebuild', { method: 'POST' })
+                    await reload()
+                    setRebuilt({ projectedEvents: result.projectedEvents, at: new Date() })
+                  })
+                }}
+              >
+                Rebuild Projections from Audit Ledger
+              </button>
+            )}
           </div>
         }
       />
@@ -883,20 +1034,164 @@ export function PlatformAnalyticsPage() {
       {modal}
       <PlatformKpis />
 
-      {data ? (
-        <section className="card panel">
-          <div className="panel-head">
-            <h2>Marketplace Health Metrics</h2>
+      {rebuilt && (
+        <div className="alert alert-success" role="status" style={{ marginBottom: 16 }}>
+          Projections rebuilt from the audit ledger at {rebuilt.at.toLocaleTimeString()}: {rebuilt.projectedEvents.toLocaleString()} event
+          {rebuilt.projectedEvents === 1 ? '' : 's'} replayed. The figures below are the rebuilt values.
+        </div>
+      )}
+
+      <div className="card panel" style={{ marginBottom: 20 }}>
+        <div className="row" style={{ alignItems: 'flex-end', gap: 14 }}>
+          <div className="field" style={{ minWidth: 180, flex: 1 }}>
+            <label htmlFor="analytics-period">Period</label>
+            <select id="analytics-period" className="input" value={preset} onChange={(e) => choosePreset(e.target.value as HealthPreset)}>
+              {HEALTH_PRESETS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+            </select>
           </div>
-          <dl className="facts">
-            {Object.entries(data).map(([key, value]) => (
-              <div key={key}>
-                <dt>{key.replace(/([A-Z])/g, ' $1')}</dt>
-                <dd>{typeof value === 'object' ? JSON.stringify(value) : String(value ?? 'No data')}</dd>
+          {bounded && (
+            <>
+              <div className="field" style={{ minWidth: 160, flex: 1 }}>
+                <label htmlFor="analytics-from">From (UTC)</label>
+                <input id="analytics-from" type="date" className="input" value={since} max={until || undefined}
+                  onChange={(e) => { setPreset('custom'); setSince(e.target.value) }} />
               </div>
-            ))}
-          </dl>
-        </section>
+              <div className="field" style={{ minWidth: 160, flex: 1 }}>
+                <label htmlFor="analytics-to">To (UTC)</label>
+                <input id="analytics-to" type="date" className="input" value={until} min={since || undefined}
+                  onChange={(e) => { setPreset('custom'); setUntil(e.target.value) }} />
+              </div>
+            </>
+          )}
+        </div>
+        {invalidRange && <p className="small" style={{ color: 'var(--zk-danger)', margin: 0 }}>Choose a start date on or before the end date.</p>}
+      </div>
+
+      {data ? (
+        <>
+          <div className="stat-row four">
+            <StatCard
+              icon="search"
+              tone={data.searches && data.zeroResultSearches / data.searches > 0.1 ? 'amber' : 'green'}
+              value={data.searches ? percent(data.zeroResultSearches, data.searches) : '—'}
+              label="Zero-Result Searches"
+              sub={`${data.zeroResultSearches.toLocaleString()} of ${data.searches.toLocaleString()} searches found nothing`}
+            />
+            <StatCard
+              icon="proposal"
+              tone="blue"
+              value={data.proposalContractConversionBps === null ? '—' : percent(data.proposalContractConversionBps, 10000)}
+              label="Proposal → Contract"
+              sub="Contracts generated per proposal submitted"
+            />
+            <StatCard
+              icon="wallet"
+              tone="teal"
+              value={data.medianReleaseLatencySeconds === null ? '—' : duration(data.medianReleaseLatencySeconds)}
+              label="Median Release Time"
+              sub="From escrow funding to release"
+            />
+            <StatCard
+              icon="shield"
+              tone={data.disputesOpened > data.disputesResolved ? 'amber' : 'green'}
+              value={`${data.disputesOpened} / ${data.disputesResolved}`}
+              label="Disputes Opened / Resolved"
+              sub={windowLabel}
+            />
+          </div>
+
+          <div className="stat-row three">
+            <StatCard icon="contract" tone="violet" value={data.activations.toLocaleString()} label="Contract Activations" sub={`Contracts that went live · ${windowLabel}`} />
+            <StatCard
+              icon="star"
+              tone="blue"
+              value={tieredProfessionals.toLocaleString()}
+              label="Professionals with a Trust Tier"
+              sub={`Current · ${tiers.length ? tiers.map(([tier, n]) => `Tier ${tier}: ${n}`).join(' · ') : 'No tiers assigned yet'}`}
+            />
+            <StatCard
+              icon="clock"
+              tone="green"
+              value={data.lastEventAt ? new Date(data.lastEventAt).toLocaleTimeString() : '—'}
+              label="Latest Event"
+              sub={data.lastEventAt ? new Date(data.lastEventAt).toLocaleDateString() : 'No events recorded yet'}
+            />
+          </div>
+
+          <section className="card panel" style={{ marginBottom: 20 }}>
+            <div className="panel-head">
+              <h2>Daily Activity</h2>
+              <span className="small muted">UTC days with activity · {windowLabel}</span>
+            </div>
+            {data.daily.length === 0 ? (
+              <EmptyTable columns={['Date', ...DAILY_COLUMNS.map(([, label]) => label)]}>No activity in this period.</EmptyTable>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table className="data">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      {DAILY_COLUMNS.map(([key, label]) => <th key={key} style={{ textAlign: 'right' }}>{label}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...data.daily].reverse().map((day) => (
+                      <tr key={day.date}>
+                        <td className="small">{utcDayLabel(day.date)}</td>
+                        {DAILY_COLUMNS.map(([key]) => (
+                          <td key={key} style={{ textAlign: 'right' }} className={day[key] ? undefined : 'muted'}>{day[key].toLocaleString()}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <th>Total</th>
+                      {DAILY_COLUMNS.map(([key]) => (
+                        <th key={key} style={{ textAlign: 'right' }}>{data.daily.reduce((sum, day) => sum + day[key], 0).toLocaleString()}</th>
+                      ))}
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </section>
+
+          <section className="card panel">
+            <div className="panel-head">
+              <h2>Event Counts by Area</h2>
+              <span className="small muted">
+                {Object.values(data.eventCounts).reduce((sum, n) => sum + n, 0).toLocaleString()} events recorded
+              </span>
+            </div>
+            {Object.keys(data.eventCounts).length === 0 ? (
+              <EmptyTable columns={['Event', 'Count']}>No events recorded yet.</EmptyTable>
+            ) : (
+              <table className="data">
+                <thead>
+                  <tr>
+                    <th>Event</th>
+                    <th style={{ textAlign: 'right' }}>Count</th>
+                  </tr>
+                </thead>
+                {groupEventCounts(data.eventCounts).map((group) => (
+                  <tbody key={group.area}>
+                    <tr style={{ background: 'var(--zk-bg-soft)' }}>
+                      <th scope="rowgroup">{group.title}</th>
+                      <th style={{ textAlign: 'right' }}>{group.total.toLocaleString()}</th>
+                    </tr>
+                    {group.events.map((e) => (
+                      <tr key={e.name}>
+                        <td title={e.name} style={{ paddingLeft: 28 }}>{e.label}</td>
+                        <td style={{ textAlign: 'right' }}>{e.count.toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                ))}
+              </table>
+            )}
+          </section>
+        </>
       ) : (
         <p className="muted">Loading health metrics…</p>
       )}
