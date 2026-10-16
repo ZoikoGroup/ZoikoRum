@@ -76,4 +76,8 @@ class ProfessionalDocument(Base, UUIDPk, Timestamps):
     review_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     review_average: Mapped[float | None] = mapped_column(Float)
     response_median_hours: Mapped[float | None] = mapped_column(Float)  # time to a proposal or a decline
+    # The firm the professional practises under (from the firm facade); a suspended firm is not shown.
+    firm_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    firm_name: Mapped[str | None] = mapped_column(String(200))
+    firm_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     document: Mapped[str] = mapped_column(TSVECTOR, nullable=False)

@@ -65,6 +65,12 @@ class SpecRef(BaseModel):
     primary: bool
 
 
+class FirmRef(BaseModel):
+    id: uuid.UUID
+    name: str
+    verified: bool
+
+
 class ResultItem(BaseModel):
     professionalId: uuid.UUID
     photoUrl: str | None
@@ -89,6 +95,7 @@ class ResultItem(BaseModel):
     whyThisResult: list[str]
     regulatedPreview: bool = False
     enterpriseReady: bool = False  # offers regulated work but is below Tier A: shown, but cannot take that work yet
+    firm: FirmRef | None = None  # the firm they practise under
 
 
 class FacetValue(BaseModel):

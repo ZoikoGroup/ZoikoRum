@@ -5,6 +5,8 @@ import { ErrorAlert, useStepUp } from '../components/ui'
 import { EmptyTable, PortalHeader, StatCard } from '../components/portal'
 import { Icon } from '../components/dashboard'
 import { AuditArchives } from '../components/AuditArchives'
+import { verifyAuditChain, type ChainCheck } from '../api/audit'
+import { useAuth } from '../auth/AuthContext'
 
 interface AuditExport {
   id: string
@@ -15,11 +17,53 @@ interface AuditExport {
   chainHeadHash: string
 }
 
+/** Recomputes the whole hash chain on demand (the worker also re-checks it hourly). */
+function LedgerIntegrity({ onError }: { onError: (err: unknown) => void }) {
+  const [result, setResult] = useState<(ChainCheck & { at: Date }) | null>(null)
+  const [busy, setBusy] = useState(false)
+  async function verify() {
+    setBusy(true)
+    onError(null)
+    try {
+      setResult({ ...(await verifyAuditChain()), at: new Date() })
+    } catch (err) {
+      onError(err)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <section className="card panel" style={{ marginBottom: 20 }}>
+      <div className="panel-head">
+        <h2>Ledger integrity</h2>
+        <button type="button" className="btn btn-primary btn-sm" onClick={verify} disabled={busy}>
+          <Icon name="shield" /> {busy ? 'Verifying…' : 'Verify ledger integrity'}
+        </button>
+      </div>
+      {!result ? (
+        <p className="muted small" style={{ margin: 0 }}>Recomputes every record's SHA-256 hash in order and checks it links to the one before.</p>
+      ) : result.valid ? (
+        <div className="alert alert-success" role="status" style={{ margin: 0 }}>
+          Intact: all {result.checked.toLocaleString()} records verified at {result.at.toLocaleTimeString()}.
+          {result.headHash && <span className="ref">Head hash <code>{result.headHash}</code></span>}
+        </div>
+      ) : (
+        <div className="alert alert-error" role="alert" style={{ margin: 0 }}>
+          Broken at record #{result.brokenAtSeq} ({result.checked.toLocaleString()} records verified before it). A
+          HashChainBroken incident was raised; treat the ledger after that point as untrusted until investigated.
+        </div>
+      )}
+    </section>
+  )
+}
+
 export default function AuditExportsPage() {
   const [jobs, setJobs] = useState<AuditExport[]>([])
   const [error, setError] = useState<unknown>(null)
   const [busy, setBusy] = useState(false)
   const { run, modal } = useStepUp(setError)
+  const { user } = useAuth()
+  const canVerify = !!user?.platformRoles.some((r) => r === 'COMPLIANCE_OFFICER' || r === 'PLATFORM_ADMIN')
 
   return (
     <>
@@ -31,6 +75,7 @@ export default function AuditExportsPage() {
 
       <ErrorAlert error={error} />
       {modal}
+      {canVerify && <LedgerIntegrity onError={setError} />}
       <AuditArchives />
 
       <div className="stat-row three" style={{ marginBottom: 20 }}>

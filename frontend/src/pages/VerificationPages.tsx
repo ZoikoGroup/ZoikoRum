@@ -258,13 +258,24 @@ function VerifiedPanel({ onRevoked }: { onRevoked: (msg: string) => void }) {
   )
 }
 
+const FIRM_START_INFO: Partial<Record<SelfServiceType, { title: string; desc: string }>> = {
+  JURISDICTION: { title: 'Verify a firm licence for a country', desc: 'Only if the firm itself is licensed or registered to practise there (e.g. an audit or law firm registration). Upload the firm\'s licence.' },
+  INSURANCE: { title: 'Verify the firm\'s professional indemnity insurance', desc: 'For regulated work (legal, audit, tax filing). Upload the firm\'s policy schedule, with its end date.' },
+}
+const PERSON_START_INFO: Partial<Record<SelfServiceType, { title: string; desc: string }>> = {
+  IDENTITY: { title: 'Verify your identity as authorized representative', desc: 'Passport, national ID or driving licence. The firm can offer regulated work only once a representative\'s identity is verified.' },
+}
+
 /** All checks for a subject, plus buttons to start the self-service ones. */
-function ChecksPanel({ subjectType, subjectId, allowed, onChanged }: {
+// eslint-disable-next-line react-refresh/only-export-components
+export function ChecksPanel({ subjectType, subjectId, allowed, onChanged }: {
   subjectType: SubjectType
   subjectId: string
   allowed: SelfServiceType[]
   onChanged?: () => void
 }) {
+  const info = (t: SelfServiceType) =>
+    (subjectType === 'FIRM' ? FIRM_START_INFO[t] : subjectType === 'IDENTITY' ? PERSON_START_INFO[t] : undefined) ?? START_INFO[t]
   const [cases, setCases] = useState<VerificationCase[]>([])
   const [jurisdiction, setJurisdiction] = useState('US')
   const [error, setError] = useState<unknown>(null)
@@ -308,7 +319,7 @@ function ChecksPanel({ subjectType, subjectId, allowed, onChanged }: {
         <ul className="checklist">
           {allowed.map((t) => (
             <li key={t}>
-              <span><strong>{START_INFO[t].title}</strong><br /><span className="muted small">{START_INFO[t].desc}</span></span>
+              <span><strong>{info(t).title}</strong><br /><span className="muted small">{info(t).desc}</span></span>
               <span className="row" style={{ flexWrap: 'nowrap' }}>
                 {t === 'BENEFICIAL_OWNERSHIP' && !active(t) && <OwnersEditor owners={owners} onChange={setOwners} />}
                 {t === 'JURISDICTION' && (
@@ -363,7 +374,7 @@ export function FirmVerificationPage() {
     <>
       <div className="page-head"><div><h1>Firm verification</h1>
         <p className="muted" style={{ margin: 0 }}>{firm.legalName} · {firm.status === 'VERIFIED' ? 'Verified' : 'Verification pending'}</p></div></div>
-      {isAdmin ? <ChecksPanel subjectType="FIRM" subjectId={firm.id} allowed={['FIRM_REGISTRATION', 'BENEFICIAL_OWNERSHIP']} />
+      {isAdmin ? <ChecksPanel subjectType="FIRM" subjectId={firm.id} allowed={['FIRM_REGISTRATION', 'BENEFICIAL_OWNERSHIP', 'JURISDICTION', 'INSURANCE']} />
         : <p className="muted">Only Firm Admins can manage firm verification.</p>}
     </>
   )

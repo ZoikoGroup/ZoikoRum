@@ -5,6 +5,7 @@ from sqlalchemy import select, delete, func, literal_column, text
 from sqlalchemy.dialects.postgresql import insert
 from zoikorum.domains.analytics.models import EventFact
 from zoikorum.domains.audit import facade as audit
+from zoikorum.domains.contract import facade as contract_facade
 from zoikorum.shared.event_catalog import E, ALL_EVENTS, domain_of
 from zoikorum.shared.events import record_audit
 from zoikorum.shared import clock
@@ -27,8 +28,14 @@ async def project(session, event):
     p = event.payload
     safe = {k: v for k, v in p.items() if k.endswith(("Id", "Ids", "Minor")) or k in {
         "currency", "status", "tier", "toTier", "score", "onTime", "auto", "resultsCount", "resultCount", "count", "reference", "expiresAt", "milestoneOutcome", "subjectType", "decisionPath", "dueDate", "title", "sequence", "party", "verificationType"}}
+    professional_id = as_uuid(p.get("professionalId") or (p.get("subjectId") if p.get("subjectType") == "PROFESSIONAL" else None))
+    if professional_id is None and domain_of(event.eventType) == "escrow" and p.get("contractId"):
+        # Funding, refund and reversal events name only the contract: without this the professional's summary would count
+        # releases but never the funding behind them. Looked up here so a rebuild from the audit ledger is right too.
+        contract = await contract_facade.get_contract(session, as_uuid(p["contractId"]))
+        professional_id = contract.professional_id if contract else None
     await session.execute(insert(EventFact).values(id=uuid.uuid4(), source_event_id=event.eventId,
-        event_type=event.eventType, organization_id=as_uuid(p.get("organizationId")), professional_id=as_uuid(p.get("professionalId") or (p.get("subjectId") if p.get("subjectType") == "PROFESSIONAL" else None)),
+        event_type=event.eventType, organization_id=as_uuid(p.get("organizationId")), professional_id=professional_id,
         aggregate_id=str(event.aggregateId), payload=safe, occurred_at=event.occurredAt).on_conflict_do_nothing(index_elements=["source_event_id"]))
 
 

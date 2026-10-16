@@ -20,6 +20,7 @@ export interface SearchResult {
   whyThisResult: string[]
   regulatedPreview?: boolean
   enterpriseReady?: boolean
+  firm?: { id: string; name: string; verified: boolean } | null  // the firm they practise under
   dimensions: Record<string, string>
   languages: string[]
   yearsExperienceBand: string | null

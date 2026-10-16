@@ -80,9 +80,14 @@ export function ActionList({ actions, empty = 'Nothing needs your attention righ
   )
 }
 
-/** One line that says what is coming, instead of cards full of dashes. */
-export function ComingSoon({ children }: { children: ReactNode }) {
-  return <div className="coming-soon"><span className="badge">Coming soon</span><span>{children}</span></div>
+/** How fresh the summary figures are (Build spec: each projection carries lastEventAt so pages can show staleness). */
+export function DataFreshness({ at }: { at: string | null | undefined }) {
+  if (at === undefined) return null
+  return (
+    <p className="muted small" style={{ margin: '-8px 0 16px' }}>
+      <Icon name="clock" /> {at ? `Figures include activity up to ${new Date(at).toLocaleString()}` : 'No activity recorded yet'}
+    </p>
+  )
 }
 
 /** Photo when there is one, otherwise initials. */

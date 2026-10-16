@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
-import { FIRM_ROLE_INFO, firmApi, type Firm, type FirmMember, type FirmRole, type Invitation } from '../api/orgs'
+import { FIRM_ROLE_INFO, firmApi, formatMoney, type Firm, type FirmMember, type FirmMoney, type FirmOverview, type FirmRole,
+  type Invitation } from '../api/orgs'
 import { verificationApi, type VerificationCase } from '../api/verification'
+import { ChecksPanel } from './VerificationPages'
 import { useAuth } from '../auth/AuthContext'
-import { ActionList, ComingSoon, greeting, Icon, Kpi, type Action } from '../components/dashboard'
+import { ActionList, greeting, Icon, Kpi, type Action } from '../components/dashboard'
 import { ErrorAlert, Field, useStepUp, Loading } from '../components/ui'
 import { COUNTRIES } from './Join'
 
@@ -46,6 +48,7 @@ function FirmRoleBadges({ roles }: { roles: string[] }) {
 
 export function FirmTeamPage() {
   const { firm, loading, isAdmin, reload: reloadFirm } = useMyFirm()
+  const { user } = useAuth()
   const [members, setMembers] = useState<FirmMember[]>([])
   const [invites, setInvites] = useState<Invitation[]>([])
   const [error, setError] = useState<unknown>(null)
@@ -66,6 +69,8 @@ export function FirmTeamPage() {
   useEffect(() => { load() }, [load])
   if (loading) return <Loading />
   if (!firm) return <p className="muted">Your firm is still being set up. Refresh in a moment.</p>
+  const rep = (identityId: string) => firm.representatives.find((r) => r.identityId === identityId)
+  const myRep = user ? rep(user.id) : undefined
 
   function invite(e: FormEvent) {
     e.preventDefault()
@@ -120,11 +125,19 @@ export function FirmTeamPage() {
           {notice.link && <span className="ref">Development mode (no email provider yet). Share this link: <a href={notice.link}>{notice.link}</a></span>}
         </div>
       )}
-      {!firm.hasAuthorizedRepresentative && (
+      {!firm.hasAuthorizedRepresentative ? (
         <div className="alert alert-warn">
           Name an <strong>authorized representative</strong>: the person who legally acts for the firm. Their identity
-          will be verified before the firm can offer regulated services.
+          is verified before the firm can offer regulated services.
         </div>
+      ) : !firm.hasVerifiedRepresentative && (
+        <div className="alert alert-warn">
+          No authorized representative has a verified identity yet. Each representative verifies their own identity on
+          this page; if they cannot, name another representative.
+        </div>
+      )}
+      {myRep && !myRep.identityVerified && (
+        <ChecksPanel subjectType="IDENTITY" subjectId={myRep.identityId} allowed={['IDENTITY']} onChanged={() => setTimeout(reloadFirm, 1500)} />
       )}
 
       {isAdmin && (
@@ -150,7 +163,10 @@ export function FirmTeamPage() {
           <tbody>{members.map((m) => (
             <tr key={m.identityId}>
               <td><strong>{m.displayName}</strong><div className="muted small">{m.email}</div></td>
-              <td><FirmRoleBadges roles={m.roles} /></td>
+              <td><FirmRoleBadges roles={m.roles} />
+                {rep(m.identityId) && <div className="small" style={{ marginTop: 4 }}>
+                  {rep(m.identityId)!.identityVerified ? <span className="badge green">Identity verified</span>
+                    : <span className="badge warn">Identity not verified</span>}</div>}</td>
               {isAdmin && (
                 <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                   <button className="btn btn-secondary btn-sm" onClick={() => toggleRep(m)}>
@@ -264,6 +280,53 @@ export function FirmProfilePage() {
   )
 }
 
+const moneyList = (money: FirmMoney[], key: 'heldMinor' | 'releasedMinor') =>
+  money.filter((m) => m[key]).map((m) => formatMoney({ amountMinor: m[key], currency: m.currency })).join(' · ') || '—'
+
+/** The firm's work across its professionals: counts and money totals only, never buyers, terms or documents. */
+function FirmWork({ firmId }: { firmId: string }) {
+  const [work, setWork] = useState<FirmOverview | null>(null)
+  const [error, setError] = useState<unknown>(null)
+  useEffect(() => { firmApi.overview(firmId).then(setWork).catch(setError) }, [firmId])
+  return (
+    <section className="card panel">
+      <div className="panel-head"><h2>Your firm's work</h2></div>
+      <ErrorAlert error={error} />
+      {!work ? (!error && <Loading />) : (<>
+        <div className="kpi-row">
+          <Kpi icon="request" tone="blue" label="Open requests" value={work.openRequests} note="Waiting for or holding a proposal" />
+          <Kpi icon="contract" tone="violet" label="Contracts" value={work.activeContracts}
+            note={`${work.awaitingSignature} awaiting signature · ${work.completedContracts} completed`} />
+          <Kpi icon="wallet" tone="teal" label="Held in escrow" value={moneyList(work.money, 'heldMinor')}
+            note={`Released to date: ${moneyList(work.money, 'releasedMinor')}`} />
+        </div>
+        {work.professionals.length === 0 ? (
+          <p className="muted small" style={{ margin: 0 }}>No professionals practise under the firm yet. Invite them from the team page;
+            they choose the firm in their own profile.</p>
+        ) : (
+          <table className="data">
+            <thead><tr><th>Professional</th><th>Open requests</th><th>Contracts</th><th>Held in escrow</th><th>Released</th></tr></thead>
+            <tbody>{work.professionals.map((p) => (
+              <tr key={p.professionalId}>
+                <td><strong>{p.displayName}</strong>{!p.published && <span className="badge" style={{ marginLeft: 6 }}>Not published</span>}
+                  {p.headline && <div className="muted small">{p.headline}</div>}</td>
+                <td>{p.openRequests}</td>
+                <td>{p.activeContracts} active<div className="muted small">{p.awaitingSignature} to sign · {p.completedContracts} completed</div></td>
+                <td>{moneyList(p.money, 'heldMinor')}</td>
+                <td>{moneyList(p.money, 'releasedMinor')}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        )}
+        <p className="muted small" style={{ margin: '12px 0 0' }}>
+          Totals only. Clients, contract terms and documents stay between each professional and their client.
+          Amounts are shown per currency and never converted.
+        </p>
+      </>)}
+    </section>
+  )
+}
+
 /** Firm home: verification status, team and representative. */
 export function FirmDashboard() {
   const { firm, loading, isAdmin } = useMyFirm()
@@ -289,6 +352,9 @@ export function FirmDashboard() {
       detail: 'Registration number and firm size', priority: 'Medium', to: '/app/firm/profile', icon: 'building' })
     if (!firm.hasAuthorizedRepresentative) actions.push({ title: 'Name an authorized representative',
       detail: 'The person who legally acts for the firm', priority: 'Medium', to: '/app/firm/team', icon: 'user' })
+    else if (!firm.hasVerifiedRepresentative) actions.push({ title: 'Representative identity not verified',
+      detail: 'A representative verifies their identity on the team page, or name another representative', priority: 'High',
+      to: '/app/firm/team', icon: 'user' })
     if (firm.memberCount <= 1) actions.push({ title: 'Invite your professionals', detail: 'They offer services under the firm',
       priority: 'Low', to: '/app/firm/team', icon: 'team' })
     if (invites > 0) actions.push({ title: `${invites} invitation${invites > 1 ? 's' : ''} not yet accepted`,
@@ -302,18 +368,22 @@ export function FirmDashboard() {
           <h1>{greeting(user.displayName)}</h1>
           <p className="muted" style={{ margin: 0 }}>{firm.tradingName || firm.legalName} · <FirmStatusBadge status={firm.status} /></p>
         </div>
-        {isAdmin && <div className="row"><Link className="btn btn-primary" to="/app/firm/team"><Icon name="team" /> Manage team</Link></div>}
+        <div className="row">
+          <Link className="btn btn-secondary" to={`/firms/${firm.id}`}><Icon name="globe" /> View public page</Link>
+          {isAdmin && <Link className="btn btn-primary" to="/app/firm/team"><Icon name="team" /> Manage team</Link>}
+        </div>
       </div>
       <div className="kpi-row">
         <Kpi icon="shield" tone={firm.status === 'VERIFIED' ? 'green' : 'amber'} label="Firm verification"
           value={STATUS_LABEL[firm.status] ?? firm.status} note={registration ? `Check: ${registration.status.replace('_', ' ').toLowerCase()}` : 'Not started'} />
         <Kpi icon="team" tone="blue" label="Firm members" value={firm.memberCount} note={invites ? `${invites} invited` : 'Including you'} />
-        <Kpi icon="user" tone={firm.hasAuthorizedRepresentative ? 'green' : 'amber'} label="Authorized representative"
-          value={firm.hasAuthorizedRepresentative ? 'Named' : 'Missing'} note="Needed for regulated work" />
+        <Kpi icon="user" tone={firm.hasVerifiedRepresentative ? 'green' : 'amber'} label="Authorized representative"
+          value={firm.hasVerifiedRepresentative ? 'Verified' : firm.hasAuthorizedRepresentative ? 'Not verified' : 'Missing'}
+          note="Needed for regulated work" />
       </div>
-      <ComingSoon>Proposal requests, contracts and protected payments for your firm's professionals.</ComingSoon>
       <div className="home-grid">
         <div>
+          {isAdmin && <FirmWork firmId={firm.id} />}
           <section className="card panel">
             <div className="panel-head"><h2>Your roles</h2></div>
             <FirmRoleBadges roles={firm.myRoles} />

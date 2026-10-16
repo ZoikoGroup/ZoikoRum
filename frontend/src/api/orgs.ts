@@ -98,8 +98,27 @@ export interface Firm {
   myRoles: FirmRole[]
   memberCount: number
   hasAuthorizedRepresentative: boolean
+  /** At least one representative whose own identity check is verified (needed for regulated firm work). */
+  hasVerifiedRepresentative: boolean
+  representatives: { identityId: string; displayName: string; identityVerified: boolean }[]
   version: number
   createdAt: string
+}
+
+export interface FirmMoney { currency: string; heldMinor: number; releasedMinor: number }
+export interface FirmProfessionalWork {
+  professionalId: string; displayName: string; headline: string | null; published: boolean
+  openRequests: number; awaitingSignature: number; activeContracts: number; completedContracts: number; money: FirmMoney[]
+}
+/** Counts and money totals only: buyers, contract terms and documents stay with each professional. */
+export interface FirmOverview {
+  professionals: FirmProfessionalWork[]
+  openRequests: number; awaitingSignature: number; activeContracts: number; completedContracts: number; money: FirmMoney[]
+}
+export interface PublicFirm {
+  id: string; name: string; legalName: string; hqCountry: string; sizeBand: string | null; primaryCategory: string | null
+  website: string | null; verified: boolean; hasVerifiedRepresentative: boolean; verifiedCredentials: string[]
+  professionals: { professionalId: string; displayName: string; headline: string | null; photoUrl: string | null; tier: string }[]
 }
 
 export interface FirmMember { identityId: string; email: string; displayName: string; roles: FirmRole[]; joinedAt: string }
@@ -156,6 +175,8 @@ export const firmApi = {
   acceptByToken: (token: string) => api<Firm>(`${F}/invitations/accept`, { method: 'POST', body: { token } }),
   acceptById: (invId: string) => api<Firm>(`${F}/invitations/${invId}/accept`, { method: 'POST' }),
   decline: (invId: string) => api<void>(`${F}/invitations/${invId}/decline`, { method: 'POST' }),
+  overview: (id: string) => api<FirmOverview>(`${F}/${id}/overview`),
+  publicFirm: (id: string) => api<PublicFirm>(`${F}/${id}/public`),
 }
 
 export function formatMoney(m: Money | null | undefined): string {

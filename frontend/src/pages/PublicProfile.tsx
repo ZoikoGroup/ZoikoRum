@@ -89,7 +89,7 @@ export default function PublicProfilePage() {
               <div>
                 <div className="name-row"><Avatar name={p.displayName} photoUrl={p.photoUrl} size={72} /><h1>{p.displayName}</h1></div>
                 {p.headline && <p className="headline">{p.headline}</p>}
-                {p.firm && <p className="small" style={{ margin: '0 0 6px' }}>Practises with <strong>{p.firm.name}</strong>
+                {p.firm && <p className="small" style={{ margin: '0 0 6px' }}>Practises with <Link to={`/firms/${p.firm.id}`}><strong>{p.firm.name}</strong></Link>
                   {p.firm.verified ? <span className="badge green" style={{ marginLeft: 8 }}>Firm verified</span> : null}</p>}
                 <p className="muted small" style={{ margin: 0 }}>
                   {[p.city, countryName(p.country)].filter(Boolean).join(', ')}

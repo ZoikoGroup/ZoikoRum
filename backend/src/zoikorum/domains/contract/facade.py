@@ -112,6 +112,24 @@ async def delivery_stats(session: AsyncSession, professional_id: uuid.UUID) -> d
     return {"completed": completed, "weightedCompleted": weighted_completed, "engagements": engagements, "milestonesWithDueDate": len(rows), "onTime": on_time}
 
 
+async def contract_counts(session: AsyncSession, professional_ids: list[uuid.UUID]) -> dict[uuid.UUID, dict[str, int]]:
+    """Per professional: contracts awaiting signature, active (incl. disputed) and completed."""
+    from sqlalchemy import func
+
+    if not professional_ids:
+        return {}
+    groups = {"GENERATED": "awaitingSignature", "PENDING_SIGNATURE": "awaitingSignature", "ACTIVE": "active",
+              "DISPUTED": "active", "COMPLETED": "completed"}
+    out: dict[uuid.UUID, dict[str, int]] = {}
+    for pid, status, n in (await session.execute(select(Contract.professional_id, Contract.status, func.count())
+                                                 .where(Contract.professional_id.in_(professional_ids))
+                                                 .group_by(Contract.professional_id, Contract.status))).all():
+        if status in groups:
+            counts = out.setdefault(pid, {"awaitingSignature": 0, "active": 0, "completed": 0})
+            counts[groups[status]] += n
+    return out
+
+
 async def engagements_by_organization(session: AsyncSession, professional_id: uuid.UUID) -> dict[uuid.UUID, dict]:
     """Per buyer organisation: engagements with this professional, how many completed, last activity (saved buyers)."""
     from sqlalchemy import func

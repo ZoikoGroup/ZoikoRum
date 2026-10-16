@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from zoikorum.config import get_settings
 from zoikorum.domains.admin import facade as admin_facade
 from zoikorum.domains.firm import facade as firm_facade
+from zoikorum.domains.identity import facade as identity_facade
 from zoikorum.domains.professional import facade as professional_facade
 from zoikorum.domains.ai import facade as ai_facade
 from zoikorum.domains.verification.models import Appeal, EvidenceCheck, EvidenceItem, ProviderSession, VerificationCase
@@ -60,7 +61,13 @@ VIEWERS = (PlatformRole.COMPLIANCE_OFFICER, PlatformRole.PLATFORM_ADMIN, Platfor
 LABELS = {"IDENTITY": "Identity", "JURISDICTION": "Jurisdiction eligibility", "INSURANCE": "Professional indemnity insurance",
           "RESTRICTIONS": "Sanctions & restrictions screening", "BACKGROUND": "Background check",
           "FIRM_REGISTRATION": "Firm registration", "BENEFICIAL_OWNERSHIP": "Beneficial ownership"}
-FIRM_ONLY = ("FIRM_REGISTRATION", "BENEFICIAL_OWNERSHIP")
+# Firm credentials (Architecture 3.x Firm Domain): a licence to practise in a jurisdiction and indemnity insurance,
+# held by the firm itself. A person's own IDENTITY check backs a firm's authorized representative.
+ALLOWED_TYPES = {"PROFESSIONAL": ("IDENTITY", "JURISDICTION", "INSURANCE", "BACKGROUND"),
+                 "FIRM": ("FIRM_REGISTRATION", "BENEFICIAL_OWNERSHIP", "JURISDICTION", "INSURANCE"), "IDENTITY": ("IDENTITY",)}
+WRONG_TYPE_MESSAGE = {"PROFESSIONAL": "Firm registration and beneficial ownership checks apply to firms only",
+                      "FIRM": "Firms cannot request personal checks such as identity",
+                      "IDENTITY": "Only an identity check can be requested for a person"}
 TIMER_REMINDER = "verification.expiry_reminder"
 TIMER_EXPIRY = "verification.expiry"
 
@@ -84,6 +91,8 @@ async def _is_owner(session: AsyncSession, actor: Actor, subject_type: str, subj
         return pro is not None and pro.identity_id == actor.identity_id
     if subject_type == "FIRM":
         return FirmRole.FIRM_ADMIN in await firm_facade.member_roles(session, subject_id, actor.identity_id)
+    if subject_type == "IDENTITY":
+        return subject_id == actor.identity_id
     return False
 
 
@@ -150,6 +159,21 @@ async def _review_fields(session: AsyncSession, case: VerificationCase) -> dict:
     return {"details": dict(case.details or {}) or None, "subjectLegalName": name}
 
 
+async def _other_subject_names(session: AsyncSession, cases) -> dict[uuid.UUID, str | None]:
+    """Display names for firm and person subjects in the review queues (professionals are looked up in bulk)."""
+    names: dict[uuid.UUID, str | None] = {}
+    for c in cases:
+        if c.subject_id in names:
+            continue
+        if c.subject_type == "FIRM":
+            firm = await firm_facade.get_firm(session, c.subject_id)
+            names[c.subject_id] = firm.legal_name if firm else None
+        elif c.subject_type == "IDENTITY":
+            who = await identity_facade.get_identity(session, c.subject_id)
+            names[c.subject_id] = who.display_name if who else None
+    return names
+
+
 def _hosted_fields(ps: ProviderSession | None) -> dict:
     """The identity partner's view of a case (integration.py), when the check runs in a hosted flow."""
     if ps is None:
@@ -207,9 +231,8 @@ async def _open(session: AsyncSession, *, subject_type: str, subject_id: uuid.UU
 async def start_case(session: AsyncSession, actor: Actor, body: CaseIn) -> CaseOut:
     if not await _is_owner(session, actor, body.subjectType, body.subjectId):
         raise Forbidden("You can only request verification for your own profile or a firm you administer")
-    if (body.verificationType in FIRM_ONLY) != (body.subjectType == "FIRM"):
-        raise ValidationFailed("Firm registration checks apply to firms only; firms cannot request personal checks",
-                               code="WRONG_SUBJECT_TYPE")
+    if body.verificationType not in ALLOWED_TYPES[body.subjectType]:
+        raise ValidationFailed(WRONG_TYPE_MESSAGE[body.subjectType], code="WRONG_SUBJECT_TYPE")
     jurisdiction = body.jurisdiction.upper() if body.jurisdiction else None
     if body.verificationType == "JURISDICTION" and not jurisdiction:
         raise ValidationFailed("Say which jurisdiction to check", code="JURISDICTION_REQUIRED")
@@ -684,10 +707,7 @@ async def review_queue(session: AsyncSession, actor: Actor, cursor: str | None, 
     )).all())
     pros = await professional_facade.get_professionals(session, [c.subject_id for c in rows if c.subject_type == "PROFESSIONAL"])
     names = {k: v.display_name for k, v in pros.items()}
-    for c in rows:
-        if c.subject_type == "FIRM" and c.subject_id not in names:
-            firm = await firm_facade.get_firm(session, c.subject_id)
-            names[c.subject_id] = firm.legal_name if firm else None
+    names.update(await _other_subject_names(session, rows))
     hosted = {ps.case_id: ps for ps in (await session.scalars(
         select(ProviderSession).where(ProviderSession.case_id.in_([c.id for c in rows])))).all()}
     now = clock.now()
@@ -748,9 +768,10 @@ async def appeal_queue(session: AsyncSession, actor: Actor, status: str | None, 
     counts = dict((await session.execute(select(EvidenceItem.case_id, func.count())
                                          .where(EvidenceItem.case_id.in_([c.id for _, c in rows])).group_by(EvidenceItem.case_id))).all())
     pros = await professional_facade.get_professionals(session, [c.subject_id for _, c in rows if c.subject_type == "PROFESSIONAL"])
+    names = {k: v.display_name for k, v in pros.items()} | await _other_subject_names(session, [c for _, c in rows])
     items = [AppealQueueItemOut(
         id=a.id, caseId=c.id, caseLabel=c.label, verificationType=c.verification_type, subjectType=c.subject_type, subjectId=c.subject_id,
-        subjectName=pros[c.subject_id].display_name if c.subject_id in pros else None, caseStatus=c.status, originalReason=c.public_reason,
+        subjectName=names.get(c.subject_id), caseStatus=c.status, originalReason=c.public_reason,
         statement=a.statement, status=a.status, evidenceCount=counts.get(c.id, 0),
         canDecide=a.original_reviewer_id != actor.identity_id and c.owner_identity_id != actor.identity_id, filedAt=a.created_at)
         for a, c in rows]

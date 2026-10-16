@@ -25,6 +25,7 @@ const OfferingsPage = lazy(() => import('./pages/OfferingsPage').then((m) => ({ 
 const ProfessionalDashboard = lazy(() => import('./pages/ProfessionalPages').then((m) => ({ default: m.ProfessionalDashboard })))
 const ProfileSetupPage = lazy(() => import('./pages/ProfessionalPages').then((m) => ({ default: m.ProfileSetupPage })))
 const PublicProfilePage = lazy(() => import('./pages/PublicProfile'))
+const PublicFirmPage = lazy(() => import('./pages/PublicFirm'))
 const BrowseProfessionals = lazy(() => import('./pages/BrowseProfessionals'))
 const CategoryPage = lazy(() => import('./pages/CategoryPage'))
 const SsoCallbackPage = lazy(() => import('./components/SingleSignOn').then((m) => ({ default: m.SsoCallbackPage })))
@@ -102,6 +103,7 @@ export default function App() {
           <Route path="/professionals" element={<BrowseProfessionals />} />
           <Route path="/categories/:slug" element={<CategoryPage />} />
           <Route path="/professionals/:id" element={<PublicProfilePage />} />
+          <Route path="/firms/:id" element={<PublicFirmPage />} />
 
           {/* Signed in: each workspace is gated by role (the API enforces the same rules). */}
           <Route path="/app" element={<RequireAuth><AppShell /></RequireAuth>}>
@@ -180,7 +182,7 @@ export default function App() {
   )
 }
 
-const CUSTOMER_ONLY = /^\/(join|enterprise|invite|professionals)(\/|$)/
+const CUSTOMER_ONLY = /^\/(join|enterprise|invite|professionals|firms)(\/|$)/
 
 /** Staff and customers use separate web apps (portal.ts): each sends the other's pages to the other address. */
 function PortalGate({ children }: { children: ReactNode }) {

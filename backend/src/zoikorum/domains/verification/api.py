@@ -91,7 +91,7 @@ async def evidence_file(evidence_id: uuid.UUID, actor: CurrentActor, session: Db
 
 
 @router.get("/subjects/{subject_type}/{subject_id}", response_model=list[CaseOut])
-async def subject_cases(subject_type: Literal["PROFESSIONAL", "FIRM"], subject_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+async def subject_cases(subject_type: Literal["PROFESSIONAL", "FIRM", "IDENTITY"], subject_id: uuid.UUID, actor: CurrentActor, session: DbSession):
     return await service.subject_cases(session, actor, subject_type, subject_id)
 
 
