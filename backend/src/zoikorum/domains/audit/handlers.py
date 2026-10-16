@@ -7,7 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from zoikorum.domains.audit import service
 from zoikorum.shared import clock
 from zoikorum.shared.events import ALL, EventEnvelope, subscribe
+from zoikorum.shared.metrics import gauge_source
 from zoikorum.shared.relay import on_timer, schedule_timer
+
+gauge_source(service.chain_health)
 
 
 @subscribe(ALL, consumer="audit.ledger")
@@ -22,3 +25,9 @@ async def validate_chain(session: AsyncSession, key: str, payload: dict) -> None
     await service.verify_chain(session)
     nxt = clock.now() + timedelta(hours=1)
     await schedule_timer(session, "audit.chain_validation", nxt.strftime("%Y%m%d%H"), nxt)
+
+
+@on_timer("audit.archive")
+async def on_archive(session, key, payload):
+    from zoikorum.domains.audit import archive
+    await archive.archive_due(session)

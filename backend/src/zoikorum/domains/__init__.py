@@ -33,4 +33,5 @@ DOMAINS = (
     "admin",
     "analytics",
     "review",
+    "support",
 )

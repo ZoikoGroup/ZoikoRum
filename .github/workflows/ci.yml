@@ -4,7 +4,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev, venky, maruthi]  # the team's branches (no others are created)
   pull_request:
 
 jobs:
@@ -44,11 +44,13 @@ jobs:
           alembic upgrade head
           alembic check
       - name: Unit tests (no database)
-        run: pytest -m unit
+        run: pytest -m unit --cov --cov-report=
       - name: Integration tests
-        run: pytest -m integration
+        run: pytest -m integration --cov --cov-append --cov-report=
       - name: Regression tests (end-to-end flows, Steps 1-9)
-        run: pytest -m regression
+        run: pytest -m regression --cov --cov-append --cov-report=
+      - name: Test coverage (the build fails below 80%; measured 84% when the gate was set)
+        run: coverage report --fail-under=80 --skip-covered --sort=cover
 
   frontend:
     runs-on: ubuntu-latest
@@ -100,8 +102,25 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build backend image
         run: docker build -t zoikorum-backend:ci ./backend
-      - name: Build web image
-        run: docker build -t zoikorum-web:ci ./frontend
+      - name: Build web images (customer and staff apps)
+        run: |
+          docker build -t zoikorum-web:ci ./frontend
+          docker build -t zoikorum-web-staff:ci --build-arg VITE_PORTAL=staff ./frontend
+      - name: Scan images for known vulnerabilities (fixable HIGH and CRITICAL fail the build)
+        run: |
+          for image in zoikorum-backend:ci zoikorum-web:ci zoikorum-web-staff:ci; do
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.56.2 image --scanners vuln --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --no-progress "$image"
+          done
+      - name: Software bill of materials (CycloneDX)
+        run: |
+          mkdir -p sbom
+          for image in zoikorum-backend zoikorum-web; do
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD/sbom:/out" aquasec/trivy:0.56.2 image               --format cyclonedx --output "/out/$image.cdx.json" --no-progress "$image:ci"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom/
       - name: Backend image refuses default secrets in production
         run: |
           if docker run --rm -e ZK_ENV=production zoikorum-backend:ci python -c "from zoikorum.config import get_settings; get_settings()"; then

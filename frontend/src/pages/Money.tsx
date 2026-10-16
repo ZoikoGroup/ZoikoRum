@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { useTwoStepReady } from '../auth/useTwoStep'
 import { Link } from 'react-router-dom'
 import { contractApi, type Contract } from '../api/contracts'
-import { escrowApi, paymentsApi, PAYOUT_STATUS, type Charge, type Earnings, type Escrow, type Invoice } from '../api/escrow'
+import { escrowApi, paymentsApi, PAYOUT_STATUS, type Charge, type Earnings, type Escrow, type Invoice, type Refund } from '../api/escrow'
 import { formatMoney, orgApi } from '../api/orgs'
 import { CURRENCIES } from '../api/professional'
 import { useAuth } from '../auth/AuthContext'
@@ -13,6 +13,7 @@ import { ErrorAlert, Field, useStepUp } from '../components/ui'
 import { COUNTRIES } from './Join'
 import { csv, downloadFile, saveBlob } from '../lib/exports'
 import { formatCurrencies } from '../lib/money'
+import { PaymentsOverview } from '../components/PaymentsOverview'
 
 /* Money screens (Step 8): the professional's Earnings (payout account + payouts) and the customer's Payments
    & Protection (escrow across engagements, charges, invoices). Test mode: a fake payment provider, no real money. */
@@ -152,10 +153,15 @@ export function CustomerPaymentsPage() {
   const [escrows, setEscrows] = useState<Escrow[]>([])
   const [charges, setCharges] = useState<Charge[]>([])
   const [invoices, setInvoices] = useState<Invoice[]>([])
+  const [refunds, setRefunds] = useState<Refund[]>([])
   const [error, setError] = useState<unknown>(null)
   const [configuration, setConfiguration] = useState<Awaited<ReturnType<typeof paymentsApi.configuration>> | null>(null)
   useEffect(() => { paymentsApi.configuration().then(setConfiguration).catch(setError) }, [])
-  const [tab, setTab] = useState<'escrow' | 'transactions' | 'invoices'>('escrow')
+  const [tab, setTab] = useState<'escrow' | 'transactions' | 'invoices' | 'refunds'>('escrow')
+  const [orgs, setOrgs] = useState<{ id: string; name: string }[]>([])
+  const [orgId, setOrgId] = useState<string | null>(null)
+  const [reloads, setReloads] = useState(0)
+  useEffect(() => { orgApi.mine().then((o) => { setOrgs(o); setOrgId((cur) => cur ?? o[0]?.id ?? null) }).catch(() => {}) }, [])
 
   useEffect(() => {
     (async () => {
@@ -167,6 +173,7 @@ export function CustomerPaymentsPage() {
         const orgIds = [...new Set([...cs.map((c) => c.organizationId), ...(await orgApi.mine()).map((o) => o.id)])]
         setCharges((await Promise.all(orgIds.map((o) => paymentsApi.charges(o).catch(() => [])))).flat())
         setInvoices((await Promise.all(orgIds.map((o) => paymentsApi.invoices(o).catch(() => [])))).flat())
+        setRefunds((await Promise.all(orgIds.map((o) => paymentsApi.refunds(o).catch(() => [])))).flat())
       } catch (err) { setError(err) }
     })()
   }, [])
@@ -188,9 +195,27 @@ export function CustomerPaymentsPage() {
         <StatCard icon="wallet" tone="blue" value={paid} label="Total paid" sub={`${charges.filter((c) => c.status === 'CAPTURED').length} payment(s)`} />
         <StatCard icon="download" tone="violet" value={formatCurrencies(escrows.map(e => e.refunded))} label="Refunded" sub="Returned to you" />
       </div>
+      {orgs.length > 1 && <label className="filter-box" style={{ maxWidth: 320 }}><span>Organisation</span>
+        <select value={orgId ?? ''} onChange={(e) => setOrgId(e.target.value)}>{orgs.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select></label>}
+      {orgId && <PaymentsOverview key={orgId} organizationId={orgId} hostedCheckout={!!configuration?.hostedCheckout}
+        onFunded={() => setReloads((n) => n + 1)} />}{reloads > 0 && <p className="muted small">Refresh to see the new escrow balances below.</p>}
       <section className="card panel">
         <Tabs tabs={[{ key: 'escrow', label: 'Escrow by engagement', count: escrows.length }, { key: 'transactions', label: 'Payments', count: charges.length },
-          { key: 'invoices', label: 'Invoices', count: invoices.length }]} value={tab} onChange={setTab} />
+          { key: 'invoices', label: 'Invoices', count: invoices.length }, { key: 'refunds', label: 'Refunds', count: refunds.length }]}
+          value={tab} onChange={setTab} />
+        {tab === 'refunds' && (refunds.length === 0 ? (
+          <EmptyTable columns={['Date', 'Engagement', 'Amount', 'Status']}><strong>No refunds.</strong> Money held in escrow comes back
+            here if work is not accepted (a dispute decision, a cancelled milestone or an ended engagement).</EmptyTable>
+        ) : (
+          <table className="data"><thead><tr><th>Date</th><th>Engagement</th><th>Amount</th><th>Status</th></tr></thead>
+            <tbody>{refunds.map((r) => <tr key={r.id}><td className="small">{new Date(r.createdAt).toLocaleDateString()}</td>
+              <td className="small">{title(r.contractId)}{r.disputeId && <> · <Link to={`/app/disputes/${r.disputeId}`}>dispute</Link></>}</td>
+              <td>{formatMoney(r.amount)}</td>
+              <td><span className={`badge ${r.status === 'SETTLED' ? 'green' : r.status === 'FAILED' ? 'warn' : ''}`}>
+                {r.status === 'SETTLED' ? `Returned to your card ${r.settledAt ? new Date(r.settledAt).toLocaleDateString() : ''}`
+                  : r.status === 'FAILED' ? 'Delayed: our team is handling it' : 'On its way to your card'}</span>
+                {r.status === 'FAILED' && r.failureMessage && <div className="muted small">{r.failureMessage}</div>}</td></tr>)}</tbody></table>
+        ))}
         {tab === 'escrow' && (escrows.length === 0 ? (
           <EmptyTable columns={['Engagement', 'Total', 'In escrow', 'Released', 'Not funded', 'Status']}>
             <strong>Nothing in escrow yet.</strong> After both parties sign a contract, fund its milestones from the engagement.</EmptyTable>

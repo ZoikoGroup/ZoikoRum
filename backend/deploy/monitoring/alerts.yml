@@ -1,0 +1,104 @@
+# Alert rules for Zoikorum. Every metric used here is exported by the API (backend/src/zoikorum/shared/metrics.py and
+# the domain gauges); tests/test_alert_rules.py fails if a rule names a metric that does not exist.
+# severity: page = wake someone now (P0/P1); ticket = handle in working hours. Each alert links its runbook section in
+# backend/docs/RUNBOOKS.md.
+groups:
+  - name: zoikorum-availability
+    rules:
+      - alert: ApiDown
+        expr: up{job="zoikorum-api"} == 0
+        for: 2m
+        labels: {severity: page}
+        annotations:
+          summary: The API is not answering metrics scrapes
+          runbook: RUNBOOKS.md#api-down-or-not-ready
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(zk_http_request_duration_seconds_count{status="5xx"}[5m]))
+            / clamp_min(sum(rate(zk_http_request_duration_seconds_count[5m])), 1e-9) > 0.02
+        for: 10m
+        labels: {severity: page}
+        annotations:
+          summary: More than 2% of API requests are failing with a server error
+          runbook: RUNBOOKS.md#high-error-rate
+      - alert: SlowSearch
+        expr: |
+          histogram_quantile(0.99, sum by (le) (rate(zk_http_request_duration_seconds_bucket{route=~"/v1/search.*"}[10m]))) > 0.3
+        for: 15m
+        labels: {severity: ticket}
+        annotations:
+          summary: Search p99 is above 300 ms
+          runbook: RUNBOOKS.md#slow-responses
+      - alert: SlowProposalChanges
+        expr: |
+          histogram_quantile(0.99, sum by (le) (rate(zk_http_request_duration_seconds_bucket{route=~"/v1/(proposals|proposal-requests).*",method!="GET"}[10m]))) > 0.5
+        for: 15m
+        labels: {severity: ticket}
+        annotations:
+          summary: Proposal changes p99 is above 500 ms
+          runbook: RUNBOOKS.md#slow-responses
+
+  - name: zoikorum-worker
+    rules:
+      - alert: EventsNotPublished
+        expr: zk_outbox_oldest_unpublished_seconds > 120
+        for: 5m
+        labels: {severity: page}
+        annotations:
+          summary: Events are waiting more than 2 minutes; the worker is stopped or behind
+          runbook: RUNBOOKS.md#worker-stopped-or-behind
+      - alert: TimersOverdue
+        expr: zk_timers_oldest_overdue_seconds > 300
+        for: 5m
+        labels: {severity: page}
+        annotations:
+          summary: Deadlines and reminders are more than 5 minutes late
+          runbook: RUNBOOKS.md#worker-stopped-or-behind
+      - alert: FinancialDeadLetter
+        expr: zk_consumer_dead_letters_financial > 0
+        labels: {severity: page, team: financial-operations}
+        annotations:
+          summary: A money event could not be processed and needs a person (replay from Administration)
+          runbook: RUNBOOKS.md#dead-letters
+      - alert: DeadLetters
+        expr: zk_consumer_dead_letters > 0
+        for: 30m
+        labels: {severity: ticket}
+        annotations:
+          summary: Events failed after every retry and wait in the dead-letter list
+          runbook: RUNBOOKS.md#dead-letters
+      - alert: PartnerCircuitOpen
+        expr: zk_circuit_open == 1
+        for: 5m
+        labels: {severity: page}
+        annotations:
+          summary: 'Calls to {{ $labels.breaker }} are failing and have been stopped for now'
+          runbook: RUNBOOKS.md#partner-outage
+
+  - name: zoikorum-money-and-records
+    rules:
+      - alert: ReconciliationMismatch
+        expr: zk_reconciliation_latest_mismatches > 0
+        labels: {severity: page, team: financial-operations}
+        annotations:
+          summary: The ledger and the payment provider disagree (P0)
+          runbook: RUNBOOKS.md#reconciliation-mismatch
+      - alert: ReconciliationNotRunning
+        expr: zk_reconciliation_latest_age_days >= 2
+        labels: {severity: page, team: financial-operations}
+        annotations:
+          summary: The daily reconciliation has not run for 2 days
+          runbook: RUNBOOKS.md#reconciliation-mismatch
+      - alert: AuditChainBroken
+        expr: zk_audit_chain_breaks > 0
+        labels: {severity: page}
+        annotations:
+          summary: The audit hash chain failed validation (possible tampering, P0)
+          runbook: RUNBOOKS.md#audit-chain-broken
+      - alert: SwitchPausedForADay
+        expr: '{__name__=~"zk_switch_paused_.+"} == 1'
+        for: 24h
+        labels: {severity: ticket}
+        annotations:
+          summary: 'An incident switch ({{ $labels.__name__ }}) has been paused for more than a day'
+          runbook: RUNBOOKS.md#incident-switches

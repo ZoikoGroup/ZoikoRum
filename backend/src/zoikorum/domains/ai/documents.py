@@ -59,8 +59,9 @@ _SYSTEM = (
 
 
 async def assess_document(data: bytes, content_type: str, expected: str, *, session: AsyncSession | None = None,
-                          subject_id=None, requested_by=None) -> DocumentCheck:
-    """Never raises. With ``session`` the call is logged in ai.inference_logs (the file's hash, never the file)."""
+                          subject_id=None, requested_by=None, inference_log: list[dict] | None = None) -> DocumentCheck:
+    """Never raises. The call is logged in ai.inference_logs (the file's hash, never the file): at once with
+    ``session``, or appended to ``inference_log`` for the caller to save (see claude.parse)."""
     s = get_settings()
     if not claude.available(PROMPT):
         return not_checked("Automatic document check is off. Review the file yourself.")
@@ -74,7 +75,7 @@ async def assess_document(data: bytes, content_type: str, expected: str, *, sess
         return not_checked("This file type is not checked automatically.")
     out = await claude.parse(
         PROMPT, _CheckOut, input_sha256=hashlib.sha256(data).hexdigest(), timeout=30.0, session=session,
-        subject_id=subject_id, requested_by=requested_by, max_tokens=400, system=_SYSTEM,
+        subject_id=subject_id, requested_by=requested_by, inference_log=inference_log, max_tokens=400, system=_SYSTEM,
         messages=[{"role": "user", "content": [block, {"type": "text", "text": f"Requested document: {expected}"}]}],
     )
     if out is None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.domains.dispute.models import DisputeCase
@@ -53,3 +54,50 @@ async def assistance_evidence(session: AsyncSession, dispute_id: uuid.UUID, revi
     return {"reference": c.reference, "category": c.category, "summary": c.summary, "context": c.context,
             "evidence": [{"id": str(e.id), "party": e.party, "type": e.evidence_type, "description": e.description,
                           "files": [{"name": f["name"], "sha256": f["sha256"]} for f in e.items]} for e in evidence]}
+
+
+async def disputes_for_contract(session: AsyncSession, contract_id: uuid.UUID) -> list[dict]:
+    """Every dispute on the engagement, open or closed, for its record."""
+    rows = (await session.scalars(select(DisputeCase).where(DisputeCase.contract_id == contract_id)
+                                  .order_by(DisputeCase.created_at))).all()
+    return [{"id": str(c.id), "reference": c.reference, "category": c.category, "status": c.status,
+             "summary": c.summary, "openedAt": c.created_at.isoformat()} for c in rows]
+
+
+async def files_for_contract(session: AsyncSession, contract_id: uuid.UUID):
+    from zoikorum.domains.dispute.models import EvidenceItem
+    from zoikorum.shared.uploads import FileRef
+
+    cases = {c.id: c for c in (await session.scalars(select(DisputeCase).where(DisputeCase.contract_id == contract_id))).all()}
+    if not cases:
+        return []
+    items = (await session.scalars(select(EvidenceItem).where(EvidenceItem.case_id.in_(list(cases)))
+                                   .order_by(EvidenceItem.created_at))).all()
+    return [FileRef(f"Dispute evidence ({cases[e.case_id].reference})", f["name"], f["sha256"], int(f.get("size", 0)),
+                    e.created_at, f"/v1/disputes/{e.case_id}/files/{f['sha256']}") for e in items for f in e.items]
+
+
+async def opened_against(session: AsyncSession, professional_id: uuid.UUID) -> int:
+    """Disputes on this professional's engagements, whoever opened them (own performance insights)."""
+    from sqlalchemy import func, select
+    return await session.scalar(select(func.count(func.distinct(DisputeCase.contract_id))).where(DisputeCase.professional_id == professional_id)) or 0
+
+
+async def kpis(session: AsyncSession, since, until) -> dict:
+    """Disputes opened and decided in the period, how they were decided, time to decision, and what is open now."""
+    from sqlalchemy import func
+
+    window = [DisputeCase.created_at >= since, DisputeCase.created_at < until]
+    opened = await session.scalar(select(func.count()).select_from(DisputeCase).where(*window)) or 0
+    decided_rows = (await session.execute(select(DisputeCase.created_at, DisputeCase.decided_at, DisputeCase.decision).where(
+        DisputeCase.decided_at >= since, DisputeCase.decided_at < until))).all()
+    days = sorted((d - c).total_seconds() / 86400 for c, d, _ in decided_rows)
+    by_path: dict[str, int] = {}
+    for _, _, decision in decided_rows:
+        path = (decision or {}).get("decisionPath", "UNKNOWN")
+        by_path[path] = by_path.get(path, 0) + 1
+    open_now = await session.scalar(select(func.count()).select_from(DisputeCase).where(
+        DisputeCase.status.in_(("EVIDENCE_COLLECTION", "DIRECT_RESOLUTION", "MEDIATION")))) or 0
+    return {"opened": opened, "decided": len(decided_rows), "openNow": open_now, "byDecisionPath": by_path,
+            "medianDaysToDecision": round(days[len(days) // 2], 1) if days else None,
+            "decidedWithoutPlatform": sum(v for k, v in by_path.items() if k in ("DIRECT", "MEDIATION"))}

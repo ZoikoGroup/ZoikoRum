@@ -33,6 +33,9 @@ export function SavedSearchesPanel() {
                 <span className="muted small">{fresh[s.id] ? `${fresh[s.id]} new since you last looked` : 'No new matches'}</span></span>
             </button>
             {!!fresh[s.id] && <span className="badge green">{fresh[s.id]} new</span>}
+            <button className="icon-btn" aria-pressed={s.alertsOn} title={s.alertsOn ? 'Daily notice of new matches is on' : 'Daily notice is off'}
+              aria-label={`${s.alertsOn ? 'Turn off' : 'Turn on'} new-match notices for ${s.name}`}
+              onClick={() => savedApi.searchAlerts(s.id, !s.alertsOn).then(load)}><Icon name="bell" />{!s.alertsOn && <span className="small"> off</span>}</button>
             <button className="icon-btn" aria-label={`Delete ${s.name}`} onClick={() => { if (confirm(`Delete the saved search “${s.name}”?`)) savedApi.deleteSearch(s.id).then(load) }}>×</button>
           </li>))}</ul>
       )}

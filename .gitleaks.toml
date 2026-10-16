@@ -3,7 +3,7 @@
 useDefault = true
 
 [allowlist]
-description = "Example values in the product and engineering documents (e.g. Idempotency-Key: buyer_123-escrow_123-ms_001)"
+description = "Example values in the product and engineering documents (e.g. Idempotency-Key: buyer_123-escrow_123-ms_001), and made-up test values"
 paths = ['''docs/product/text/.*\.md''']
-# The published web-push example subscription key used as a test fixture (backend/tests/test_push.py); not a credential.
+# backend/tests/test_push.py: the "auth" value of a made-up browser push subscription (sending is replaced in the test).
 regexes = ['''^tBHItJI5svbpez7KI4CCXg$''']

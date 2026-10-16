@@ -6,6 +6,7 @@ import { useAuth } from '../auth/AuthContext'
 import { AuthLayout, ErrorAlert, Field, PasswordInput } from '../components/ui'
 import { passkeyCancelled, passkeysSupported, signWithPasskey } from '../lib/passkeys'
 import { PORTAL, signInHref } from '../portal'
+import { SsoSignInOptions } from '../components/SingleSignOn'
 
 /** Two sign-in pages: /login for customers, professionals, firms and enterprise teams, and /staff/login for Zoikorum
     staff. The server holds each account to its own page; the backend says which dashboard to open. */
@@ -129,6 +130,7 @@ export default function SignIn({ staff = false }: { staff?: boolean }) {
           </button>
         )}
       </form>
+      {!needsCode && !staff && <SsoSignInOptions email={email} />}
       {!needsCode && passkeysSupported() && (
         <button type="button" className="btn btn-secondary btn-block" style={{ marginTop: 10 }} disabled={busy} onClick={withPasskey}>
           Sign in with a passkey

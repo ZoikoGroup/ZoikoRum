@@ -59,6 +59,15 @@ async def deliver(sf: async_sessionmaker[AsyncSession], sub: Subscription, env: 
 
 
 async def _deliver(sf: async_sessionmaker[AsyncSession], sub: Subscription, env: EventEnvelope) -> None:
+    prepared = None
+    if sub.prepare is not None:
+        async with sf() as session:
+            seen = await session.scalar(select(InboxEntry.id).where(InboxEntry.consumer == sub.consumer,
+                                                                    InboxEntry.event_id == env.eventId))
+        if seen is not None:
+            return  # already processed: skip the slow step too
+        with context.use_context(_consumer_context(env, sub.consumer)):
+            prepared = await sub.prepare(sf, env)  # no transaction open while it waits
     async with sf() as session, session.begin():
         inserted = await session.execute(
             pg_insert(InboxEntry)
@@ -69,7 +78,10 @@ async def _deliver(sf: async_sessionmaker[AsyncSession], sub: Subscription, env:
         if inserted.scalar_one_or_none() is None:
             return  # already processed by this consumer
         with context.use_context(_consumer_context(env, sub.consumer)):
-            await sub.handler(session, env)
+            if sub.prepare is not None:
+                await sub.handler(session, env, prepared)
+            else:
+                await sub.handler(session, env)
 
 
 async def _record_failure(sf, consumer: str, env: EventEnvelope, exc: Exception) -> None:

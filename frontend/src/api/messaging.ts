@@ -1,6 +1,6 @@
 import { api } from './client'
 
-export type MessageContextType = 'PROPOSAL_REQUEST' | 'CONTRACT' | 'DISPUTE'
+export type MessageContextType = 'PROPOSAL_REQUEST' | 'CONTRACT' | 'DISPUTE' | 'INQUIRY'
 
 export interface MessageAttachment {
   id: string
@@ -66,6 +66,9 @@ export const messagingApi = {
   }),
   open: (contextType: MessageContextType, contextId: string) =>
     api<MessageThread>(T, { method: 'POST', body: { contextType, contextId }, headers: idem() }),
+  /** Ask a professional a question before sending a request (one conversation per organisation and professional). */
+  inquire: (organizationId: string, professionalId: string) =>
+    api<MessageThread>(T, { method: 'POST', body: { contextType: 'INQUIRY', contextId: professionalId, organizationId }, headers: idem() }),
   get: (threadId: string) => api<MessageThread>(`${T}/${threadId}`),
   messages: (threadId: string, before?: number) =>
     api<Page<ConversationMessage>>(`${T}/${threadId}/messages`, {

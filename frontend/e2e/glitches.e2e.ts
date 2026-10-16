@@ -14,7 +14,9 @@ test('reviewer filters all cases by person and opens the correct case', async ({
   await page.getByLabel('Professional or firm').selectOption(`PROFESSIONAL:${second.pro.id}`)
   await page.getByRole('row').filter({ hasText: 'Review Person Beta' }).getByRole('button', { name: 'Review', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'CPA (US)', exact: true })).toBeVisible()
-  await expect(page.getByRole('link', { name: 'View professional', exact: true })).toHaveAttribute('href', `/professionals/${second.pro.id}`)
+  // Only the opened case: the "Second looks" panel on the same page has its own "View professional" links.
+  const opened = page.getByRole('region', { name: 'Open verification case' })
+  await expect(opened.getByRole('link', { name: 'View professional', exact: true })).toHaveAttribute('href', `/professionals/${second.pro.id}`)
 })
 
 test('professional list fits the results container with long expertise labels', async ({ page }) => {

@@ -7,6 +7,7 @@ import type { Money } from './orgs'
 export type AllocationState = 'UNFUNDED' | 'FUNDING' | 'HELD' | 'ON_HOLD' | 'RELEASE_PENDING_APPROVAL' | 'RELEASED' | 'PARTIALLY_RELEASED' | 'REFUNDED'
 
 export interface Escrow {
+  autoFundingEnabledAt?: string | null
   id: string
   contractId: string
   status: 'UNFUNDED' | 'FUNDED' | 'PARTIALLY_RELEASED' | 'FULLY_RELEASED' | 'DISPUTED' | 'REFUNDED' | 'CLOSED'
@@ -19,7 +20,7 @@ export interface Escrow {
   refunded: Money
   unfunded: Money
   feeBps: number
-  allocations: { milestoneId: string; sequence: number; title: string; amount: Money; state: AllocationState; released: Money; fee: Money; fundedAt: string | null; releasedAt: string | null }[]
+  allocations: { milestoneId: string; sequence: number; title: string; amount: Money; state: AllocationState; released: Money; fee: Money; fundedAt: string | null; releasedAt: string | null; releaseReference?: string | null }[]
   fundings: { id: string; amount: Money; milestoneIds: string[]; status: 'REQUESTED' | 'CAPTURED' | 'FAILED'; failureMessage: string | null; createdAt: string; capturedAt: string | null }[]
   viewerRole: 'BUYER' | 'PROFESSIONAL' | 'OPERATOR'
   canFund: boolean
@@ -42,16 +43,33 @@ export interface Earnings {
 export interface Invoice { id: string; number: string; contractId: string; milestoneId: string | null; lines: { description: string; amountMinor: number }[]; tax: Money; total: Money; issuedAt: string }
 export interface Charge { id: string; contractId: string; amount: Money; status: 'CREATED' | 'CAPTURED' | 'FAILED' | 'CHARGED_BACK'; methodLabel: string; failureMessage: string | null; createdAt: string
   capturedAt: string | null; chargedBackAt: string | null }
+export interface Refund { id: string; contractId: string; milestoneId: string | null; disputeId: string | null; amount: Money
+  status: 'INITIATED' | 'SETTLED' | 'FAILED'; failureMessage: string | null; createdAt: string; settledAt: string | null }
+export interface OpsItem { kind: 'PAYOUT' | 'REFUND' | 'CHARGEBACK_LOSS'; id: string; amount: Money; engagement: string; contractId: string
+  buyer: string; professional: string; problem: string; since: string; canRetry: boolean; resolution: string | null; resolvedAt: string | null }
 export interface ReconciliationCheck { name: string; currency: string; ledger: number; payments: number; provider: number | null; difference: number; ok: boolean }
 export interface Reconciliation { id: string; day: string; status: 'MATCHED' | 'MISMATCH'; mismatches: number; checks: ReconciliationCheck[]; runBy: string; updatedAt: string }
 
 const idem = () => ({ 'Idempotency-Key': crypto.randomUUID() })
+
+export interface PaymentsOverview {
+  totals: { currency: string; heldMinor: number; frozenMinor: number; awaitingFundingMinor: number; releasedMinor: number }[]
+  vendors: { professionalId: string; name: string; currency: string; engagements: number; heldMinor: number; frozenMinor: number; awaitingFundingMinor: number; releasedMinor: number }[]
+  releaseTimeline: { accountId: string; contractId: string; reference: string; vendor: string; milestone: string; amountMinor: number; currency: string; dueDate: string | null; status: string | null }[]
+  awaitingFunding: { accountId: string; contractId: string; reference: string; vendor: string; milestoneId: string; milestone: string; amountMinor: number; currency: string; dueDate: string | null }[]
+}
 
 export const escrowApi = {
   byContract: (contractId: string) => api<Escrow>(`/v1/escrow/by-contract/${contractId}`),
   ledger: (id: string) => api<LedgerLine[]>(`/v1/escrow/${id}/ledger`),
   fund: (id: string, body: { milestoneIds?: string[]; all?: boolean; paymentMethodToken: string }) =>
     api<Escrow>(`/v1/escrow/${id}/fund`, { method: 'POST', body, headers: idem() }),
+  autoFunding: (id: string, paymentMethodToken: string | null) =>
+    api<Escrow>(`/v1/escrow/${id}/auto-funding`, { method: 'PUT', body: { paymentMethodToken } }),
+  overview: (organizationId: string) => api<PaymentsOverview>(`/v1/escrow/organization/${organizationId}/overview`),
+  bulkFund: (items: { accountId: string; milestoneIds: string[] }[], paymentMethodToken: string) =>
+    api<{ funded: number; failed: number; results: { accountId: string; ok: boolean; code?: string; detail?: string }[] }>(
+      '/v1/escrow/bulk-fund', { method: 'POST', body: { items, paymentMethodToken }, headers: idem() }),
 }
 
 export const paymentsApi = {
@@ -66,6 +84,12 @@ export const paymentsApi = {
   invoicePdf: (id: string) => api<Blob>(`/v1/payments/invoices/${id}/pdf`, { blob: true }),
   payoutPdf: (id: string) => api<Blob>(`/v1/payments/payouts/${id}/pdf`, { blob: true }),
   charges: (organizationId: string) => allPages<Charge>('/v1/payments/charges', { organizationId }),
+  refunds: (organizationId: string) => allPages<Refund>('/v1/payments/refunds', { organizationId }),
+  opsWorklist: (includeResolved = false) =>
+    api<{ items: OpsItem[]; open: number }>('/v1/payments/ops/worklist', { query: includeResolved ? { includeResolved: 'true' } : {} }),
+  opsRetry: (kind: 'PAYOUT' | 'REFUND', id: string) => api<{ items: OpsItem[]; open: number }>(`/v1/payments/ops/${kind}/${id}/retry`, { method: 'POST' }),
+  opsResolve: (kind: OpsItem['kind'], id: string, outcome: 'RECOVERED' | 'WRITTEN_OFF' | 'SETTLED_OUTSIDE', note: string) =>
+    api<{ items: OpsItem[]; open: number }>(`/v1/payments/ops/${kind}/${id}/resolve`, { method: 'POST', body: { outcome, note } }),
   reconciliations: () => api<Reconciliation[]>('/v1/payments/reconciliations'),
   reconcile: (day: string) => api<Reconciliation>('/v1/payments/reconciliations', { method: 'POST', body: { day } }),
 }

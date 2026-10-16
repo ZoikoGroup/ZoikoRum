@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import uuid
+from typing import Literal
+
+from pydantic import BaseModel, Field
 
 from fastapi import APIRouter, status
 
@@ -154,3 +157,40 @@ async def cost_centers(org_id: uuid.UUID, actor: CurrentActor, session: DbSessio
 @router.post("/{org_id}/cost-centers", response_model=CostCenterOut, status_code=status.HTTP_201_CREATED)
 async def create_cost_center(org_id: uuid.UUID, body: CostCenterIn, actor: CurrentActor, session: DbSession):
     return await service.create_cost_center(session, actor, org_id, body.name, body.code, body.businessUnitId, body.quarterlyBudget)
+
+
+class MergeUnitsIn(BaseModel):
+    targetId: uuid.UUID  # the unit that remains
+
+
+@router.post("/{org_id}/business-units/{unit_id}/merge", response_model=list[BusinessUnitOut])
+async def merge_business_units(org_id: uuid.UUID, unit_id: uuid.UUID, body: MergeUnitsIn, actor: CurrentActor, session: DbSession):
+    """Organisation Admin: fold this unit into another; everything it held moves to that unit."""
+    return await service.merge_business_units(session, actor, org_id, unit_id, body.targetId)
+
+
+class ApiKeyIn(BaseModel):
+    name: str = Field(min_length=2, max_length=100)
+    scope: Literal["READ", "WRITE"] = "READ"
+    expiresInDays: int | None = Field(default=None, ge=1, le=730)
+
+
+@router.get("/{org_id}/api-keys")
+async def list_api_keys(org_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> list[dict]:
+    """Organisation Admin: the organisation's API keys (never the keys themselves)."""
+    from zoikorum.domains.buyer import api_keys
+    return await api_keys.list_keys(session, actor, org_id)
+
+
+@router.post("/{org_id}/api-keys", status_code=status.HTTP_201_CREATED)
+async def create_api_key(org_id: uuid.UUID, body: ApiKeyIn, actor: CurrentActor, session: DbSession) -> dict:
+    """Organisation Admin: create a key (shown once). It acts as you, with your current roles, and never confirms
+    actions that need two-step sign-in."""
+    from zoikorum.domains.buyer import api_keys
+    return await api_keys.create_key(session, actor, org_id, body.name, body.scope, body.expiresInDays)
+
+
+@router.post("/{org_id}/api-keys/{key_id}/revoke")
+async def revoke_api_key(org_id: uuid.UUID, key_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> dict:
+    from zoikorum.domains.buyer import api_keys
+    return await api_keys.revoke_key(session, actor, org_id, key_id)

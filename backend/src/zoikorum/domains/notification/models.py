@@ -25,6 +25,9 @@ class Preference(Base, UUIDPk, Timestamps):
     in_app: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     sms: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     marketing: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    digest: Mapped[str] = mapped_column(String(10), nullable=False, default="OFF", server_default="OFF")  # OFF | DAILY | WEEKLY
+    digest_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    calendar_token_hash: Mapped[str | None] = mapped_column(String(64), unique=True)  # private calendar feed
 
 
 class Notification(Base, UUIDPk, Timestamps):
@@ -76,3 +79,15 @@ class DeliveryAttempt(Base, UUIDPk, CreatedAt):
     response_status: Mapped[int | None] = mapped_column(Integer)
     error: Mapped[str | None] = mapped_column(String(300))
     attempt: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class PushSubscription(Base, UUIDPk, CreatedAt):
+    """A browser that agreed to receive push notifications (Web Push). Removed when the browser says it is gone."""
+    __tablename__ = "push_subscriptions"
+    __table_args__ = {"schema": SCHEMA}
+    identity_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    endpoint: Mapped[str] = mapped_column(String(1000), nullable=False, unique=True)
+    p256dh: Mapped[str] = mapped_column(String(200), nullable=False)
+    auth: Mapped[str] = mapped_column(String(100), nullable=False)
+    user_agent: Mapped[str | None] = mapped_column(String(300))
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

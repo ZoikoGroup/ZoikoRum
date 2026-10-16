@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -35,6 +35,7 @@ class DisputeIn(BaseModel):
     summary: str = Field(min_length=10, max_length=300)
     desiredOutcome: Outcome
     context: str = Field(default="", max_length=1000)
+    prefersEarlyResolution: bool = False  # happy to settle directly before formal steps
 
 
 class EvidenceIn(BaseModel):
@@ -54,6 +55,7 @@ class ResolutionIn(BaseModel):
 
     outcome: Outcome
     allocations: list[AllocationIn] = Field(default_factory=list, max_length=20)
+    extendDays: int | None = Field(default=None, ge=1, le=180)  # timeline extension: how much later the work is due
     note: str = Field(default="", max_length=1000)
 
 
@@ -101,6 +103,7 @@ class TimelineOut(BaseModel):
     actor: str
     text: str
     at: datetime
+    ref: str | None = None  # links the entry to evidence, a proposal or a decision
 
 
 class MilestoneRef(BaseModel):
@@ -111,6 +114,9 @@ class MilestoneRef(BaseModel):
 
 
 class DisputeOut(BaseModel):
+    prefersEarlyResolution: bool = False
+    clarifications: list[dict] = []
+    canCooldown: bool = False
     id: uuid.UUID
     reference: str
     contractId: uuid.UUID
@@ -137,5 +143,30 @@ class DisputeOut(BaseModel):
     timeline: list[TimelineOut]
     viewerRole: Literal["BUYER", "PROFESSIONAL", "MEDIATOR", "OPERATOR"]
     canEscalate: bool
+    mediationRequired: bool = False  # the buyer organisation's policy sends settlements of this size to a mediator
+    legalReviewRequired: bool = False  # the buyer's settlement needs the organisation's Legal Reviewer
+    arbitration: dict | None = None  # referred to an outside arbitrator; money stays frozen until the award is recorded
+    retainUntil: date | None = None  # closed records are kept at least until this date
+    retentionBasis: str | None = None
+    legalHold: bool = False
     nextStep: str  # plain-language "what happens next"
     createdAt: datetime
+
+
+class ClarificationIn(BaseModel):
+    to: Literal["BUYER", "PROFESSIONAL"]
+    question: str = Field(min_length=10, max_length=500)
+
+
+class ArbitrationReferIn(BaseModel):
+    forum: str = Field(min_length=3, max_length=200)  # e.g. "ICC", "AAA", "LCIA", or the forum the engagement names
+    reason: str = Field(min_length=20, max_length=2000)
+
+
+class ArbitrationAwardIn(RecommendationIn):
+    awardReference: str = Field(min_length=3, max_length=200)  # the arbitrator's award or case number
+
+
+class LegalHoldIn(BaseModel):
+    hold: bool
+    reason: str = Field(min_length=10, max_length=500)

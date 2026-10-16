@@ -31,11 +31,12 @@ class PlatformRole:
     FINANCIAL_OPS = "FINANCIAL_OPS"
     EXECUTIVE = "EXECUTIVE"
     AI_SAFETY_REVIEWER = "AI_SAFETY_REVIEWER"
+    SUPPORT_AGENT = "SUPPORT_AGENT"  # answers help requests; no authority over money, verification or enforcement
 
     ALL = frozenset(
         {
             PLATFORM_ADMIN, TS_ANALYST, COMPLIANCE_OFFICER, RISK_LEAD, LEGAL,
-            MEDIATOR, FINANCIAL_OPS, EXECUTIVE, AI_SAFETY_REVIEWER,
+            MEDIATOR, FINANCIAL_OPS, EXECUTIVE, AI_SAFETY_REVIEWER, SUPPORT_AGENT,
         }
     )
 
@@ -209,6 +210,14 @@ async def _current_actor(request: Request) -> Actor:
     token = _bearer(request)
     if not token:
         raise Unauthenticated()
+    if token.startswith("zk_"):  # an organisation API key (buyer/api_keys.py)
+        resolver = getattr(request.app.state, "api_key_resolver", None)
+        if resolver is None:
+            raise Unauthenticated("API keys are not accepted here")
+        actor = await resolver(token, request.url.path, request.method)
+        context.bind_actor(str(actor.identity_id), "api_key", None, actor.auth_strength)
+        request.state.actor = actor
+        return actor
     actor = decode_access_token(token)
     validator = getattr(request.app.state, "actor_validator", None)
     if validator:

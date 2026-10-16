@@ -29,3 +29,11 @@ node_modules/
 *.swp
 .DS_Store
 Thumbs.db
+backend/deploy/monitoring/metrics_token
+
+# Terraform working files and state (state lives in a GCS bucket); real variable files
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example

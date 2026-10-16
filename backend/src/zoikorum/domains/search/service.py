@@ -24,6 +24,7 @@ from zoikorum.domains.policy import facade as policy_facade
 from zoikorum.domains.professional import facade as professional_facade
 from zoikorum.domains.proposal import facade as proposal_facade
 from zoikorum.domains.review import facade as review_facade
+from zoikorum.domains.search import concepts
 from zoikorum.domains.search.models import ProfessionalDocument as Doc
 from zoikorum.domains.search.schemas import (FacetValue, IntentFilters, IntentIn, IntentOut, PolicyFilterOut, ResultItem, SearchOut,
                                             SearchParams, SpecRef)
@@ -96,7 +97,10 @@ async def rebuild(session: AsyncSession, professional_id: uuid.UUID, occurred_at
         and not set(await admin_facade.active_restrictions(session, "IDENTITY", pro.identity_id)).intersection({"SUSPEND_ACCOUNT", "OFFBOARD"}),
         visibility_reduced=pro.visibility_reduced or "VISIBILITY_REDUCTION" in await admin_facade.active_restrictions(session, "PROFESSIONAL", pro.id),
         display_name=pro.display_name, headline=pro.headline, country=pro.country, city=pro.city,
-        years_experience_band=pro.years_experience_band, languages=list(pro.languages),
+        years_experience_band=pro.years_experience_band, languages=list(pro.languages), industries=list(pro.industries),
+        enterprise_ready=await professional_facade.enterprise_ready(session, pro.id),
+        concepts=await concepts.vector(session, " ".join(filter(None, [pro.headline, pro.bio, *(o.title for o in offerings)])),
+                                       {s: (1.0 if s == pro.primary_specialization else 0.8) for s in pro.specializations}),
         categories=sorted({i.category_slug for i in specs.values()}), primary_specialization=pro.primary_specialization,
         specializations=list(pro.specializations), specialization_names=names,
         engagement_types=list(pro.engagement_types), delivery_modes=list(pro.delivery_modes),
@@ -172,10 +176,33 @@ def _conditions(p: SearchParams, tsquery) -> list:
     if p.jurisdiction:
         j = p.jurisdiction.upper()
         conds.append(or_(Doc.served_jurisdictions.contains([j]), Doc.licensed_jurisdictions.contains([j])))
+    if p.industry:
+        conds.append(Doc.industries.contains([p.industry]))
+    if p.enterpriseReady:
+        conds.append(Doc.enterprise_ready.is_(True))
+    if p.language:
+        conds.append(func.array_to_string(Doc.languages, "|").ilike(f"%{_escape_like(p.language)}%", escape="\\"))
+    if p.crossBorder:
+        # No countries listed means unrestricted; otherwise at least one served country besides their own.
+        conds.append(or_(func.cardinality(Doc.served_jurisdictions) == 0,
+                         func.cardinality(func.array_remove(Doc.served_jurisdictions, Doc.country)) > 0))
+    if p.budgetMaxMinor is not None:
+        within = Doc.starting_price_minor <= p.budgetMaxMinor
+        if p.budgetCurrency:
+            within = within & (Doc.price_currency == p.budgetCurrency.upper())
+        conds.append(or_(Doc.starting_price_minor.is_(None), within))
     return conds
 
 
-def _rank_and_explain(doc: Doc, rank: float, max_rank: float, p: SearchParams) -> tuple[float, list[str]]:
+NEW_TALENT_LIFT = 4.0  # experiment "search.new_talent_boost": about what three completed engagements would add
+NEW_TALENT_MAX_COMPLETED = 3
+
+
+def _new_talent(doc: Doc) -> bool:
+    return doc.tier in ("A", "B") and (doc.completed_engagements or 0) < NEW_TALENT_MAX_COMPLETED
+
+
+def _rank_and_explain(doc: Doc, rank: float, max_rank: float, p: SearchParams, new_talent_boost: bool = False) -> tuple[float, list[str]]:
     """Architecture 9.4 weights: relevance 30, trust 20, contract success 15, reviews 10, availability 10,
     response 5, pricing fit 5, policy fit 5. Track record (contract success, reviews, response) comes from the
     projection; professionals new to the platform score 0 there and are not otherwise penalised. Policy fit is
@@ -214,6 +241,9 @@ def _rank_and_explain(doc: Doc, rank: float, max_rank: float, p: SearchParams) -
     after_tier = next(i for i, w in enumerate(why) if w.startswith("Tier ")) + 1
     why[after_tier:after_tier] = record_why  # shown right after the tier, so the 6-reason cap keeps them
     score = relevance + trust + availability + pricing_fit + record
+    if new_talent_boost and _new_talent(doc):
+        score += NEW_TALENT_LIFT
+        why.insert(after_tier, "Verified and new to Zoikorum")
     if doc.visibility_reduced:
         score *= 0.5  # enforcement: visibility reduction (explained to the professional, not to buyers)
     return score, why[:6]
@@ -286,7 +316,7 @@ def _facets(docs: list[Doc]) -> dict[str, list[FacetValue]]:
     }
 
 
-def _item(doc: Doc, why: list[str]) -> ResultItem:
+def _item(doc: Doc, why: list[str], regulated: set[str] = frozenset()) -> ResultItem:
     price = (MoneyDTO(amountMinor=doc.starting_price_minor, currency=doc.price_currency)
              if doc.starting_price_minor is not None and doc.price_currency else None)
     return ResultItem(
@@ -298,6 +328,7 @@ def _item(doc: Doc, why: list[str]) -> ResultItem:
         trustScore=doc.trust_score, whyThisResult=why, languages=doc.languages, yearsExperienceBand=doc.years_experience_band,
         servedJurisdictions=list(doc.served_jurisdictions), licensedJurisdictions=list(doc.licensed_jurisdictions),
         dimensions={**doc.dimensions, **({"restrictions": "UNKNOWN"} if doc.dimensions.get("restrictions") not in (None, "CLEAR") else {})},
+        regulatedPreview=doc.tier != "A" and bool(regulated.intersection(doc.specializations)), enterpriseReady=doc.enterprise_ready,
     )
 
 
@@ -315,7 +346,12 @@ async def search(session: AsyncSession, actor: Actor | None, p: SearchParams) ->
     q = (p.q or "").strip() or None
     p = p.model_copy(update={"q": q})
     tsquery = func.websearch_to_tsquery(EN, q) if q else None
-    conds = _conditions(p, tsquery)
+    qvec = await concepts.vector(session, q) if q else {}
+    if q and qvec:  # semantic: a profile sharing a concept with the query is a candidate even without the exact words
+        from sqlalchemy.dialects.postgresql import array
+        conds = _conditions(p, None) + [or_(Doc.document.op("@@")(tsquery), Doc.concepts.has_any(array(list(qvec))))]
+    else:
+        conds = _conditions(p, tsquery)
     org_id = p.organizationId
     if org_id:
         if actor is None or not await buyer_facade.get_member_roles(session, org_id, actor.identity_id):
@@ -352,11 +388,25 @@ async def search(session: AsyncSession, actor: Actor | None, p: SearchParams) ->
     rows = (await session.execute(
         select(Doc, rank_col.label("rank")).where(*conds).order_by(*order).limit(CANDIDATE_CAP)
     )).all()
+    if q and qvec:
+        by_text = [str(d.professional_id) for d, r in sorted(rows, key=lambda x: -float(x[1])) if float(r) > 0]
+        sims = {str(d.professional_id): concepts.cosine(qvec, d.concepts or {}) for d, _ in rows}
+        by_meaning = [k for k, v in sorted(sims.items(), key=lambda kv: -kv[1]) if v > 0]
+        fused = concepts.fuse(by_text, by_meaning)
+        related = {str(d.professional_id): max((d.concepts or {}).keys() & qvec.keys(), key=lambda s: qvec[s] * (d.concepts or {})[s], default=None)
+                   for d, r in rows if float(r) == 0}
+        rows = [(d, fused.get(str(d.professional_id), 0.0)) for d, _ in rows]
+    else:
+        related = {}
     max_rank = max((float(r) for _, r in rows), default=0.0)
+    boost = await admin_facade.flag_enabled(session, "search.new_talent_boost", actor.identity_id if actor else None, org_id)
     ranked = []
     whys: dict[uuid.UUID, list[str]] = {}
     for doc, r in rows:
-        score, why = _rank_and_explain(doc, float(r), max_rank, p)
+        score, why = _rank_and_explain(doc, float(r), max_rank, p, new_talent_boost=boost)
+        concept = related.get(str(doc.professional_id))
+        if concept and why and why[0].startswith("“"):
+            why[0] = f"Related to “{q}”: {concepts.name_of(concept)}"
         ranked.append((doc, score))
         whys[doc.professional_id] = why
     ranked.sort(key=_sort_key(p.sort))
@@ -364,12 +414,14 @@ async def search(session: AsyncSession, actor: Actor | None, p: SearchParams) ->
 
     filters = {k: v for k, v in p.model_dump(exclude={"limit", "offset", "sort", "specMatch"}).items() if v}
     record_event(session, E.SEARCH_PERFORMED, aggregate_type="Search", aggregate_id=uuid.uuid4(),
-                 payload={"query": q, "filters": filters, "sort": p.sort, "total": total,
+                 payload={"query": q, "filters": filters, "sort": p.sort, "total": total, "variant": "new_talent_boost" if boost else None,
                           "actorId": actor.identity_id if actor else None})
     if total == 0:
         record_event(session, E.SEARCH_ZERO_RESULT, aggregate_type="Search", aggregate_id=uuid.uuid4(),
                      payload={"query": q, "filters": filters})
-    return SearchOut(total=total, items=[_item(d, whys[d.professional_id]) for d, _ in page], facets=_facets([d for d, _ in rows]),
+    infos = await marketplace_facade.get_specializations(session, sorted({s for d, _ in page for s in d.specializations}))
+    regulated = {slug for slug, info in infos.items() if info.regulated}
+    return SearchOut(total=total, items=[_item(d, whys[d.professional_id], regulated) for d, _ in page], facets=_facets([d for d, _ in rows]),
                      policy=policy)
 
 
@@ -392,3 +444,82 @@ async def count_eligible(session: AsyncSession, eligibility: dict) -> int:
     if eligibility.get("categories"):
         conds.append(Doc.categories.overlap(list(eligibility["categories"])))
     return await session.scalar(select(func.count()).select_from(Doc).where(*conds)) or 0
+
+
+
+# ---- Autocomplete (Category doc: search box suggestions) ------------------------------------------------------------
+
+async def suggest(session: AsyncSession, q: str) -> SuggestOut:
+    """Expertise whose name matches what was typed, then visible professionals by name or headline. Public data only."""
+    from zoikorum.domains.search.schemas import SuggestOut
+
+    q = q.strip()
+    if len(q) < 2:
+        return SuggestOut()
+    like = f"%{_escape_like(q)}%"
+    specs = await marketplace_facade.search_specializations(session, q, limit=6)
+    rows = (await session.execute(select(Doc.professional_id, Doc.display_name, Doc.headline).where(
+        Doc.visible.is_(True), Doc.visibility_reduced.is_(False),
+        or_(Doc.display_name.ilike(like, escape="\\"), Doc.headline.ilike(like, escape="\\")))
+        .order_by(Doc.trust_score.desc()).limit(5))).all()
+    return SuggestOut(specializations=specs, professionals=[{"id": i, "name": n, "headline": h} for i, n, h in rows])
+
+
+# ---- Short-lived cache for signed-out searches --------------------------------------------------------------------
+# Public discovery is the busiest read. Results are cached for a few seconds per set of filters, and the cache key
+# includes a stamp of the search table (row count and the sum of change times), so any profile change is visible at once.
+
+CACHE_SECONDS = 20
+CACHE_MAX = 500
+_cache: dict[str, tuple[float, SearchOut]] = {}
+
+
+async def _stamp(session: AsyncSession) -> str:
+    # The sum of every row's change time moves whenever any one row changes, even out of order.
+    n, total = (await session.execute(select(func.count(), func.sum(func.extract("epoch", Doc.updated_at))).select_from(Doc))).one()
+    return f"{n}:{total or 0}"
+
+
+async def cached_search(session: AsyncSession, actor: Actor | None, p: SearchParams) -> SearchOut:
+    """Signed-in searches always run (organisation policy and analytics depend on the person); signed-out ones may
+    come from the cache. The search is still recorded for analytics either way."""
+    import json
+    import time
+
+    if actor is not None or p.organizationId:
+        return await search(session, actor, p)
+    key = json.dumps(p.model_dump(mode="json"), sort_keys=True) + "|" + await _stamp(session)
+    hit = _cache.get(key)
+    now = time.monotonic()
+    if hit and now - hit[0] < CACHE_SECONDS:
+        record_event(session, E.SEARCH_PERFORMED, aggregate_type="Search", aggregate_id=uuid.uuid4(),
+                     payload={"query": p.q, "filters": {}, "sort": p.sort, "total": hit[1].total, "actorId": None, "cached": True})
+        return hit[1]
+    out = await search(session, actor, p)
+    if len(_cache) >= CACHE_MAX:
+        for k in sorted(_cache, key=lambda k: _cache[k][0])[: CACHE_MAX // 4]:
+            _cache.pop(k, None)
+    _cache[key] = (now, out)
+    return out
+
+
+
+async def top10_exposure(session: AsyncSession, new_talent_boost: bool) -> dict[str, float]:
+    """Fairness check for ranking experiments: across the busiest specializations, the share of top-10 places held by
+    each group (new or established professionals, each trust tier, each country), with or without the change."""
+    from collections import Counter
+
+    specs = (await session.execute(select(func.unnest(Doc.specializations).label("s"), func.count())
+                                   .where(Doc.visible.is_(True)).group_by("s").order_by(func.count().desc()).limit(20))).all()
+    places: Counter = Counter()
+    total = 0
+    for spec, _ in specs:
+        p = SearchParams(spec=[spec])
+        docs = (await session.scalars(select(Doc).where(*_conditions(p, None)))).all()
+        ranked = sorted(docs, key=lambda d: -_rank_and_explain(d, 0.0, 0.0, p, new_talent_boost=new_talent_boost)[0])[:10]
+        for d in ranked:
+            total += 1
+            places["new to Zoikorum" if (d.completed_engagements or 0) < NEW_TALENT_MAX_COMPLETED else "established"] += 1
+            places[f"Tier {d.tier}"] += 1
+            places[f"country {d.country}"] += 1
+    return {g: n / total for g, n in places.items()} if total else {}

@@ -4,6 +4,7 @@ import { openStoredFile } from '../api/files'
 import { ErrorAlert, useStepUp } from '../components/ui'
 import { EmptyTable, PortalHeader, StatCard } from '../components/portal'
 import { Icon } from '../components/dashboard'
+import { AuditArchives } from '../components/AuditArchives'
 
 interface AuditExport {
   id: string
@@ -30,6 +31,7 @@ export default function AuditExportsPage() {
 
       <ErrorAlert error={error} />
       {modal}
+      <AuditArchives />
 
       <div className="stat-row three" style={{ marginBottom: 20 }}>
         <StatCard

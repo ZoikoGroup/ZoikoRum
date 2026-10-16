@@ -127,6 +127,8 @@ export const orgApi = {
   acceptById: (invId: string) => api<Organization>(`${O}/invitations/${invId}/accept`, { method: 'POST' }),
   decline: (invId: string) => api<void>(`${O}/invitations/${invId}/decline`, { method: 'POST' }),
   businessUnits: (id: string) => api<BusinessUnit[]>(`${O}/${id}/business-units`),
+  mergeBusinessUnits: (id: string, unitId: string, targetId: string) =>
+    api<BusinessUnit[]>(`${O}/${id}/business-units/${unitId}/merge`, { method: 'POST', body: { targetId } }),
   createBusinessUnit: (id: string, name: string) => api<BusinessUnit>(`${O}/${id}/business-units`, { method: 'POST', body: { name } }),
   costCenters: (id: string) => api<CostCenter[]>(`${O}/${id}/cost-centers`),
   legalEntities: (id: string) => api<LegalEntity[]>(`${O}/${id}/legal-entities`),

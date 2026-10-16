@@ -6,7 +6,7 @@ from typing import Literal
 from fastapi import APIRouter, Query, Response, status
 
 from zoikorum.domains.dispute import service
-from zoikorum.domains.dispute.schemas import AppealIn, AppealDecisionIn, AssignIn, DisputeIn, DisputeOut, EvidenceIn, RecommendationIn, ResolutionIn
+from zoikorum.domains.dispute.schemas import AppealIn, AppealDecisionIn, LegalHoldIn, ArbitrationAwardIn, ArbitrationReferIn, AssignIn, DisputeIn, DisputeOut, EvidenceIn, RecommendationIn, ResolutionIn, ClarificationIn
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
 from zoikorum.shared.http import Page
@@ -120,3 +120,54 @@ async def propose_decision(case_id: uuid.UUID, body: RecommendationIn, actor: Cu
 @router.post(f"{D}/{{case_id}}/decision/approve", response_model=DisputeOut)
 async def approve_decision(case_id: uuid.UUID, actor: CurrentActor, session: DbSession, idem: IdempotencyKey):
     return await idem.run(session, actor, lambda: service.approve_decision(session, actor, case_id))
+
+
+
+@router.post(f"{D}/{{case_id}}/evidence/messages", response_model=DisputeOut)
+async def import_messages(case_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    """Add the engagement's conversation (with fingerprints) as evidence."""
+    return await service.import_messages(session, actor, case_id)
+
+
+@router.post(f"{D}/{{case_id}}/clarification", response_model=DisputeOut)
+async def clarification(case_id: uuid.UUID, body: ClarificationIn, actor: CurrentActor, session: DbSession):
+    """Mediator: ask one side a focused question (at most three per dispute)."""
+    return await service.request_clarification(session, actor, case_id, body.to, body.question)
+
+
+@router.post(f"{D}/{{case_id}}/cooldown", response_model=DisputeOut)
+async def cooldown(case_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    """Once per dispute per side: pause the current deadline for 24 hours."""
+    return await service.cooldown(session, actor, case_id)
+
+
+
+@router.get(f"{D}/{{case_id}}/record")
+async def case_record(case_id: uuid.UUID, actor: CurrentActor, session: DbSession, format: Literal["pdf", "json"] = "pdf") -> Response:
+    """The whole case as one attested file (PDF or JSON), for the parties, the mediator or an authority. Audited."""
+    data, name, media = await service.case_record(session, actor, case_id, format)
+    return Response(data, media_type=media, headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
+
+
+@router.post(f"{D}/{{case_id}}/arbitration", response_model=DisputeOut)
+async def refer_to_arbitration(case_id: uuid.UUID, body: ArbitrationReferIn, actor: CurrentActor, session: DbSession):
+    """Mediator: refer the case to an outside arbitrator. Money stays frozen until Legal records the award."""
+    return await service.refer_to_arbitration(session, actor, case_id, body)
+
+
+@router.post(f"{D}/{{case_id}}/arbitration/award", response_model=DisputeOut)
+async def record_arbitration_award(case_id: uuid.UUID, body: ArbitrationAwardIn, actor: CurrentActor, session: DbSession, idem: IdempotencyKey):
+    """Legal: record the arbitrator's award; the money moves as awarded."""
+    return await idem.run(session, actor, lambda: service.record_arbitration_award(session, actor, case_id, body))
+
+
+@router.post(f"{D}/{{case_id}}/legal-hold", response_model=DisputeOut)
+async def legal_hold(case_id: uuid.UUID, body: LegalHoldIn, actor: CurrentActor, session: DbSession):
+    """Legal: keep a record regardless of its retention date (litigation, a regulator's request), or lift the hold."""
+    return await service.set_legal_hold(session, actor, case_id, body.hold, body.reason)
+
+
+@router.get("/v1/admin/disputes/retention")
+async def retention_queue(actor: CurrentActor, session: DbSession) -> list[dict]:
+    """Legal: closed dispute records due for a retention review, and records on legal hold."""
+    return await service.retention_queue(session, actor)

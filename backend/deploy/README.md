@@ -8,13 +8,13 @@ and nothing else. There are no accounts, passwords, customer data or demo data.
 The normal way, used for every later release as well:
 
 ```
-docker compose -f docker-compose.prod.yml run --rm migrate      # = alembic upgrade head
+docker compose --env-file <settings> -f docker-compose.prod.yml run --rm migrate   # alembic upgrade head, then cli db-grants
 ```
 
 ## Alternative: `zoikorum_fresh_install.sql`
 
-This is a snapshot of a freshly migrated, empty database (PostgreSQL 16, migration `710d1280b58a`). It contains
-94 tables in 22 schemas, the triggers that keep audit and ledger records append-only, the 133 starter
+This is a snapshot of a freshly migrated, empty database (PostgreSQL 16, migration `f4a5b6c7d8e9`). It contains
+109 tables in 23 schemas, the triggers that keep audit and ledger records append-only, the 133 starter
 specializations, and the migration marker.
 
 1. Create an empty database and the user the app connects as.
@@ -25,8 +25,8 @@ specializations, and the migration marker.
    psql "postgresql://<user>:<password>@<host>:5432/<database>" -v ON_ERROR_STOP=1 -f zoikorum_fresh_install.sql
    ```
 
-3. Give the app's database user rights on all the schemas and tables. The file has no owners or grants, so it
-   works with any user name.
+3. Give the app's database user its rights: `python -m zoikorum.cli db-grants --role <app user>` (run as the owner).
+   The file has no owners or grants, so it works with any user name; append-only tables become read-and-insert only.
 4. Run `alembic upgrade head` once. It should report nothing to do. After that, every release adds its changes
    through migrations.
 

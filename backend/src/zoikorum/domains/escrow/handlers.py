@@ -93,3 +93,8 @@ async def on_dispute_resolved(session: AsyncSession, event: EventEnvelope) -> No
 @subscribe(E.CONTRACT_TERMINATED, consumer="escrow.refund_on_termination")
 async def on_contract_terminated(session: AsyncSession, event: EventEnvelope) -> None:
     await service.contract_terminated(session, event.payload)
+
+
+@subscribe(E.MILESTONE_FUNDING_REMINDER, consumer="escrow.auto_fund_retainer_cycle")
+async def on_funding_reminder(session: AsyncSession, event: EventEnvelope) -> None:
+    await service.auto_fund_cycle(session, event.payload)

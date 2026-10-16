@@ -381,8 +381,10 @@ export function SubmissionView({ s, c }: { s: Submission; c: Contract }) {
 
 const QUICK = ['Something is missing', 'Does not meet the agreed criteria', 'Please explain', 'I cannot open the file or link']
 
-export function ReviewPanel({ m, c, busy, onDecide, onPartial }: {
+export function ReviewPanel({ m, c, busy, onDecide, onPartial, acceptBlocked }: {
   m: ContractMilestone; c: Contract; busy: boolean
+  /** Why the organisation's policy does not allow accepting now (acceptance stays disabled); sending changes back still works. */
+  acceptBlocked?: string
   onDecide: (verdicts: { deliverableKey: string; verdict: Verdict; comment: string }[]) => void; onPartial?: () => void
 }) {
   const latest = m.submissions[0]
@@ -451,7 +453,7 @@ export function ReviewPanel({ m, c, busy, onDecide, onPartial }: {
           {changes.length
             ? <button type="button" className="btn btn-secondary" disabled={busy || missing.length > 0} onClick={() => onDecide(verdicts())}>
               Send back {changes.length} change request{changes.length > 1 ? 's' : ''}</button>
-            : <button type="button" className="btn btn-primary" disabled={busy} onClick={() => setConfirming(true)}>Accept all &amp; release {formatMoney(m.amount)}</button>}
+            : <button type="button" className="btn btn-primary" disabled={busy || !!acceptBlocked} title={acceptBlocked} onClick={() => setConfirming(true)}>Accept all &amp; release {formatMoney(m.amount)}</button>}
         </span>
       </div>
 
@@ -461,7 +463,7 @@ export function ReviewPanel({ m, c, busy, onDecide, onPartial }: {
         <ul className="send-summary">{items.map((i) => <li key={i.key}><span className="ok-text">✓</span><span>{i.title}</span></li>)}</ul>
         <div className="row" style={{ justifyContent: 'flex-end', marginTop: 12 }}>
           <button type="button" className="btn btn-ghost" onClick={() => setConfirming(false)}>Go back</button>
-          <button type="button" className="btn btn-primary" disabled={busy} onClick={() => { setConfirming(false); onDecide(verdicts()) }}>Accept and release</button>
+          <button type="button" className="btn btn-primary" disabled={busy || !!acceptBlocked} title={acceptBlocked} onClick={() => { setConfirming(false); onDecide(verdicts()) }}>Accept and release</button>
         </div>
       </Modal>}
     </div>

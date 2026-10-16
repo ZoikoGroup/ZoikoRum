@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { currentSubscription, disablePush, enablePush, pushKey, pushSupported } from '../../lib/push'
 import { Link, useSearchParams } from 'react-router-dom'
 import { accountApi, deviceName, type DataRequest, type DeviceSession, type NotificationPreferences, type ProfileDetails } from '../../api/account'
 import { authApi } from '../../api/auth'
 import { useAuth } from '../../auth/AuthContext'
 import { Icon } from '../../components/dashboard'
 import { PortalHeader, SidePanel, Tabs } from '../../components/portal'
-import { ErrorAlert, Field, useStepUp } from '../../components/ui'
+import { ErrorAlert, Field, useStepUp, Loading } from '../../components/ui'
 import { countryName } from '../ProfessionalPages'
 
 type Tab = 'account' | 'security' | 'notifications' | 'privacy' | 'payments' | 'platform' | 'linked'
@@ -24,7 +25,7 @@ export default function SettingsPage() {
   useEffect(() => { accountApi.me().then(setMe).catch(setError) }, [])
 
   const saved = (p: ProfileDetails, msg: string) => { setMe(p); setNotice(msg); setError(null); reloadUser().catch(() => {}) }
-  if (!me) return error ? <ErrorAlert error={error} /> : <p className="muted">Loading…</p>
+  if (!me) return error ? <ErrorAlert error={error} /> : <Loading />
 
   return (
     <>
@@ -116,7 +117,7 @@ function SecurityTab({ me }: { me: ProfileDetails }) {
       </section>
       <section className="card panel">
         <div className="panel-head"><h2>Signed-in devices</h2></div>
-        {!sessions ? <p className="muted">Loading…</p> : (
+        {!sessions ? <Loading /> : (
           <table className="data"><thead><tr><th>Device</th><th>Signed in</th><th>Strength</th><th><span className="sr-only">Actions</span></th></tr></thead>
             <tbody>{sessions.map((s) => (
               <tr key={s.id}><td>{deviceName(s.device)} {s.current && <span className="badge green">This device</span>}</td>
@@ -134,7 +135,7 @@ function NotificationsTab({ onSaved }: { onSaved: () => void }) {
   const [prefs, setPrefs] = useState<NotificationPreferences | null>(null)
   const [error, setError] = useState<unknown>(null)
   useEffect(() => { accountApi.notifications().then(setPrefs).catch(setError) }, [])
-  if (!prefs) return error ? <ErrorAlert error={error} /> : <p className="muted">Loading…</p>
+  if (!prefs) return error ? <ErrorAlert error={error} /> : <Loading />
   const rows: [keyof NotificationPreferences, string, string][] = [
     ['email', 'Email', 'Proposals, approvals, deliverables and payment updates.'],
     ['inApp', 'In-app', 'Notifications in the bell menu.'],
@@ -144,7 +145,7 @@ function NotificationsTab({ onSaved }: { onSaved: () => void }) {
   async function save(e: FormEvent) {
     e.preventDefault()
     setError(null)
-    try { const { email, inApp, sms, marketing } = prefs!; setPrefs(await accountApi.setNotifications({ email, inApp, sms, marketing })); onSaved() } catch (err) { setError(err) }
+    try { const { email, inApp, sms, marketing, digest } = prefs!; setPrefs(await accountApi.setNotifications({ email, inApp, sms, marketing, digest })); onSaved() } catch (err) { setError(err) }
   }
   return (
     <section className="card panel">
@@ -155,6 +156,12 @@ function NotificationsTab({ onSaved }: { onSaved: () => void }) {
           <li key={k}><span><strong>{label}</strong><br /><span className="muted small">{desc}</span></span>
             <label className="switch"><input type="checkbox" aria-label={label} checked={Boolean(prefs[k])} onChange={(e) => setPrefs({ ...prefs, [k]: e.target.checked })} /><span aria-hidden /></label></li>
         ))}</ul>
+        <label className="field" style={{ marginTop: 12 }}><span>Email delivery</span>
+          <select className="input" value={prefs.digest ?? 'OFF'} onChange={(e) => setPrefs({ ...prefs, digest: e.target.value as 'OFF' | 'DAILY' | 'WEEKLY' })}>
+            <option value="OFF">Each update as it happens</option><option value="DAILY">One summary a day</option><option value="WEEKLY">One summary a week (Mondays)</option></select>
+          <span className="hint">Urgent, payment and security messages always arrive straight away.</span></label>
+        <PushToggle onError={setError} />
+        <CalendarFeed onError={setError} />
         {prefs.mandatoryNotice && <p className="muted small">{prefs.mandatoryNotice}</p>}
         <button className="btn btn-primary">Save preferences</button>
       </form>
@@ -277,5 +284,42 @@ function PlatformTab({ me, onSaved }: { me: ProfileDetails; onSaved: (p: Profile
         <button className="btn btn-primary">Save preferences</button>
       </form>
     </section>
+  )
+}
+
+
+/** A private calendar address with milestone due dates and signing deadlines, for Google, Outlook or Apple Calendar. */
+function CalendarFeed({ onError }: { onError: (e: unknown) => void }) {
+  const [url, setUrl] = useState<string | null>(null)
+  const make = (enabled: boolean) => accountApi.calendarLink(enabled).then((r) => setUrl(r.url ? `${window.location.origin}${r.url}` : null)).catch(onError)
+  return (
+    <div className="field" style={{ marginTop: 12 }}>
+      <span><strong>Calendar</strong></span>
+      <span className="hint">Add milestone due dates and signing deadlines to your calendar app. The address is private: anyone with it can see your dates.</span>
+      {url ? <><code style={{ wordBreak: 'break-all' }}>{url}</code>
+        <div className="row"><button type="button" className="btn btn-ghost btn-sm" onClick={() => { navigator.clipboard?.writeText(url).catch(() => {}) }}>Copy</button>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => make(true)}>Replace address</button>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => make(false)}>Turn off</button></div>
+        <span className="hint">Shown once. Replace it to get a new one; the old one stops working.</span></>
+        : <button type="button" className="btn btn-secondary btn-sm" onClick={() => make(true)}>Create calendar address</button>}
+    </div>
+  )
+}
+
+
+/** Notifications on this device (browser push). Only shown when the server has push set up. */
+function PushToggle({ onError }: { onError: (e: unknown) => void }) {
+  const [available, setAvailable] = useState(false)
+  const [on, setOn] = useState(false)
+  useEffect(() => {
+    if (!pushSupported()) return
+    pushKey().then((k) => { setAvailable(!!k); return currentSubscription() }).then((s) => setOn(!!s)).catch(() => {})
+  }, [])
+  if (!available) return null
+  return (
+    <label className="checkbox" style={{ marginTop: 12 }}>
+      <input type="checkbox" checked={on} onChange={(e) => (e.target.checked ? enablePush() : disablePush()).then(() => setOn(e.target.checked)).catch(onError)} />
+      <span><strong>Notifications on this device</strong><br /><span className="muted small">Your browser shows new updates even when Zoikorum is closed.</span></span>
+    </label>
   )
 }

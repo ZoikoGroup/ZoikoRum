@@ -33,6 +33,7 @@ class AllocationOut(BaseModel):
     fee: MoneyDTO
     fundedAt: datetime | None
     releasedAt: datetime | None
+    releaseReference: str | None = None  # shown on "Funds released": the release's transaction reference
 
 
 class FundingOut(BaseModel):
@@ -46,6 +47,7 @@ class FundingOut(BaseModel):
 
 
 class EscrowOut(BaseModel):
+    autoFundingEnabledAt: datetime | None = None  # retainer cycles funded automatically from a saved method
     id: uuid.UUID
     contractId: uuid.UUID
     status: str
@@ -76,3 +78,20 @@ class LedgerLineOut(BaseModel):
     milestoneId: uuid.UUID | None
     memo: str
     createdAt: datetime
+
+
+class AutoFundingIn(BaseModel):
+    paymentMethodToken: str | None = Field(default=None, min_length=3, max_length=120, pattern=r"^[A-Za-z0-9_\-]+$")  # null: turn off
+
+
+class BulkFundItem(BaseModel):
+    accountId: uuid.UUID
+    milestoneIds: list[uuid.UUID] = Field(min_length=1, max_length=50)
+
+
+class BulkFundIn(BaseModel):
+    """Fund milestones across several engagements at once. Each engagement is checked (roles, spend limit, policy) and
+    funded on its own, so one refusal does not stop the others."""
+
+    items: list[BulkFundItem] = Field(min_length=1, max_length=25)
+    paymentMethodToken: str = Field(min_length=3, max_length=120, pattern=r"^[A-Za-z0-9_\-]+$")

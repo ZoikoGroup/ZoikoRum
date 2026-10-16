@@ -43,3 +43,13 @@ async def replay_events(session: AsyncSession, after_seq: int, limit: int = 500)
         aggregateType=r.object_type, aggregateId=r.object_id, tenantId=r.tenant_id,
         metadata=EventMetadata(actorId=r.actor_id, actorType=r.actor_type, authStrength=r.auth_strength, policyVersion=r.policy_version),
         payload=r.details)) for r in rows]
+
+
+async def list_archives(session, actor):
+    from zoikorum.domains.audit import archive
+    return await archive.list_archives(session, actor)
+
+
+async def verify_archive(session, actor, archive_id):
+    from zoikorum.domains.audit import archive
+    return await archive.verify(session, actor, archive_id)

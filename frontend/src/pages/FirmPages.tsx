@@ -4,7 +4,7 @@ import { FIRM_ROLE_INFO, firmApi, type Firm, type FirmMember, type FirmRole, typ
 import { verificationApi, type VerificationCase } from '../api/verification'
 import { useAuth } from '../auth/AuthContext'
 import { ActionList, ComingSoon, greeting, Icon, Kpi, type Action } from '../components/dashboard'
-import { ErrorAlert, Field, useStepUp } from '../components/ui'
+import { ErrorAlert, Field, useStepUp, Loading } from '../components/ui'
 import { COUNTRIES } from './Join'
 
 // eslint-disable-next-line react-refresh/only-export-components
@@ -64,7 +64,7 @@ export function FirmTeamPage() {
     }
   }, [firm])
   useEffect(() => { load() }, [load])
-  if (loading) return <p className="muted">Loading…</p>
+  if (loading) return <Loading />
   if (!firm) return <p className="muted">Your firm is still being set up. Refresh in a moment.</p>
 
   function invite(e: FormEvent) {
@@ -203,7 +203,7 @@ export function FirmProfilePage() {
       hqCountry: firm.hqCountry, sizeBand: firm.sizeBand ?? '', website: firm.website ?? '',
     })
   }
-  if (loading || !firm) return <p className="muted">Loading…</p>
+  if (loading || !firm) return <Loading />
   const set = (k: string) => (e: { target: { value: string } }) => { setSaved(false); setForm({ ...form, [k]: e.target.value }) }
 
   async function save(e: FormEvent) {
@@ -275,7 +275,7 @@ export function FirmDashboard() {
     verificationApi.forSubject('FIRM', firm.id).then(setCases).catch(() => {})
     firmApi.invitations(firm.id).then((i) => setInvites(i.length)).catch(() => {})
   }, [firm, isAdmin])
-  if (loading || !user) return <p className="muted">Loading…</p>
+  if (loading || !user) return <Loading />
   if (!firm) return <p className="muted">Your firm is still being set up. Refresh in a moment.</p>
 
   const registration = cases.find((c) => c.verificationType === 'FIRM_REGISTRATION')

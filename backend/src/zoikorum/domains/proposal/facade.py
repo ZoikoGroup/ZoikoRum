@@ -102,3 +102,53 @@ async def buyer_relationships(session: AsyncSession, professional_id: uuid.UUID)
                                   .where(ProposalRequest.professional_id == professional_id, ProposalRequest.sent_at.is_not(None))
                                   .group_by(ProposalRequest.organization_id))).all()
     return {org: {"requests": n, "lastRequestAt": last} for org, n, last in rows}
+
+
+async def files_for(session: AsyncSession, request_id: uuid.UUID, proposal_id: uuid.UUID | None):
+    """The request's attachments and the accepted proposal's attachments."""
+    from zoikorum.domains.proposal.models import Proposal, ProposalRequest
+    from zoikorum.shared.uploads import FileRef
+
+    out = []
+    r = await session.get(ProposalRequest, request_id)
+    for f in (r.attachments if r else []):
+        out.append(FileRef("Request", f["name"], f["sha256"], int(f.get("size", 0)), r.sent_at or r.created_at,
+                           f"/v1/proposal-requests/{request_id}/attachments/{f['sha256']}"))
+    p = await session.get(Proposal, proposal_id) if proposal_id else None
+    for f in (p.attachments if p else []):
+        out.append(FileRef("Proposal", f["name"], f["sha256"], int(f.get("size", 0)), p.submitted_at or p.created_at,
+                           f"/v1/proposals/{proposal_id}/attachments/{f['sha256']}"))
+    return out
+
+
+async def win_stats(session: AsyncSession, professional_id: uuid.UUID, since=None) -> dict[str, int]:
+    """Proposals the professional sent, and how many buyers accepted (own performance insights)."""
+    from sqlalchemy import func, select
+
+    q = select(Proposal.status, func.count()).where(Proposal.professional_id == professional_id, Proposal.submitted_at.is_not(None))
+    if since is not None:
+        q = q.where(Proposal.submitted_at >= since)
+    rows = dict((await session.execute(q.group_by(Proposal.status))).all())
+    return {"submitted": sum(rows.values()), "accepted": rows.get("ACCEPTED", 0),
+            "declinedByBuyer": rows.get("REJECTED", 0), "open": sum(rows.get(s, 0) for s in ("SUBMITTED", "UNDER_REVIEW", "REVISION_REQUESTED", "PENDING_APPROVAL"))}
+
+
+async def committed_for_cost_center(session: AsyncSession, cost_center_id: uuid.UUID, since, currency: str) -> int:
+    """Value of proposals accepted against a cost centre since a date, in one currency (quarterly budget check)."""
+    from sqlalchemy import func, select
+
+    return await session.scalar(select(func.coalesce(func.sum(Proposal.total_minor), 0)).join(
+        ProposalRequest, ProposalRequest.id == Proposal.request_id).where(
+        ProposalRequest.cost_center_id == cost_center_id, Proposal.status == "ACCEPTED", Proposal.currency == currency,
+        Proposal.decided_at >= since)) or 0
+
+
+async def accepted_values(session: AsyncSession, specializations: list[str], currency: str, engagement_type: str | None = None) -> list[int]:
+    """Totals of accepted proposals for these specializations in one currency (pricing guidance; amounts only)."""
+    from sqlalchemy import select
+
+    q = select(Proposal.total_minor).join(ProposalRequest, ProposalRequest.id == Proposal.request_id).where(
+        Proposal.status == "ACCEPTED", Proposal.currency == currency, ProposalRequest.specialization.in_(specializations))
+    if engagement_type:
+        q = q.where(ProposalRequest.engagement_type == engagement_type)
+    return [int(v) for v in (await session.scalars(q)).all()]

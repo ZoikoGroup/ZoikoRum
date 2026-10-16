@@ -17,6 +17,7 @@ import importlib.util
 import inspect
 import os
 import tempfile
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -92,6 +93,21 @@ def _close_breakers():
     from zoikorum.domains.verification import providers as partner
     for b in (claude.breaker(), mail.mail_breaker(), payments.breaker(), partner._partner_breaker()):
         b.reset()
+
+
+# Authenticator codes are single-use. Instead of waiting 30 seconds for a fresh code, test users move this shared
+# authenticator clock (seen by the server too) on to the next step.
+TOTP_SKEW = [0.0]
+
+
+def totp_time() -> float:
+    return time.time() + TOTP_SKEW[0]
+
+
+@pytest.fixture(autouse=True)
+def _authenticator_clock(monkeypatch):
+    from zoikorum.domains.identity import service as identity_service
+    monkeypatch.setattr(identity_service, "_totp_time", totp_time)
 
 
 @pytest.fixture(autouse=True)
@@ -176,6 +192,7 @@ class User:
         self.refresh_token = data["tokens"]["refreshToken"]
         self.confirm_token = data.get("emailConfirmationToken")
         self.totp_secret: str | None = None
+        self.totp_last_step = -1
 
     @property
     def h(self) -> dict:
@@ -199,8 +216,18 @@ class User:
         self.recovery_codes: list[str] = r.json()["recoveryCodes"]
 
     def totp(self) -> str:
+        """The next unused code: codes are single-use, so once the current and next steps are used the authenticator
+        clock moves on, as if the person waited for a new code."""
         assert self.totp_secret
-        return pyotp.TOTP(self.totp_secret).at(clock.now())
+        t = pyotp.TOTP(self.totp_secret)
+        while True:
+            current = int(totp_time()) // t.interval
+            # Never the previous step: at a 30-second boundary the server may already be one step further.
+            step = next((s for s in (current, current + 1) if s > self.totp_last_step), None)
+            if step is not None:
+                self.totp_last_step = step
+                return t.generate_otp(step)
+            TOTP_SKEW[0] += t.interval
 
     async def step_up(self) -> None:
         if not self.totp_secret:

@@ -23,8 +23,9 @@ def record(msg="request", **fields) -> logging.LogRecord:
 def test_json_lines_carry_fields_and_the_correlation_id():
     with context.use_context(context.ExecutionContext(correlation_id="cid-123", actor_type="anonymous")):
         line = json.loads(observability.JsonFormatter().format(record(method="GET", status=200)))
-    assert line["msg"] == "request" and line["level"] == "INFO" and line["logger"] == "zoikorum.http"
-    assert line["correlationId"] == "cid-123" and line["method"] == "GET" and line["status"] == 200 and line["ts"]
+    assert line["message"] == "request" and line["severity"] == "INFO" and line["logger"] == "zoikorum.http"
+    assert line["correlationId"] == "cid-123" and line["method"] == "GET" and line["status"] == 200 and line["time"]
+    assert line["actorType"] == "anonymous" and "actorId" not in line  # empty fields are left out
 
 
 @pytest.mark.unit

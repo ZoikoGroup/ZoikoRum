@@ -38,7 +38,7 @@ class LoginIn(BaseModel):
 
 
 class RefreshIn(BaseModel):
-    refreshToken: str
+    refreshToken: str | None = None  # API clients; the web app's refresh token travels in an HttpOnly cookie instead
 
 
 class ConfirmEmailIn(BaseModel):

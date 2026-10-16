@@ -57,6 +57,7 @@ class RequestIn(BaseModel):
     ndaRequired: bool = False
     attachments: list[UploadIn] = Field(default_factory=list, max_length=3)  # PDF, Word, Excel, CSV, JPG or PNG
     deliverables: list[str] = Field(default_factory=list, max_length=15)
+    customDeliverables: list[str] = Field(default_factory=list, max_length=15)  # the ones not from a template: flagged
     dependencies: list[Literal["BUYER_DATA", "THIRD_PARTY_ACCESS", "INTERNAL_APPROVALS"]] = Field(default_factory=list, max_length=3)
     pricingPreferences: list[Literal["HOURLY", "FIXED", "RETAINER", "OPEN"]] = Field(default_factory=list, max_length=4)
     paymentCadence: Literal["MILESTONE", "MONTHLY", "COMPLETION"] | None = None
@@ -66,6 +67,7 @@ class RequestIn(BaseModel):
     @model_validator(mode="after")
     def _rules(self):
         self.deliverables = _clean_deliverables(self.deliverables)
+        self.customDeliverables = [d for d in _clean_deliverables(self.customDeliverables) if d in self.deliverables]
         if len(set(self.professionalIds)) != len(self.professionalIds):
             raise ValueError("each professional can be chosen once")
         if self.offeringId and len(self.professionalIds) > 1:
@@ -130,12 +132,14 @@ class RequestOut(BaseModel):
     ndaAccepted: bool
     status: str
     sentAt: datetime | None
+    respondBy: datetime | None = None  # the professional is asked to answer by then
     closedAt: datetime | None
     reasonCode: str | None
     reasonNote: str | None
     proposal: ProposalBrief | None
     groupSize: int
     deliverables: list[str]  # hidden with the details until the NDA is accepted
+    customDeliverables: list[str] = []  # in the buyer's own words (not from a service template): confirm what is meant
     dependencies: list[str]
     pricingPreferences: list[str]
     paymentCadence: str | None
@@ -214,8 +218,13 @@ class RevisionIn(BaseModel):
     note: str | None = Field(default=None, max_length=500)
 
 
+BuyerDeclineReason = Literal["NOT_SELECTED", "PRICE_TOO_HIGH", "TIMELINE_DOES_NOT_FIT", "SCOPE_MISMATCH",
+                             "NEED_CHANGED", "OTHER"]
+
+
 class RejectIn(BaseModel):
-    reasonCode: str = Field(default="NOT_SELECTED", min_length=2, max_length=60)
+    """Why the buyer declines (structured, so professionals learn what to change; the note is optional and private)."""
+    reasonCode: BuyerDeclineReason = "NOT_SELECTED"
     note: str | None = Field(default=None, max_length=500)
 
 

@@ -122,3 +122,30 @@ async def exception_file(request_id: uuid.UUID, digest: str, actor: CurrentActor
     record_audit(session, "policy.exception.document.viewed", object_type="ExceptionRequest", object_id=request.id,
         tenant_id=request.organization_id, evidence_hash=record['sha256'])
     return file_response(read_file(record), record.get("contentType"), record["name"])
+
+
+@router.get("/profiles/{profile_id}/checks")
+async def profile_checks(profile_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> dict:
+    """Builder checks for the draft (or active) version, and where the profile applies."""
+    from zoikorum.domains.buyer import facade as buyer_facade
+    from zoikorum.domains.policy import insights
+    from zoikorum.domains.policy.models import PolicyVersion
+
+    profile = await service.get_profile(session, actor, profile_id)
+    version_id = profile.draft_version_id or profile.active_version_id
+    version = await session.get(PolicyVersion, version_id) if version_id else None
+    if version is None:
+        raise Conflict("This profile has no active or draft version", code="NO_VERSION")
+    units = await buyer_facade.business_unit_names(session, profile.organization_id)
+    return {"checks": insights.checks(version.settings, version.rules, await insights.roles_held(session, profile.organization_id)),
+            "appliesTo": [units.get(b, "Unknown unit") for b in profile.business_unit_ids] or ["The whole organisation"],
+            "riskLevel": profile.risk_level, "version": "draft" if profile.draft_version_id else "active"}
+
+
+@router.get("/dashboard")
+async def policy_dashboard(orgId: uuid.UUID, actor: CurrentActor, session: DbSession, days: int = 30) -> dict:
+    """Policy KPIs for the organisation: usage, interventions, approval speed, exceptions, spend held back."""
+    from zoikorum.domains.policy import insights
+
+    await service.require_member(session, actor, orgId)
+    return await insights.dashboard(session, orgId, max(1, min(days, 365)))

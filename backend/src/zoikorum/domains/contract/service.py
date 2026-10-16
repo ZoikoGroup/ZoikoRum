@@ -17,15 +17,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.config import get_settings
 from zoikorum.domains.buyer import facade as buyer_facade
+from zoikorum.domains.audit import facade as audit_facade
+from zoikorum.domains.dispute import facade as dispute_facade
+from zoikorum.domains.messaging import facade as messaging_facade
+from zoikorum.domains.proposal import facade as proposal_facade
 from zoikorum.domains.policy import facade as policy_facade
 from zoikorum.domains.contract import delivery
 from zoikorum.domains.contract.models import (
     ChangeOrder, Contract, ContractRevision, Milestone, Signature, Submission, SubmissionDraft, SubmissionReview,
+    TerminationRequest,
 )
 from zoikorum.domains.contract.schemas import (
     PartialOfferIn, PartialOfferOut, ChangeOrderIn, ChangePreviewOut, ContractOut, ContractRevisionOut, ContractSummaryOut, MilestoneOut,
     DraftItemOut, DraftTextIn, EvidenceIn, EvidenceOut, IssueOut, PartyOut, ReviewIn, RevisionIn, SignatureOut, SignIn,
-    SubmissionDraftOut, SubmissionItemOut, SubmissionOut, SubmissionReviewOut, SubmitIn,
+    SubmissionDraftOut, SubmissionItemOut, SubmissionOut, SubmissionReviewOut, SubmitIn, TerminateIn, TerminationDecisionIn,
+    TerminationRequestOut,
 )
 from zoikorum.domains.escrow import facade as escrow_facade
 from zoikorum.domains.firm import facade as firm_facade
@@ -40,6 +46,7 @@ from zoikorum.shared.http import page_of, paginate
 from zoikorum.shared.money import MoneyDTO
 from zoikorum.shared.relay import cancel_timer, schedule_timer
 from zoikorum.shared.state_machine import StateMachine
+from zoikorum.shared import uploads
 from zoikorum.shared.uploads import file_out, find_file, read_file, store_uploads
 
 CONTRACT_STATES = StateMachine("Contract", {
@@ -68,6 +75,7 @@ TIMER_SIGNATURE_EXPIRY = "contract.signature_expiry"  # a never-signed contract 
 TIMER_REVIEW_REMINDER = "contract.review_reminder"  # one day before the buyer's review window closes
 TIMER_REVIEW_DUE = "contract.review_due"  # the review window has passed
 TIMER_AUTO_ACCEPT = "contract.policy_auto_accept"
+TIMER_TERMINATION_LAPSE = "contract.termination_lapse"  # an unanswered request to end by agreement closes
 TIMER_FUNDING_REMINDER = "contract.funding_reminder"  # an unfunded milestone / retainer cycle is coming up (P&E s.15)
 LABEL = {"ADVISORY": "Advisory", "PROJECT": "Project", "RETAINER": "Retainer", "FRACTIONAL": "Fractional",
          "HOURLY": "Hourly", "FIXED": "Fixed fee"}
@@ -220,6 +228,8 @@ def _change_error(message: str) -> Conflict:
 async def _assert_allocations_unfunded(
     session: AsyncSession, c: Contract, milestone_ids: set[uuid.UUID]
 ) -> None:
+    if c.activated_at is None:
+        return  # not signed yet: escrow opens at activation, so nothing can be funded
     states = await escrow_facade.get_allocation_states_for_amendment(session, c.id, milestone_ids)
     if states is None or states.keys() != milestone_ids:
         raise Conflict("Escrow allocations are not available for this active contract", code="AMENDMENT_ESCROW_MISSING")
@@ -498,7 +508,12 @@ def render_document(c: Contract, milestones: list[Milestone]) -> str:
         lines += ["", "11. CONFIDENTIALITY",
                   "The professional keeps the buyer's confidential information confidential and uses it only for this engagement, "
                   "as accepted before the proposal was written."]
-    lines += ["", "STANDARD TERMS",
+    lines += ["", "DATA HANDLING",
+              "Each party uses personal data received for this engagement only to perform it, keeps it confidential and secure, "
+              "and does not keep it longer than the engagement and its legal record-keeping require. Files shared through "
+              "Zoikorum are stored encrypted, scanned for malware and kept with an audit record; each person can ask Zoikorum "
+              "for a copy of, or the deletion of, their personal data (records the law requires are kept).",
+              "", "STANDARD TERMS",
               "The Zoikorum Terms of Service apply to this agreement. Governing law and jurisdiction follow those terms unless an "
               "enterprise policy profile sets them.",
               "", f"Terms reference (SHA-256): {c.terms_hash}", f"Policy: {c.policy_version_label}"]
@@ -665,6 +680,7 @@ async def _out(session: AsyncSession, actor: Actor, c: Contract, viewer: str) ->
     p = c.parties
     firm_line = f"Practising with {p['professional']['firm']}" if p["professional"].get("firm") else "Independent professional"
     accepted = sum(m.amount_minor for m in ms if m.status == "ACCEPTED")
+    can_end_now, can_request_end, termination = await _termination_view(session, actor, c, viewer)
     return ContractOut(
         id=c.id, reference=c.reference, proposalId=c.proposal_id, requestId=c.request_id, organizationId=c.organization_id,
         professionalId=c.professional_id, title=c.title, engagementType=c.engagement_type, pricingModel=c.pricing_model,
@@ -709,7 +725,9 @@ async def _out(session: AsyncSession, actor: Actor, c: Contract, viewer: str) ->
             submissions=[_submission_out(s, reviews.get(s.id)) for s in subs if s.milestone_id == m.id],
         ) for m in ms],
         viewerRole=viewer, nextAction=_next_action(c, ms, signed, viewer, p["professional"]["name"]), canSign=can_sign,
-        acceptedAmount=MoneyDTO(amountMinor=accepted, currency=c.currency), createdAt=c.created_at, version=c.version,
+        acceptedAmount=MoneyDTO(amountMinor=accepted, currency=c.currency), pausedAt=c.paused_at, pauseReason=c.pause_reason,
+        canEndNow=can_end_now,
+        canRequestEnd=can_request_end, terminationRequest=termination, createdAt=c.created_at, version=c.version,
     )
 
 
@@ -794,6 +812,13 @@ async def summary(session: AsyncSession, actor: Actor, role: str) -> ContractSum
     return ContractSummaryOut(role=role, contracts=contracts, milestones=milestones)
 
 
+def _amendable(c: Contract) -> bool:
+    """Before anyone signed the first version, or while active with no amendment waiting for signatures."""
+    if c.status == "PENDING_SIGNATURE" and c.activated_at is None:
+        return True
+    return c.status == "ACTIVE" and c.pending_change_order_id is None
+
+
 async def propose_change_order(
     session: AsyncSession, actor: Actor, contract_id: uuid.UUID, body: ChangeOrderIn
 ) -> ContractOut:
@@ -801,9 +826,9 @@ async def propose_change_order(
     viewer = await _viewer(session, actor, c)
     if viewer == "OPERATOR":
         raise Forbidden("Only the contract parties can propose a change")
-    if c.status != "ACTIVE" or c.pending_change_order_id is not None:
-        raise Conflict("A change order can only be proposed on an active contract with no amendment awaiting signatures",
-                       code="CONTRACT_NOT_AMENDABLE")
+    if not _amendable(c):
+        raise Conflict("A change can be proposed before the agreement is signed, or on an active contract with no amendment "
+                       "awaiting signatures", code="CONTRACT_NOT_AMENDABLE")
     if await session.scalar(select(ChangeOrder.id).where(
         ChangeOrder.contract_id == c.id, ChangeOrder.status == "PROPOSED"
     )):
@@ -854,7 +879,7 @@ async def decide_change_order(
             raise Forbidden("Deciding a change needs the Requester or Approver role", code="ROLE_REQUIRED")
     if change.status != "PROPOSED":
         raise Conflict("This change order has already been decided", code="CHANGE_ORDER_ALREADY_DECIDED")
-    if c.status != "ACTIVE" or c.contract_version != change.base_contract_version:
+    if not _amendable(c) or c.contract_version != change.base_contract_version:
         raise Conflict("The contract changed after this proposal; create a new change order", code="CHANGE_ORDER_STALE")
     actor.require_step_up()
     if approve:
@@ -887,9 +912,15 @@ async def decide_change_order(
                  tenant_id=c.organization_id, evidence_hash=c.terms_hash, policy_version=c.policy_version_label,
                  details={"contractId": str(c.id), "version": c.contract_version, "material": material,
                           "awaitingSignatures": material})
+    unsigned = c.activated_at is None  # agreed before anyone was bound: the new version simply replaces the draft
     _evt(session, E.CHANGE_ORDER_APPROVED, c, changeOrderId=change.id, decidedByIdentityId=actor.identity_id,
-         contractVersion=c.contract_version, awaitingSignatures=material)
-    if material:
+         contractVersion=c.contract_version, awaitingSignatures=material or unsigned)
+    if unsigned:
+        change.applied_version = c.contract_version  # both sign this version (signatures on the earlier one no longer count)
+        c.signature_deadline = now + timedelta(days=get_settings().signature_deadline_days)
+        await cancel_timer(session, TIMER_SIGNATURE, str(c.id))
+        await schedule_timer(session, TIMER_SIGNATURE, str(c.id), c.signature_deadline, {"contractId": str(c.id)})
+    elif material:
         CONTRACT_STATES.assert_can(c.status, "PENDING_SIGNATURE")
         c.status = "PENDING_SIGNATURE"
         c.pending_change_order_id = change.id
@@ -989,7 +1020,7 @@ async def funding_reminder(session: AsyncSession, payload: dict) -> None:
     if m is None or m.status != "PENDING_FUNDING":
         return  # already funded, cancelled or done
     c = await _contract(session, m.contract_id)
-    if c.status == "ACTIVE":
+    if c.status == "ACTIVE" and c.paused_at is None:  # no reminders while a retainer is paused
         _evt(session, E.MILESTONE_FUNDING_REMINDER, c, milestoneId=m.id, dueDate=m.due_date, amountMinor=m.amount_minor, currency=m.currency)
 
 
@@ -1070,6 +1101,7 @@ async def dispute_initiated(session: AsyncSession, payload: dict) -> None:
     if c.status == "ACTIVE":
         c.status = "DISPUTED"
         _evt(session, E.CONTRACT_DISPUTED, c, disputeId=payload["disputeId"])
+    await _close_termination_request(session, c, "CANCELLED", "A dispute was opened; it decides how the engagement ends.")
 
 
 async def dispute_resolved(session: AsyncSession, payload: dict) -> None:
@@ -1090,6 +1122,9 @@ async def dispute_resolved(session: AsyncSession, payload: dict) -> None:
             m.status = "CANCELLED"
         else:  # REWORK / EXTEND: back to work; the money stays held
             m.status = "IN_PROGRESS"
+            days = next((a.get("extendDays") for a in payload.get("allocations", []) if str(a["milestoneId"]) == str(m.id)), None)
+            if o == "EXTEND" and days:  # the decision gives more time: the milestone is due that much later
+                m.due_date = (m.due_date or now.date()) + timedelta(days=int(days))
     for m in ms:
         if m.status == "CANCELLED" and outcomes.get(str(m.id)) == "CANCEL":
             _evt(session, E.MILESTONE_CANCELLED, c, milestoneId=m.id, reason="DISPUTE_DECISION")
@@ -1555,3 +1590,413 @@ def _buyer_party(buyer: dict) -> PartyOut:
         return PartyOut(role="BUYER", name=buyer["name"], detail=f"Signatory: {buyer['signatory']}")
     reg = f" · Reg. no. {e['registrationNumber']}" if e.get("registrationNumber") else ""
     return PartyOut(role="BUYER", name=e["legalName"], detail=f"{buyer['name']}{reg} · Signatory: {buyer['signatory']}")
+
+
+# ---- Ending an engagement ------------------------------------------------------------------------------------------
+# Either side may end it at once while nothing is in escrow and no dispute is open (e.g. before any funding, or after
+# the last funded milestone was paid). While money is held, the other side must agree; held money for work not accepted
+# goes back to the buyer and accepted work is still paid (escrow consumer of CONTRACT_TERMINATED). A disputed
+# engagement is never ended by one side: the dispute decides (Architecture: contract invariants).
+
+OPEN_MILESTONES = ("PENDING_FUNDING", "IN_PROGRESS", "SUBMITTED", "REVISION_REQUESTED", "ACCEPTANCE_PENDING_APPROVAL")
+
+
+async def _pending_termination(session: AsyncSession, c: Contract, lock: bool = False) -> TerminationRequest | None:
+    stmt = select(TerminationRequest).where(TerminationRequest.contract_id == c.id, TerminationRequest.status == "PENDING")
+    return await session.scalar(stmt.with_for_update() if lock else stmt)
+
+
+async def _may_end(session: AsyncSession, actor: Actor, c: Contract, viewer: str) -> bool:
+    """The viewer may speak for their side: the professional, or a Requester/Approver of the buyer organisation."""
+    if viewer == "PROFESSIONAL":
+        return True
+    return viewer == "BUYER" and bool(
+        (await buyer_facade.get_member_roles(session, c.organization_id, actor.identity_id)).intersection(DECIDERS))
+
+
+async def _termination_view(session: AsyncSession, actor: Actor, c: Contract, viewer: str):
+    pending = await _pending_termination(session, c)
+    latest = pending or await session.scalar(select(TerminationRequest).where(TerminationRequest.contract_id == c.id)
+                                             .order_by(TerminationRequest.created_at.desc()).limit(1))
+    speaks = c.status in ("ACTIVE", "PENDING_SIGNATURE") and await _may_end(session, actor, c, viewer)
+    held = await escrow_facade.money_in_escrow(session, c.id) if speaks else True
+    can_end_now = speaks and not held and pending is None
+    can_request_end = speaks and c.status == "ACTIVE" and held and pending is None
+    out = None
+    if latest is not None and (latest.status == "PENDING" or c.status in ("ACTIVE", "TERMINATED")):
+        out = TerminationRequestOut(
+            id=latest.id, requesterParty=latest.requester_party, reason=latest.reason, status=latest.status,
+            expiresAt=latest.expires_at, decisionNote=latest.decision_note, decidedAt=latest.decided_at,
+            createdAt=latest.created_at,
+            canAnswer=latest.status == "PENDING" and speaks and viewer != latest.requester_party,
+            canWithdraw=latest.status == "PENDING" and speaks and viewer == latest.requester_party)
+    return can_end_now, can_request_end, out
+
+
+async def _end(session: AsyncSession, c: Contract, reason: str, **extra) -> None:
+    """Close the open milestones and the contract; escrow refunds what is held for work not accepted."""
+    CONTRACT_STATES.assert_can(c.status, "TERMINATED")
+    for m in await _milestones(session, c.id, lock=True):
+        if m.status in OPEN_MILESTONES:
+            m.status = "CANCELLED"
+            m.partial_offer_minor = m.partial_offer_reason = m.partial_offered_at = None
+            await cancel_timer(session, TIMER_FUNDING_REMINDER, str(m.id))
+            _evt(session, E.MILESTONE_CANCELLED, c, milestoneId=m.id, reason=reason)
+    c.status = "TERMINATED"
+    if c.pending_change_order_id:  # an amendment waiting for signatures no longer applies
+        change = await session.get(ChangeOrder, c.pending_change_order_id, with_for_update=True)
+        if change is not None and change.status == "PROPOSED":
+            change.status, change.decided_at, change.decision_reason = "REJECTED", clock.now(), "The engagement ended."
+        c.pending_change_order_id = None
+    await cancel_timer(session, TIMER_SIGNATURE, str(c.id))
+    await cancel_timer(session, TIMER_SIGNATURE_EXPIRY, str(c.id))
+    _evt(session, E.CONTRACT_TERMINATED, c, reason=reason, **extra)
+
+
+async def _close_termination_request(session: AsyncSession, c: Contract, status: str, note: str,
+                                     by: uuid.UUID | None = None) -> TerminationRequest | None:
+    req = await _pending_termination(session, c, lock=True)
+    if req is None:
+        return None
+    req.status, req.decision_note, req.decided_at, req.decided_by_identity_id = status, note, clock.now(), by
+    await cancel_timer(session, TIMER_TERMINATION_LAPSE, str(req.id))
+    if status in ("WITHDRAWN", "LAPSED", "CANCELLED"):
+        _evt(session, E.CONTRACT_TERMINATION_WITHDRAWN, c, requestId=req.id, outcome=status)
+    return req
+
+
+async def terminate(session: AsyncSession, actor: Actor, contract_id: uuid.UUID, body: TerminateIn) -> ContractOut:
+    """End now (nothing in escrow, no dispute) or ask the other side to agree (``mutual``). Needs a fresh two-step
+    confirmation: it changes what happens to money."""
+    c = await _contract(session, contract_id, lock=True)
+    viewer = await _viewer(session, actor, c)
+    if not await _may_end(session, actor, c, viewer):
+        raise Forbidden("Ending an engagement needs the professional, or the Requester or Approver role in the buyer "
+                        "organisation", code="ROLE_REQUIRED")
+    if c.status == "DISPUTED":
+        raise Conflict("A dispute is open: the dispute decides how this engagement ends", code="CONTRACT_DISPUTED")
+    if c.status not in ("ACTIVE", "PENDING_SIGNATURE"):
+        raise Conflict("This engagement has already ended", code="CONTRACT_CLOSED")
+    actor.require_step_up()
+    if await _pending_termination(session, c, lock=True):
+        raise Conflict("A request to end this engagement is already waiting for an answer", code="TERMINATION_PENDING")
+    reason = body.reason.strip()
+    held = await escrow_facade.money_in_escrow(session, c.id)
+    if not body.mutual:
+        if held:
+            raise Conflict("Money is held in escrow for this engagement, so ending it needs the other side's agreement. "
+                           "Send them a request to end it instead.", code="MONEY_IN_ESCROW")
+        await _end(session, c, "ENDED_BY_" + viewer, endedBy=actor.identity_id, note=reason)
+        record_audit(session, "contract.terminated", object_type="Contract", object_id=c.id, tenant_id=c.organization_id,
+                     details={"party": viewer, "reason": reason})
+        await session.flush()
+        return await _out(session, actor, c, viewer)
+    if c.status != "ACTIVE":
+        raise Conflict("Only an active engagement can be ended by agreement; an unsigned agreement can simply be ended",
+                       code="CONTRACT_NOT_ACTIVE")
+    req = TerminationRequest(contract_id=c.id, requested_by_identity_id=actor.identity_id, requester_party=viewer,
+                             reason=reason, status="PENDING",
+                             expires_at=clock.now() + timedelta(days=get_settings().termination_response_days))
+    session.add(req)
+    await session.flush()
+    await schedule_timer(session, TIMER_TERMINATION_LAPSE, str(req.id), req.expires_at, {"requestId": str(req.id)})
+    _evt(session, E.CONTRACT_TERMINATION_REQUESTED, c, requestId=req.id, requesterParty=viewer, reason=reason,
+         expiresAt=req.expires_at)
+    return await _out(session, actor, c, viewer)
+
+
+async def decide_termination(session: AsyncSession, actor: Actor, contract_id: uuid.UUID,
+                             body: TerminationDecisionIn) -> ContractOut:
+    """The other side agrees (the engagement ends now) or declines (it continues)."""
+    c = await _contract(session, contract_id, lock=True)
+    viewer = await _viewer(session, actor, c)
+    req = await _pending_termination(session, c, lock=True)
+    if req is None:
+        raise Conflict("There is no request to end this engagement waiting for an answer", code="NO_TERMINATION_REQUEST")
+    if not await _may_end(session, actor, c, viewer) or viewer == req.requester_party:
+        raise Forbidden("Only the other side can answer this request", code="NOT_THE_OTHER_SIDE")
+    actor.require_step_up()
+    note = (body.note or "").strip() or None
+    if body.agree:
+        if c.status != "ACTIVE":
+            raise Conflict("The engagement is no longer active", code="CONTRACT_NOT_ACTIVE")
+        req.status, req.decision_note, req.decided_at, req.decided_by_identity_id = "AGREED", note, clock.now(), actor.identity_id
+        await cancel_timer(session, TIMER_TERMINATION_LAPSE, str(req.id))
+        await _end(session, c, "MUTUAL_AGREEMENT", requestId=req.id, requesterParty=req.requester_party,
+                   agreedBy=actor.identity_id)
+    else:
+        req.status, req.decision_note, req.decided_at, req.decided_by_identity_id = "DECLINED", note, clock.now(), actor.identity_id
+        await cancel_timer(session, TIMER_TERMINATION_LAPSE, str(req.id))
+        _evt(session, E.CONTRACT_TERMINATION_DECLINED, c, requestId=req.id, note=note)
+    await session.flush()
+    return await _out(session, actor, c, viewer)
+
+
+async def withdraw_termination(session: AsyncSession, actor: Actor, contract_id: uuid.UUID) -> ContractOut:
+    c = await _contract(session, contract_id, lock=True)
+    viewer = await _viewer(session, actor, c)
+    req = await _pending_termination(session, c, lock=True)
+    if req is None:
+        raise Conflict("There is no request to end this engagement waiting for an answer", code="NO_TERMINATION_REQUEST")
+    if not await _may_end(session, actor, c, viewer) or viewer != req.requester_party:
+        raise Forbidden("Only the side that asked can withdraw the request", code="NOT_THE_REQUESTER")
+    await _close_termination_request(session, c, "WITHDRAWN", "Withdrawn by the side that asked.", actor.identity_id)
+    await session.flush()
+    return await _out(session, actor, c, viewer)
+
+
+async def termination_lapsed(session: AsyncSession, payload: dict) -> None:
+    req = await session.get(TerminationRequest, uuid.UUID(payload["requestId"]))
+    if req is None or req.status != "PENDING":
+        return
+    c = await _contract(session, req.contract_id, lock=True)
+    await _close_termination_request(session, c, "LAPSED", "Not answered in time; the engagement continues.")
+
+
+async def professional_offboarded(session: AsyncSession, professional_id: uuid.UUID) -> None:
+    """Exit governance: when a professional is offboarded, their engagements do not stay open. Unsigned and active
+    engagements end (accepted work is still paid, held money for other work goes back to the buyer); disputed ones
+    continue through their dispute, which decides the money."""
+    contracts = (await session.scalars(select(Contract).where(
+        Contract.professional_id == professional_id, Contract.status.in_(("ACTIVE", "PENDING_SIGNATURE")))
+        .with_for_update())).all()
+    for c in contracts:
+        await _close_termination_request(session, c, "CANCELLED", "The professional was offboarded.")
+        await _end(session, c, "PROFESSIONAL_OFFBOARDED")
+
+
+# ---- Telling buyers about changes to their professional ---------------------------------------------------------------
+
+SUSPENSIONS = {
+    "SUSPEND_ACCOUNT": "{name}'s account is suspended after a Trust & Safety decision, so they cannot work on engagements for now.",
+    "ENGAGEMENT_SUSPENSION": "{name} cannot take part in engagements for now after a Trust & Safety decision.",
+    "CREDENTIAL_ENFORCEMENT": "A credential {name} relied on was withdrawn after a Trust & Safety review.",
+    "VERIFICATION_RESET": "{name}'s verification has to be done again after a Trust & Safety review.",
+}
+WHAT_NEXT = ("Money held in escrow stays protected: nothing is released without your acceptance. Pause new work, raise a "
+             "dispute about delivered work, or end the engagement by agreement from the engagement page.")
+
+
+async def tell_buyers(session: AsyncSession, professional_id: uuid.UUID, change: str, message: str) -> int:
+    """One notice per open engagement of this professional, to the buyer organisation only."""
+    contracts = (await session.scalars(select(Contract).where(
+        Contract.professional_id == professional_id,
+        Contract.status.in_(("PENDING_SIGNATURE", "ACTIVE", "DISPUTED"))))).all()
+    for c in contracts:
+        _evt(session, E.CONTRACT_PROFESSIONAL_STATUS_CHANGED, c, change=change, message=message, buyersOnly=True)
+    return len(contracts)
+
+
+async def professional_restricted(session: AsyncSession, payload: dict, reversed_: bool = False) -> None:
+    action = payload.get("action")
+    if action not in SUSPENSIONS:  # every one of these changes whether the professional can work on engagements
+        return
+    subject = uuid.UUID(str(payload["subjectId"]))
+    pro = (await professional_facade.get_professional(session, subject) if payload.get("subjectType") == "PROFESSIONAL"
+           else await professional_facade.get_professional_by_identity(session, subject)
+           if payload.get("subjectType") == "IDENTITY" else None)
+    if pro is None:
+        return
+    if reversed_:
+        await tell_buyers(session, pro.id, "RESTRICTION_LIFTED",
+                          f"The restriction on {pro.display_name} has ended; they can work on your engagement again.")
+    else:
+        await tell_buyers(session, pro.id, action, SUSPENSIONS[action].format(name=pro.display_name) + " " + WHAT_NEXT)
+
+
+CHECK_LABEL = {"IDENTITY": "identity check", "CREDENTIAL": "credential", "INSURANCE": "insurance",
+               "JURISDICTION": "right to practise", "RESTRICTIONS": "restrictions screening", "BACKGROUND": "background check"}
+
+
+async def professional_check_lapsed(session: AsyncSession, payload: dict, expired: bool) -> None:
+    if payload.get("subjectType") != "PROFESSIONAL":
+        return
+    pro = await professional_facade.get_professional(session, uuid.UUID(str(payload["subjectId"])))
+    if pro is None:
+        return
+    what = CHECK_LABEL.get(payload.get("verificationType"), "verification")
+    label = f" ({payload['label']})" if payload.get("label") and payload.get("verificationType") == "CREDENTIAL" else ""
+    how = "has expired" if expired else "is no longer verified"
+    await tell_buyers(session, pro.id, "CHECK_EXPIRED" if expired else "CHECK_REVOKED",
+                      f"{pro.display_name}'s {what}{label} {how}. Check whether your engagement or your organisation's "
+                      f"policy needs it before more work is delivered. {WHAT_NEXT}")
+
+
+# ---- Engagement record: activity, files, evidence pack -------------------------------------------------------------
+
+def _plain(action: str) -> str:
+    """'zoikorum.contract.milestone.accepted.v1' -> 'Milestone accepted'; 'contract.terminated' -> 'Contract terminated'."""
+    parts = action.split(".")
+    if parts[0] == "zoikorum" and len(parts) >= 5:
+        words = [parts[2], parts[3]]
+    else:
+        words = parts[-2:] if len(parts) >= 2 else parts
+    text = " ".join(w.replace("_", " ") for w in words)
+    return text[:1].upper() + text[1:]
+
+
+async def _record_ids(session: AsyncSession, c: Contract) -> list[str]:
+    ids = [str(c.id), str(c.proposal_id), str(c.request_id)] + [str(m.id) for m in await _milestones(session, c.id)]
+    account = await escrow_facade.account_id_for_contract(session, c.id)
+    if account:
+        ids.append(str(account))
+    ids += [d["id"] for d in await dispute_facade.disputes_for_contract(session, c.id)]
+    return ids
+
+
+async def activity(session: AsyncSession, actor: Actor, contract_id: uuid.UUID) -> list[dict]:
+    """The engagement's history from the tamper-evident audit trail (each line carries its chain hash)."""
+    c = await _contract(session, contract_id)
+    await _viewer(session, actor, c)
+    entries = await audit_facade.timeline_for_objects(session, await _record_ids(session, c))
+    people = await identity_facade.get_identities(session, [uuid.UUID(e.actor_id) for e in entries
+                                                            if e.actor_id and _is_uuid(e.actor_id)])
+    return [{"at": e.occurred_at, "what": _plain(e.action), "action": e.action,
+             "by": people[uuid.UUID(e.actor_id)].display_name if e.actor_id and _is_uuid(e.actor_id)
+             and uuid.UUID(e.actor_id) in people else ("Zoikorum" if not e.actor_id else "System"),
+             "hash": e.hash} for e in entries]
+
+
+def _is_uuid(value: str) -> bool:
+    try:
+        uuid.UUID(value)
+        return True
+    except ValueError:
+        return False
+
+
+async def files(session: AsyncSession, actor: Actor, contract_id: uuid.UUID) -> list[dict]:
+    """Every file of the engagement in one place: request, proposal, delivered work, messages, dispute evidence."""
+    c = await _contract(session, contract_id)
+    await _viewer(session, actor, c)
+    refs = await proposal_facade.files_for(session, c.request_id, c.proposal_id)
+    for m in await _milestones(session, c.id):
+        for s in (await session.scalars(select(Submission).where(Submission.milestone_id == m.id)
+                                        .order_by(Submission.created_at))).all():
+            refs += [uploads.FileRef(f"Delivered work (M{m.sequence})", f["name"], f["sha256"], int(f.get("size", 0)),
+                                     s.created_at, f"/v1/contracts/{c.id}/files/{f['sha256']}") for f in s.files]
+    refs += await messaging_facade.files_for_contexts(session, [("PROPOSAL_REQUEST", c.request_id), ("CONTRACT", c.id)])
+    refs += await dispute_facade.files_for_contract(session, c.id)
+    return [{"source": f.source, "name": f.name, "sha256": f.sha256, "size": f.size, "uploadedAt": f.uploaded_at,
+             "url": f.url} for f in refs]
+
+
+async def evidence_pack(session: AsyncSession, actor: Actor, contract_id: uuid.UUID, fmt: str) -> tuple[bytes, str, str]:
+    """The engagement record as one attested document (PDF or JSON): parties, agreement versions and their hashes,
+    signatures, milestones and acceptance, escrow ledger, disputes, files with fingerprints, and the audit timeline.
+    The SHA-256 of the record is printed on every page and recorded with the download."""
+    c = await _contract(session, contract_id)
+    viewer = await _viewer(session, actor, c)
+    out = await _out(session, actor, c, viewer)
+    record = {
+        "engagement": {"reference": c.reference, "title": c.title, "status": c.status, "policy": c.policy_version_label,
+                       "total": {"amountMinor": c.total_minor, "currency": c.currency}},
+        "parties": [p.model_dump() for p in out.parties],
+        "versions": [{"version": r.contractVersion, "termsHash": r.termsHash, "documentSha256": r.documentSha256,
+                      "createdAt": r.createdAt.isoformat()} for r in out.revisions],
+        "signatures": [{"party": s.party, "signer": s.signerName, "version": s.contractVersion, "termsHash": s.termsHash,
+                        "authStrength": s.authStrength, "signedAt": s.signedAt.isoformat()} for s in out.signatures],
+        "milestones": [{"sequence": m.sequence, "title": m.title, "amountMinor": m.amount.amountMinor, "status": m.status,
+                        "acceptedAt": m.acceptedAt.isoformat() if m.acceptedAt else None} for m in out.milestones],
+        "escrowLedger": await escrow_facade.ledger_for_contract(session, c.id),
+        "disputes": await dispute_facade.disputes_for_contract(session, c.id),
+        "files": [{k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in f.items() if k != "url"}
+                  for f in await files(session, actor, c.id)],
+        "activity": [{"at": a["at"].isoformat(), "what": a["what"], "by": a["by"], "hash": a["hash"]}
+                     for a in await activity(session, actor, c.id)],
+    }
+    body = json.dumps(record, sort_keys=True, separators=(",", ":"), default=str)
+    fingerprint = hashlib.sha256(body.encode()).hexdigest()
+    record_audit(session, "contract.evidence_pack.downloaded", object_type="Contract", object_id=c.id,
+                 tenant_id=c.organization_id, evidence_hash=fingerprint, details={"format": fmt})
+    name = f"{c.reference}-evidence-pack"
+    if fmt == "json":
+        return (json.dumps({"fingerprintSha256": fingerprint, "record": record}, indent=2, default=str).encode(),
+                f"{name}.json", "application/json")
+    money = lambda m: pdf.money(m, c.currency)  # noqa: E731
+    doc = pdf.PdfDocument(
+        title="Engagement evidence pack", reference=c.reference, issued=clock.now(), fingerprint=fingerprint,
+        subtitle=f"{c.title} · {c.status.replace('_', ' ').lower()} · policy {c.policy_version_label}",
+        sections=[
+            pdf.Section("Parties", rows=[(p.role.title(), p.name) for p in out.parties]),
+            pdf.Section("Agreement versions", rows=[(f"Version {v['version']}", f"terms {v['termsHash'][:16]}… · "
+                                                     f"document {v['documentSha256'][:16]}…") for v in record["versions"]]),
+            pdf.Section("Signatures", rows=[(f"{s['party'].title()} (v{s['version']})", f"{s['signer']} · {s['signedAt'][:19]}"
+                                             f" · {s['authStrength']}") for s in record["signatures"]] or [("—", "Not signed")]),
+            pdf.Section("Milestones", table=[(f"M{m['sequence']} {m['title']} ({m['status'].lower()})", money(m["amountMinor"]))
+                                             for m in record["milestones"]], total=("Total", money(c.total_minor))),
+            pdf.Section("Escrow ledger", table=[(f"{e['at'][:10]} {e['type'].lower()} · {e['account'].lower()}",
+                                                 money(e["debitMinor"] or e["creditMinor"])) for e in record["escrowLedger"]]
+                        or [("No money has moved", "")]),
+            pdf.Section("Disputes", rows=[(d["reference"], f"{d['category'].lower()} · {d['status'].lower()}")
+                                          for d in record["disputes"]] or [("None", "")]),
+            pdf.Section("Files", rows=[(f["name"], f"{f['source']} · SHA-256 {f['sha256'][:16]}…") for f in record["files"]]
+                        or [("None", "")]),
+            pdf.Section("Activity (from the audit trail)", rows=[(a["at"][:19].replace("T", " "), f"{a['what']} · {a['by']}")
+                                                                 for a in record["activity"]]),
+            pdf.Section(text="Attestation: this pack was produced by Zoikorum from its records. Each activity line comes from "
+                             "the append-only, hash-chained audit trail; files are identified by their SHA-256. The fingerprint "
+                             "below is the SHA-256 of this record and is stored with the download in the audit trail."),
+        ])
+    return pdf.render(doc), f"{name}.pdf", "application/pdf"
+
+
+
+# ---- Retainer pause (Payments & Escrow s.15: pause and resume cycles) -------------------------------------------
+
+async def set_retainer_pause(session: AsyncSession, actor: Actor, contract_id: uuid.UUID, pause: bool, reason: str | None) -> ContractOut:
+    """The buyer pauses a retainer: no new cycles are funded or reminded until they resume. Funded cycles continue."""
+    c = await _contract(session, contract_id, lock=True)
+    viewer = await _viewer(session, actor, c)
+    await _require_decider(session, actor, c, viewer)
+    if c.engagement_type != "RETAINER" and c.pricing_model != "RETAINER":
+        raise Conflict("Only a retainer can be paused", code="NOT_A_RETAINER")
+    if c.status != "ACTIVE":
+        raise Conflict("Only an active retainer can be paused or resumed", code="CONTRACT_NOT_ACTIVE")
+    if pause == (c.paused_at is not None):
+        raise Conflict("The retainer is already " + ("paused" if pause else "running"), code="NO_CHANGE")
+    c.paused_at, c.pause_reason = (clock.now(), (reason or "").strip()[:500] or None) if pause else (None, None)
+    _evt(session, E.RETAINER_PAUSED if pause else E.RETAINER_RESUMED, c, reason=c.pause_reason, by=actor.identity_id)
+    await session.flush()
+    return await _out(session, actor, c, viewer)
+
+
+async def is_paused(session: AsyncSession, contract_id: uuid.UUID) -> bool:
+    c = await session.get(Contract, contract_id)
+    return bool(c and c.paused_at)
+
+
+
+# ---- Live policy state (Enterprise policies: show blocked actions before they are tried) ---------------------------
+
+ACTION_LABEL = {"ESCROW_FUND": "Fund the next milestone", "MILESTONE_ACCEPT": "Accept submitted work", "ESCROW_RELEASE": "Release payment"}
+
+
+async def policy_state(session: AsyncSession, actor: Actor, contract_id: uuid.UUID) -> dict:
+    """For the buyer side: what the engagement's agreed policy version would decide for the next money actions, so a
+    blocked action is shown as blocked (with its reason and the way forward) before anyone presses the button."""
+    from zoikorum.domains.escrow import facade as escrow_facade
+
+    c = await _contract(session, contract_id)
+    if await _viewer(session, actor, c) != "BUYER":
+        raise Forbidden("Only the buyer organisation sees its policy state")
+    ms = await _milestones(session, c.id)
+    account_id = await escrow_facade.account_id_for_contract(session, c.id)
+    checks = []
+    to_fund = next((m for m in ms if m.status == "PENDING_FUNDING"), None)
+    if to_fund and account_id and c.status == "ACTIVE":
+        checks.append(("ESCROW_FUND", "EscrowAccount", account_id, to_fund))
+    submitted = next((m for m in ms if m.status == "SUBMITTED"), None)
+    if submitted:
+        checks.append(("MILESTONE_ACCEPT", "Milestone", submitted.id, submitted))
+        checks.append(("ESCROW_RELEASE", "Milestone", submitted.id, submitted))
+    out = []
+    for action, subject_type, subject_id, m in checks:
+        d = await policy_facade.preview(session, await policy_facade.commercial_context(session,
+            org_id=c.organization_id, professional_id=c.professional_id, action=action, subject_type=subject_type,
+            subject_id=subject_id, actor_identity_id=actor.identity_id, amount=m.amount_minor, currency=m.currency,
+            engagement_type=c.engagement_type, pinned_version_id=c.policy_version_id,
+            platform_default_pinned=c.policy_version_id is None))
+        out.append({"action": action, "label": ACTION_LABEL[action], "milestoneId": m.id, "milestone": f"M{m.sequence} {m.title}",
+                    "decision": d.decision, "reasons": [{"code": r.code, "message": r.message} for r in d.reasons]})
+    return {"contractId": c.id, "policyVersion": c.policy_version_label, "actions": out}

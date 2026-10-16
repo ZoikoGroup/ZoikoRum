@@ -36,6 +36,7 @@ class ProfessionalSummary:
     years_experience_band: str | None
     languages: tuple[str, ...]
     visibility_reduced: bool  # enforcement - search must down-rank, with explanation
+    industries: tuple[str, ...] = ()
     # Added for the search projection (optional, so existing callers are unaffected).
     bio: str | None = None
     city: str | None = None
@@ -69,7 +70,7 @@ def _summary(p: Professional) -> ProfessionalSummary:
         engagement_types=tuple(p.engagement_types), delivery_modes=tuple(p.delivery_modes),
         pricing_models=tuple(p.pricing_models), availability=effective_availability(p),
         max_concurrent_engagements=p.max_concurrent_engagements, active_engagements=p.active_engagements,
-        years_experience_band=p.years_experience_band, languages=tuple(p.languages),
+        years_experience_band=p.years_experience_band, languages=tuple(p.languages), industries=tuple(p.industries),
         visibility_reduced=p.visibility_reduced, bio=p.bio, city=p.city, indicative_rate_minor=p.rate_minor,
         indicative_rate_currency=p.rate_currency, published_at=p.published_at, photo_url=photo_url(p),
     )
@@ -136,3 +137,34 @@ async def saved_buyer_alerts(session: AsyncSession, professional_id: uuid.UUID, 
     """Whether the professional saved this buyer organisation with alerts on (notification domain)."""
     return bool(await session.scalar(select(SavedBuyer.id).where(
         SavedBuyer.professional_id == professional_id, SavedBuyer.organization_id == organization_id, SavedBuyer.alerts.is_(True))))
+
+
+async def enterprise_ready(session: AsyncSession, professional_id: uuid.UUID) -> bool:
+    from zoikorum.domains.professional import enterprise
+
+    p = await session.get(Professional, professional_id)
+    return bool(p) and await enterprise.is_ready(session, p)
+
+
+async def funnel(session: AsyncSession, since, until) -> dict:
+    """Professional onboarding in the period: profiles started, published, and Enterprise Ready decisions."""
+    from sqlalchemy import func
+
+    started = await session.scalar(select(func.count()).select_from(Professional).where(
+        Professional.created_at >= since, Professional.created_at < until)) or 0
+    published = await session.scalar(select(func.count()).select_from(Professional).where(
+        Professional.published_at >= since, Professional.published_at < until)) or 0
+    live = await session.scalar(select(func.count()).select_from(Professional).where(Professional.status == "PUBLISHED")) or 0
+    enterprise = await session.scalar(select(func.count()).select_from(Professional).where(Professional.enterprise_status == "READY")) or 0
+    return {"profilesStarted": started, "profilesPublished": published, "publishedNow": live, "enterpriseReadyNow": enterprise}
+
+
+async def published_rates(session: AsyncSession, specializations: list[str], currency: str) -> dict[str, list[int]]:
+    """Indicative rates of published professionals in these specializations, per unit (pricing guidance)."""
+    rows = (await session.execute(select(Professional.rate_minor, Professional.rate_unit).where(
+        Professional.status == "PUBLISHED", Professional.rate_currency == currency, Professional.rate_minor.is_not(None),
+        Professional.primary_specialization.in_(specializations)))).all()
+    out: dict[str, list[int]] = {}
+    for minor, unit in rows:
+        out.setdefault(unit or "PROJECT", []).append(int(minor))
+    return out

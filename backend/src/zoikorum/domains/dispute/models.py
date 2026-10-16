@@ -8,9 +8,9 @@ case's visible history; the audit ledger keeps the tamper-evident record.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, String
+from sqlalchemy import Date, Boolean, BigInteger, DateTime, ForeignKey, Index, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -51,6 +51,14 @@ class DisputeCase(Base, UUIDPk, Timestamps, Versioned):
     decision: Mapped[dict | None] = mapped_column(JSONB)  # final decision package
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    prefers_early_resolution: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    cooldown_used_by: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")  # parties
+    clarifications: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")  # [{to, question, at}]
+    arbitration: Mapped[dict | None] = mapped_column(JSONB)
+    retain_until: Mapped[date | None] = mapped_column(Date)  # set when the case closes
+    retention_basis: Mapped[str | None] = mapped_column(String(200))  # why that date: platform, policy or jurisdiction
+    legal_hold: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    retention_review_due: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")  # referral to an outside arbitrator: {forum, reason, referredAt, award...}
 
 
 class DisputeAppeal(Base, UUIDPk, Timestamps):
@@ -109,3 +117,4 @@ class TimelineEntry(Base, UUIDPk, CreatedAt):
     kind: Mapped[str] = mapped_column(String(40), nullable=False)
     actor: Mapped[str] = mapped_column(String(200), nullable=False)  # "Buyer (Lennox)", "Mediator", "System"
     text: Mapped[str] = mapped_column(String(500), nullable=False)
+    ref: Mapped[str | None] = mapped_column(String(100))  # what the entry is about: evidence:<id>, proposal:<id>, ...

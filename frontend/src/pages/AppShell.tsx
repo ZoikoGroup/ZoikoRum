@@ -157,6 +157,8 @@ export default function AppShell() {
           <Item to="/app/messages" icon="message" count={unreadMessages}>Messages</Item>
           <Item to="/app/professional/buyers" icon="bookmark">Saved Buyers</Item>
           <Item to="/app/professional/earnings" count={n('/app/professional/earnings')} icon="wallet">Earnings</Item>
+          <Item to="/app/professional/insights" icon="star">Performance</Item>
+          <Item to="/app/professional/enterprise" icon="building">Enterprise Ready</Item>
           <Item to="/app/professional/disputes" count={n('/app/professional/disputes')} icon="shield">Disputes</Item>
         </>}
 
@@ -172,6 +174,7 @@ export default function AppShell() {
           <div className="side-group">Administration</div>
           <Item to="/app/ops" icon="building" end>Admin Dashboard</Item>
           {isOfficer && <Item to="/app/ops/verification" count={n('/app/ops/verification')} icon="shield">Verification Reviews</Item>}
+          {isOfficer && <Item to="/app/ops/enterprise" icon="building">Enterprise Ready</Item>}
           {user.platformRoles.some((r) => ['PLATFORM_ADMIN', 'TS_ANALYST'].includes(r)) && <Item to="/app/ops/users" icon="user">Users</Item>}
           {isAdmin && <Item to="/app/ops/staff" icon="team">Staff &amp; Roles</Item>}
           {isAdmin && <Item to="/app/ops/taxonomy" count={n('/app/ops/taxonomy')} icon="folder">Taxonomy</Item>}
@@ -184,6 +187,9 @@ export default function AppShell() {
           <Item to="/app/ops/safety" icon="shield">Safety Cases</Item>
           {user.platformRoles.includes('AI_SAFETY_REVIEWER') && <Item to="/app/ops/ai" icon="gear">AI Governance</Item>}
           {user.platformRoles.some((r) => ['FINANCIAL_OPS', 'PLATFORM_ADMIN'].includes(r)) && <Item to="/app/ops/switches" icon="lock">Switches &amp; Worker</Item>}
+          {user.platformRoles.some((r) => ['SUPPORT_AGENT', 'PLATFORM_ADMIN'].includes(r)) && <Item to="/app/ops/support" icon="help">Help Requests</Item>}
+          <Item to="/app/ops/incidents" icon="bell">Incidents</Item>
+          {user.platformRoles.some((r) => ['FINANCIAL_OPS', 'PLATFORM_ADMIN'].includes(r)) && <Item to="/app/ops/money" icon="wallet">Money Problems</Item>}
           {user.platformRoles.some((r) => ['FINANCIAL_OPS', 'PLATFORM_ADMIN'].includes(r)) && <Item to="/app/ops/dead-letters" icon="gear">Failed Deliveries</Item>}
         </>}
 
