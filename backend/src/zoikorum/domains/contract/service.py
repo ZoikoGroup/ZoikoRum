@@ -1094,10 +1094,14 @@ async def dispute_initiated(session: AsyncSession, payload: dict) -> None:
     if c is None or c.status not in ("ACTIVE", "DISPUTED"):
         return
     ids = {uuid.UUID(str(i)) for i in payload.get("milestoneIds", [])}
+    paused = False
     for m in await _milestones(session, c.id, lock=True):
         if m.id in ids and MILESTONE_STATES.can(m.status, "DISPUTED"):
             m.status = "DISPUTED"
             m.partial_offer_minor = m.partial_offer_reason = m.partial_offered_at = None
+            paused = True
+    if not paused:
+        return  # only accepted work's payment is disputed (escrow holds it); the engagement carries on
     if c.status == "ACTIVE":
         c.status = "DISPUTED"
         _evt(session, E.CONTRACT_DISPUTED, c, disputeId=payload["disputeId"])

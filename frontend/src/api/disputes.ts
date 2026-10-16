@@ -1,6 +1,8 @@
 import { allPages, api } from './client'
 import type { StoredFile, Upload } from './files'
 import type { Money } from './orgs'
+import type { Contract } from './contracts'
+import type { Escrow } from './escrow'
 
 /* Disputes (Step 9): funds freeze on submission; evidence; structured direct resolution; mediation; a platform decision
    needs the mediator and a second reviewer with the Legal role; escrow executes the outcome and the case is sealed. */
@@ -118,3 +120,25 @@ export const PHASE: Record<DisputeStatus, { label: string; tone: '' | 'green' | 
   CLOSED: { label: 'Closed', tone: '' },
 }
 export const OPEN_PHASES: DisputeStatus[] = ['EVIDENCE_COLLECTION', 'DIRECT_RESOLUTION', 'MEDIATION']
+
+const DISPUTABLE = ['IN_PROGRESS', 'SUBMITTED', 'REVISION_REQUESTED']  // funded and not yet accepted
+
+/** Accepted work whose payment is still held: its release was not approved (only a payment-release dispute can move it). */
+export function paymentStuck(c: Contract, escrow: Escrow | null | undefined): Set<string> {
+  const held = new Set((escrow?.allocations ?? []).filter((x) => x.state === 'HELD' || x.state === 'RELEASE_PENDING_APPROVAL').map((x) => x.milestoneId))
+  return new Set(c.milestones.filter((m) => m.status === 'ACCEPTED' && held.has(m.id)).map((m) => m.id))
+}
+
+/** When an accepted milestone's challenge window ends (its payment is released then), or null without a window. */
+export function releaseAfterWindow(c: Contract, milestoneId: string, now = Date.now()): Date | null {
+  const days = c.terms.policySettings?.challengeWindowDays ?? 0
+  const m = c.milestones.find((x) => x.id === milestoneId)
+  if (!days || !m?.acceptedAt) return null
+  const end = new Date(new Date(m.acceptedAt).getTime() + days * 86_400_000)
+  return end.getTime() > now ? end : null
+}
+
+export function disputableMilestones(c: Contract, escrow?: Escrow | null) {
+  const stuck = paymentStuck(c, escrow)
+  return c.milestones.filter((m) => DISPUTABLE.includes(m.status) || stuck.has(m.id))
+}

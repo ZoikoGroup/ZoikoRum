@@ -79,3 +79,17 @@ class Message(Base, UUIDPk, CreatedAt):
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     source_event_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
     flags: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+
+
+class Meeting(Base, UUIDPk, Timestamps):
+    """A call scheduled in a conversation (meetings.py). SCHEDULED -> CANCELLED. The link is to an outside video service."""
+
+    __tablename__ = "meetings"
+    __table_args__ = (Index("ix_meetings_thread_starts", "thread_id", "starts_at"), {"schema": SCHEMA})
+    thread_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("messaging.threads.id"), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    duration_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    join_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_by: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="SCHEDULED")

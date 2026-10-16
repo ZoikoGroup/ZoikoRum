@@ -135,6 +135,7 @@ export default function AppShell() {
           <Item to="/app/find" icon="search">Find Professionals</Item>
           <Item to="/app/saved" icon="bookmark">Saved Professionals</Item>
           <Item to="/app/requests" icon="request">Requests</Item>
+          <Item to="/app/briefs" icon="mail">Open Briefs</Item>
           <Item to="/app/proposals" count={n('/app/proposals')} icon="proposal">Proposals</Item>
           <Item to="/app/engagements" count={n('/app/engagements')} icon="briefcase">Engagements</Item>
           <Item to="/app/payments" icon="wallet">Payments &amp; Protection</Item>
@@ -153,6 +154,7 @@ export default function AppShell() {
           <Item to="/app/professional/verification" icon="shield">Verification &amp; Trust</Item>
           {inFirm && !dashboards.has('firm') && <Item to="/app/firm/team" icon="team">My Firm</Item>}
           <Item to="/app/professional/requests" icon="proposal" count={n('/app/professional/requests')}>Requests</Item>
+          <Item to="/app/professional/briefs" icon="mail">Open Briefs</Item>
           <Item to="/app/professional/engagements" icon="briefcase" count={n('/app/professional/engagements')}>Engagements</Item>
           <Item to="/app/messages" icon="message" count={unreadMessages}>Messages</Item>
           <Item to="/app/professional/buyers" icon="bookmark">Saved Buyers</Item>

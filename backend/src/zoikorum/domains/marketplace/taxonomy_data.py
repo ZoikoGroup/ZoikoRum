@@ -128,7 +128,21 @@ CONSULTING = {
     ],
 }
 
-CATEGORIES = [FINANCE_ACCOUNTING, TECHNOLOGY, LEGAL, PEOPLE, MARKETING, CONSULTING]
+CREATIVE = {
+    "name": "Creative & Design",
+    "credential_hints": [],
+    "groups": [
+        ("Visual Design", [
+            ("Graphic Design", ""), ("Illustration", ""), ("Presentation & Pitch Deck Design", ""), ("Packaging & Print Design", ""),
+        ]),
+        ("Video & Audio", [("Video Production & Editing", ""), ("Motion Graphics & Animation", ""), ("Podcast & Audio Production", "")]),
+        ("Writing & Translation", [
+            ("Technical & Business Writing", ""), ("Translation & Localisation", ""), ("Editing & Proofreading", ""),
+        ]),
+    ],
+}
+
+CATEGORIES = [FINANCE_ACCOUNTING, TECHNOLOGY, LEGAL, PEOPLE, MARKETING, CONSULTING, CREATIVE]
 
 # Typical deliverables per group (Onboarding s.8 "deliverables templates"); specific overrides below.
 GROUP_DELIVERABLES = {
@@ -157,6 +171,9 @@ GROUP_DELIVERABLES = {
     "Strategy": ["Situation analysis", "Strategy options and recommendation", "Roadmap"],
     "Operations": ["Current-state assessment", "Improvement plan", "Implementation support report"],
     "Transformation": ["Transformation roadmap", "Governance and change plan", "Progress reporting"],
+    "Visual Design": ["Concepts and moodboard", "Final design files", "Usage guidelines"],
+    "Video & Audio": ["Script or storyboard", "Edited final cut", "Source files and formats"],
+    "Writing & Translation": ["Outline or glossary", "Final text", "Revision notes"],
 }
 SPECIALIZATION_DELIVERABLES = {
     "Fractional CFO": ["Financial strategy and operating plan", "Investor and board reporting", "Fundraising support materials"],

@@ -217,3 +217,18 @@ class SubmissionReview(Base, UUIDPk, CreatedAt):
     reviewer_identity_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     verdicts: Mapped[list] = mapped_column(JSONB, nullable=False)  # [{deliverableKey, verdict: MET | CHANGES_REQUESTED, comment}]
     outcome: Mapped[str] = mapped_column(String(30), nullable=False)  # ACCEPTED | REVISION_REQUESTED
+
+
+class EngagementTask(Base, UUIDPk, Timestamps):
+    """A shared to-do on an engagement (tasks.py): who does what by when. Not part of the signed terms."""
+
+    __tablename__ = "tasks"
+    __table_args__ = (Index("ix_tasks_contract", "contract_id", "created_at"), {"schema": SCHEMA})
+    contract_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.contracts.id"), nullable=False)
+    milestone_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    owner: Mapped[str] = mapped_column(String(20), nullable=False)  # BUYER | PROFESSIONAL
+    due_date: Mapped[date | None] = mapped_column(Date)
+    done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    done_by: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    created_by: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)

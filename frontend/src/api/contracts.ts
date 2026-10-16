@@ -91,6 +91,8 @@ export interface ContractTerms {
   startDate: string | null
   endDate: string | null
   governingLaw?: string  // set by an enterprise policy; otherwise the Terms of Service apply
+  /** Deadlines pinned when the contract was made; challengeWindowDays: days after acceptance before payment is released. */
+  policySettings?: { challengeWindowDays?: number | null }
 }
 
 export interface ChangeOrder {
@@ -196,7 +198,19 @@ export const LINK_PROVIDER: Record<string, string> = {
   DROPBOX: 'Dropbox', AIRTABLE: 'Airtable', GITHUB: 'GitHub', GITLAB: 'GitLab', BITBUCKET: 'Bitbucket', WEBSITE: 'Website',
 }
 
+export interface EngagementTask {
+  id: string; contractId: string; milestoneId: string | null; title: string; owner: 'BUYER' | 'PROFESSIONAL'
+  dueDate: string | null; done: boolean; doneAt: string | null; overdue: boolean; createdAt: string
+}
+export interface TaskInput { title: string; owner: 'BUYER' | 'PROFESSIONAL'; dueDate?: string | null; milestoneId?: string | null }
+
 export const contractApi = {
+  /** The engagement's shared task list (not part of the signed terms). */
+  tasks: (id: string) => api<EngagementTask[]>(`${C}/${id}/tasks`),
+  addTask: (id: string, body: TaskInput) => api<EngagementTask>(`${C}/${id}/tasks`, { method: 'POST', body, headers: idem() }),
+  updateTask: (taskId: string, body: Partial<Omit<TaskInput, 'milestoneId'>> & { done?: boolean }) =>
+    api<EngagementTask>(`/v1/contract-tasks/${taskId}`, { method: 'PATCH', body, headers: idem() }),
+  removeTask: (taskId: string) => api<void>(`/v1/contract-tasks/${taskId}`, { method: 'DELETE', headers: idem() }),
   list: (role: 'buyer' | 'professional', status?: string) =>
     api<{ items: Contract[] }>(C, { query: { role, limit: '100', ...(status ? { status } : {}) } }).then((r) => r.items),
   summary: (role: 'buyer' | 'professional') => api<ContractSummary>(`${C}/summary`, { query: { role } }),

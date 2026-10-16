@@ -4,7 +4,7 @@ import uuid
 from urllib.parse import quote
 
 from fastapi import APIRouter, Query, Response
-from zoikorum.domains.messaging import service
+from zoikorum.domains.messaging import meetings, service
 from zoikorum.domains.messaging.schemas import MessageHitOut, MessageIn, MessageOut, ReadIn, ThreadIn, ThreadOut, UploadIn, AttachmentOut, UnreadSummaryOut
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
@@ -12,6 +12,23 @@ from zoikorum.shared.http import Page
 from zoikorum.shared.idempotency import IdempotencyKey
 
 router = APIRouter(tags=["messaging"])
+
+
+# ---- Meetings (meetings.py) -------------------------------------------------------------
+@router.post("/v1/threads/{thread_id}/meetings", response_model=meetings.MeetingOut, status_code=201)
+async def schedule_meeting(thread_id: uuid.UUID, body: meetings.MeetingIn, actor: CurrentActor, session: DbSession, idem: IdempotencyKey):
+    """Schedule a call in this conversation: your own link (Zoom, Teams, Meet) or a generated video room."""
+    return await idem.run(session, actor, lambda: meetings.schedule(session, actor, thread_id, body), status_code=201)
+
+
+@router.get("/v1/threads/{thread_id}/meetings", response_model=list[meetings.MeetingOut])
+async def thread_meetings(thread_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    return await meetings.list_for_thread(session, actor, thread_id)
+
+
+@router.post("/v1/meetings/{meeting_id}/cancel", response_model=meetings.MeetingOut)
+async def cancel_meeting(meeting_id: uuid.UUID, actor: CurrentActor, session: DbSession, idem: IdempotencyKey):
+    return await idem.run(session, actor, lambda: meetings.cancel(session, actor, meeting_id))
 
 
 @router.post("/v1/threads", response_model=ThreadOut, status_code=201)

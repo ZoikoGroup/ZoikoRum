@@ -108,3 +108,28 @@ async def files_for_contexts(session: AsyncSession, contexts: list[tuple[str, uu
                                   .order_by(Attachment.created_at))).all()
     return [FileRef("Messages", f"{a.name} (v{a.file_version})" if a.file_version > 1 else a.name, a.sha256, a.size_bytes,
                     a.created_at, f"/v1/threads/{a.thread_id}/attachments/{a.id}") for a in rows]
+
+
+async def upcoming_meetings(session: AsyncSession, org_ids: list[uuid.UUID], professional_id: uuid.UUID | None,
+                            days: int = 180) -> list[dict]:
+    """Scheduled meetings in the person's conversations, for their calendar feed."""
+    from datetime import timedelta
+
+    from sqlalchemy import or_
+
+    from zoikorum.domains.messaging.models import Meeting
+    from zoikorum.shared import clock
+
+    who = []
+    if org_ids:
+        who.append(Thread.organization_id.in_(org_ids))
+    if professional_id:
+        who.append(Thread.professional_id == professional_id)
+    if not who:
+        return []
+    now = clock.now()
+    rows = (await session.execute(select(Meeting, Thread).join(Thread, Thread.id == Meeting.thread_id).where(
+        or_(*who), Meeting.status == "SCHEDULED", Meeting.starts_at >= now - timedelta(days=1),
+        Meeting.starts_at <= now + timedelta(days=days)))).all()
+    return [{"uid": f"meeting-{m.id}", "start": m.starts_at, "end": m.starts_at + timedelta(minutes=m.duration_minutes),
+             "title": m.title, "detail": f"{t.title} - join: {m.join_url}", "url": m.join_url} for m, t in rows]

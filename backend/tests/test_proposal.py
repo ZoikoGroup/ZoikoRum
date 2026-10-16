@@ -279,3 +279,17 @@ async def test_a_professional_blocked_by_tier_is_told_what_to_verify(client, mak
     notes = [n for n in (await client.get("/v1/notifications", headers=c_user.h)).json()["items"] if n["title"] == "Verify to work with this buyer"]
     assert len(notes) == 1 and "Trust Tier B" in notes[0]["body"] and "Verification" in notes[0]["body"]
     assert not [n for n in (await client.get("/v1/notifications", headers=buyer.h)).json()["items"] if n["title"] == "Verify to work with this buyer"]
+
+
+async def test_a_request_goes_to_at_most_the_configured_number_of_professionals(client, make_user, drain, monkeypatch):
+    import uuid
+
+    from zoikorum.config import get_settings
+
+    buyer, org = await buyer_org(client, make_user, drain, "many-bea")
+    fake = [{"id": str(uuid.uuid4())} for _ in range(6)]
+    r = await client.post("/v1/proposal-requests", headers=buyer.idem(), json=request_body(org, *fake))
+    assert r.status_code == 422 and "at most 5 professionals" in r.text
+    monkeypatch.setattr(get_settings(), "max_professionals_per_request", 2)
+    r = await client.post("/v1/proposal-requests", headers=buyer.idem(), json=request_body(org, *fake[:3]))
+    assert r.status_code == 422 and "at most 2 professionals" in r.text

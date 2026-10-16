@@ -119,6 +119,36 @@
   "backupIdentityId",
   "primaryIdentityId"
  ],
+ "BriefIn": [
+  "budget",
+  "desiredStartDate",
+  "details",
+  "estimatedDuration",
+  "objective",
+  "organizationId",
+  "service",
+  "specialization"
+ ],
+ "BriefOut": [
+  "budget",
+  "closesAt",
+  "country",
+  "createdAt",
+  "desiredStartDate",
+  "details",
+  "estimatedDuration",
+  "id",
+  "industry",
+  "interestCount",
+  "interests",
+  "myInterest",
+  "objective",
+  "organizationId",
+  "service",
+  "specialization",
+  "specializationName",
+  "status"
+ ],
  "Budget": [
   "currency",
   "maxMinor",
@@ -739,6 +769,14 @@
   "reasons",
   "source"
  ],
+ "InterestIn": [
+  "note"
+ ],
+ "InterestOut": [
+  "createdAt",
+  "note",
+  "professional"
+ ],
  "InvitationOut": [
   "createdAt",
   "devInviteUrl",
@@ -830,6 +868,22 @@
   "language",
   "phone",
   "timeZone"
+ ],
+ "MeetingIn": [
+  "durationMinutes",
+  "joinUrl",
+  "startsAt",
+  "title"
+ ],
+ "MeetingOut": [
+  "createdAt",
+  "durationMinutes",
+  "id",
+  "joinUrl",
+  "startsAt",
+  "status",
+  "threadId",
+  "title"
  ],
  "MemberOut": [
   "businessUnitId",
@@ -1876,6 +1930,30 @@
  "SwitchIn": [
   "paused",
   "reason"
+ ],
+ "TaskIn": [
+  "dueDate",
+  "milestoneId",
+  "owner",
+  "title"
+ ],
+ "TaskOut": [
+  "contractId",
+  "createdAt",
+  "done",
+  "doneAt",
+  "dueDate",
+  "id",
+  "milestoneId",
+  "overdue",
+  "owner",
+  "title"
+ ],
+ "TaskPatch": [
+  "done",
+  "dueDate",
+  "owner",
+  "title"
  ],
  "TerminateIn": [
   "mutual",

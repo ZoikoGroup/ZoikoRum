@@ -6,6 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from zoikorum.config import get_settings
 from zoikorum.shared.money import MoneyDTO
 from zoikorum.shared.uploads import StoredFileOut, UploadIn
 
@@ -41,7 +42,7 @@ class RequestIn(BaseModel):
     organizationId: uuid.UUID
     costCenterId: uuid.UUID | None = None
     legalEntityId: uuid.UUID | None = None  # the organisation's contracting entity; empty: its default
-    professionalIds: list[uuid.UUID] = Field(min_length=1, max_length=3)
+    professionalIds: list[uuid.UUID] = Field(min_length=1, max_length=10)  # the platform's limit: max_professionals_per_request
     offeringId: uuid.UUID | None = None
     service: str = Field(min_length=2, max_length=200)
     specialization: str | None = Field(default=None, max_length=120)
@@ -70,6 +71,8 @@ class RequestIn(BaseModel):
         self.customDeliverables = [d for d in _clean_deliverables(self.customDeliverables) if d in self.deliverables]
         if len(set(self.professionalIds)) != len(self.professionalIds):
             raise ValueError("each professional can be chosen once")
+        if len(self.professionalIds) > (most := get_settings().max_professionals_per_request):
+            raise ValueError(f"a request can go to at most {most} professionals")
         if self.offeringId and len(self.professionalIds) > 1:
             raise ValueError("a service offering belongs to one professional")
         if self.deliveryMode != "REMOTE" and not (self.location or "").strip():

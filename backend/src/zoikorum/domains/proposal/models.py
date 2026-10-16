@@ -1,6 +1,6 @@
 """Proposal domain tables: a buyer's request to one professional, and that professional's proposal.
 
-A buyer may send the same requirement to up to three chosen professionals at once (RFP wireframe s.4:
+A buyer may send the same requirement to several chosen professionals (up to five by default) at once (RFP wireframe s.4:
 "Request Proposal for selected professional(s)"). Each professional gets their own request row; the rows share a
 ``group_id`` so the buyer can compare the proposals, and accepting one closes the others.
 """
@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Index, Integer, String
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -109,3 +109,35 @@ class Proposal(Base, UUIDPk, Timestamps, Versioned):
     reason_code: Mapped[str | None] = mapped_column(String(60))
     reason_note: Mapped[str | None] = mapped_column(String(500))
     terms_hash: Mapped[str | None] = mapped_column(String(64))
+
+
+# ---- Open briefs (briefs.py): a need described once; matching professionals say they are interested ----------------
+class OpenBrief(Base, UUIDPk, Timestamps):
+    """OPEN -> CLOSED (by the buyer, or when closes_at passes)."""
+
+    __tablename__ = "open_briefs"
+    __table_args__ = (Index("ix_open_briefs_match", "specialization", "status", "closes_at"),
+                      Index("ix_open_briefs_org", "organization_id", "created_at"), {"schema": SCHEMA})
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    buyer_identity_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    country: Mapped[str] = mapped_column(String(2), nullable=False)  # the buyer organisation's, for matching
+    service: Mapped[str] = mapped_column(String(200), nullable=False)
+    specialization: Mapped[str] = mapped_column(String(120), nullable=False)
+    objective: Mapped[str] = mapped_column(String(300), nullable=False)
+    details: Mapped[str] = mapped_column(String(1200), nullable=False, default="")
+    desired_start_date: Mapped[date | None] = mapped_column(Date)
+    estimated_duration: Mapped[str | None] = mapped_column(String(30))
+    budget_max_minor: Mapped[int | None] = mapped_column(BigInteger)
+    budget_currency: Mapped[str | None] = mapped_column(String(3))
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="OPEN")
+    closes_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class BriefInterest(Base, UUIDPk, Timestamps):
+    __tablename__ = "brief_interests"
+    __table_args__ = (UniqueConstraint("brief_id", "professional_id"), {"schema": SCHEMA})
+
+    brief_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.open_briefs.id"), nullable=False, index=True)
+    professional_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    note: Mapped[str] = mapped_column(String(500), nullable=False, default="")

@@ -136,7 +136,15 @@ class Settings(BaseSettings):
     signature_deadline_days: int = 7  # unsigned contracts escalate after this
     request_response_hours: int = 72  # professionals are asked to answer a request within this; reminded a day before
     termination_response_days: int = 7  # a request to end an engagement by agreement lapses if not answered
+    # Meetings in conversations: a link is generated here when the person does not paste their own (Zoom, Teams, Meet).
+    # A self-hosted Jitsi address works too. Empty: people always paste their own link.
+    meeting_base_url: str = "https://meet.jit.si/"
+    max_professionals_per_request: int = 5  # one requirement sent to several chosen professionals at once (at most 10)
     acceptance_window_days: int = 5  # buyer's review window after a milestone is submitted
+    # Accepted work whose payment release the buyer's approver refused (or let expire) is never left alone: every this
+    # many days the organisation's approvers and admins and the professional are reminded, and either side can take it to
+    # a payment-release dispute.
+    release_block_escalation_days: int = 5
     funding_reminder_days: int = 7  # remind the buyer this many days before an unfunded milestone / retainer cycle is due
 
     # Disputes (Step 9). Direct resolution default is from the Dispute Resolution doc s.10; the evidence window is not
@@ -158,8 +166,15 @@ class Settings(BaseSettings):
     # {"IN": {"label": "GST", "rateBps": 1800, "basis": "FEE"}, "GB": {"label": "VAT", "rateBps": 2000, "basis": "TOTAL"}}
     # basis FEE: tax on Zoikorum's platform fee only; TOTAL: on the whole amount. Empty: invoices show no tax.
     tax_rules: dict[str, dict] = Field(default_factory=dict)
-    # Days after acceptance in which accepted work may still be disputed. 0 until management sets one (not enforced yet).
-    dispute_challenge_window_days: int = 0
+    # Spend limits in another currency: units of each currency per 1 USD, set by Finance, e.g. {"USD": 1, "EUR": 0.92}.
+    # The converted amount gets this safety margin (basis points) and is rounded up. Empty: a limit in another currency
+    # does not authorise the amount.
+    fx_rates: dict[str, float] = Field(default_factory=dict)
+    fx_margin_bps: int = Field(default=300, ge=0, le=5_000)
+    # Days after acceptance in which accepted work may still be disputed. Its payment is held until the window ends, so
+    # a defect found after acceptance can still be put right. 0: paid out at acceptance (an organisation's policy may set
+    # its own window).
+    dispute_challenge_window_days: int = Field(default=0, ge=0, le=90)
 
     @property
     def mfa_bypass(self) -> bool:

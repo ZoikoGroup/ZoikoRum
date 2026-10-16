@@ -95,6 +95,9 @@ async def test_filters(client, make_user, drain):
     assert await names(client, spec="fractional-cfo,budgeting-and-forecasting", specMatch="all") == ["Pia"]
     assert await names(client, jurisdiction="gb") == ["Pia"]
     assert await names(client, jurisdiction="IN") == ["Tom"]
+    # Licensed in Germany but not serving it: an engagement could not be agreed there, so it is not a match.
+    await publish(client, make_user, drain, "lea", headline="Auditor", primary="transfer-pricing", served=("FR",), licensed=("DE",))
+    assert await names(client, jurisdiction="DE") == []
     assert await names(client, availability="NOW") == ["Pia"]
     assert await names(client, category="finance-and-accounting", tier="A") == []
     bad = await client.get(URL, params={"verified": "astrology"})

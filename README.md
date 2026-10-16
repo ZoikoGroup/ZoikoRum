@@ -8,7 +8,6 @@ escrow-protected payments and an audit-grade record of every action.
 | [`backend/`](backend/) | FastAPI + PostgreSQL modular monolith: one schema per domain, outbox events, audit ledger | [backend/README.md](backend/README.md), [Architecture](backend/docs/ARCHITECTURE.md), [Build spec](backend/docs/BUILD_SPEC.md) |
 | [`frontend/`](frontend/) | React 19 + TypeScript + Vite web app | [frontend/README.md](frontend/README.md) |
 | `docker-compose.yml` | Local Postgres 16 (port 5434) and Redis 7 (port 6380) | |
-| [`docs/product/`](docs/product/README.md) | The 18 product documents (originals + readable text) | |
 | `start-dev.ps1` | Starts the whole dev stack on Windows | |
 | `run-tests.ps1` | Runs every test suite (or one kind: `-Kind unit`, `integration`, `regression`) | |
 | `.github/workflows/ci.yml` | CI: migrations, backend unit / integration / regression tests, frontend lint, unit tests, build | |
@@ -50,7 +49,7 @@ Run the regression suite before every merge; CI runs all three on every push.
 ## Build status
 
 Built in small, reviewed steps. See [ARCHITECTURE.md §6](backend/docs/ARCHITECTURE.md) for the current status:
-Steps 0–9 form the core marketplace. Steps 10–18 now have backend and frontend implementations for messaging, change orders, enterprise policies, notifications, dispute extras, reviews, AI assistance, reports and safety tools. This is implementation status, not a claim of production readiness. See [current merge status and validation limits](backend/docs/CURRENT_STATUS.md) and [Steps 12–18](backend/docs/STEPS_12_18_IMPLEMENTATION.md) for remaining work.
+Steps 0–9 form the core marketplace. Steps 10–18 now have backend and frontend implementations for messaging, change orders, enterprise policies, notifications, dispute extras, reviews, AI assistance, reports and safety tools. This is implementation status, not a claim of production readiness: [LAUNCH_CHECKLIST.md](backend/docs/LAUNCH_CHECKLIST.md) lists what is left before launch.
 
 ## Rules of the road
 

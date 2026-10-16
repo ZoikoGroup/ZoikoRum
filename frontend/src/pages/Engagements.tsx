@@ -6,9 +6,10 @@ import { Link, useParams } from 'react-router-dom'
 import { CONTRACT_STATUS, contractApi, MILESTONE_STATUS, type PolicyState, type ActivityEntry, type ChangeOrder, type Contract, type ContractMilestone,
   type EngagementFile, type Verdict } from '../api/contracts'
 import { DeliveryForm, ReviewPanel, SubmissionView } from '../components/Delivery'
-import { disputeApi, OPEN_PHASES, type Dispute } from '../api/disputes'
+import { disputableMilestones, disputeApi, OPEN_PHASES, paymentStuck, releaseAfterWindow, type Dispute } from '../api/disputes'
 import { escrowApi, type Escrow } from '../api/escrow'
-import { disputableMilestones, RaiseDisputeDialog } from './Disputes'
+import { MeetingsPanel, TasksPanel } from '../components/Collaboration'
+import { RaiseDisputeDialog } from './Disputes'
 import { FundDialog, PaymentsPanel } from '../components/EscrowPanels'
 import { formatMoney, orgApi } from '../api/orgs'
 import { LABEL } from '../api/professional'
@@ -94,7 +95,7 @@ export function EngagementDetail({ side }: { side: Side }) {
   const [c, setC] = useState<Contract | null>(null)
   const [error, setError] = useState<unknown>(null)
   const [notice, setNotice] = useState<string | null>(null)
-  const [tab, setTab] = useState<'overview' | 'agreement' | 'changes' | 'milestones' | 'payments' | 'messages' | 'files' | 'activity'>('overview')
+  const [tab, setTab] = useState<'overview' | 'agreement' | 'changes' | 'milestones' | 'tasks' | 'payments' | 'messages' | 'files' | 'activity'>('overview')
   const [doc, setDoc] = useState<string | null>(null)
   const [read, setRead] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -139,11 +140,11 @@ export function EngagementDetail({ side }: { side: Side }) {
   return (
     <>
       {modal}
-      {raising && <RaiseDisputeDialog contract={c} onClose={() => setRaising(false)} />}
+      {raising && <RaiseDisputeDialog contract={c} escrow={escrow} onClose={() => setRaising(false)} />}
       <PortalHeader eyebrow={<Link to={base(side)}>← Engagements</Link>} title={c.title}
         subtitle={<><span className={`badge ${st.tone}`}>{st.label}</span> · {c.reference} · {formatMoney(c.total)} · version {c.contractVersion}</>}
         actions={<><Link className="btn btn-secondary" to={`/app/messages?contextType=CONTRACT&contextId=${c.id}`}><Icon name="message" /> Messages</Link>
-          {(c.status === 'ACTIVE' || c.status === 'DISPUTED') && disputableMilestones(c).length > 0 &&
+          {(c.status === 'ACTIVE' || c.status === 'DISPUTED' || (c.status === 'COMPLETED' && paymentStuck(c, escrow).size > 0)) && disputableMilestones(c, escrow).length > 0 &&
             <button className="btn btn-ghost" onClick={() => setRaising(true)}><Icon name="help" /> Raise a dispute</button>}</>} />
       {notice && <div className="alert alert-success" role="status">{notice}</div>}
       <ErrorAlert error={error} />
@@ -176,7 +177,7 @@ export function EngagementDetail({ side }: { side: Side }) {
         professionalName={c.parties.find((p) => p.role === 'PROFESSIONAL')?.name} organizationName={c.parties.find((p) => p.role === 'BUYER')?.name} />}
       {tab === 'agreement' && <AIAssistance purpose="contract-summary" subjectId={c.id} />}
       <Tabs tabs={[{ key: 'overview', label: 'Overview' }, { key: 'agreement', label: 'Agreement' }, { key: 'milestones', label: 'Milestones', count: c.milestones.length },
-        { key: 'changes', label: 'Change orders', count: c.changeOrders.length }, { key: 'payments', label: 'Payments' },
+        { key: 'tasks', label: 'Tasks' }, { key: 'changes', label: 'Change orders', count: c.changeOrders.length }, { key: 'payments', label: 'Payments' },
         { key: 'messages', label: 'Messages' }, { key: 'files', label: 'Files' }, { key: 'activity', label: 'Activity' }]} value={tab} onChange={setTab} />
 
       {tab === 'overview' && (
@@ -312,6 +313,7 @@ export function EngagementDetail({ side }: { side: Side }) {
             canFund={!!escrow?.canFund && escrow.allocations.some((x) => x.milestoneId === m.id && x.state === 'UNFUNDED') && !blockedReason('ESCROW_FUND', m.id)}
             acceptBlocked={blockedReason('MILESTONE_ACCEPT', m.id)}
             funding={escrow?.allocations.find((x) => x.milestoneId === m.id)?.state === 'FUNDING'}
+            paymentStuck={paymentStuck(c, escrow).has(m.id) && escrow?.allocations.find((x) => x.milestoneId === m.id)?.state === 'RELEASE_PENDING_APPROVAL'}
             onFund={() => setFundFor([m.id])}
             onSent={(k) => { setC(k); setError(null); setNotice('Work sent to the buyer for review.') }}
             onReview={(verdicts) => {
@@ -328,6 +330,7 @@ export function EngagementDetail({ side }: { side: Side }) {
       {tab === 'payments' && <PaymentsPanel c={c} escrow={escrow} side={side} onFund={(ids) => setFundFor(ids)}
         fundBlocked={blockedReason('ESCROW_FUND')} />}
 
+      {tab === 'tasks' && <TasksPanel c={c} side={side} onError={setError} />}
       {tab === 'messages' && <MessagesPreview c={c} />}
       {tab === 'files' && <FilesPanel c={c} onError={setError} />}
       {tab === 'activity' && <ActivityPanel c={c} onError={setError} />}
@@ -600,8 +603,8 @@ function RetainerCycles({ c, side, busy, onCancel, onPause, onResume }: { c: Con
   )
 }
 
-function MilestoneCard({ m, c, side, busy, canFund, funding, onFund, onSent, onReview, onOfferPartial, onAnswerPartial, acceptBlocked }: {
-  acceptBlocked?: string
+function MilestoneCard({ m, c, side, busy, canFund, funding, onFund, onSent, onReview, onOfferPartial, onAnswerPartial, acceptBlocked, paymentStuck }: {
+  acceptBlocked?: string; paymentStuck?: boolean
   m: ContractMilestone; c: Contract; side: Side; busy: boolean; canFund: boolean; funding: boolean; onFund: () => void
   onSent: (c: Contract) => void; onReview: (verdicts: { deliverableKey: string; verdict: Verdict; comment: string }[]) => void
   onOfferPartial: (amountMinor: number, reason: string) => void; onAnswerPartial: (agree: boolean) => void
@@ -641,6 +644,13 @@ function MilestoneCard({ m, c, side, busy, canFund, funding, onFund, onSent, onR
 
       {canDeliver && <DeliveryForm m={m} onSent={onSent} />}
 
+      {m.status === 'ACCEPTED' && !paymentStuck && (() => { const end = releaseAfterWindow(c, m.id); return end && <div className="tip" style={{ marginTop: 10 }}>
+        <Icon name="lock" /><span><strong>Payment is released on {end.toLocaleDateString()}.</strong>{' '}{side === 'buyer'
+          ? 'Until then you can still raise a problem with this work; after that date it is paid out.'
+          : 'The agreement gives the buyer this period to raise a problem after accepting; the money is held in escrow until then.'}</span></div> })()}
+      {paymentStuck && <div className="tip" style={{ marginTop: 10 }}><Icon name="wallet" /><span><strong>Payment waiting for the buyer's approval.</strong>{' '}
+        {side === 'buyer' ? 'Your organisation has not approved releasing this payment yet. Ask your approver again, or raise a payment-release dispute so a mediator decides.'
+          : 'The work is accepted, but the buyer\'s organisation has not approved the payment yet. The money stays protected in escrow; if it is not released, raise a payment-release dispute.'}</span></div>}
       {m.acceptedRelease && <p className="small muted" style={{ margin: '8px 0 0' }}>Accepted for {formatMoney(m.acceptedRelease)} by agreement;
         {' '}{formatMoney({ amountMinor: m.amount.amountMinor - m.acceptedRelease.amountMinor, currency: m.amount.currency })} was refunded to the buyer.</p>}
       {m.partialOffer && m.status === 'SUBMITTED' && <div className="tip" style={{ marginTop: 10 }}><Icon name="wallet" /><span>
@@ -718,11 +728,13 @@ function ActivationPanel({ c, escrow, side, onFund }: { c: Contract; escrow: Esc
 function MessagesPreview({ c }: { c: Contract }) {
   const [messages, setMessages] = useState<ConversationMessage[] | null>(null)
   const [threadId, setThreadId] = useState<string | null>(null)
-  useEffect(() => {
+  const load = useCallback(() => {
     messagingApi.open('CONTRACT', c.id).then(async (t) => { setThreadId(t.id); setMessages((await messagingApi.messages(t.id)).items.slice(-8)) })
       .catch(() => setMessages([]))
   }, [c.id])
+  useEffect(() => { load() }, [load])
   return (
+    <>
     <section className="card panel">
       <div className="panel-head"><h2>Messages</h2>
         <Link className="btn btn-secondary btn-sm" to={`/app/messages?contextType=CONTRACT&contextId=${c.id}`}><Icon name="message" /> Open conversation</Link></div>
@@ -734,6 +746,8 @@ function MessagesPreview({ c }: { c: Contract }) {
       )}
       <p className="muted small" style={{ margin: 0 }}>Messages are part of the engagement record and cannot be edited or deleted.</p>
     </section>
+    {threadId && <MeetingsPanel threadId={threadId} onChange={load} />}
+    </>
   )
 }
 

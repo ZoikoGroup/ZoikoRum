@@ -166,3 +166,12 @@ async def kpis(session: AsyncSession, since, until) -> dict:
     for r in out.values():
         r["takeRateBps"] = round(10000 * r["feesMinor"] / r["releasedMinor"]) if r["releasedMinor"] else None
     return {"byCurrency": sorted(out.values(), key=lambda r: r["currency"])}
+
+
+async def release_stuck(session: AsyncSession, milestone_id: uuid.UUID) -> bool:
+    """Accepted work whose payment is still held in escrow: the release was not approved or still waits for approval."""
+    from zoikorum.domains.escrow.models import Release
+
+    x = await session.scalar(select(Allocation).where(Allocation.milestone_id == milestone_id))
+    return x is not None and x.state in ("HELD", "RELEASE_PENDING_APPROVAL") and not await session.scalar(
+        select(Release.id).where(Release.milestone_id == milestone_id))
