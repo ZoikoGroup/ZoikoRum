@@ -299,17 +299,22 @@ function FirmWork({ firmId }: { firmId: string }) {
             note={`${work.awaitingSignature} awaiting signature · ${work.completedContracts} completed`} />
           <Kpi icon="wallet" tone="teal" label="Held in escrow" value={moneyList(work.money, 'heldMinor')}
             note={`Released to date: ${moneyList(work.money, 'releasedMinor')}`} />
+          <Kpi icon="shield" tone={work.professionals.some((p) => p.tier === 'C') ? 'amber' : 'green'} label="Verified professionals"
+            value={`${work.professionals.filter((p) => p.tier !== 'C').length} of ${work.professionals.length}`}
+            note="Tier B or A: can send proposals" />
         </div>
         {work.professionals.length === 0 ? (
           <p className="muted small" style={{ margin: 0 }}>No professionals practise under the firm yet. Invite them from the team page;
             they choose the firm in their own profile.</p>
         ) : (
           <table className="data">
-            <thead><tr><th>Professional</th><th>Open requests</th><th>Contracts</th><th>Held in escrow</th><th>Released</th></tr></thead>
+            <thead><tr><th>Professional</th><th>Trust Tier</th><th>Open requests</th><th>Contracts</th><th>Held in escrow</th><th>Released</th></tr></thead>
             <tbody>{work.professionals.map((p) => (
               <tr key={p.professionalId}>
                 <td><strong>{p.displayName}</strong>{!p.published && <span className="badge" style={{ marginLeft: 6 }}>Not published</span>}
                   {p.headline && <div className="muted small">{p.headline}</div>}</td>
+                <td><span className={`badge ${p.tier === 'C' ? 'warn' : 'green'}`}>Tier {p.tier}</span>
+                  {p.tier === 'C' && <div className="muted small">Identity not verified</div>}</td>
                 <td>{p.openRequests}</td>
                 <td>{p.activeContracts} active<div className="muted small">{p.awaitingSignature} to sign · {p.completedContracts} completed</div></td>
                 <td>{moneyList(p.money, 'heldMinor')}</td>
@@ -383,7 +388,14 @@ export function FirmDashboard() {
       </div>
       <div className="home-grid">
         <div>
-          {isAdmin && <FirmWork firmId={firm.id} />}
+          {isAdmin ? <FirmWork firmId={firm.id} /> : user.personas.includes('PROFESSIONAL') && (
+            <section className="card panel">
+              <div className="panel-head"><h2>Your work under the firm</h2></div>
+              <p className="muted small">Your requests, engagements and earnings are on your professional dashboard. Firm Admins see
+                totals across the firm, never your clients, terms or documents.</p>
+              <Link className="btn btn-secondary btn-sm" to="/app/professional">Open my dashboard</Link>
+            </section>
+          )}
           <section className="card panel">
             <div className="panel-head"><h2>Your roles</h2></div>
             <FirmRoleBadges roles={firm.myRoles} />

@@ -8,6 +8,18 @@ export interface DashboardSummary {
   fundsInProtectionMinor: Record<string, number>
   pendingReleaseMinor: Record<string, number>
   earningsThisMonthMinor: Record<string, number>
+  lifetimeEarningsMinor: Record<string, number>
+  /** Proposals sent and waiting on the buyer's decision. */
+  openProposals: number
+  /** Requests the professional has not yet answered. */
+  newRequests: number
+  /** Milestones not yet accepted that have a due date, soonest first. */
+  upcomingMilestones: { id: string; contractId: string; title: string | null; dueDate: string }[]
+  trustTier: 'A' | 'B' | 'C' | null
+  /** Verification checks by state, e.g. {"VERIFIED": 2, "NEEDS_INFO": 1}. */
+  verificationStatus: Record<string, number>
+  /** Buyer dashboard only. */
+  savedProfessionals?: number
   /** When the newest event behind these figures happened: how fresh the summary is. */
   lastEventAt: string | null
 }

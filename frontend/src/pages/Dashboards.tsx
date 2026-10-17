@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { authApi, ROLE_LABEL } from '../api/auth'
 import { useAuth } from '../auth/AuthContext'
@@ -6,11 +6,10 @@ import { ErrorAlert } from '../components/ui'
 import { ResendConfirmation } from '../components/ResendConfirmation'
 import { WELCOME_KEY } from '../lib/welcome'
 
-/** Read once, on the first dashboard view after sign-up (Join.tsx). */
-function takeWelcome(): { confirmToken?: string | null } | null {
+/** Set by Join.tsx; shown on the first dashboard view after sign-up. */
+function readWelcome(): { confirmToken?: string | null } | null {
   try {
     const raw = sessionStorage.getItem(WELCOME_KEY)
-    sessionStorage.removeItem(WELCOME_KEY)
     return raw ? JSON.parse(raw) : null
   } catch {
     return null
@@ -20,7 +19,12 @@ function takeWelcome(): { confirmToken?: string | null } | null {
 /** Welcome message after sign-up and the email-confirmation reminder, shown on every dashboard. */
 export function AccountAlerts() {
   const { user } = useAuth()
-  const [welcome] = useState(takeWelcome)
+  // Read during render, removed only once shown: React may render and discard a tree (Suspense, StrictMode) before
+  // committing it, and a render that consumed the message would leave nothing for the one that is displayed.
+  const [welcome] = useState(readWelcome)
+  useEffect(() => {
+    if (welcome) try { sessionStorage.removeItem(WELCOME_KEY) } catch { /* storage unavailable: nothing to clear */ }
+  }, [welcome])
   if (!user) return null
   return (
     <>

@@ -41,6 +41,22 @@ def test_dashboard_signature_actions_follow_the_current_contract_version():
     assert summarize(rows, role='professional')['pendingActions'] == 0
 
 
+def test_dashboard_open_proposals_leave_once_withdrawn_or_chosen():
+    from types import SimpleNamespace
+    from zoikorum.domains.analytics.service import summarize
+    from zoikorum.shared.event_catalog import E
+    rows = []
+    def event(kind, pid):
+        rows.append(SimpleNamespace(event_type=kind, payload={'proposalId': pid, 'requestId': f'r-{pid}'}, aggregate_id=pid, occurred_at=clock.now()))
+    event(E.PROPOSAL_SUBMITTED, 'withdrawn')
+    event(E.PROPOSAL_SUBMITTED, 'chosen')
+    assert summarize(rows)['openProposals'] == 2
+    event(E.PROPOSAL_WITHDRAWN, 'withdrawn')
+    event(E.PROPOSAL_ACCEPTANCE_PENDING_APPROVAL, 'chosen')
+    assert summarize(rows)['openProposals'] == 0
+    assert summarize(rows)['pendingActions'] == 0
+
+
 def test_webhook_destinations_and_pdf():
     for url in ['http://public.example/events', 'https://localhost/events', 'https://u:p@public.example/events', 'https://[broken',
                 'https://127.0.0.1/events', 'https://[::1]/events', 'https://169.254.169.254/events']:

@@ -68,6 +68,7 @@ async def test_firm_credentials_overview_public_page_and_search(client, make_use
     assert overview.status_code == 200, overview.text
     work = overview.json()
     assert [p["professionalId"] for p in work["professionals"]] == [pro["id"]]
+    assert work["professionals"][0]["tier"] == (await client.get(f"/v1/trust/professionals/{pro['id']}", headers=admin.h)).json()["tier"]
     assert work["openRequests"] == work["activeContracts"] == 0 and work["money"] == []
     await pro_user.step_up()
     assert (await client.get(f"/v1/firms/{firm['id']}/overview", headers=pro_user.h)).status_code == 403

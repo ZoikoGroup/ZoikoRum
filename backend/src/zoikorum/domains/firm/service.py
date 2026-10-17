@@ -129,6 +129,7 @@ async def overview(session: AsyncSession, actor: Actor, firm_id: uuid.UUID) -> F
     open_requests = await proposal_facade.open_request_counts(session, ids)
     contracts = await contract_facade.contract_counts(session, ids)
     money = await escrow_facade.money_by_professional(session, ids)
+    trust = await trust_facade.get_trust_many(session, ids)
     rows, totals = [], {}
     for p in pros:
         c = contracts.get(p.id, {"awaitingSignature": 0, "active": 0, "completed": 0})
@@ -138,7 +139,7 @@ async def overview(session: AsyncSession, actor: Actor, firm_id: uuid.UUID) -> F
             t["released"] += v["released"]
         rows.append(FirmProfessionalWork(
             professionalId=p.id, displayName=p.display_name, headline=p.headline, published=p.status == "PUBLISHED",
-            openRequests=open_requests.get(p.id, 0), awaitingSignature=c["awaitingSignature"], activeContracts=c["active"],
+            tier=trust[p.id].tier if p.id in trust else "C", openRequests=open_requests.get(p.id, 0), awaitingSignature=c["awaitingSignature"], activeContracts=c["active"],
             completedContracts=c["completed"], money=_money(money.get(p.id, {}))))
     return FirmOverviewOut(
         professionals=rows, openRequests=sum(r.openRequests for r in rows), awaitingSignature=sum(r.awaitingSignature for r in rows),

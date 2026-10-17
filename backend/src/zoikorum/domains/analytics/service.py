@@ -65,7 +65,8 @@ def summarize(rows, role="buyer"):
         if kind == E.PROPOSAL_REQUESTED: requests[rid] = "NEW"
         if kind in (E.PROPOSAL_REQUEST_DECLINED, E.PROPOSAL_REQUEST_CANCELLED, E.PROPOSAL_SUBMITTED, E.PROPOSAL_REVISED): requests[rid] = "ANSWERED"
         if kind in (E.PROPOSAL_SUBMITTED, E.PROPOSAL_REVISED): proposals[pid] = "OPEN"
-        if kind in (E.PROPOSAL_ACCEPTED, E.PROPOSAL_REJECTED, E.PROPOSAL_EXPIRED): proposals[pid] = "CLOSED"
+        if kind in (E.PROPOSAL_ACCEPTED, E.PROPOSAL_REJECTED, E.PROPOSAL_EXPIRED, E.PROPOSAL_WITHDRAWN): proposals[pid] = "CLOSED"
+        if kind == E.PROPOSAL_ACCEPTANCE_PENDING_APPROVAL: proposals[pid] = "APPROVAL"  # chosen; the approvers act next
         if kind == E.PROPOSAL_REVISION_REQUESTED: proposals[pid] = "REVISION"
         if kind in (E.CONTRACT_GENERATED, E.CONTRACT_AMENDED):
             contracts[cid], signatures[cid] = "SIGNING", set()

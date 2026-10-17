@@ -1,34 +1,34 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { firmApi, orgApi, type Organization } from '../api/orgs'
 import { LABEL } from '../api/professional'
 import { formatMoney } from '../api/orgs'
 import { CONTRACT_STATUS, contractApi, type Contract } from '../api/contracts'
-import { proposalApi, requestStatus, type ProposalRequest } from '../api/proposals'
+import { BUYER_DECLINE_REASONS, proposalApi, requestStatus, type BuyerDeclineReason, type ProposalRequest } from '../api/proposals'
 import { savedApi, type SavedProfessional } from '../api/saved'
 import { messagingApi, type MessageThread } from '../api/messaging'
+import { disputeApi } from '../api/disputes'
+import { paymentsApi } from '../api/escrow'
+import { policyApi, type PolicyDashboard } from '../api/policy'
+import { buyerPaymentActions, buyerRequestActions, disputeActions } from '../lib/dashboardActions'
+import { buyerRequestBucket, deadlineOf, deadlineText, decidable, engagementMoney, isDisputed, type ReqTab } from '../lib/dashboardRows'
 import { useAuth } from '../auth/AuthContext'
 import { ActionList, Avatar, DataFreshness, greeting, Icon, type Action } from '../components/dashboard'
+import { DecisionDialog } from '../components/DecisionDialog'
+import { SavedSearchesPanel } from '../components/SavedSearches'
 import { dashboardApi, moneyOf, type DashboardSummary } from '../api/dashboards'
 import { EmptyTable, PortalHeader, StatCard, Tabs } from '../components/portal'
 import { AccountAlerts } from './Dashboards'
 import { formatCurrencies } from '../lib/money'
-import { Loading } from '../components/ui'
+import { ErrorAlert, Loading, useStepUp } from '../components/ui'
 
 /* Customer dashboard: management design + Buyer Dashboard & Engagement wireframe (5 summary cards,
    attention strip, engagements, assurance, requests & proposals, saved professionals). Real data only;
-   modules waiting on later steps show what will appear there. */
+   each module shows its own placeholder while it loads, so the page never waits on its slowest part. */
 
 type EngTab = 'all' | 'signing' | 'active' | 'completed'
 const engBucket = (c: Contract): EngTab => (c.status === 'PENDING_SIGNATURE' ? 'signing' : c.status === 'ACTIVE' ? 'active' : 'completed')
-type ReqTab = 'all' | 'open' | 'proposals' | 'accepted' | 'declined'
-const reqBucket = (r: ProposalRequest): ReqTab => {
-  const s = r.proposal?.status
-  if (s === 'ACCEPTED') return 'accepted'
-  if (s && ['SUBMITTED', 'UNDER_REVIEW', 'REVISION_REQUESTED'].includes(s)) return 'proposals'
-  if (['DRAFT', 'OPEN', 'PROPOSAL_RECEIVED'].includes(r.status)) return 'open'
-  return 'declined'
-}
+const REQ_TABS: Record<ReqTab, string> = { all: 'All', open: 'Open Requests', proposals: 'Proposals', accepted: 'Accepted', expired: 'Expired', declined: 'Closed' }
 
 // How every engagement is protected (Buyer Dashboard s.9, Payments & Escrow). Rules, not statuses.
 const ASSURANCE: { icon: 'shield' | 'contract' | 'lock' | 'check' | 'help' | 'request'; label: string; value: string }[] = [
@@ -43,7 +43,8 @@ const ASSURANCE: { icon: 'shield' | 'contract' | 'lock' | 'check' | 'help' | 're
 export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
   const { user } = useAuth()
   const [org, setOrg] = useState<Organization | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [orgLoading, setOrgLoading] = useState(true)
+  const [listsLoading, setListsLoading] = useState(true)
   const [myInvites, setMyInvites] = useState(0)
   const [orgInvites, setOrgInvites] = useState(0)
   const [units, setUnits] = useState<number | null>(null)
@@ -55,7 +56,27 @@ export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
   const [requests, setRequests] = useState<ProposalRequest[]>([])
   const [hideBanner, setHideBanner] = useState(false)
   const [threads, setThreads] = useState<MessageThread[]>([])
+  const [policy, setPolicy] = useState<PolicyDashboard | null>(null)
+  const [deciding, setDeciding] = useState<{ r: ProposalRequest; accept: boolean } | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [error, setError] = useState<unknown>(null)
+  const { run, modal } = useStepUp(setError)
+  const [now] = useState(() => Date.now())  // read the clock once, not on every render
   useEffect(() => { messagingApi.list().then((p) => setThreads(p.items.slice(0, 4))).catch(() => {}) }, [])
+
+  // Requests, contracts and the shortlist don't depend on the organisation: they load at once, alongside it.
+  const loadLists = useCallback(async () => {
+    const [rq, ct] = await Promise.all([proposalApi.list('buyer').catch(() => []), contractApi.list('buyer').catch(() => [])])
+    setRequests(rq); setContracts(ct)
+  }, [])
+  useEffect(() => {
+    let cancelled = false
+    Promise.all([loadLists(), savedApi.list().then(setSaved).catch(() => {}),
+      Promise.all([orgApi.myInvitations(), firmApi.myInvitations()]).then(([o, f]) => setMyInvites(o.length + f.length)).catch(() => {})])
+      .finally(() => { if (!cancelled) setListsLoading(false) })
+    return () => { cancelled = true }
+  }, [loadLists])
 
   useEffect(() => {
     let cancelled = false
@@ -69,11 +90,8 @@ export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
           if (found) { setOrg(found); break }
           await new Promise((r) => setTimeout(r, 800))
         }
-        const [o, f, s, rq, ct] = await Promise.all([orgApi.myInvitations(), firmApi.myInvitations(), savedApi.list(),
-          proposalApi.list('buyer').catch(() => []), contractApi.list('buyer').catch(() => [])])
-        if (!cancelled) { setMyInvites(o.length + f.length); setSaved(s); setRequests(rq); setContracts(ct) }
       } catch { /* each panel shows its own empty state */ }
-      if (!cancelled) setLoading(false)
+      if (!cancelled) setOrgLoading(false)
     })()
     return () => { cancelled = true }
   }, [kind])
@@ -83,9 +101,18 @@ export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
   useEffect(() => {
     if (org) dashboardApi.buyer(org.id).then(setSummary).catch(() => {})
   }, [org])
+  // Disputes and payment problems lead the attention queue (Buyer Dashboard s.16: no dead ends).
+  const [problems, setProblems] = useState<Action[]>([])
+  useEffect(() => {
+    if (!org) return
+    Promise.all([disputeApi.list('buyer').catch(() => []), paymentsApi.charges(org.id).catch(() => []),
+      paymentsApi.refunds(org.id).catch(() => [])])
+      .then(([d, c, r]) => setProblems([...disputeActions(d), ...buyerPaymentActions(c, r)]))
+  }, [org])
   useEffect(() => {
     if (!org || kind !== 'enterprise') return
     orgApi.businessUnits(org.id).then((u) => setUnits(u.length)).catch(() => {})
+    policyApi.dashboard(org.id).then(setPolicy).catch(() => {})
     if (isAdmin) {
       orgApi.invitations(org.id).then((i) => setOrgInvites(i.length)).catch(() => {})
       orgApi.members(org.id).then((ms) => setHasExceptionAuthority(ms.some((m) =>
@@ -94,11 +121,25 @@ export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
   }, [org, kind, isAdmin])
 
   if (!user) return null
-  if (loading) return <Loading />
+
+  async function decide(reason: BuyerDeclineReason | null, note: string | undefined) {
+    if (!deciding) return
+    const { r, accept } = deciding
+    setBusy(true); setError(null); setNotice(null)
+    await run(async () => {
+      if (accept) await proposalApi.accept(r.proposal!.id)
+      else await proposalApi.reject(r.proposal!.id, reason ?? 'OTHER', note)
+      setNotice(accept ? `Proposal accepted. The contract for “${r.service}” is ready for signing in Engagements.` : 'Proposal declined. The professional has been told.')
+      await loadLists()
+    })
+    setDeciding(null); setBusy(false)
+  }
 
   const actions: Action[] = []
   if (!user.emailConfirmed) actions.push({ title: 'Confirm your email address', detail: 'Needed before you can accept invitations', priority: 'High', to: '/app/settings', icon: 'mail' })
   if (myInvites > 0) actions.push({ title: `Respond to ${myInvites} invitation${myInvites > 1 ? 's' : ''}`, detail: 'You were invited to join a team', priority: 'Medium', to: '/app/invitations', icon: 'bell' })
+  if (kind === 'enterprise' && org && policy?.approvals.pending) actions.push({ title: `${policy.approvals.pending} approval${policy.approvals.pending > 1 ? 's' : ''} pending`,
+    detail: 'Work waits until the approvers decide', priority: 'Medium', to: `/app/policies?orgId=${org.id}&tab=approvals`, icon: 'shield' })
   if (kind === 'enterprise' && org && isAdmin) {
     if (org.memberCount <= 1) actions.push({ title: 'Invite your team', detail: 'Add requesters, approvers and budget owners', priority: 'Medium', to: '/app/organisation?tab=members', icon: 'team' })
     if (!hasExceptionAuthority) actions.push({ title: 'Name an Exception Authority', detail: 'Must be someone other than an Org Admin', priority: 'Medium', to: '/app/organisation?tab=roles', icon: 'shield' })
@@ -109,12 +150,17 @@ export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
   if (toSign.length > 0) actions.unshift({ title: `Sign the contract: ${toSign[0].title}`, detail: `${toSign[0].reference} · then the professional countersigns`, priority: 'High', to: `/app/engagements/${toSign[0].id}`, icon: 'contract' })
   const toApprove = contracts.flatMap((c) => c.milestones.filter((m) => m.status === 'SUBMITTED').map((m) => ({ c, m })))
   if (toApprove.length > 0) actions.unshift({ title: `Review submitted work: M${toApprove[0].m.sequence} ${toApprove[0].m.title}`, detail: toApprove[0].c.title, priority: 'High', to: `/app/engagements/${toApprove[0].c.id}`, icon: 'check' })
-  const toReview = requests.filter((r) => r.proposal && ['SUBMITTED', 'UNDER_REVIEW'].includes(r.proposal.status))
+  const toReview = requests.filter(decidable)
   if (toReview.length > 0) actions.unshift({ title: `Review ${toReview.length} proposal${toReview.length > 1 ? 's' : ''}`, detail: `${toReview[0].professional.displayName} replied to “${toReview[0].service}”`, priority: 'High', to: `/app/requests/${toReview[0].id}`, icon: 'proposal' })
+  actions.unshift(...problems, ...buyerRequestActions(requests, now))
   const drafts = requests.filter((r) => r.status === 'DRAFT')
   if (drafts.length > 0) actions.push({ title: 'Finish your draft request', detail: drafts[0].service, priority: 'Medium', to: `/app/requests/${drafts[0].id}`, icon: 'request' })
-  if (saved.length === 0) actions.push({ title: 'Find and save professionals', detail: 'Build a shortlist by specialization and Trust Tier', priority: 'Low', to: '/app/find', icon: 'search' })
+  if (!listsLoading && saved.length === 0) actions.push({ title: 'Find and save professionals', detail: 'Build a shortlist by specialization and Trust Tier', priority: 'Low', to: '/app/find', icon: 'search' })
   const urgent = actions.filter((a) => a.priority !== 'Low')
+  const money = contracts.map(engagementMoney)
+  const shownContracts = contracts.filter((c) => engTab === 'all' || engBucket(c) === engTab)
+  const shownRequests = requests.filter((r) => reqTab === 'all' || buyerRequestBucket(r) === reqTab)
+  const blocked = policy?.decisions.BLOCK ?? 0
 
   return (
     <>
@@ -125,17 +171,32 @@ export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
           <Link className="btn btn-secondary" to="/app/requests/new"><Icon name="request" /> Create a Request</Link>
         </>} />
       <AccountAlerts />
+      <ErrorAlert error={error} />
+      {notice && <div className="alert alert-success" role="status">{notice}</div>}
+      {modal}
+      {deciding && (deciding.accept ? (
+        <DecisionDialog<BuyerDeclineReason> title="Accept this proposal?" confirmLabel="Accept proposal" busy={busy}
+          onConfirm={decide} onCancel={() => setDeciding(null)}>
+          <p>You are accepting {deciding.r.professional.displayName}'s proposal for “{deciding.r.service}” at <strong>{formatMoney(deciding.r.proposal!.total)}</strong>.
+            A contract is generated for both of you to sign.{deciding.r.groupSize > 1 && ' The other proposals for this request will be closed.'}</p>
+          <p className="small">This cannot be undone. Your organisation's policies may need an approval first; you'll see it if so.</p>
+        </DecisionDialog>
+      ) : (
+        <DecisionDialog<BuyerDeclineReason> title="Decline this proposal?" confirmLabel="Decline proposal" danger busy={busy}
+          reasons={BUYER_DECLINE_REASONS} onConfirm={decide} onCancel={() => setDeciding(null)}>
+          <p>{deciding.r.professional.displayName} is told the proposal for “{deciding.r.service}” was not selected. This cannot be undone.</p>
+        </DecisionDialog>
+      ))}
 
       <div className="stat-row five">
         <StatCard icon="bell" tone="amber" label="Action Required" value={urgent.length} sub={urgent.length ? 'Needs your attention' : 'All caught up'} to="#actions" />
-        <StatCard icon="star" tone="blue" label="Saved Professionals" value={saved.length}
+        <StatCard icon="star" tone="blue" label="Saved Professionals" value={summary?.savedProfessionals ?? saved.length}
           sub={saved.filter((s) => s.availability === 'NOW').length ? `${saved.filter((s) => s.availability === 'NOW').length} available now` : 'Your shortlist'} to="/app/saved" />
-        <StatCard icon="proposal" tone="violet" label="Proposals" value={toReview.length} sub="Awaiting your review" to="/app/proposals" />
+        <StatCard icon="proposal" tone="violet" label="Proposals" value={summary?.openProposals ?? toReview.length} sub="Awaiting your review" to="/app/proposals" />
         <StatCard icon="briefcase" tone="green" label="Active Engagements" value={contracts.filter((c) => c.status === 'ACTIVE').length}
           sub={toSign.length ? `${toSign.length} awaiting your signature` : 'In progress'} to="/app/engagements" />
         <StatCard icon="lock" tone="teal" label="Protected Funds" to="/app/payments" sub="In escrow, until you accept"
-          value={summary ? formatCurrencies(moneyOf(summary.fundsInProtectionMinor))
-            : formatCurrencies(contracts.flatMap(c => c.milestones.filter(m => ['IN_PROGRESS', 'SUBMITTED', 'REVISION_REQUESTED', 'ACCEPTANCE_PENDING_APPROVAL', 'DISPUTED'].includes(m.status)).map(m => m.amount)))} />
+          value={summary ? formatCurrencies(moneyOf(summary.fundsInProtectionMinor)) : formatCurrencies(money.flatMap((m) => m.held))} />
       </div>
       <DataFreshness at={summary?.lastEventAt} />
 
@@ -156,14 +217,14 @@ export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
             <Tabs<EngTab> tabs={(['all', 'signing', 'active', 'completed'] as const).map((k) => ({ key: k,
               label: { all: 'All', signing: 'Awaiting signature', active: 'In progress', completed: 'Completed' }[k],
               count: k === 'all' ? contracts.length : contracts.filter((c) => engBucket(c) === k).length }))} value={engTab} onChange={setEngTab} />
-            {contracts.filter((c) => engTab === 'all' || engBucket(c) === engTab).length === 0 ? (
-              <EmptyTable columns={['Professional', 'Service', 'Stage', 'Next action', 'Value']}>
+            {listsLoading ? <Loading lines={3} /> : shownContracts.length === 0 ? (
+              <EmptyTable columns={['Professional', 'Service', 'Status', 'Milestone', 'Payment']}>
                 <strong>No engagements here.</strong> When you accept a proposal, its contract appears here for signing.
               </EmptyTable>
             ) : (
               <table className="data">
-                <thead><tr><th>Professional</th><th>Service</th><th>Stage</th><th>Progress</th><th>Value</th><th><span className="sr-only">Actions</span></th></tr></thead>
-                <tbody>{contracts.filter((c) => engTab === 'all' || engBucket(c) === engTab).slice(0, 6).map((c) => {
+                <thead><tr><th>Professional</th><th>Service</th><th>Status</th><th>Milestone</th><th>Payment</th><th><span className="sr-only">Actions</span></th></tr></thead>
+                <tbody>{shownContracts.slice(0, 6).map((c) => {
                   const done = c.milestones.filter((m) => m.status === 'ACCEPTED').length
                   const inReview = c.milestones.find((m) => m.status === 'SUBMITTED')
                   const pct = c.milestones.length ? Math.round((done / c.milestones.length) * 100) : 0
@@ -171,11 +232,12 @@ export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
                   <tr key={c.id}>
                     <td className="small">{c.parties.find((p) => p.role === 'PROFESSIONAL')?.name}</td>
                     <td><Link to={`/app/engagements/${c.id}`}><strong>{c.title}</strong></Link><div className="muted small">{c.nextAction}</div></td>
-                    <td>{inReview && c.status === 'ACTIVE' ? <span className="badge warn">In review</span>
+                    <td>{isDisputed(c) ? <span className="badge red">Disputed</span>
+                      : inReview && c.status === 'ACTIVE' ? <span className="badge warn">In review</span>
                       : <span className={`badge ${CONTRACT_STATUS[c.status].tone}`}>{CONTRACT_STATUS[c.status].label}</span>}</td>
                     <td className="small" title={`${done} of ${c.milestones.length} milestones accepted`}>
                       <div className="bar" aria-hidden><span style={{ width: `${pct}%` }} /></div>{done}/{c.milestones.length}</td>
-                    <td className="small">{formatMoney(c.total)}</td>
+                    <td className="small">{engagementMoney(c).text}<div className="muted small">of {formatMoney(c.total)}</div></td>
                     <td><span className="row" style={{ flexWrap: 'nowrap', gap: 4 }}>
                       {inReview && <Link className="btn btn-primary btn-sm" to={`/app/engagements/${c.id}`}>Approve milestone</Link>}
                       <Link className="btn btn-ghost btn-sm" to={`/app/messages?contextType=CONTRACT&contextId=${c.id}`} aria-label={`Message about ${c.title}`}><Icon name="message" /></Link>
@@ -188,24 +250,33 @@ export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
 
           <section className="card panel" id="requests">
             <div className="panel-head"><h2>Requests &amp; Proposals</h2><Link className="small" to="/app/requests">View all</Link></div>
-            <Tabs<ReqTab> tabs={(['all', 'open', 'proposals', 'accepted', 'declined'] as const).map((k) => ({ key: k,
-              label: { all: 'All', open: 'Open Requests', proposals: 'Proposals', accepted: 'Accepted', declined: 'Closed' }[k],
-              count: k === 'all' ? requests.length : requests.filter((r) => reqBucket(r) === k).length }))} value={reqTab} onChange={setReqTab} />
-            {requests.filter((r) => reqTab === 'all' || reqBucket(r) === reqTab).length === 0 ? (
-              <EmptyTable columns={['Request', 'Professional', 'Status', 'Proposal', 'Sent']}>
+            <Tabs<ReqTab> tabs={(Object.keys(REQ_TABS) as ReqTab[]).map((k) => ({ key: k, label: REQ_TABS[k],
+              count: k === 'all' ? requests.length : requests.filter((r) => buyerRequestBucket(r) === k).length }))} value={reqTab} onChange={setReqTab} />
+            {listsLoading ? <Loading lines={3} /> : shownRequests.length === 0 ? (
+              <EmptyTable columns={['Request', 'Professional', 'Status', 'Proposal', 'Deadline']}>
                 <strong>Nothing here yet.</strong> Choose professionals in <Link to="/app/find">Find</Link> and select <strong>Request proposal</strong>.
               </EmptyTable>
             ) : (
               <table className="data">
-                <thead><tr><th>Request</th><th>Professional</th><th>Status</th><th>Proposal</th><th>Sent</th></tr></thead>
-                <tbody>{requests.filter((r) => reqTab === 'all' || reqBucket(r) === reqTab).slice(0, 6).map((r) => (
+                <thead><tr><th>Request</th><th>Professional</th><th>Status</th><th>Proposal</th><th>Deadline</th><th><span className="sr-only">Actions</span></th></tr></thead>
+                <tbody>{shownRequests.slice(0, 6).map((r) => {
+                  const due = deadlineText(deadlineOf(r), now)
+                  return (
                   <tr key={r.id}>
-                    <td><Link to={`/app/requests/${r.id}`}><strong>{r.service}</strong></Link></td>
+                    <td><Link to={`/app/requests/${r.id}`}><strong>{r.service}</strong></Link>
+                      <div className="muted small">{r.sentAt ? `Sent ${new Date(r.sentAt).toLocaleDateString()}` : 'Draft'}</div></td>
                     <td className="small">{r.professional.displayName}</td>
                     <td><span className={`badge ${requestStatus(r).tone}`}>{requestStatus(r).label}</span></td>
                     <td className="small">{r.proposal ? formatMoney(r.proposal.total) : '—'}</td>
-                    <td className="small">{r.sentAt ? new Date(r.sentAt).toLocaleDateString() : 'Draft'}</td>
-                  </tr>))}</tbody>
+                    <td className="small" title={decidable(r) ? 'The proposal is valid until then' : 'The professional is asked to answer by then'}>
+                      {due.tone ? <span className={`badge ${due.tone}`}>{due.text}</span> : due.text}</td>
+                    <td>{decidable(r) && <span className="row" style={{ flexWrap: 'nowrap', gap: 4 }}>
+                      <Link className="btn btn-ghost btn-sm" to={`/app/requests/${r.id}`}>View</Link>
+                      <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => setDeciding({ r, accept: true })}>Accept</button>
+                      <button className="btn btn-ghost btn-sm danger-text" disabled={busy} onClick={() => setDeciding({ r, accept: false })}>Decline</button>
+                    </span>}</td>
+                  </tr>)
+                })}</tbody>
               </table>
             )}
           </section>
@@ -214,17 +285,20 @@ export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
         <aside>
           <section className="card panel attention" id="actions">
             <div className="panel-head"><h2>Pending Actions</h2></div>
-            <ActionList actions={actions} empty="You're all caught up." />
+            {listsLoading ? <Loading lines={2} /> : <ActionList actions={actions} empty="You're all caught up." />}
           </section>
 
           <section className="card panel" id="payments">
-            <div className="panel-head"><h2>Payments &amp; Contracts</h2><Link className="small" to="/app/payments">Open</Link></div>
-            <dl className="facts">
-              <dt>In escrow</dt><dd>{formatCurrencies(contracts.flatMap((c) => c.milestones.filter((m) => ['IN_PROGRESS', 'SUBMITTED', 'REVISION_REQUESTED', 'ACCEPTANCE_PENDING_APPROVAL', 'DISPUTED'].includes(m.status)).map((m) => m.amount)))}</dd>
-              <dt>Paid for accepted work</dt><dd>{formatCurrencies(contracts.map((c) => c.acceptedAmount))}</dd>
-              <dt>To sign</dt><dd>{toSign.length ? <Link to={`/app/engagements/${toSign[0].id}`}>{toSign.length} contract{toSign.length > 1 ? 's' : ''}</Link> : 'None'}</dd>
-              <dt>Unfunded milestones</dt><dd>{contracts.filter((c) => c.status === 'ACTIVE').flatMap((c) => c.milestones.filter((m) => m.status === 'PENDING_FUNDING')).length}</dd>
-            </dl>
+            <div className="panel-head"><h2>Payments &amp; Contracts</h2></div>
+            {listsLoading ? <Loading lines={3} /> : <>
+              <dl className="facts">
+                <dt>Held in escrow</dt><dd>{formatCurrencies(money.flatMap((m) => m.held))}</dd>
+                <dt>Scheduled</dt><dd title="Milestones still to fund">{formatCurrencies(money.flatMap((m) => m.scheduled))}</dd>
+                <dt>Released for accepted work</dt><dd>{formatCurrencies(money.flatMap((m) => m.released))}</dd>
+                <dt>To sign</dt><dd>{toSign.length ? <Link to={`/app/engagements/${toSign[0].id}`}>{toSign.length} contract{toSign.length > 1 ? 's' : ''}</Link> : 'None'}</dd>
+              </dl>
+              <Link className="small" to="/app/payments">View payment breakdown →</Link>
+            </>}
           </section>
 
           <section className="card panel" id="messages">
@@ -237,15 +311,22 @@ export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
             )}
           </section>
 
-          {kind === 'enterprise' && org && <section className="card panel" id="controls">
+          {kind === 'enterprise' && (orgLoading ? <section className="card panel"><Loading lines={3} /></section> : org && <section className="card panel" id="controls">
             <div className="panel-head"><h2><Icon name="gear" /> Enterprise controls</h2></div>
+            {policy && <dl className="facts">
+              <dt>Approvals pending</dt><dd>{policy.approvals.pending
+                ? <Link to={`/app/policies?orgId=${org.id}&tab=approvals`}>{policy.approvals.pending}</Link> : 'None'}</dd>
+              <dt>Blocked by policy ({policy.days} days)</dt><dd>{blocked}</dd>
+              {policy.approvals.medianHoursToDecide !== null && <><dt>Typical approval time</dt><dd>{Math.round(policy.approvals.medianHoursToDecide)} h</dd></>}
+            </dl>}
             <ul className="quick-actions">
               <li><Link to={`/app/policies?orgId=${org.id}`}><Icon name="shield" /><span>Policies, approvals and exceptions</span><span aria-hidden>›</span></Link></li>
               <li><Link to="/app/organisation?tab=roles"><Icon name="team" /><span>Roles and spend limits</span><span aria-hidden>›</span></Link></li>
               <li><Link to="/app/enterprise/structure"><Icon name="building" /><span>Business units and cost centers</span><span aria-hidden>›</span></Link></li>
               <li><Link to="/app/organisation?tab=entities"><Icon name="contract" /><span>Legal entities</span><span aria-hidden>›</span></Link></li>
+              <li><Link to="/app/organisation?tab=security"><Icon name="download" /><span>Export the audit log</span><span aria-hidden>›</span></Link></li>
             </ul>
-          </section>}
+          </section>)}
 
           <section className="card panel">
             <div className="panel-head"><h2><Icon name="shield" /> Engagement Assurance</h2></div>
@@ -260,7 +341,7 @@ export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
 
           <section className="card panel" id="saved">
             <div className="panel-head"><h2>Saved Professionals</h2><Link className="small" to="/app/saved">View all</Link></div>
-            {saved.length === 0 ? (
+            {listsLoading ? <Loading lines={2} /> : saved.length === 0 ? (
               <p className="muted small" style={{ margin: 0 }}>Nothing saved yet. <Link to="/app/find">Find professionals</Link> and save them to compare.</p>
             ) : (
               <ul className="pro-list">
@@ -275,6 +356,8 @@ export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
               </ul>
             )}
           </section>
+
+          <SavedSearchesPanel />
         </aside>
       </div>
     </>

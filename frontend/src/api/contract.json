@@ -709,7 +709,8 @@
   "money",
   "openRequests",
   "professionalId",
-  "published"
+  "published",
+  "tier"
  ],
  "FirmRef": [
   "id",
