@@ -21,6 +21,8 @@ const FirmProfilePage = lazy(() => import('./pages/FirmPages').then((m) => ({ de
 const FirmTeamPage = lazy(() => import('./pages/FirmPages').then((m) => ({ default: m.FirmTeamPage })))
 const InvitationsPage = lazy(() => import('./pages/Invitations').then((m) => ({ default: m.InvitationsPage })))
 const InviteLanding = lazy(() => import('./pages/Invitations').then((m) => ({ default: m.InviteLanding })))
+const BuyerBriefsPage = lazy(() => import('./pages/OpenBriefs').then((m) => ({ default: m.BuyerBriefsPage })))
+const ProfessionalBriefsPage = lazy(() => import('./pages/OpenBriefs').then((m) => ({ default: m.ProfessionalBriefsPage })))
 const OfferingsPage = lazy(() => import('./pages/OfferingsPage').then((m) => ({ default: m.OfferingsPage })))
 const ProfessionalDashboard = lazy(() => import('./pages/ProfessionalPages').then((m) => ({ default: m.ProfessionalDashboard })))
 const ProfileSetupPage = lazy(() => import('./pages/ProfessionalPages').then((m) => ({ default: m.ProfileSetupPage })))
@@ -116,6 +118,7 @@ export default function App() {
             <Route path="professional/engagements" element={<RequireRole any={['PROFESSIONAL']}><EngagementsPage side="professional" /></RequireRole>} />
             <Route path="professional/engagements/:id" element={<RequireRole any={['PROFESSIONAL']}><EngagementDetail side="professional" /></RequireRole>} />
             <Route path="professional/requests" element={<RequireRole any={['PROFESSIONAL']}><ProfessionalRequestsPage /></RequireRole>} />
+            <Route path="professional/briefs" element={<RequireRole any={['PROFESSIONAL']}><ProfessionalBriefsPage /></RequireRole>} />
             <Route path="professional/requests/:id" element={<RequireRole any={['PROFESSIONAL']}><ProfessionalRequestDetail /></RequireRole>} />
             <Route path="professional/offerings" element={<RequireRole any={['PROFESSIONAL']}><OfferingsPage /></RequireRole>} />
             <Route path="professional/verification" element={<RequireRole any={['PROFESSIONAL']}><ProfessionalVerificationPage /></RequireRole>} />
@@ -130,6 +133,7 @@ export default function App() {
             <Route path="saved" element={<RequireRole any={CUSTOMER}><SavedProfessionals /></RequireRole>} />
             <Route path="requests" element={<RequireRole any={CUSTOMER}><RequestsPage /></RequireRole>} />
             <Route path="requests/new" element={<RequireRole any={CUSTOMER}><RequestWizard /></RequireRole>} />
+            <Route path="briefs" element={<RequireRole any={CUSTOMER}><BuyerBriefsPage /></RequireRole>} />
             <Route path="requests/:id" element={<RequireRole any={CUSTOMER}><RequestDetailPage /></RequireRole>} />
             <Route path="proposals" element={<RequireRole any={CUSTOMER}><ProposalsPage /></RequireRole>} />
             <Route path="engagements" element={<RequireRole any={CUSTOMER}><EngagementsPage side="buyer" /></RequireRole>} />

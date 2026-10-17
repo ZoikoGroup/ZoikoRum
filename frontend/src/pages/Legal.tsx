@@ -20,7 +20,7 @@ const PAGES: Record<string, Page> = {
       'Verification documents and engagement records are access-controlled and every access is logged.',
     ],
   },
-  // Public commitments from the Trust & Safety Governance Charter v1.0 (docs/product/trust-and-safety-charter.docx).
+  // Public commitments from the Trust & Safety Governance Charter v1.0.
   'trust-and-safety': {
     title: 'Trust & Safety Charter',
     intro: 'Trust is not assumed. It is demonstrated, verified and maintained. This charter is a binding commitment on how trust, safety and governance work on Zoikorum.',
@@ -48,7 +48,7 @@ const PAGES: Record<string, Page> = {
         'Zoikorum provides marketplace infrastructure, verification, contracting and payment protection. It does not employ professionals or provide regulated professional services, and verification is not a guarantee of outcome.'] },
     ],
   },
-  // Public commitments from the Zoikorum Ethics Code (docs/product/ethics-code.docx).
+  // Public commitments from the Zoikorum Ethics Code.
   ethics: {
     title: 'Ethics Code',
     intro: 'Fairness, transparency, human authority and governed technology: the principles every decision on Zoikorum follows.',

@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { briefApi } from '../../api/briefs'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { orgApi, type Organization, type CostCenter, type LegalEntity } from '../../api/orgs'
 import { CURRENCIES, LABEL, proApi, taxonomyApi, toMinor, type PublicProfile } from '../../api/professional'
 import {
+  MAX_REQUEST_PROFESSIONALS,
   budgetText, CADENCES, DEPENDENCIES, DURATION_LABEL, DURATIONS, PRICING_PREFS, proposalApi,
   type Dependency, type Duration, type EngagementType, type PaymentCadence, type PricingPreference, type ProposalRequest,
 } from '../../api/proposals'
@@ -16,7 +18,7 @@ import { useAuth } from '../../auth/AuthContext'
 import { clearDraft, readDraft, useAutosave } from '../../lib/autosave'
 
 /* Request Proposal flow (RFP wireframe s.3–10): context → scope → commercial → governance → review & send.
-   One requirement can go to up to 3 chosen professionals; each answers with their own proposal. */
+   One requirement can go to several chosen professionals (MAX_REQUEST_PROFESSIONALS); each answers with their own proposal. */
 
 const STEPS = ['Engagement context', 'Scope', 'Commercial', 'Protections', 'Review & send']
 const CONTEXTS: [string, string][] = [['STARTUP', 'Startup'], ['SME', 'SME'], ['MID_MARKET', 'Mid-market'], ['ENTERPRISE', 'Enterprise'], ['INDIVIDUAL', 'Individual']]
@@ -33,7 +35,7 @@ interface Form {
 export default function RequestWizard() {
   const [params] = useSearchParams()
   const navigate = useNavigate()
-  const ids = useMemo(() => params.getAll('pro').slice(0, 3), [params])
+  const ids = useMemo(() => params.getAll('pro').slice(0, MAX_REQUEST_PROFESSIONALS), [params])
   const offeringId = params.get('offering')
   const [pros, setPros] = useState<PublicProfile[]>([])
   const [org, setOrg] = useState<Organization | null>(null)
@@ -55,6 +57,7 @@ export default function RequestWizard() {
   const [custom, setCustom] = useState('')
   const set = <K extends keyof Form>(k: K, v: Form[K]) => { setTouched(true); setF((x) => ({ ...x, [k]: v })) }
   const fromId = params.get('from')
+  const briefId = params.get('brief')
   // Autosave (RFP s.5 "auto-save on input"): per user and per set of professionals; attachments are not kept in drafts.
   const { user } = useAuth()
   const draftKey = user && ids.length ? `${user.id}.request.${[...ids].sort().join('+')}` : null
@@ -95,6 +98,15 @@ export default function RequestWizard() {
   }, [ids, offeringId, fromId])
   const toggle = <T,>(list: T[], v: T) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v])
   useEffect(() => { if (org) orgApi.costCenters(org.id).then(setCostCenters).catch(setError) }, [org])
+  useEffect(() => {  // from an open brief: its wording carries over
+    if (!org || !briefId) return
+    briefApi.mine(org.id).then((all) => {
+      const b = all.find((x) => x.id === briefId)
+      if (b) setF((x) => ({ ...x, service: b.service, objective: b.objective, details: b.details || x.details,
+        estimatedDuration: (b.estimatedDuration as Form['estimatedDuration']) ?? x.estimatedDuration,
+        budgetOn: !!b.budget, budgetMax: b.budget ? String(b.budget.maxMinor / 100) : x.budgetMax, currency: b.budget?.currency ?? x.currency }))
+    }).catch(() => {})
+  }, [org, briefId])
   useEffect(() => {
     if (org) orgApi.legalEntities(org.id).then((all) => {
       const active = all.filter((e) => e.status === 'ACTIVE')
@@ -109,7 +121,7 @@ export default function RequestWizard() {
     return (
       <>
         <PortalHeader eyebrow="Requests" title="Request a proposal" subtitle="Choose who you want to hear from first." />
-        <section className="card panel"><p style={{ margin: 0 }}>Requests go to professionals you choose — up to three at once so you can
+        <section className="card panel"><p style={{ margin: 0 }}>Requests go to professionals you choose — up to {MAX_REQUEST_PROFESSIONALS} at once so you can
           compare their proposals. <Link to="/app/find">Find professionals</Link> or pick from your <Link to="/app/saved">saved list</Link>, then
           use <strong>Request proposal</strong>.</p></section>
       </>

@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { contractApi } from '../../api/contracts'
-import { formatMoney } from '../../api/orgs'
+import { formatMoney, orgApi } from '../../api/orgs'
+import { searchApi, type SearchResult } from '../../api/search'
 import { LABEL } from '../../api/professional'
 import {
+  MAX_REQUEST_PROFESSIONALS,
   attachmentUrl, budgetText, proposalFileUrl, CADENCES, DEPENDENCIES, DURATION_LABEL, PRICING_PREFS, PROPOSAL_STATUS, proposalApi, requestStatus, type Proposal, type ProposalRequest,
   BUYER_DECLINE_REASONS, type BuyerDeclineReason,
 } from '../../api/proposals'
@@ -80,7 +82,7 @@ export function RequestsPage() {
             { key: 'open', label: 'Open', count: count('open') }, { key: 'closed', label: 'Closed', count: count('closed') }]} value={tab} onChange={setTab} />
           {list && shown.length === 0 ? (
             <EmptyTable columns={['Request', 'Professionals', 'Status', 'Next action', 'Start']}>
-              <strong>No requests here.</strong> Open a professional's profile, or select up to three in <Link to="/app/find">Find</Link> or
+              <strong>No requests here.</strong> Open a professional's profile, or select up to {MAX_REQUEST_PROFESSIONALS} in <Link to="/app/find">Find</Link> or
               {' '}<Link to="/app/saved">Saved</Link>, and choose <strong>Request proposal</strong>.
             </EmptyTable>
           ) : (
@@ -105,7 +107,7 @@ export function RequestsPage() {
         </section>
         <aside>
           <SidePanel title="How a request works">
-            <ol className="side-steps">{[['Choose professionals', 'From a profile, search, your saved list or a comparison — up to three.'],
+            <ol className="side-steps">{[['Choose professionals', `From a profile, search, your saved list or a comparison — up to ${MAX_REQUEST_PROFESSIONALS}.`],
               ['Describe the need', 'Objective, scope, timing and an optional budget.'], ['Protect confidentiality', 'Require an NDA before they see the details.'],
               ['Compare and accept', 'Each replies with a structured proposal; accept one and the others close.']].map(([t, d], i) => (
               <li key={t}><span className="n">{i + 1}</span><span><strong>{t}</strong><br /><span className="muted small">{d}</span></span></li>))}</ol>
@@ -256,6 +258,7 @@ export function RequestDetailPage() {
                   <Link className="btn btn-secondary btn-sm" to={`/app/requests/new?pro=${m.professional.id}&from=${m.id}`}>Request again</Link></div>}
               </section>
           })}
+          {!accepted && openOnes.length === 0 && !isDraft && <NextMatches req={req} asked={group.members.map((m) => m.professional.id)} />}
           {group.members.some((m) => m.proposal?.status === 'EXPIRED') && !accepted && <section className="card panel">
             <p style={{ margin: 0 }}>A proposal expired before you decided. You can <Link to={`/app/requests/new?${group.members.map((m) => `pro=${m.professional.id}`).join('&')}&from=${req.id}`}>
               request again with the same scope</Link>.</p></section>}
@@ -406,6 +409,42 @@ function ProposalCard({ p, busy, canDecide, best, onAccept, onReject, onRevise }
         </>}
         {p.expired && <span className="muted small">This proposal expired on {fmtDate(p.validUntil)}.</span>}
       </div>
+    </section>
+  )
+}
+
+
+/** Nobody on this request can take it on: suggest up to three similar professionals who were not asked yet and who serve the
+ *  buyer's country, and send them the same brief in one step (the request form opens prefilled from this request). */
+function NextMatches({ req, asked }: { req: ProposalRequest; asked: string[] }) {
+  const [matches, setMatches] = useState<SearchResult[] | null>(null)
+  const askedKey = asked.join(',')  // a stable dependency: the list itself is rebuilt on every render
+  useEffect(() => {
+    let live = true
+    const already = new Set(askedKey.split(','))
+    Promise.all([searchApi.professionals({ spec: req.specialization ?? '', limit: '12' }), orgApi.get(req.organizationId)])
+      .then(([found, org]) => {
+        const serves = (r: SearchResult) => r.servedJurisdictions.length === 0 || r.servedJurisdictions.includes(org.country)
+        if (live) setMatches(found.items.filter((r) => !already.has(r.professionalId) && serves(r)).slice(0, 3))
+      })
+      .catch(() => { if (live) setMatches([]) })
+    return () => { live = false }
+  }, [req.specialization, req.organizationId, askedKey])
+  if (matches === null) return null
+  return (
+    <section className="card panel">
+      <h2 style={{ marginTop: 0 }}>Try other professionals</h2>
+      {matches.length === 0
+        ? <p className="muted" style={{ margin: 0 }}>None of the professionals you asked can take this on. <Link to="/app/find">Find other professionals</Link> and send them the same request.</p>
+        : <>
+          <p className="muted small" style={{ marginTop: 0 }}>None of the professionals you asked can take this on. These ones offer the same expertise and serve your country:</p>
+          <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 12px' }}>{matches.map((r) => (
+            <li key={r.professionalId} className="name-row" style={{ marginBottom: 8 }}><Avatar name={r.displayName} photoUrl={r.photoUrl} size={36} />
+              <span><Link to={`/professionals/${r.professionalId}`}><strong>{r.displayName}</strong></Link> <TierBadge tier={r.tier} /><br />
+                <span className="muted small">{r.headline}</span></span></li>))}</ul>
+          <Link className="btn btn-primary" to={`/app/requests/new?${matches.map((r) => `pro=${r.professionalId}`).join('&')}&from=${req.id}`}>
+            Send this request to {matches.length === 1 ? 'them' : `these ${matches.length}`}</Link>
+        </>}
     </section>
   )
 }

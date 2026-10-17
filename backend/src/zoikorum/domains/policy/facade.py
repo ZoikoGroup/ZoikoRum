@@ -136,7 +136,7 @@ class ProfileSettings:
     signature_deadline_days: int = 0
     dispute_evidence_days: int = 0
     direct_resolution_business_days: int = 0
-    challenge_window_days: int = 0  # accepted milestones may be disputed within this window (not enforced yet)
+    challenge_window_days: int = 0  # accepted milestones may be disputed within this window; their payment waits for it
     required_clauses: tuple[str, ...] = ("CONFIDENTIALITY", "IP_OWNERSHIP", "TERMINATION", "GOVERNING_LAW")
     allowed_currencies: tuple[str, ...] | None = None
     step_up_for_approvals: bool = True

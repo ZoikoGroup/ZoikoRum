@@ -1,7 +1,7 @@
 """Proposal domain: buyer requests -> professional proposals -> buyer decision (RFP wireframe, BUILD_SPEC s.proposal).
 
 Zoikorum is not a job board (Homepage wireframe): a buyer sends a structured request to professionals they chose
-(one, or up to three to compare), and each answers with a structured proposal or declines with a reason.
+(one, or several to compare), and each answers with a structured proposal or declines with a reason.
 
 Until the policy domain exists, the platform baseline applies (BUILD_SPEC s.policy): restricted professionals cannot
 be engaged, and Tier C professionals cannot submit or have a proposal accepted. An accepting member's own spend limit
@@ -30,7 +30,7 @@ from zoikorum.domains.proposal.schemas import (
     RequestIn, RequestOut, RequestSummaryOut, RevisionIn,
 )
 from zoikorum.domains.trust import facade as trust_facade
-from zoikorum.shared import clock
+from zoikorum.shared import clock, fx
 from zoikorum.shared.auth import Actor, OrgRole
 from zoikorum.shared.errors import Conflict, Forbidden, NotFound, PolicyBlocked, ValidationFailed
 from zoikorum.shared.event_catalog import E
@@ -431,7 +431,7 @@ async def create_requests(session: AsyncSession, actor: Actor, body: RequestIn) 
 
 
 async def send_drafts(session: AsyncSession, actor: Actor, request_id: uuid.UUID, acknowledged: bool) -> list[RequestOut]:
-    """Send every draft in the request's group (one requirement, up to three professionals)."""
+    """Send every draft in the request's group (one requirement, several professionals)."""
     first = await _request(session, request_id)
     await _require_buyer(session, actor, first.organization_id, OrgRole.REQUESTER)
     if not acknowledged:
@@ -810,7 +810,7 @@ async def accept_proposal(session: AsyncSession, actor: Actor, proposal_id: uuid
         raise PolicyBlocked(f"{pro.display_name} does not serve {org.country}; the engagement cannot be agreed. "
                             "Choose a professional who serves your country.", code="JURISDICTION_CONFLICT")
     limit = await buyer_facade.get_member_spend_limit(session, p.organization_id, actor.identity_id)
-    if limit is not None and (limit.currency != p.currency or p.total_minor > limit.minor):
+    if limit is not None and not fx.within_limit(p.total_minor, p.currency, limit.minor, limit.currency):
         raise PolicyBlocked(f"{_money(p.total_minor, p.currency)} is above your approval limit of "
                             f"{_money(limit.minor, limit.currency)}; ask a colleague with a higher limit to accept",
                             code="SPEND_LIMIT_EXCEEDED")

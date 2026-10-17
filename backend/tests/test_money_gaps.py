@@ -161,3 +161,82 @@ async def test_release_not_approved_is_announced(client, make_user, drain, sf):
                                                   EV.APPROVAL_DENIED)
     assert await events(sf, EV.ESCROW_RELEASE_BLOCKED) == 1
     assert (await states(sf, c["id"]))[1] == "RELEASE_PENDING_APPROVAL"  # neither paid nor refunded on one side's word
+
+
+async def test_accepted_work_whose_release_was_refused_is_escalated_and_can_be_disputed(client, make_user, drain, sf):
+    """No deadlock: reminders go out, and either side can take the held payment to a payment-release dispute."""
+    pro_user, pro, buyer, c = await signed_contract(client, make_user, drain)
+    esc = await escrow_of(client, buyer, c)
+    m1 = c["milestones"][0]
+    await fund(client, buyer, esc, [m1["id"]])
+    await drain()
+    async with sf() as s, s.begin():
+        await s.execute(text("UPDATE escrow.allocations SET state = 'RELEASE_PENDING_APPROVAL' WHERE milestone_id = :m"), {"m": m1["id"]})
+        await s.execute(text("UPDATE contract.milestones SET status = 'ACCEPTED', accepted_at = now() WHERE id = :m"), {"m": m1["id"]})
+        await escrow_service.release_not_approved(s, {"subjectId": m1["id"], "subjectType": "Milestone", "action": "ESCROW_RELEASE"},
+                                                  EV.APPROVAL_DENIED)
+    async with sf() as s:
+        timer = await s.scalar(text("SELECT key FROM platform.timers WHERE kind = :k"), {"k": escrow_service.TIMER_RELEASE_ESCALATION})
+    assert timer == f"{m1['id']}:1"
+    async with sf() as s, s.begin():
+        await escrow_service.release_escalation(s, {"milestoneId": m1["id"], "round": 1})
+    assert await events(sf, EV.ESCROW_RELEASE_ESCALATED) == 1
+    assert EV.ESCROW_RELEASE_ESCALATED in EVENT_TITLES
+
+    # Accepted work can only be disputed about its payment.
+    wrong = await client.post(D, headers=pro_user.idem(), json=dispute_body(c))
+    assert wrong.status_code == 422 and wrong.json()["code"] == "PAYMENT_RELEASE_ONLY"
+    r = await client.post(D, headers=pro_user.idem(), json=dispute_body(c, category="PAYMENT_RELEASE", outcome="FULL_RELEASE"))
+    assert r.status_code in (200, 201), r.text
+    await drain()
+    assert (await states(sf, c["id"]))[1] == "ON_HOLD"
+    assert (await client.get(f"{C}/{c['id']}", headers=buyer.h)).json()["status"] == "ACTIVE"  # the rest of the work carries on
+    async with sf() as s, s.begin():  # while the dispute holds it, no more reminders
+        await escrow_service.release_escalation(s, {"milestoneId": m1["id"], "round": 2})
+    assert await events(sf, EV.ESCROW_RELEASE_ESCALATED) == 1
+
+    async with sf() as s, s.begin():  # the decision pays the professional
+        await escrow_service.dispute_resolved(s, {"contractId": c["id"], "disputeId": r.json()["id"], "allocations": [
+            {"milestoneId": m1["id"], "releaseMinor": m1["amount"]["amountMinor"], "refundMinor": 0, "milestoneOutcome": "ACCEPT"}]})
+    assert (await states(sf, c["id"]))[1] == "RELEASED"
+    await balanced(sf)
+
+
+async def test_a_challenge_window_holds_payment_after_acceptance_and_allows_a_dispute(client, make_user, drain, sf, monkeypatch):
+    """Defects found after acceptance: the payment waits for the window, the buyer may dispute inside it, then it is paid."""
+    from zoikorum.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "dispute_challenge_window_days", 7)  # pinned into the contract's terms
+    pro_user, pro, buyer, c = await signed_contract(client, make_user, drain)
+    esc = await escrow_of(client, buyer, c)
+    m1, m2 = c["milestones"][0], c["milestones"][1]
+    await fund(client, buyer, esc, [m1["id"], m2["id"]])
+    await drain()
+    async with sf() as s, s.begin():
+        await s.execute(text("UPDATE contract.milestones SET status = 'ACCEPTED', accepted_at = now() WHERE id IN (:a, :b)"),
+                        {"a": m1["id"], "b": m2["id"]})
+        await escrow_service.milestone_accepted(s, {"milestoneId": m1["id"]})
+        await escrow_service.milestone_accepted(s, {"milestoneId": m2["id"]})
+    assert await states(sf, c["id"]) == {1: "HELD", 2: "HELD"}  # not paid out at acceptance
+    async with sf() as s:
+        due = (await s.execute(text("SELECT key FROM platform.timers WHERE kind = :k ORDER BY key"),
+                               {"k": escrow_service.TIMER_RELEASE_AFTER_WINDOW})).scalars().all()
+    assert sorted(due) == sorted([m1["id"], m2["id"]])
+
+    # Inside the window the buyer may dispute accepted work for what it is, not only about the payment.
+    r = await client.post(D, headers=buyer.idem(), json=dispute_body(c, milestones=[m1["id"]]))
+    assert r.status_code in (200, 201), r.text
+    await drain()
+    assert (await states(sf, c["id"]))[1] == "ON_HOLD"
+
+    # The window ends: M2 is paid; M1 stays with its dispute.
+    async with sf() as s, s.begin():
+        await s.execute(text("UPDATE contract.milestones SET accepted_at = now() - interval '8 days' WHERE id IN (:a, :b)"),
+                        {"a": m1["id"], "b": m2["id"]})
+        await escrow_service.milestone_accepted(s, {"milestoneId": m2["id"]})
+        await escrow_service.milestone_accepted(s, {"milestoneId": m1["id"]})
+    assert await states(sf, c["id"]) == {1: "ON_HOLD", 2: "RELEASED"}
+    await balanced(sf)
+    # After the window, accepted work can no longer be disputed for its quality.
+    late = await client.post(D, headers=buyer.idem(), json=dispute_body(c, milestones=[m2["id"]]))
+    assert late.status_code == 409

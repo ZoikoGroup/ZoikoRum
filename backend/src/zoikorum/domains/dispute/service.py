@@ -19,6 +19,7 @@ from zoikorum.config import get_settings
 from zoikorum.domains.admin import facade as admin_facade
 from zoikorum.domains.buyer import facade as buyer_facade
 from zoikorum.domains.contract import facade as contract_facade
+from zoikorum.domains.escrow import facade as escrow_facade
 from zoikorum.domains.dispute.models import DisputeAppeal, DisputeCase, EvidenceItem, ResolutionProposal, TimelineEntry
 from zoikorum.domains.dispute.schemas import (
     AllocationIn, AllocationOut, ArbitrationAwardIn, ArbitrationReferIn, AssignIn, DisputeIn, DisputeOut, EvidenceIn, EvidenceOut, MilestoneRef, ProposalOut,
@@ -27,7 +28,7 @@ from zoikorum.domains.dispute.schemas import (
 from zoikorum.domains.identity import facade as identity_facade
 from zoikorum.domains.policy import facade as policy_facade
 from zoikorum.domains.professional import facade as professional_facade
-from zoikorum.shared import clock
+from zoikorum.shared import clock, fx
 from zoikorum.shared.auth import Actor, OrgRole, PlatformRole
 from zoikorum.shared.errors import Conflict, Forbidden, NotFound, PolicyBlocked, ValidationFailed
 from zoikorum.shared.event_catalog import E
@@ -111,7 +112,7 @@ async def _require_buyer_authority(session: AsyncSession, actor: Actor, c, relea
                         code="LEGAL_REVIEW_REQUIRED")
     actor.require_step_up()
     limit = await buyer_facade.get_member_spend_limit(session, c.organization_id, actor.identity_id)
-    if release_minor and limit is not None and (limit.currency != c.currency or release_minor > limit.minor):
+    if release_minor and limit is not None and not fx.within_limit(release_minor, c.currency, limit.minor, limit.currency):
         raise PolicyBlocked("Releasing this amount is above your approval limit; ask a colleague with a higher limit",
                             code="SPEND_LIMIT_EXCEEDED")
 
@@ -297,19 +298,27 @@ async def open_dispute(session: AsyncSession, actor: Actor, body: DisputeIn) -> 
                         "answer disputes opened against you.", code="DISPUTE_ACCESS_RESTRICTED")
     if party == "BUYER":
         await _require_buyer_authority(session, actor, k, settle=False)  # opening freezes money: decider roles only
-    if k.status not in ("ACTIVE", "DISPUTED"):
-        raise Conflict("Only an active engagement can be disputed", code="CONTRACT_NOT_ACTIVE")
     ms = {m.id: m for m in k.milestones}
     wanted = set(body.milestoneIds)
     if not wanted <= set(ms):
         raise NotFound("Milestone not found on this contract")
+    # Accepted work whose payment is still held: inside the contract's challenge window it may be disputed for any reason
+    # (a defect found after acceptance); after it, only about the payment itself (a release the buyer's approver refused).
+    stuck = {i for i in wanted if ms[i].status == "ACCEPTED" and await escrow_facade.release_stuck(session, i)}
+    window = int((await contract_facade.policy_controls(session, k.id)).get("challengeWindowDays") or 0)
+    in_window = {i for i in stuck if window and ms[i].accepted_at and clock.now() < ms[i].accepted_at + timedelta(days=window)}
+    if stuck - in_window and body.category != "PAYMENT_RELEASE":
+        raise ValidationFailed("Accepted work whose payment is held can only be disputed as \"Payment & release\"",
+                               code="PAYMENT_RELEASE_ONLY")
+    if k.status not in ("ACTIVE", "DISPUTED") and not (stuck == wanted and k.status == "COMPLETED"):
+        raise Conflict("Only an active engagement can be disputed", code="CONTRACT_NOT_ACTIVE")
     open_cases = (await session.scalars(select(DisputeCase).where(DisputeCase.contract_id == k.id, DisputeCase.status.in_(OPEN)))).all()
     if any(wanted & {uuid.UUID(m) for m in oc.milestone_ids} for oc in open_cases):
         raise Conflict("There is already an open dispute for this milestone; add evidence to it instead", code="DUPLICATE_DISPUTE")
-    bad = [ms[i] for i in wanted if ms[i].status not in DISPUTABLE]
+    bad = [ms[i] for i in wanted if ms[i].status not in DISPUTABLE and i not in stuck]
     if bad:
         raise Conflict(f"M{bad[0].sequence} cannot be disputed ({bad[0].status.replace('_', ' ').lower()}). Only funded milestones that are "
-                       "not yet accepted can be disputed.", code="MILESTONE_NOT_DISPUTABLE")
+                       "not yet accepted, or accepted work whose payment is still held, can be disputed.", code="MILESTONE_NOT_DISPUTABLE")
 
     now = clock.now()
     c = DisputeCase(prefers_early_resolution=body.prefersEarlyResolution, reference=f"ZK-DSP-{uuid.uuid4().hex[:8].upper()}", contract_id=k.id, contract_reference=k.reference or "—",

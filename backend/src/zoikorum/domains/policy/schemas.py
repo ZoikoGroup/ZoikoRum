@@ -63,11 +63,6 @@ class SettingsIn(BaseModel):
             raise ValueError("clause texts must use supported clause names with nonempty text of at most 6000 characters")
         if not self.escrowRequired:
             raise ValueError("the platform baseline requires escrow before work; enterprise profiles cannot disable it")
-        if self.challengeWindowDays is not None:
-            # Accepted work is paid out at once, so a window to dispute it after acceptance needs a holdback of part of
-            # each payment - a business decision not yet made. Refused rather than stored and silently ignored.
-            raise ValueError("disputes after acceptance (challengeWindowDays) are not available yet: they need a payment "
-                             "holdback rule; leave this setting out")
         window = self.acceptanceWindowDays or get_settings().acceptance_window_days
         if self.autoAcceptAfterDays is not None and self.autoAcceptAfterDays < window:
             raise ValueError("automatic acceptance cannot precede the review window")

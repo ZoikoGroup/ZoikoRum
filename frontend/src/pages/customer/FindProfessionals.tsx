@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { MAX_REQUEST_PROFESSIONALS } from '../../api/proposals'
 import { Link, useSearchParams } from 'react-router-dom'
 import { formatMoney, orgApi, type Organization } from '../../api/orgs'
 import { LABEL, taxonomyApi, type TaxonomyCategory } from '../../api/professional'
@@ -20,7 +21,7 @@ const INDUSTRIES = ['Professional Services', 'Financial Services', 'Technology',
   'Energy & Utilities', 'Public Sector', 'Education', 'Real Estate', 'Other']
 
 const PAGE = 20
-const MAX_COMPARE = 3
+const MAX_COMPARE = 3  // side by side; a request can go to more (MAX_REQUEST_PROFESSIONALS)
 const SORTS: [string, string][] = [
   ['best', 'Relevance'], ['verified', 'Most verified'], ['availability', 'Soonest available'], ['experience', 'Most experienced'],
   ['price_asc', 'Price: low to high'], ['price_desc', 'Price: high to low'], ['recent', 'Newest'],
@@ -39,7 +40,7 @@ function unmet(r: SearchResult, params: URLSearchParams): string[] {
   const out: string[] = []
   if (list('tier').length && !list('tier').includes(r.tier)) out.push(`Tier ${r.tier}`)
   const j = params.get('jurisdiction')
-  if (j && r.servedJurisdictions.length && !r.servedJurisdictions.includes(j) && !r.licensedJurisdictions.includes(j)) out.push(`Does not serve ${countryName(j)}`)
+  if (j && r.servedJurisdictions.length && !r.servedJurisdictions.includes(j)) out.push(`Does not serve ${countryName(j)}`)
   for (const [k, values] of [['delivery', r.deliveryModes], ['engagementType', r.engagementTypes], ['pricingModel', r.pricingModels]] as const) {
     const want = params.get(k)
     if (want && !values.includes(want)) out.push(`No ${(LABEL[want] ?? want).toLowerCase()}`)
@@ -109,7 +110,7 @@ export default function FindProfessionals() {
     set(name, (list.includes(value) ? list.filter((v) => v !== value) : [...list, value]).join(','))
   }
   function toggleSelect(id: string) {
-    setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : s.length >= MAX_COMPARE ? s : [...s, id]))
+    setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : s.length >= MAX_REQUEST_PROFESSIONALS ? s : [...s, id]))
   }
   async function more() {
     const next = offset + PAGE
@@ -136,8 +137,8 @@ export default function FindProfessionals() {
   }
   const hoverOpen = (id: string) => { window.clearTimeout(hover.current); hover.current = window.setTimeout(() => setQuick(id), 700) }
   const hoverCancel = () => window.clearTimeout(hover.current)
-  const limited = (r: SearchResult) => !!buyerCountry && r.servedJurisdictions.length > 0
-    && !r.servedJurisdictions.includes(buyerCountry) && !r.licensedJurisdictions.includes(buyerCountry)
+  // Same rule as the agreement check: a licence alone does not mean the professional serves the buyer's country.
+  const limited = (r: SearchResult) => !!buyerCountry && r.servedJurisdictions.length > 0 && !r.servedJurisdictions.includes(buyerCountry)
 
   const groups = taxonomy.flatMap((c) => c.groups)
   // Active filter summary bar (Category doc s.4.5): every filter visible and removable on its own.
@@ -166,7 +167,7 @@ export default function FindProfessionals() {
   const card = (r: SearchResult, misses?: string[]) => (
     <article key={r.professionalId} className={view === 'grid' ? 'pro-card' : 'pro-row'} onMouseLeave={hoverCancel}>
       <input type="checkbox" aria-label={`Select ${r.displayName} to compare`} checked={selected.includes(r.professionalId)}
-        disabled={!selected.includes(r.professionalId) && selected.length >= MAX_COMPARE} onChange={() => toggleSelect(r.professionalId)} />
+        disabled={!selected.includes(r.professionalId) && selected.length >= MAX_REQUEST_PROFESSIONALS} onChange={() => toggleSelect(r.professionalId)} />
       <span onMouseEnter={() => hoverOpen(r.professionalId)}><Avatar name={r.displayName} photoUrl={r.photoUrl} size={view === 'grid' ? 48 : 64} /></span>
       <div className="pro-main" onMouseEnter={() => hoverOpen(r.professionalId)}>
         <div className="name-line"><Link to={`/professionals/${r.professionalId}`}><strong>{r.displayName}</strong></Link> <TierBadge tier={r.tier} />
@@ -200,7 +201,7 @@ export default function FindProfessionals() {
           <Link className="btn btn-secondary btn-sm" to={`/app/requests/new?pro=${r.professionalId}`}>Request proposal</Link>
           <button className="btn btn-ghost btn-sm" onClick={() => setQuick(quick === r.professionalId ? null : r.professionalId)} aria-expanded={quick === r.professionalId}>Quick view</button>
           <button className="btn btn-ghost btn-sm" onClick={() => toggleSelect(r.professionalId)}
-            disabled={!selected.includes(r.professionalId) && selected.length >= MAX_COMPARE}><Icon name="compare" /> {selected.includes(r.professionalId) ? 'Selected' : 'Compare'}</button>
+            disabled={!selected.includes(r.professionalId) && selected.length >= MAX_REQUEST_PROFESSIONALS}><Icon name="compare" /> {selected.includes(r.professionalId) ? 'Selected' : 'Compare'}</button>
         </div>
       </div>
       {view === 'list' && r.whyThisResult.length > 0 && <ul className="why-inline">{r.whyThisResult.map((w) => <li key={w}>{w}</li>)}</ul>}
@@ -318,7 +319,7 @@ export default function FindProfessionals() {
               <button className={`btn btn-sm ${view === 'grid' ? 'btn-primary' : 'btn-ghost'}`} aria-pressed={view === 'grid'} onClick={() => setView('grid')}>Grid</button>
               <button className={`btn btn-sm ${view === 'list' ? 'btn-primary' : 'btn-ghost'}`} aria-pressed={view === 'list'} onClick={() => setView('list')}>List</button>
             </div>
-            <span className="small muted">Compare: ({selected.length}/{MAX_COMPARE})</span>
+            <span className="small muted">Selected: {selected.length}/{MAX_REQUEST_PROFESSIONALS}{selected.length > MAX_COMPARE ? ` (the first ${MAX_COMPARE} are compared)` : ''}</span>
             <label className="small">Sort by{' '}
               <select className="input" value={params.get('sort') ?? 'best'} onChange={(e) => set('sort', e.target.value === 'best' ? null : e.target.value)}>
                 {SORTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
@@ -353,7 +354,7 @@ export default function FindProfessionals() {
           <Link className="btn btn-secondary" to="/app/saved"><Icon name="bookmark" /> View shortlist</Link>
           <Link className="btn btn-secondary" to={`/app/requests/new?${selected.map((id) => `pro=${id}`).join('&')}`}><Icon name="request" /> Request proposal{selected.length > 1 ? 's' : ''}</Link>
         </>} />
-      {comparing && <CompareDialog ids={selected} onClose={() => setComparing(false)} />}
+      {comparing && <CompareDialog ids={selected.slice(0, MAX_COMPARE)} onClose={() => setComparing(false)} />}
     </>
   )
 }

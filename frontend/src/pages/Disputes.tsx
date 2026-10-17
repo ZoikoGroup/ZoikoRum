@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import type { Contract } from '../api/contracts'
+import type { Escrow } from '../api/escrow'
 import {
-  CATEGORIES, CATEGORY_LABEL, disputeApi, disputeFileUrl, EVIDENCE_TYPES, OPEN_PHASES, OUTCOME_LABEL, OUTCOMES, PHASE,
+  CATEGORIES, CATEGORY_LABEL, disputableMilestones, disputeApi, disputeFileUrl, EVIDENCE_TYPES, OPEN_PHASES, OUTCOME_LABEL, OUTCOMES,
+  paymentStuck, PHASE, releaseAfterWindow,
   type Dispute, type DisputeCategory, type DisputeOutcome, type EvidenceType, type RawAllocation,
 } from '../api/disputes'
 import { formatMoney } from '../api/orgs'
@@ -19,7 +21,6 @@ import { formatCurrencies } from '../lib/money'
 
 /* Disputes (Dispute Resolution doc): neutral language, structured steps, the money frozen until a decision is executed. */
 
-const DISPUTABLE = ['IN_PROGRESS', 'SUBMITTED', 'REVISION_REQUESTED']
 const NO_MONEY: DisputeOutcome[] = ['REWORK', 'TIMELINE_EXTENSION']
 const PARTIAL: DisputeOutcome[] = ['PARTIAL_RELEASE', 'PARTIAL_REFUND']
 const PARTY: Record<string, string> = { BUYER: 'Buyer', PROFESSIONAL: 'Professional', PLATFORM: 'Platform' }
@@ -32,17 +33,17 @@ function timeLeft(iso: string | null): string {
   return h >= 48 ? `${Math.floor(h / 24)} days left` : h >= 1 ? `${h} h left` : `${Math.max(1, Math.floor(ms / 60_000))} min left`
 }
 
-export function disputableMilestones(c: Contract) {
-  return c.milestones.filter((m) => DISPUTABLE.includes(m.status))
-}
-
 /** Dispute intake (doc s.7): category, milestones, 300-character summary, desired outcome, confirmation. */
-export function RaiseDisputeDialog({ contract, onClose }: { contract: Contract; onClose: () => void }) {
+export function RaiseDisputeDialog({ contract, escrow, onClose }: { contract: Contract; escrow?: Escrow | null; onClose: () => void }) {
   const dialog = useDialog(onClose)
   const navigate = useNavigate()
-  const options = disputableMilestones(contract)
-  const [category, setCategory] = useState<DisputeCategory>('QUALITY_ACCEPTANCE')
+  const options = disputableMilestones(contract, escrow)
+  const stuck = paymentStuck(contract, escrow)
+  const [chosenCategory, setCategory] = useState<DisputeCategory>('QUALITY_ACCEPTANCE')
   const [ids, setIds] = useState<string[]>(options.slice(0, 1).map((m) => m.id))
+  // Accepted work can only be disputed about its payment, except inside its challenge window (a defect found after acceptance).
+  const paymentOnly = ids.some((id) => stuck.has(id) && !releaseAfterWindow(contract, id))
+  const category: DisputeCategory = paymentOnly ? 'PAYMENT_RELEASE' : chosenCategory
   const [summary, setSummary] = useState('')
   const [outcome, setOutcome] = useState<DisputeOutcome>('REWORK')
   const [context, setContext] = useState('')
@@ -64,11 +65,12 @@ export function RaiseDisputeDialog({ contract, onClose }: { contract: Contract; 
         <p className="muted small">Use this when you cannot agree through revisions. Keep it factual: what was agreed, what happened, what you want.</p>
         <ErrorAlert error={error} />
         <label className="filter-box"><span>Category (cannot be changed later)</span>
-          <select value={category} onChange={(e) => setCategory(e.target.value as DisputeCategory)}>{CATEGORIES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>
-        <div className="field" style={{ marginTop: 10 }}><span className="label">Affected milestones (funded, not yet accepted)</span>
+          <select value={category} disabled={paymentOnly} onChange={(e) => setCategory(e.target.value as DisputeCategory)}>{CATEGORIES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>
+        {paymentOnly && <p className="muted small" style={{ margin: '6px 0 0' }}>Accepted work is disputed only about its payment, which the buyer's organisation has not approved.</p>}
+        <div className="field" style={{ marginTop: 10 }}><span className="label">Affected milestones (funded, not yet accepted, or accepted but unpaid)</span>
           <ul className="fund-list">{options.map((m) => (
             <li key={m.id}><label className="checkbox"><input type="checkbox" checked={ids.includes(m.id)}
-              onChange={() => setIds(ids.includes(m.id) ? ids.filter((x) => x !== m.id) : [...ids, m.id])} /><span>M{m.sequence} {m.title}</span></label>
+              onChange={() => setIds(ids.includes(m.id) ? ids.filter((x) => x !== m.id) : [...ids, m.id])} /><span>M{m.sequence} {m.title}{stuck.has(m.id) && <span className="muted"> · accepted, payment not released{releaseAfterWindow(contract, m.id) ? ' (within the check period)' : ''}</span>}</span></label>
               <strong>{formatMoney(m.amount)}</strong></li>))}</ul></div>
         <label className="filter-box grow"><span>Issue summary ({summary.length}/300)</span>
           <textarea rows={3} maxLength={300} value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="e.g. The report misses the two sections listed in the acceptance criteria." /></label>

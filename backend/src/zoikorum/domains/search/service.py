@@ -181,7 +181,9 @@ def _conditions(p: SearchParams, tsquery) -> list:
         conds.append(Doc.published_at > p.publishedAfter)
     if p.jurisdiction:
         j = p.jurisdiction.upper()
-        conds.append(or_(Doc.served_jurisdictions.contains([j]), Doc.licensed_jurisdictions.contains([j])))
+        # Same rule as agreeing an engagement (proposal._conflict): the country is served, or no countries are listed
+        # (unrestricted). A licence alone does not mean the professional takes work there.
+        conds.append(or_(Doc.served_jurisdictions.contains([j]), func.cardinality(Doc.served_jurisdictions) == 0))
     if p.industry:
         conds.append(Doc.industries.contains([p.industry]))
     if p.enterpriseReady:

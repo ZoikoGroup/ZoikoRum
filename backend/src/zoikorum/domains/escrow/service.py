@@ -22,7 +22,7 @@ from zoikorum.domains.policy import facade as policy_facade
 from zoikorum.domains.escrow.models import Allocation, EscrowAccount, Funding, LedgerEntry, Release
 from zoikorum.domains.escrow.schemas import AllocationOut, BulkFundIn, EscrowOut, FundingOut, FundIn, LedgerLineOut
 from zoikorum.domains.professional import facade as professional_facade
-from zoikorum.shared import clock
+from zoikorum.shared import clock, fx
 from zoikorum.shared.auth import Actor, OrgRole, PlatformRole
 from zoikorum.shared.errors import ValidationFailed, Conflict, DomainError, Forbidden, NotFound, PolicyBlocked
 from zoikorum.shared.event_catalog import E
@@ -270,10 +270,10 @@ async def _fund_for(session: AsyncSession, identity_id: uuid.UUID, a: EscrowAcco
     limit = await buyer_facade.get_member_spend_limit(session, a.organization_id, identity_id)
     if limit is not None:
         # Per engagement: what this person has already put in counts too, so a large contract cannot be funded in
-        # small pieces. A limit in another currency cannot be compared, so it does not authorise this one.
+        # small pieces. A limit in another currency is compared at Finance's rate with a safety margin (shared/fx).
         already = await session.scalar(select(func.coalesce(func.sum(Funding.amount_minor), 0)).where(
             Funding.account_id == a.id, Funding.requested_by == identity_id, Funding.status.in_(("REQUESTED", "CAPTURED")))) or 0
-        if limit.currency != a.currency or already + amount > limit.minor:
+        if not fx.within_limit(already + amount, a.currency, limit.minor, limit.currency):
             raise PolicyBlocked("This funding is above your spend limit for this engagement; ask a colleague with a higher limit",
                                 code="SPEND_LIMIT_EXCEEDED")
 
@@ -382,6 +382,7 @@ def _accepted_gross(accepted_release_minor: int | None, funded_minor: int) -> in
 
 
 RELEASE_RESUME_TIMER = "escrow.release_resume"
+TIMER_RELEASE_AFTER_WINDOW = "escrow.release_after_window"
 
 
 async def milestone_accepted(session: AsyncSession, payload: dict) -> None:
@@ -414,6 +415,13 @@ async def milestone_accepted(session: AsyncSession, payload: dict) -> None:
     milestone = next((m for m in contract.milestones if m.id == milestone_id), None)
     if milestone is None or milestone.status != "ACCEPTED":
         evaluated("BLOCKED", "MILESTONE_NOT_ACCEPTED")
+        return
+    # Challenge window (contract terms): accepted work stays held until it ends, so a defect found after acceptance can
+    # still be disputed. The timer brings the release back here when the window is over.
+    window = int((await contract_facade.policy_controls(session, a.contract_id)).get("challengeWindowDays") or 0)
+    if window and milestone.accepted_at and clock.now() < (due := milestone.accepted_at + timedelta(days=window)):
+        await schedule_timer(session, TIMER_RELEASE_AFTER_WINDOW, str(milestone_id), due, {"milestoneId": str(milestone_id)})
+        evaluated("HELD", "CHALLENGE_WINDOW")
         return
     settings = await policy_facade.get_settings_for_org(session,
         a.organization_id if contract.policy_version_id else None, contract.policy_version_id)
@@ -478,6 +486,35 @@ async def release_not_approved(session: AsyncSession, payload: dict, event_type:
     a = await _account(session, x.account_id, lock=True)
     _evt(session, E.ESCROW_RELEASE_BLOCKED, a, milestoneId=x.milestone_id, amountMinor=x.amount_minor, currency=a.currency,
          reason="APPROVAL_DENIED" if event_type == E.APPROVAL_DENIED else "APPROVAL_EXPIRED", professionalId=a.professional_id)
+    await _schedule_release_escalation(session, x.milestone_id, 1)
+
+
+TIMER_RELEASE_ESCALATION = "escrow.release_escalation"
+RELEASE_ESCALATION_ROUNDS = 3  # then it stays with the parties' dispute right and Financial Ops
+
+
+async def _schedule_release_escalation(session: AsyncSession, milestone_id: uuid.UUID, round_: int) -> None:
+    days = get_settings().release_block_escalation_days
+    await schedule_timer(session, TIMER_RELEASE_ESCALATION, f"{milestone_id}:{round_}", clock.now() + timedelta(days=days),
+                         {"milestoneId": str(milestone_id), "round": round_})
+
+
+async def release_escalation(session: AsyncSession, payload: dict) -> None:
+    """Timer: accepted work is still unpaid because its release was not approved. The organisation's approvers and admins
+    and the professional are told again, and that either side can open a payment-release dispute. Never moves money."""
+    milestone_id = uuid.UUID(str(payload["milestoneId"]))
+    x = await session.scalar(select(Allocation).where(Allocation.milestone_id == milestone_id))
+    if x is None or x.state not in ("HELD", "RELEASE_PENDING_APPROVAL"):
+        return  # released, refunded, or a dispute already holds it
+    if await session.scalar(select(Release.id).where(Release.milestone_id == milestone_id)):
+        return
+    a = await _account(session, x.account_id)
+    round_ = int(payload.get("round", 1))
+    _evt(session, E.ESCROW_RELEASE_ESCALATED, a, milestoneId=milestone_id, amountMinor=x.amount_minor, currency=a.currency,
+         professionalId=a.professional_id, round=round_, daysWaiting=round_ * get_settings().release_block_escalation_days)
+    if round_ < RELEASE_ESCALATION_ROUNDS:
+        await _schedule_release_escalation(session, milestone_id, round_ + 1)
+
 
 
 async def milestone_cancelled(session: AsyncSession, payload: dict) -> None:

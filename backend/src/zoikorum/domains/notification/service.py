@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 import secrets
-from datetime import timedelta
+from datetime import timedelta, timezone
 
 from sqlalchemy import select, func
 from sqlalchemy.dialects.postgresql import insert
@@ -62,7 +62,8 @@ EVENT_TITLES = {
     E.MILESTONE_ACCEPTANCE_OVERDUE: 'Milestone review overdue',
     E.MILESTONE_FUNDING_REMINDER: 'Funding due soon', E.MILESTONE_FUNDING_REVERSED: 'Payment reversed: pause work on this milestone',
     E.MILESTONE_PARTIAL_ACCEPTANCE_OFFERED: 'Partial acceptance offered', E.MILESTONE_PARTIAL_ACCEPTANCE_DECLINED: 'Partial acceptance declined',
-    E.ESCROW_RELEASE_BLOCKED: 'Payment release not approved', E.REFUND_SETTLED: 'Refund completed',
+    E.OPEN_BRIEF_INTEREST: 'A professional is interested in your brief',
+    E.ESCROW_RELEASE_BLOCKED: 'Payment release not approved', E.ESCROW_RELEASE_ESCALATED: 'Accepted work is still unpaid', E.REFUND_SETTLED: 'Refund completed',
     E.REFUND_FAILED: 'Refund could not be completed',
     E.VERIFICATION_NEEDS_INFO: 'Verification needs information', E.VERIFICATION_COMPLETED: 'Verification completed',
     E.VERIFICATION_FAILED: 'Verification unsuccessful', E.VERIFICATION_EXPIRING: 'Verification expires soon',
@@ -85,7 +86,7 @@ EVENT_TITLES = {
     E.SUPPORT_REQUEST_ANSWERED: 'Support replied to your request', E.SUPPORT_REQUEST_RESOLVED: 'Your support request was resolved',
 }
 # Always shown in the app (email still follows the person's preferences): disputes and money that needs action.
-MUST_SEE = frozenset({E.PAYMENT_FAILED, E.MILESTONE_FUNDING_REVERSED, E.REFUND_FAILED, E.ESCROW_RELEASE_BLOCKED, E.PAYOUT_FAILED,
+MUST_SEE = frozenset({E.PAYMENT_FAILED, E.MILESTONE_FUNDING_REVERSED, E.REFUND_FAILED, E.ESCROW_RELEASE_BLOCKED, E.ESCROW_RELEASE_ESCALATED, E.PAYOUT_FAILED,
                       E.CONTRACT_PROFESSIONAL_STATUS_CHANGED})
 WEBHOOK_EVENTS = frozenset(e for e in EVENT_TITLES if domain_of(e) in {'proposal', 'contract', 'escrow', 'policy', 'dispute', 'verification'})
 
@@ -117,7 +118,7 @@ async def recipients(session, event):
             org_id, pro_id = engagement.organization_id, engagement.professional_id
     audience = 'BUYER' if p.get('buyersOnly') else p.get('audience')  # a notice for one side only
     if org_id and audience != 'PROFESSIONAL':
-        wanted = [OrgRole.APPROVER, OrgRole.BUDGET_OWNER, OrgRole.LEGAL_REVIEWER, OrgRole.ORG_ADMIN] if event.eventType in (E.APPROVAL_REQUIRED, E.APPROVAL_ESCALATED) else None
+        wanted = [OrgRole.APPROVER, OrgRole.BUDGET_OWNER, OrgRole.LEGAL_REVIEWER, OrgRole.ORG_ADMIN] if event.eventType in (E.APPROVAL_REQUIRED, E.APPROVAL_ESCALATED, E.ESCROW_RELEASE_ESCALATED) else None
         if event.eventType == E.EXCEPTION_REQUESTED:
             wanted = [OrgRole.EXCEPTION_AUTHORITY]
         found.update(await buyer.list_member_identities(session, org_id, wanted))
@@ -139,6 +140,8 @@ def target_url(event, recipient, professional_identity):
         return '/app/security'
     if domain_of(event.eventType) == 'admin':
         return '/app/safety'
+    if event.eventType == E.OPEN_BRIEF_INTEREST:
+        return '/app/briefs'
     if event.eventType == E.SAVED_SEARCH_MATCHES:
         return '/app/find?' + str(p.get('query') or '')
     if event.eventType == E.SAVED_PROFESSIONAL_AVAILABLE:
@@ -464,5 +467,12 @@ async def calendar_feed(session, token: str) -> str:
         out += ["BEGIN:VEVENT", f"UID:{it['uid']}@zoikorum", f"DTSTAMP:{stamp}", f"DTSTART;VALUE=DATE:{day}", f"DTEND;VALUE=DATE:{nxt}",
                 f"SUMMARY:{_ics_escape(it['title'])}", f"DESCRIPTION:{_ics_escape(it['detail'] + ' ' + base + it['path'])}",
                 f"URL:{base}{it['path']}", "END:VEVENT"]
+    from zoikorum.domains.messaging import facade as messaging_facade
+
+    for it in await messaging_facade.upcoming_meetings(session, orgs, pro.id if pro else None):
+        out += ["BEGIN:VEVENT", f"UID:{it['uid']}@zoikorum", f"DTSTAMP:{stamp}",
+                f"DTSTART:{it['start'].astimezone(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
+                f"DTEND:{it['end'].astimezone(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
+                f"SUMMARY:{_ics_escape(it['title'])}", f"DESCRIPTION:{_ics_escape(it['detail'])}", f"URL:{it['url']}", "END:VEVENT"]
     out.append("END:VCALENDAR")
     return "\r\n".join(out) + "\r\n"

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Query, Request, Response
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
-from zoikorum.domains.contract import service
+from zoikorum.domains.contract import service, tasks
 from zoikorum.domains.contract.schemas import (
     PartialOfferIn, ChangeOrderDecisionIn, ChangeOrderIn, ContractOut, ContractSummaryOut, DraftTextIn, EvidenceIn, ReviewIn,
     RevisionIn, SignIn, SubmissionDraftOut, SubmitIn, TerminateIn, TerminationDecisionIn,
@@ -19,6 +19,29 @@ from zoikorum.shared.idempotency import IdempotencyKey
 from zoikorum.shared.uploads import file_response
 
 router = APIRouter(tags=["contracts"])
+
+
+# ---- Tasks (tasks.py) --------------------------------------------------------------------
+@router.get("/v1/contracts/{contract_id}/tasks", response_model=list[tasks.TaskOut])
+async def list_tasks(contract_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    """The engagement's shared checklist: who does what by when (not part of the signed terms)."""
+    return await tasks.list_tasks(session, actor, contract_id)
+
+
+@router.post("/v1/contracts/{contract_id}/tasks", response_model=tasks.TaskOut, status_code=201)
+async def add_task(contract_id: uuid.UUID, body: tasks.TaskIn, actor: CurrentActor, session: DbSession, idem: IdempotencyKey):
+    return await idem.run(session, actor, lambda: tasks.add(session, actor, contract_id, body), status_code=201)
+
+
+@router.patch("/v1/contract-tasks/{task_id}", response_model=tasks.TaskOut)
+async def update_task(task_id: uuid.UUID, body: tasks.TaskPatch, actor: CurrentActor, session: DbSession, idem: IdempotencyKey):
+    return await idem.run(session, actor, lambda: tasks.update(session, actor, task_id, body))
+
+
+@router.delete("/v1/contract-tasks/{task_id}", status_code=204)
+async def remove_task(task_id: uuid.UUID, actor: CurrentActor, session: DbSession, idem: IdempotencyKey):
+    await idem.run(session, actor, lambda: tasks.remove(session, actor, task_id), status_code=204)
+    return Response(status_code=204)
 Role = Literal["buyer", "professional"]
 
 
