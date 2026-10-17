@@ -69,8 +69,8 @@ export function ActionList({ actions, empty = 'Nothing needs your attention righ
   if (actions.length === 0) return <p className="muted small" style={{ margin: 0 }}>{empty}</p>
   return (
     <ul className="action-list">
-      {actions.map((a) => (
-        <li key={a.title}>
+      {actions.map((a, i) => (
+        <li key={`${i}:${a.title}`}>
           <span className={`kpi-icon ${a.priority === 'High' ? 'red' : a.priority === 'Medium' ? 'amber' : 'blue'}`}><Icon name={a.icon} /></span>
           <Link to={a.to}><strong>{a.title}</strong><span className="muted small">{a.detail}</span></Link>
           <span className={`badge prio-${a.priority.toLowerCase()}`}>{a.priority}</span>
