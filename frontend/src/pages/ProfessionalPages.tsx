@@ -9,11 +9,16 @@ import {
 } from '../api/professional'
 import { CONTRACT_STATUS, contractApi, type Contract } from '../api/contracts'
 import { paymentsApi, type Earnings } from '../api/escrow'
-import { budgetText, proposalApi, requestStatus, type ProposalRequest } from '../api/proposals'
+import { budgetText, DECLINE_REASONS, proposalApi, requestStatus, type DeclineReason, type ProposalRequest } from '../api/proposals'
 import { DIMENSION_VALUE, DIMENSIONS, trustApi, verificationApi, type Trust, type VerificationCase } from '../api/verification'
 import { useAuth } from '../auth/AuthContext'
 import { ActionList, Avatar, DataFreshness, greeting, Icon, Kpi, type Action } from '../components/dashboard'
 import { dashboardApi, moneyOf, type DashboardSummary } from '../api/dashboards'
+import { disputeApi, type Dispute } from '../api/disputes'
+import { disputeActions, payoutActions, professionalRequestActions, urgentCount } from '../lib/dashboardActions'
+import { deadlineOf, deadlineText, engagementMoney, isDisputed } from '../lib/dashboardRows'
+import { DecisionDialog } from '../components/DecisionDialog'
+import { AvailabilityPanel, EarningsPanel, OpportunitiesPanel, RecentMessages } from '../components/ProfessionalPanels'
 import { HoursSlider } from '../components/HoursSlider'
 import { CantFindSpecialization } from '../components/CantFindSpecialization'
 import { DraftSaved, ResumeDraft } from '../components/ResumeDraft'
@@ -152,20 +157,30 @@ export function ProfessionalDashboard() {
   const [contracts, setContracts] = useState<Contract[]>([])
   const [earnings, setEarnings] = useState<Earnings | null>(null)
   const [summary, setSummary] = useState<DashboardSummary | null>(null)
+  const [disputes, setDisputes] = useState<Dispute[]>([])
   const [actionError, setActionError] = useState<unknown>(null)
   const [now] = useState(() => Date.now())  // read the clock once, not on every render
 
+  const [declining, setDeclining] = useState<ProposalRequest | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [listsLoading, setListsLoading] = useState(true)
+  const profileId = profile?.id
+
+  // Every module loads at once (Doherty threshold): the page never waits on its slowest call.
   const load = useCallback(async () => {
-    if (!profile) return
-    const [r, o, t, v] = await Promise.all([proApi.readiness(), proApi.offerings(), trustApi.get(profile.id),
-      verificationApi.forSubject('PROFESSIONAL', profile.id)])
-    setReadiness(r); setOfferings(o); setTrust(t); setCases(v)
-    setRequests(await proposalApi.list('professional').catch(() => []))
-    setContracts(await contractApi.list('professional').catch(() => []))
-    setEarnings(await paymentsApi.earnings().catch(() => null))
-    setSummary(await dashboardApi.professional().catch(() => null))
-  }, [profile])
-  useEffect(() => { load().catch(() => {}) }, [load])
+    if (!profileId) return
+    await Promise.all([
+      proApi.readiness().then(setReadiness), proApi.offerings().then(setOfferings), trustApi.get(profileId).then(setTrust),
+      verificationApi.forSubject('PROFESSIONAL', profileId).then(setCases),
+      proposalApi.list('professional').catch(() => []).then(setRequests),
+      contractApi.list('professional').catch(() => []).then(setContracts),
+      paymentsApi.earnings().catch(() => null).then(setEarnings),
+      dashboardApi.professional().catch(() => null).then(setSummary),
+      disputeApi.list('professional').catch(() => []).then(setDisputes),
+    ].map((p) => p.catch(() => {})))
+    setListsLoading(false)
+  }, [profileId])
+  useEffect(() => { load() }, [load])
 
   if (loading || !user) return <Loading />
 
@@ -179,12 +194,25 @@ export function ProfessionalDashboard() {
     startingPrice: o.startingPrice, typicalDuration: o.typicalDuration ?? undefined,
   }))
 
+  async function decline(reason: DeclineReason | null, note: string | undefined) {
+    if (!declining) return
+    const q = declining
+    await run(async () => {
+      await proposalApi.decline(q.id, reason ?? 'OTHER', note)
+      setNotice(`You declined “${q.service}”. ${q.organizationName ?? 'The buyer'} has been told, without your private note.`)
+    })
+    setDeclining(null)
+  }
+
   const monthPaid = earnings ? formatCurrencies(earnings.monthlySettledByCurrency) : '—'
-  const earningsTotal = (key: 'pending' | 'settled') => earnings ? formatCurrencies(Object.values(earnings.totalsByCurrency).map(t => t[key])) : '—'
+  const pendingRelease = summary ? formatCurrencies(moneyOf(summary.pendingReleaseMinor))
+    : formatCurrencies(contracts.flatMap((k) => engagementMoney(k).held))
   const soon = now + 30 * 86400_000
   const soon14 = now + 14 * 86400_000
   const expiring = cases.filter((c) => c.status === 'VERIFIED' && c.expiresAt && new Date(c.expiresAt).getTime() < soon)
-  const actions: Action[] = []
+  // Disputes and payout problems lead the queue (Professional Dashboard s.18: no dead ends).
+  const actions: Action[] = [...disputeActions(disputes), ...payoutActions(earnings?.payouts ?? []),
+    ...professionalRequestActions(requests, now).filter((a) => a.priority === 'High')]
   const newRequests = requests.filter((r) => r.status === 'OPEN')
   for (const k of contracts.filter((k) => k.canSign)) {
     actions.push({ title: `Countersign the contract: ${k.title}`, detail: `${k.reference} · the buyer has signed`, priority: 'High',
@@ -224,6 +252,7 @@ export function ProfessionalDashboard() {
     actions.push({ title: 'Verify your identity', detail: 'Reach Tier B to respond to requests', priority: 'Medium',
       to: '/app/professional/verification', icon: 'shield' })
   }
+  actions.push(...professionalRequestActions(requests, now).filter((a) => a.priority !== 'High'))  // waiting on the buyer: low, last
   for (const i of readiness?.items.filter((i) => !i.required && !i.done) ?? []) {
     actions.push({ title: i.label, detail: 'Recommended: makes your profile stronger', priority: 'Low', to: FIX_AT[i.key], icon: 'star' })
   }
@@ -244,16 +273,24 @@ export function ProfessionalDashboard() {
       </div>
       <AccountAlerts />
       <ErrorAlert error={error ?? actionError} />
+      {notice && <div className="alert alert-success" role="status">{notice}</div>}
+      {declining && (
+        <DecisionDialog<DeclineReason> title="Decline this request?" confirmLabel="Decline request" danger reasons={DECLINE_REASONS}
+          onConfirm={decline} onCancel={() => setDeclining(null)}>
+          <p>{declining.organizationName ?? 'The buyer'} is told you won't send a proposal for “{declining.service}”. This cannot be undone.</p>
+          <p className="small">Declining is never held against you: the reason helps us send you better-matched requests.</p>
+        </DecisionDialog>
+      )}
       {!profile ? <CreateProfile onCreated={setProfile} /> : (
         <>
           {/* Summary cards (max 6) */}
           <div className="kpi-row six">
             <Link to="/app/professional/engagements"><Kpi icon="contract" tone="blue" label="Active Engagements" value={contracts.filter((k) => k.status === 'ACTIVE').length} note="Contracts in progress" /></Link>
-            <Link to="/app/professional/requests"><Kpi icon="proposal" tone="violet" label="New Requests" value={newRequests.length} note="From buyers" /></Link>
-            <a href="#actions"><Kpi icon="bell" tone="amber" label="Pending Actions" value={actions.length} note={actions.length ? 'Needs your attention' : 'All caught up'} /></a>
+            <Link to="/app/professional/requests"><Kpi icon="proposal" tone="violet" label="New Requests" value={summary?.newRequests ?? newRequests.length} note="From buyers" /></Link>
+            <a href="#actions"><Kpi icon="bell" tone="amber" label="Pending Actions" value={urgentCount(actions)} note={urgentCount(actions) ? 'Needs your attention' : 'All caught up'} /></a>
             <Link to="/app/professional/engagements"><Kpi icon="clock" tone="teal" label="Upcoming Milestones" value={contracts.filter((k) => k.status === 'ACTIVE')
               .flatMap((k) => k.milestones).filter((m) => ['IN_PROGRESS', 'REVISION_REQUESTED'].includes(m.status)
-                && (!m.dueDate || new Date(`${m.dueDate}T00:00:00`).getTime() <= soon14)).length}
+                && !!m.dueDate && new Date(`${m.dueDate}T00:00:00`).getTime() <= soon14).length}
               note="Open, due in the next 14 days" /></Link>
             <Link to="/app/professional/earnings"><Kpi icon="check" tone="green" label="Earnings This Month (UTC)" value={monthPaid}
               note={summary && moneyOf(summary.pendingReleaseMinor).length ? `Paid out, after fees · ${formatCurrencies(moneyOf(summary.pendingReleaseMinor))} held in escrow for you`
@@ -293,59 +330,65 @@ export function ProfessionalDashboard() {
 
               <section className="card panel" id="requests">
                 <div className="panel-head"><h2>Incoming Requests &amp; Proposals</h2><Link className="small" to="/app/professional/requests">View all</Link></div>
-                <table className="data">
-                  <thead><tr><th>Buyer</th><th>Service</th><th>Type</th><th>Budget</th><th>Start</th><th>Actions</th></tr></thead>
+                {listsLoading ? <Loading lines={3} /> : <table className="data">
+                  <thead><tr><th>Buyer</th><th>Service</th><th>Type</th><th>Budget</th><th>Deadline</th><th>Actions</th></tr></thead>
                   <tbody>{requests.length === 0 ? <tr><td colSpan={6} className="empty-row">
                     <strong>No requests yet.</strong> Buyers find you in search and send requests; they appear here, ready to respond to.
                     {trust?.tier === 'C' && ' Tier B (verified identity) is needed to send a proposal.'}
-                  </td></tr> : requests.slice(0, 5).map((q) => (
+                  </td></tr> : requests.slice(0, 5).map((q) => {
+                    const due = deadlineText(deadlineOf(q), now)
+                    return (
                     <tr key={q.id}>
                       <td><strong>{q.organizationName ?? q.buyerName}</strong></td>
-                      <td className="small">{q.service}</td>
+                      <td className="small">{q.service}<div className="muted small">Start {q.desiredStartDate}</div></td>
                       <td className="small">{LABEL[q.engagementType]}</td>
                       <td className="small">{budgetText(q.budget)}</td>
-                      <td className="small">{q.desiredStartDate}</td>
+                      <td className="small" title="Answer by then">{due.tone ? <span className={`badge ${due.tone}`}>{due.text}</span> : due.text}</td>
                       <td>{q.status === 'OPEN' || q.proposal?.status === 'REVISION_REQUESTED'
-                        ? <Link className="btn btn-primary btn-sm" to={`/app/professional/requests/${q.id}`}>{q.status === 'OPEN' ? 'Respond' : 'Revise'}</Link>
+                        ? <span className="row" style={{ flexWrap: 'nowrap', gap: 4 }}>
+                          <Link className="btn btn-ghost btn-sm" to={`/app/professional/requests/${q.id}`}>View</Link>
+                          <Link className="btn btn-primary btn-sm" to={`/app/professional/requests/${q.id}`}>{q.status === 'OPEN' ? 'Respond' : 'Revise'}</Link>
+                          {q.status === 'OPEN' && !q.proposal && <button className="btn btn-ghost btn-sm danger-text" onClick={() => setDeclining(q)}>Decline</button>}
+                        </span>
                         : <span className={`badge ${requestStatus(q).tone}`}>{requestStatus(q).label}</span>}</td>
-                    </tr>))}</tbody>
-                </table>
+                    </tr>)
+                  })}</tbody>
+                </table>}
               </section>
 
               <section className="card panel" id="engagements">
                 <div className="panel-head"><h2>Engagements</h2><Link className="small" to="/app/professional/engagements">View all</Link></div>
-                <table className="data">
-                  <thead><tr><th>Buyer</th><th>Service</th><th>Status</th><th>Value</th><th>Next action</th></tr></thead>
-                  <tbody>{contracts.length === 0 ? <tr><td colSpan={5} className="empty-row">
+                {listsLoading ? <Loading lines={3} /> : <table className="data">
+                  <thead><tr><th>Buyer</th><th>Service</th><th>Status</th><th>Milestone</th><th>Payment</th><th>Next action</th></tr></thead>
+                  <tbody>{contracts.length === 0 ? <tr><td colSpan={6} className="empty-row">
                     <strong>No engagements yet.</strong> When a buyer accepts your proposal, the contract appears here for signing.
-                  </td></tr> : contracts.slice(0, 5).map((k) => (
+                  </td></tr> : contracts.slice(0, 5).map((k) => {
+                    const done = k.milestones.filter((m) => m.status === 'ACCEPTED').length
+                    const pct = k.milestones.length ? Math.round((done / k.milestones.length) * 100) : 0
+                    return (
                     <tr key={k.id}>
                       <td className="small">{k.parties.find((p) => p.role === 'BUYER')?.name}</td>
                       <td><Link to={`/app/professional/engagements/${k.id}`}><strong>{k.title}</strong></Link></td>
-                      <td><span className={`badge ${CONTRACT_STATUS[k.status].tone}`}>{CONTRACT_STATUS[k.status].label}</span></td>
-                      <td className="small">{formatMoney(k.total)}</td>
+                      <td>{isDisputed(k) ? <span className="badge red">Disputed</span>
+                        : <span className={`badge ${CONTRACT_STATUS[k.status].tone}`}>{CONTRACT_STATUS[k.status].label}</span>}</td>
+                      <td className="small" title={`${done} of ${k.milestones.length} milestones accepted`}>
+                        <div className="bar" aria-hidden><span style={{ width: `${pct}%` }} /></div>{done}/{k.milestones.length}</td>
+                      <td className="small">{engagementMoney(k).text}<div className="muted small">of {formatMoney(k.total)}</div></td>
                       <td className="small">{k.canSign ? <Link className="btn btn-primary btn-sm" to={`/app/professional/engagements/${k.id}`}>Countersign</Link> : k.nextAction}</td>
-                    </tr>))}</tbody>
-                </table>
+                    </tr>)
+                  })}</tbody>
+                </table>}
               </section>
+
+              <EarningsPanel earnings={earnings} contracts={contracts} pendingRelease={pendingRelease} />
             </div>
 
             <aside>
               <section className="card panel attention" id="actions">
                 <div className="panel-head"><h2>Pending Actions</h2></div>
-                <ActionList actions={actions} empty="You're all set. New requests from buyers will appear here." />
+                {listsLoading ? <Loading lines={2} /> : <ActionList actions={actions} empty="You're all set. New requests from buyers will appear here." />}
               </section>
-              <section className="card panel" id="earnings">
-                <div className="panel-head"><h2>Earnings &amp; Payouts</h2></div>
-                <ul className="checklist">
-                  <li><span>Paid out this month (UTC)</span><strong>{monthPaid}</strong></li>
-                  <li><span>Waiting for payout</span><strong>{earningsTotal('pending')}</strong></li>
-                  <li><span>Lifetime paid out</span><strong>{earningsTotal('settled')}</strong></li>
-                </ul>
-                <p className="muted small" style={{ margin: '8px 0 0' }}>{earnings && !earnings.payoutAccount
-                  ? <>Add a <Link to="/app/professional/earnings">payout account</Link> so released money can be paid to you.</>
-                  : <>Money is released from escrow when buyers accept milestones. <Link to="/app/professional/earnings">View earnings</Link></>}</p>
-              </section>
+              <AvailabilityPanel profile={profile} active={contracts.filter((k) => k.status === 'ACTIVE').length} onSaved={setProfile} />
               {trust && (
                 <section className="card panel" id="verification">
                   <div className="panel-head"><h2>Verification &amp; Trust</h2>
@@ -364,6 +407,8 @@ export function ProfessionalDashboard() {
                   <Link className="btn btn-secondary btn-sm" style={{ marginTop: 12 }} to="/app/professional/verification">Complete verification →</Link>
                 </section>
               )}
+              <RecentMessages />
+              <OpportunitiesPanel />
             </aside>
           </div>
         </>
