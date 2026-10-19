@@ -55,6 +55,27 @@ jobs:
             .venv/bin/alembic upgrade head
             sudo systemctl restart zoikorum-api zoikorum-worker'
 
+      # The first staff account (Platform Admin with every staff role), from two repository secrets. Skipped when they
+      # are not set. Safe on every deploy: an existing account keeps its password, two-step sign-in and roles.
+      # The password goes over SSH on standard input, never on a command line or in the log.
+      - name: First staff account
+        env:
+          VM_HOST: ${{ secrets.VM_HOST }}
+          VM_USER: ${{ secrets.VM_USER }}
+          ADMIN_EMAIL: ${{ secrets.ZK_BOOTSTRAP_ADMIN_EMAIL }}
+          ADMIN_PASSWORD: ${{ secrets.ZK_BOOTSTRAP_ADMIN_PASSWORD }}
+        run: |
+          if [ -z "$ADMIN_EMAIL" ] || [ -z "$ADMIN_PASSWORD" ]; then
+            echo "No first staff account configured (secrets ZK_BOOTSTRAP_ADMIN_EMAIL and ZK_BOOTSTRAP_ADMIN_PASSWORD)."
+            exit 0
+          fi
+          case "$ADMIN_EMAIL" in *[!A-Za-z0-9@._+-]*) echo "ZK_BOOTSTRAP_ADMIN_EMAIL is not a plain email address"; exit 1;; esac
+          printf '%s' "$ADMIN_PASSWORD" | ssh "$VM_USER@$VM_HOST" "set -e
+            cd ~/zoikorum-app/backend
+            export PYTHONPATH=\$PWD/src
+            ZK_ADMIN_PASSWORD=\$(cat) .venv/bin/python -m zoikorum.cli create-admin --email '$ADMIN_EMAIL' --name 'Zoikorum Admin' \
+              --country IN --roles COMPLIANCE_OFFICER,MEDIATOR,FINANCIAL_OPS,TS_ANALYST,LEGAL"
+
       - name: Wait for the API to be ready
         run: |
           for _ in $(seq 1 20); do

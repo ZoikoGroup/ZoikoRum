@@ -667,9 +667,11 @@ async def create_platform_admin(session: AsyncSession, email: str, password: str
         session.add(identity)
         await session.flush()
         _evt(session, E.IDENTITY_CREATED, identity, email=identity.email, country=country, accountType="STAFF")
+        _evt(session, E.PLATFORM_ROLE_GRANTED, identity, role=PlatformRole.PLATFORM_ADMIN, grantedBy="bootstrap-cli")
     elif PlatformRole.PLATFORM_ADMIN not in identity.platform_roles:
         identity.platform_roles = sorted({*identity.platform_roles, PlatformRole.PLATFORM_ADMIN})
-    _evt(session, E.PLATFORM_ROLE_GRANTED, identity, role=PlatformRole.PLATFORM_ADMIN, grantedBy="bootstrap-cli")
+        _evt(session, E.PLATFORM_ROLE_GRANTED, identity, role=PlatformRole.PLATFORM_ADMIN, grantedBy="bootstrap-cli")
+    # Run again (e.g. on every deploy) it changes nothing: the password, two-step sign-in and existing roles are kept.
     for role in extra_roles:
         if role not in identity.platform_roles:
             identity.platform_roles = sorted({*identity.platform_roles, role})
