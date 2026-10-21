@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from zoikorum.domains.contract import service, tasks
 from zoikorum.domains.contract.schemas import (
+    AdminContractOut, AdminContractSummaryOut,
     PartialOfferIn, ChangeOrderDecisionIn, ChangeOrderIn, ContractOut, ContractSummaryOut, DraftTextIn, EvidenceIn, ReviewIn,
     RevisionIn, SignIn, SubmissionDraftOut, SubmitIn, TerminateIn, TerminationDecisionIn,
 )
@@ -263,3 +264,18 @@ async def resume_retainer(contract_id: uuid.UUID, actor: CurrentActor, session: 
 async def policy_state(contract_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> dict:
     """Buyer: what the agreed policy would decide for funding, acceptance and release, before they are tried."""
     return await service.policy_state(session, actor, contract_id)
+
+
+# ---- Staff admin console -------------------------------------------------------------------------------------------
+@router.get("/v1/admin/contracts", response_model=Page[AdminContractOut])
+async def admin_contracts(actor: CurrentActor, session: DbSession, q: str | None = Query(default=None, max_length=200),
+                          status_: str | None = Query(default=None, alias="status", max_length=30),
+                          cursor: str | None = None, limit: int | None = Query(default=None, ge=1, le=100)):
+    """Platform Admin / Compliance / Legal / Mediators / Financial Operations: every contract with its milestones, escrow
+    money and open disputes. Reads are audited."""
+    return await service.admin_contracts(session, actor, q, status_, cursor, limit)
+
+
+@router.get("/v1/admin/contracts/summary", response_model=AdminContractSummaryOut)
+async def admin_contract_summary(actor: CurrentActor, session: DbSession):
+    return await service.admin_contract_summary(session, actor)

@@ -20,7 +20,10 @@ from zoikorum.domains.buyer import facade as buyer_facade
 from zoikorum.domains.contract import facade as contract_facade
 from zoikorum.domains.policy import facade as policy_facade
 from zoikorum.domains.escrow.models import Allocation, EscrowAccount, Funding, LedgerEntry, Release
-from zoikorum.domains.escrow.schemas import AllocationOut, BulkFundIn, EscrowOut, FundingOut, FundIn, LedgerLineOut
+from zoikorum.domains.escrow.schemas import (
+    AdminEscrowBucketOut, AdminEscrowRowOut, AdminEscrowSummaryOut, AllocationOut, BulkFundIn, EscrowOut, FundingOut, FundIn,
+    LedgerLineOut,
+)
 from zoikorum.domains.professional import facade as professional_facade
 from zoikorum.shared import clock, fx
 from zoikorum.shared.auth import Actor, OrgRole, PlatformRole
@@ -863,3 +866,54 @@ async def auto_fund_cycle(session: AsyncSession, payload: dict) -> None:
     except DomainError as e:
         _evt(session, E.ESCROW_AUTO_FUNDING_FAILED, a, milestoneId=milestone_id, code=e.code, audience="BUYER",
              message=f"M{alloc.sequence} {alloc.title} could not be funded automatically ({e.detail or e.code}). Fund it from the engagement.")
+
+
+# ---- Staff admin console: protected funds ---------------------------------------------------------------------------
+
+ESCROW_VIEWERS = (PlatformRole.FINANCIAL_OPS, PlatformRole.PLATFORM_ADMIN)
+
+
+async def admin_escrow(session: AsyncSession, actor: Actor, status: str | None, currency: str | None, cursor: str | None,
+                       limit: int | None) -> dict:
+    """Staff Protected funds list: every milestone allocation, newest first, filtered by state and currency, with the
+    payment provider's reference for its funding. Every read is audited."""
+    from zoikorum.domains.payments import facade as payments_facade
+    from zoikorum.shared.http import next_cursor, paginate
+
+    actor.require_platform_role(*ESCROW_VIEWERS)
+    stmt = select(Allocation, EscrowAccount).join(EscrowAccount, EscrowAccount.id == Allocation.account_id)
+    if status:
+        stmt = stmt.where(Allocation.state == status)
+    if currency:
+        stmt = stmt.where(EscrowAccount.currency == currency.upper())
+    stmt, lim = paginate(stmt, Allocation, cursor, limit)
+    rows = (await session.execute(stmt)).all()
+    page = rows[:lim]
+    titles = await contract_facade.titles(session, list({a.contract_id for _, a in page}))
+    orgs = {o: await buyer_facade.get_organization(session, o) for o in {a.organization_id for _, a in page}}
+    pros = await professional_facade.get_professionals(session, list({a.professional_id for _, a in page}))
+    refs = await payments_facade.intent_refs(session, [x.funding_id for x, _ in page if x.funding_id])
+    record_audit(session, "escrow.admin.allocations_listed", object_type="Identity", object_id=actor.identity_id,
+                 details={"status": status, "currency": currency, "count": len(page)})
+
+    def out(x: Allocation, a: EscrowAccount) -> AdminEscrowRowOut:
+        org, pro = orgs.get(a.organization_id), pros.get(a.professional_id)
+        provider, reference = refs.get(x.funding_id, (None, None))
+        return AdminEscrowRowOut(
+            id=x.id, contractId=a.contract_id, contractTitle=titles.get(a.contract_id, ""), milestoneId=x.milestone_id,
+            milestoneSequence=x.sequence, buyerName=org.name if org else "", professionalName=pro.display_name if pro else "",
+            currency=a.currency, amountMinor=x.amount_minor, status=x.state, provider=provider, providerReference=reference,
+            updatedAt=x.updated_at)
+
+    return {"items": [out(x, a) for x, a in page], "nextCursor": next_cursor(rows, lim, key=lambda r: r[0])}
+
+
+async def admin_escrow_summary(session: AsyncSession, actor: Actor) -> AdminEscrowSummaryOut:
+    """Allocations and their amounts per state and currency. Currencies are never added together."""
+    actor.require_platform_role(*ESCROW_VIEWERS)
+    rows = (await session.execute(
+        select(Allocation.state, EscrowAccount.currency, func.count(), func.coalesce(func.sum(Allocation.amount_minor), 0))
+        .join(EscrowAccount, EscrowAccount.id == Allocation.account_id)
+        .group_by(Allocation.state, EscrowAccount.currency).order_by(Allocation.state, EscrowAccount.currency))).all()
+    return AdminEscrowSummaryOut(buckets=[AdminEscrowBucketOut(status=s, currency=c, count=n, amountMinor=int(total))
+                                          for s, c, n, total in rows])

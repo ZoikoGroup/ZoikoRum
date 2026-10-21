@@ -215,3 +215,36 @@ async def upcoming_dates(session: AsyncSession, org_ids: list[uuid.UUID], profes
         out.append({"uid": f"sign-{c.id}-{c.contract_version}", "date": c.signature_deadline.date(), "title": f"Sign by: {c.reference}",
                     "detail": "The contract must be signed by both parties by this date.", "path": path})
     return sorted(out, key=lambda x: x["date"])
+
+
+# ---- Staff admin console ------------------------------------------------------------------------------------------
+
+async def counts_by_party(session: AsyncSession, organization_ids: list[uuid.UUID],
+                          firm_ids: list[uuid.UUID]) -> tuple[dict[uuid.UUID, int], dict[uuid.UUID, int]]:
+    """Contracts (any status) per buyer organisation, and per firm the professional practised under."""
+    from sqlalchemy import func
+
+    by_org = dict((await session.execute(select(Contract.organization_id, func.count()).where(
+        Contract.organization_id.in_(organization_ids)).group_by(Contract.organization_id))).all()) if organization_ids else {}
+    by_firm = dict((await session.execute(select(Contract.firm_id, func.count()).where(
+        Contract.firm_id.in_(firm_ids)).group_by(Contract.firm_id))).all()) if firm_ids else {}
+    return by_org, by_firm
+
+
+async def engagement_counts(session: AsyncSession, professional_ids: list[uuid.UUID]) -> dict[uuid.UUID, dict[str, int]]:
+    """Per professional: engagements running now (active or disputed) and every engagement that ever started."""
+    from sqlalchemy import func
+
+    if not professional_ids:
+        return {}
+    rows = (await session.execute(select(
+        Contract.professional_id, func.count().filter(Contract.status.in_(("ACTIVE", "DISPUTED"))),
+        func.count().filter(Contract.activated_at.is_not(None)))
+        .where(Contract.professional_id.in_(professional_ids)).group_by(Contract.professional_id))).all()
+    return {pid: {"active": active, "lifetime": lifetime} for pid, active, lifetime in rows}
+
+
+async def titles(session: AsyncSession, contract_ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
+    if not contract_ids:
+        return {}
+    return dict((await session.execute(select(Contract.id, Contract.title).where(Contract.id.in_(contract_ids)))).all())

@@ -1,7 +1,7 @@
 """FastAPI application factory for the Zoikorum modular monolith.
 
 Each domain in ``zoikorum.domains.DOMAINS`` contributes:
-  * ``api.router``  - mounted on the app
+  * ``api.router``  - mounted on the app (and ``api.admin_router``, staff routes outside the domain's URL prefix)
   * ``handlers``    - imported so its @subscribe / @on_timer registrations run
   * ``models``      - imported so its tables join the shared metadata
 """
@@ -107,8 +107,9 @@ def create_app() -> FastAPI:
     app.state.api_key_budget = api_key_budget
     for d in load_domains():
         api = _maybe_import(f"zoikorum.domains.{d}.api")
-        if api is not None and hasattr(api, "router"):
-            app.include_router(api.router)
+        for name in ("router", "admin_router"):
+            if api is not None and hasattr(api, name):
+                app.include_router(getattr(api, name))
 
     @app.get("/health", tags=["platform"])
     async def health() -> dict:

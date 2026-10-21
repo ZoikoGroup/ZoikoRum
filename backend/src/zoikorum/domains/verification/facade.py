@@ -59,3 +59,13 @@ async def open_case_counts(session: AsyncSession) -> dict[str, int]:
     overdue = await session.scalar(select(func.count()).select_from(VerificationCase).where(
         VerificationCase.status.in_(("PENDING", "IN_REVIEW")), VerificationCase.estimated_completion < clock.now())) or 0
     return {"open": total, "overdue": overdue}
+
+
+async def open_case_subjects(session: AsyncSession) -> dict[str, set[uuid.UUID]]:
+    """Subjects with a check still waiting for a decision, by subject type (PROFESSIONAL | FIRM | IDENTITY)."""
+    out: dict[str, set[uuid.UUID]] = {}
+    for subject_type, subject_id in (await session.execute(select(VerificationCase.subject_type, VerificationCase.subject_id)
+                                                           .where(VerificationCase.status.in_(("PENDING", "IN_REVIEW", "NEEDS_INFO")))
+                                                           .distinct())).all():
+        out.setdefault(subject_type, set()).add(subject_id)
+    return out

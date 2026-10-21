@@ -28,6 +28,7 @@ from zoikorum.domains.contract.models import (
     TerminationRequest,
 )
 from zoikorum.domains.contract.schemas import (
+    AdminBuyerPartyOut, AdminContractOut, AdminContractSummaryOut, AdminMilestoneOut, AdminProfessionalPartyOut,
     PartialOfferIn, PartialOfferOut, ChangeOrderIn, ChangePreviewOut, ContractOut, ContractRevisionOut, ContractSummaryOut, MilestoneOut,
     DraftItemOut, DraftTextIn, EvidenceIn, EvidenceOut, IssueOut, PartyOut, ReviewIn, RevisionIn, SignatureOut, SignIn,
     SubmissionDraftOut, SubmissionItemOut, SubmissionOut, SubmissionReviewOut, SubmitIn, TerminateIn, TerminationDecisionIn,
@@ -2004,3 +2005,65 @@ async def policy_state(session: AsyncSession, actor: Actor, contract_id: uuid.UU
         out.append({"action": action, "label": ACTION_LABEL[action], "milestoneId": m.id, "milestone": f"M{m.sequence} {m.title}",
                     "decision": d.decision, "reasons": [{"code": r.code, "message": r.message} for r in d.reasons]})
     return {"contractId": c.id, "policyVersion": c.policy_version_label, "actions": out}
+
+
+# ---- Staff admin console: every contract ---------------------------------------------------------------------------
+
+CONTRACT_VIEWERS = (PlatformRole.PLATFORM_ADMIN, PlatformRole.COMPLIANCE_OFFICER, PlatformRole.LEGAL, PlatformRole.MEDIATOR,
+                    PlatformRole.FINANCIAL_OPS)
+
+
+async def admin_contracts(session: AsyncSession, actor: Actor, q: str | None, status: str | None, cursor: str | None,
+                          limit: int | None) -> dict:
+    """Staff Contracts list, newest first: search by title or reference, filter by status. Each contract carries its
+    milestones, the money funded and released in escrow, and whether a dispute is open. Every read is audited."""
+    from sqlalchemy import or_
+
+    from zoikorum.shared.http import next_cursor
+
+    actor.require_platform_role(*CONTRACT_VIEWERS)
+    stmt = select(Contract)
+    if q and q.strip():
+        term = "%" + q.strip().lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        stmt = stmt.where(or_(func.lower(Contract.title).like(term, escape="\\"),
+                              func.lower(Contract.reference).like(term, escape="\\")))
+    if status:
+        stmt = stmt.where(Contract.status == status)
+    stmt, lim = paginate(stmt, Contract, cursor, limit)
+    rows = list((await session.scalars(stmt)).all())
+    page = rows[:lim]
+    ids = [c.id for c in page]
+    milestones: dict[uuid.UUID, list[Milestone]] = {}
+    for m in (await session.scalars(select(Milestone).where(Milestone.contract_id.in_(ids))
+                                    .order_by(Milestone.contract_id, Milestone.sequence))).all() if ids else []:
+        milestones.setdefault(m.contract_id, []).append(m)
+    orgs = {o: await buyer_facade.get_organization(session, o) for o in {c.organization_id for c in page}}
+    pros = await professional_facade.get_professionals(session, list({c.professional_id for c in page}))
+    money = await escrow_facade.money_by_contract(session, ids)
+    disputed = await dispute_facade.contracts_with_open_disputes(session, ids)
+    record_audit(session, "contract.admin.contracts_listed", object_type="Identity", object_id=actor.identity_id,
+                 details={"search": bool(q and q.strip()), "status": status, "count": len(page)})
+
+    def out(c: Contract) -> AdminContractOut:
+        org, pro, parties = orgs.get(c.organization_id), pros.get(c.professional_id), c.parties or {}
+        return AdminContractOut(
+            id=c.id, title=c.title, status=c.status, version=c.contract_version, currency=c.currency, totalMinor=c.total_minor,
+            buyer=AdminBuyerPartyOut(organizationId=c.organization_id, country=org.country if org else None,
+                                     name=org.name if org else parties.get("buyer", {}).get("name", "")),
+            professional=AdminProfessionalPartyOut(id=c.professional_id, country=pro.country if pro else None,
+                                                   name=pro.display_name if pro else parties.get("professional", {}).get("name", "")),
+            milestones=[AdminMilestoneOut(id=m.id, sequence=m.sequence, title=m.title, status=m.status,
+                                          amountMinor=m.amount_minor, dueDate=m.due_date) for m in milestones.get(c.id, [])],
+            fundedMinor=money.get(c.id, {}).get("funded", 0), releasedMinor=money.get(c.id, {}).get("released", 0),
+            hasOpenDispute=c.id in disputed, createdAt=c.created_at, signedAt=c.activated_at, updatedAt=c.updated_at)
+
+    return {"items": [out(c) for c in page], "nextCursor": next_cursor(rows, lim)}
+
+
+async def admin_contract_summary(session: AsyncSession, actor: Actor) -> AdminContractSummaryOut:
+    """Counts for the Contracts page cards: contracts and milestones by status, and disputes still open."""
+    actor.require_platform_role(*CONTRACT_VIEWERS)
+    by_status = dict((await session.execute(select(Contract.status, func.count()).group_by(Contract.status))).all())
+    milestones = dict((await session.execute(select(Milestone.status, func.count()).group_by(Milestone.status))).all())
+    return AdminContractSummaryOut(total=sum(by_status.values()), byStatus=by_status, milestonesByStatus=milestones,
+                                   openDisputes=await dispute_facade.open_count(session))

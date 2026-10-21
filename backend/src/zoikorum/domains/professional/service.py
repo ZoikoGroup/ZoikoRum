@@ -21,6 +21,10 @@ from zoikorum.domains.trust import facade as trust_facade
 from zoikorum.domains.verification import facade as verification_facade
 from zoikorum.domains.professional.models import CredentialClaim, Offering, Professional
 from zoikorum.domains.professional.schemas import (
+    AdminProfessionalOut,
+    AdminProfessionalSummaryOut,
+    AdminTiersOut,
+    AdminVerificationOut,
     AvailabilityIn,
     CredentialIn,
     CredentialOut,
@@ -44,7 +48,7 @@ from zoikorum.domains.professional.schemas import (
     SpecializationsIn,
 )
 from zoikorum.shared import clock
-from zoikorum.shared.auth import Actor, Persona
+from zoikorum.shared.auth import Actor, Persona, PlatformRole
 from zoikorum.shared.errors import Conflict, DomainError, Forbidden, NotFound, ValidationFailed, VersionConflict
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_audit, record_event
@@ -769,3 +773,79 @@ def _discard_photo(key: str) -> None:
 async def _enterprise_signals(session: AsyncSession, pro: Professional) -> dict:
     from zoikorum.domains.professional import enterprise
     return await enterprise.signals(session, pro)
+
+
+# ---- Staff admin console: every professional profile ------------------------------------------------------------------
+
+PROFESSIONAL_VIEWERS = (PlatformRole.PLATFORM_ADMIN, PlatformRole.TS_ANALYST, PlatformRole.COMPLIANCE_OFFICER,
+                        PlatformRole.SUPPORT_AGENT)
+
+
+async def _publication(session: AsyncSession):
+    """The console's publication state as one SQL expression, so the list filter and the summary counts always agree."""
+    from sqlalchemy import case, or_
+
+    waiting = await verification_facade.open_case_subjects(session)
+    in_review = or_(Professional.id.in_(list(waiting.get("PROFESSIONAL", ()))),
+                    Professional.identity_id.in_(list(waiting.get("IDENTITY", ()))))
+    return case((or_(Professional.status == "SUSPENDED", Professional.visibility_reduced.is_(True)), "RESTRICTED"),
+                (Professional.status == "PUBLISHED", "PUBLISHED"), (in_review, "IN_REVIEW"), else_="DRAFT")
+
+
+async def admin_professionals(session: AsyncSession, actor: Actor, q: str | None, publication: str | None, tier: str | None,
+                              country: str | None, cursor: str | None, limit: int | None) -> dict:
+    """Staff Professionals list, newest first: search by name or headline, filter by publication state, trust tier and
+    country. Every read is audited."""
+    from sqlalchemy import or_
+
+    from zoikorum.shared.http import next_cursor, paginate
+
+    actor.require_platform_role(*PROFESSIONAL_VIEWERS)
+    state = await _publication(session)
+    stmt = select(Professional, state)
+    if q and q.strip():
+        term = "%" + q.strip().lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        stmt = stmt.where(or_(func.lower(Professional.display_name).like(term, escape="\\"),
+                              func.lower(func.coalesce(Professional.headline, "")).like(term, escape="\\")))
+    if publication:
+        stmt = stmt.where(state == publication)
+    if tier in ("A", "B"):
+        stmt = stmt.where(Professional.id.in_(await trust_facade.professionals_in_tiers(session, (tier,))))
+    elif tier == "C":  # not assessed yet counts as C
+        stmt = stmt.where(Professional.id.not_in(await trust_facade.professionals_in_tiers(session, ("A", "B"))))
+    if country:
+        stmt = stmt.where(Professional.country == country.upper())
+    stmt, lim = paginate(stmt, Professional, cursor, limit)
+    rows = (await session.execute(stmt)).all()
+    ids = [p.id for p, _ in rows[:lim]]
+    trust = await trust_facade.tiers_and_dimensions(session, ids)
+    engagements = await contract_facade.engagement_counts(session, ids)
+    record_audit(session, "professional.admin.professionals_listed", object_type="Identity", object_id=actor.identity_id,
+                 details={"search": bool(q and q.strip()), "publication": publication, "tier": tier, "country": country,
+                          "count": len(ids)})
+
+    def out(row) -> AdminProfessionalOut:
+        p, pub = row
+        t, dims = trust[p.id]
+        counts = engagements.get(p.id, {})
+        return AdminProfessionalOut(
+            id=p.id, identityId=p.identity_id, displayName=p.display_name, headline=p.headline,
+            specialization=p.primary_specialization, category=p.primary_category, country=p.country, tier=t, publication=pub,
+            verification=AdminVerificationOut(identity=dims["identity"], credentials=dims["credentials"],
+                                              jurisdiction=dims["jurisdiction"]),
+            activeEngagements=counts.get("active", 0), lifetimeEngagements=counts.get("lifetime", 0), createdAt=p.created_at)
+
+    return {"items": [out(r) for r in rows[:lim]], "nextCursor": next_cursor(rows, lim, key=lambda r: r[0])}
+
+
+async def admin_professional_summary(session: AsyncSession, actor: Actor) -> AdminProfessionalSummaryOut:
+    """Counts for the Professionals page cards. Tier C includes profiles not assessed yet."""
+    actor.require_platform_role(*PROFESSIONAL_VIEWERS)
+    state = await _publication(session)
+    by_state = dict((await session.execute(select(state, func.count()).group_by(state))).all())
+    total = sum(by_state.values())
+    trust = await trust_facade.admin_counts(session)
+    return AdminProfessionalSummaryOut(
+        total=total, published=by_state.get("PUBLISHED", 0), inReview=by_state.get("IN_REVIEW", 0),
+        draft=by_state.get("DRAFT", 0), restricted=by_state.get("RESTRICTED", 0), identityVerified=trust["identityVerified"],
+        tiers=AdminTiersOut(A=trust["A"], B=trust["B"], C=max(0, total - trust["A"] - trust["B"])))

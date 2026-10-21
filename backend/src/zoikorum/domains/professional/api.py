@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import uuid
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
-from fastapi import APIRouter, Header, Response, status
+from fastapi import APIRouter, Header, Query, Response, status
 
 from zoikorum.domains.professional import enterprise, insights, saved_buyers, service
 from zoikorum.domains.professional.schemas import (
+    AdminProfessionalOut, AdminProfessionalSummaryOut, Publication,
     BuyerCandidateOut, SavedBuyerIn, SavedBuyerOut, SavedBuyerPatch,
     AvailabilityIn,
     CredentialIn,
@@ -28,6 +29,7 @@ from zoikorum.domains.professional.schemas import (
 )
 from zoikorum.shared.auth import CurrentActor, OptionalActor
 from zoikorum.shared.db import DbSession
+from zoikorum.shared.http import Page
 
 router = APIRouter(prefix="/v1/professionals", tags=["professionals"])
 
@@ -224,3 +226,22 @@ async def enterprise_applications(actor: CurrentActor, session: DbSession) -> li
 @router.post("/{professional_id}/enterprise/decision")
 async def decide_enterprise_readiness(professional_id: uuid.UUID, body: EnterpriseDecisionIn, actor: CurrentActor, session: DbSession) -> dict:
     return await enterprise.decide(session, actor, professional_id, body.approve, body.reason)
+
+
+# Staff admin console: every professional profile (outside the /v1/professionals prefix).
+admin_router = APIRouter(prefix="/v1/admin/professionals", tags=["professionals"])
+
+
+@admin_router.get("", response_model=Page[AdminProfessionalOut])
+async def admin_professionals(actor: CurrentActor, session: DbSession, q: str | None = Query(default=None, max_length=200),
+                              publication: Publication | None = None, tier: Literal["A", "B", "C"] | None = None,
+                              country: str | None = Query(default=None, min_length=2, max_length=2),
+                              cursor: str | None = None, limit: int | None = Query(default=None, ge=1, le=100)):
+    """Platform Admin / Trust & Safety / Compliance / Support: every profile with its publication state, trust tier,
+    verification and engagements. Reads are audited."""
+    return await service.admin_professionals(session, actor, q, publication, tier, country, cursor, limit)
+
+
+@admin_router.get("/summary", response_model=AdminProfessionalSummaryOut)
+async def admin_professional_summary(actor: CurrentActor, session: DbSession):
+    return await service.admin_professional_summary(session, actor)

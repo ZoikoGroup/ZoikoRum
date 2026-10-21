@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -61,3 +62,63 @@ async def member_roles(session: AsyncSession, firm_id: uuid.UUID, identity_id: u
     m = await session.scalar(select(FirmMember).where(
         FirmMember.firm_id == firm_id, FirmMember.identity_id == identity_id, FirmMember.status == "ACTIVE"))
     return frozenset(m.roles) if m else frozenset()
+
+
+# ---- Staff admin console: firms listed beside buyer organisations (buyer.service.admin_organizations) ----------------
+
+@dataclass(frozen=True)
+class FirmAdminRow:
+    id: uuid.UUID
+    name: str  # trading name when set, else the legal name
+    country: str
+    category: str | None
+    status: str  # ACTIVE | SUSPENDED (the console's organisation status)
+    verification_status: str  # PENDING_VERIFICATION | VERIFIED | SUSPENDED (the firm's own status)
+    member_count: int
+    primary_contact: tuple[str, str] | None  # (name, email) of the longest-standing Firm Admin
+    created_at: datetime
+
+
+def _firm_filters(stmt, q: str | None, status: str | None):
+    from sqlalchemy import func, or_
+
+    if q and q.strip():
+        term = "%" + q.strip().lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        stmt = stmt.where(or_(func.lower(Firm.legal_name).like(term, escape="\\"),
+                              func.lower(func.coalesce(Firm.trading_name, "")).like(term, escape="\\")))
+    if status == "SUSPENDED":
+        stmt = stmt.where(Firm.status == "SUSPENDED")
+    elif status:
+        stmt = stmt.where(Firm.status != "SUSPENDED")
+    return stmt
+
+
+async def admin_rows(session: AsyncSession, q: str | None, status: str | None, cursor: str | None, limit: int) -> list[FirmAdminRow]:
+    """Firms newest first after ``cursor``: up to ``limit`` + 1 rows, the extra one showing that a next page exists."""
+    from sqlalchemy import func
+
+    from zoikorum.shared.http import paginate
+
+    stmt, _ = paginate(_firm_filters(select(Firm), q, status), Firm, cursor, limit)
+    firms = list((await session.scalars(stmt)).all())
+    ids = [f.id for f in firms]
+    counts = dict((await session.execute(select(FirmMember.firm_id, func.count()).where(
+        FirmMember.firm_id.in_(ids), FirmMember.status == "ACTIVE").group_by(FirmMember.firm_id))).all()) if ids else {}
+    contacts: dict[uuid.UUID, tuple[str, str]] = {}
+    for m in (await session.scalars(select(FirmMember).where(
+            FirmMember.firm_id.in_(ids), FirmMember.status == "ACTIVE", FirmMember.roles.contains([FirmRole.FIRM_ADMIN]))
+            .order_by(FirmMember.created_at))).all() if ids else []:
+        contacts.setdefault(m.firm_id, (m.display_name, m.email))
+    return [FirmAdminRow(f.id, f.trading_name or f.legal_name, f.hq_country, f.primary_category,
+                         "SUSPENDED" if f.status == "SUSPENDED" else "ACTIVE", f.status, counts.get(f.id, 0),
+                         contacts.get(f.id), f.created_at) for f in firms]
+
+
+async def admin_counts(session: AsyncSession, since: datetime) -> dict[str, int]:
+    """{"total", "suspended", "new"}: every firm, those suspended, and those created since ``since``."""
+    from sqlalchemy import func
+
+    total, suspended, new = (await session.execute(select(
+        func.count(), func.count().filter(Firm.status == "SUSPENDED"), func.count().filter(Firm.created_at >= since))
+        .select_from(Firm))).one()
+    return {"total": total or 0, "suspended": suspended or 0, "new": new or 0}

@@ -132,3 +132,33 @@ class LegalEntityOut(BaseModel):
     taxId: str | None
     isDefault: bool
     status: str
+
+
+# ---- Staff admin console (buyer and enterprise organisations, with firms beside them) ---------------------------------
+
+class AdminContactOut(BaseModel):
+    name: str
+    email: str
+
+
+class AdminOrganizationOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    kind: Literal["BUYER", "ENTERPRISE", "FIRM"]
+    status: str  # ACTIVE | SUSPENDED
+    country: str | None
+    industry: str | None  # firms: their primary category
+    memberCount: int
+    verificationStatus: str | None  # firms: PENDING_VERIFICATION | VERIFIED | SUSPENDED; buyers are not verified as organisations
+    contractCount: int
+    createdAt: datetime
+    primaryContact: AdminContactOut | None
+
+
+class AdminOrganizationSummaryOut(BaseModel):
+    total: int
+    buyer: int
+    enterprise: int
+    firm: int
+    suspended: int
+    newLast30Days: int

@@ -69,3 +69,31 @@ async def tier_kpis(session: AsyncSession, since, until) -> dict:
         TierHistory.created_at >= since, TierHistory.created_at < until).group_by(TierHistory.from_tier, TierHistory.to_tier))).all()
     return {"tiersNow": now, "reachedB": sum(n for f, t, n in moves if t == "B" and f == "C"),
             "reachedA": sum(n for f, t, n in moves if t == "A"), "downgrades": sum(n for f, t, n in moves if (f, t) in (("A", "B"), ("A", "C"), ("B", "C")))}
+
+
+# ---- Staff admin console: tier and verification dimensions without the delivery statistics get_trust_many adds -------
+
+DEFAULT_DIMENSIONS = {"identity": "NONE", "credentials": "NONE", "jurisdiction": "UNKNOWN"}
+
+
+async def tiers_and_dimensions(session: AsyncSession, ids: list[uuid.UUID]) -> dict[uuid.UUID, tuple[str, dict[str, str]]]:
+    """Per professional: (tier, dimensions). A professional not yet assessed is Tier C with nothing verified."""
+    rows = dict((await session.execute(select(TrustProfile.professional_id, TrustProfile).where(
+        TrustProfile.professional_id.in_(ids)))).all()) if ids else {}
+    return {pid: (rows[pid].tier, {**DEFAULT_DIMENSIONS, **rows[pid].dimensions}) if pid in rows else ("C", dict(DEFAULT_DIMENSIONS))
+            for pid in ids}
+
+
+async def professionals_in_tiers(session: AsyncSession, tiers: tuple[str, ...]) -> list[uuid.UUID]:
+    """Professionals with a trust profile in one of these tiers (those without a profile count as C: see the caller)."""
+    return list((await session.scalars(select(TrustProfile.professional_id).where(TrustProfile.tier.in_(tiers)))).all())
+
+
+async def admin_counts(session: AsyncSession) -> dict[str, int]:
+    """Professionals in Tier A and Tier B, and those whose identity is verified."""
+    from sqlalchemy import func
+
+    tiers = dict((await session.execute(select(TrustProfile.tier, func.count()).group_by(TrustProfile.tier))).all())
+    verified = await session.scalar(select(func.count()).select_from(TrustProfile).where(
+        TrustProfile.dimensions["identity"].astext == "VERIFIED")) or 0
+    return {"A": tiers.get("A", 0), "B": tiers.get("B", 0), "identityVerified": verified}

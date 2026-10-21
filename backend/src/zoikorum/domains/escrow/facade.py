@@ -191,3 +191,12 @@ async def release_stuck(session: AsyncSession, milestone_id: uuid.UUID) -> bool:
     x = await session.scalar(select(Allocation).where(Allocation.milestone_id == milestone_id))
     return x is not None and x.state in ("HELD", "RELEASE_PENDING_APPROVAL") and not await session.scalar(
         select(Release.id).where(Release.milestone_id == milestone_id))
+
+
+async def money_by_contract(session: AsyncSession, contract_ids: list[uuid.UUID]) -> dict[uuid.UUID, dict[str, int]]:
+    """Per contract, in the contract's own currency: funded to date and released to date."""
+    if not contract_ids:
+        return {}
+    rows = (await session.execute(select(EscrowAccount.contract_id, EscrowAccount.funded_minor, EscrowAccount.released_minor)
+                                  .where(EscrowAccount.contract_id.in_(contract_ids)))).all()
+    return {cid: {"funded": funded, "released": released} for cid, funded, released in rows}
