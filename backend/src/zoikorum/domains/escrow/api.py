@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from zoikorum.domains.escrow import service
-from zoikorum.domains.escrow.schemas import AutoFundingIn, BulkFundIn, EscrowOut, FundIn, LedgerLineOut
+from zoikorum.domains.escrow.schemas import (
+    AdminEscrowRowOut, AdminEscrowSummaryOut, AutoFundingIn, BulkFundIn, EscrowOut, FundIn, LedgerLineOut,
+)
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
+from zoikorum.shared.http import Page
 from zoikorum.shared.idempotency import IdempotencyKey
 
 router = APIRouter(prefix="/v1/escrow", tags=["escrow"])
@@ -51,3 +54,20 @@ async def fund(account_id: uuid.UUID, body: FundIn, actor: CurrentActor, session
 async def set_auto_funding(account_id: uuid.UUID, body: AutoFundingIn, actor: CurrentActor, session: DbSession):
     """Buyer: fund each new retainer cycle automatically from a saved payment method (null turns it off)."""
     return await service.set_auto_funding(session, actor, account_id, body.paymentMethodToken)
+
+
+# Staff admin console: protected funds across the platform (outside the /v1/escrow prefix).
+admin_router = APIRouter(prefix="/v1/admin/escrow", tags=["escrow"])
+
+
+@admin_router.get("", response_model=Page[AdminEscrowRowOut])
+async def admin_escrow(actor: CurrentActor, session: DbSession, status_: str | None = Query(default=None, alias="status", max_length=30),
+                       currency: str | None = Query(default=None, min_length=3, max_length=3),
+                       cursor: str | None = None, limit: int | None = Query(default=None, ge=1, le=100)):
+    """Financial Operations / Platform Admin: every milestone allocation and its state. Reads are audited."""
+    return await service.admin_escrow(session, actor, status_, currency, cursor, limit)
+
+
+@admin_router.get("/summary", response_model=AdminEscrowSummaryOut)
+async def admin_escrow_summary(actor: CurrentActor, session: DbSession):
+    return await service.admin_escrow_summary(session, actor)

@@ -95,3 +95,32 @@ class BulkFundIn(BaseModel):
 
     items: list[BulkFundItem] = Field(min_length=1, max_length=25)
     paymentMethodToken: str = Field(min_length=3, max_length=120, pattern=r"^[A-Za-z0-9_\-]+$")
+
+
+# ---- Staff admin console: protected funds, one row per milestone allocation -----------------------------------------
+
+class AdminEscrowRowOut(BaseModel):
+    id: uuid.UUID  # the allocation
+    contractId: uuid.UUID
+    contractTitle: str
+    milestoneId: uuid.UUID | None
+    milestoneSequence: int | None
+    buyerName: str
+    professionalName: str
+    currency: str
+    amountMinor: int
+    status: str  # UNFUNDED | FUNDING | HELD | ON_HOLD | RELEASE_PENDING_APPROVAL | RELEASED | PARTIALLY_RELEASED | REFUNDED
+    provider: str | None  # payment provider that took the funding, once one was started
+    providerReference: str | None
+    updatedAt: datetime
+
+
+class AdminEscrowBucketOut(BaseModel):
+    status: str
+    currency: str
+    count: int
+    amountMinor: int
+
+
+class AdminEscrowSummaryOut(BaseModel):
+    buckets: list[AdminEscrowBucketOut]  # per status and currency: amounts are never added across currencies

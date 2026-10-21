@@ -8,6 +8,7 @@ export type IconName =
   | 'request' | 'proposal' | 'contract' | 'shield' | 'check' | 'bell' | 'team' | 'mail' | 'building' | 'search'
   | 'user' | 'star' | 'clock' | 'bookmark' | 'wallet' | 'message' | 'gear' | 'help' | 'lock' | 'compare' | 'folder'
   | 'plus' | 'download' | 'trash' | 'filter' | 'globe' | 'home' | 'briefcase'
+  | 'chart' | 'list' | 'scale' | 'alert' | 'pulse' | 'sliders' | 'layers' | 'refresh' | 'eye' | 'arrow'
 
 const PATHS: Record<IconName, string> = {
   bookmark: 'M6 3h12v18l-6-4-6 4z',
@@ -38,6 +39,16 @@ const PATHS: Record<IconName, string> = {
   user: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21v-1a8 8 0 0 1 16 0v1',
   star: 'M12 3l2.8 5.7 6.2.9-4.5 4.4 1 6.2L12 17.3 6.5 20.2l1-6.2L3 9.6l6.2-.9z',
   clock: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3 3',
+  chart: 'M4 20V12M10 20V6M16 20v-9M22 20H2',
+  list: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
+  scale: 'M12 3v18M7 21h10M5 7h14M5 7l-3 7a3 3 0 0 0 6 0zM19 7l-3 7a3 3 0 0 0 6 0z',
+  alert: 'M12 3l10 18H2zM12 10v5M12 18h.01',
+  pulse: 'M2 12h4l3-8 4 16 3-8h6',
+  sliders: 'M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0M14 4v4M8 10v4M16 16v4',
+  layers: 'M12 3l9 5-9 5-9-5zM3 13l9 5 9-5',
+  refresh: 'M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7',
+  eye: 'M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
+  arrow: 'M5 12h14M13 6l6 6-6 6',
 }
 
 export function Icon({ name }: { name: IconName }) {

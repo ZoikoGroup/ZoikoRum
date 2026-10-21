@@ -16,6 +16,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from zoikorum.config import get_settings
 from zoikorum.domains.buyer.models import BillingContact, BusinessUnit, CostCenter, Invitation, LegalEntity, OrgMember, Organization
 from zoikorum.domains.buyer.schemas import (
+    AdminContactOut,
+    AdminOrganizationOut,
+    AdminOrganizationSummaryOut,
     BillingContactOut,
     BusinessUnitOut,
     CostCenterOut,
@@ -25,14 +28,16 @@ from zoikorum.domains.buyer.schemas import (
     MemberOut,
     OrganizationOut,
 )
+from zoikorum.domains.contract import facade as contract_facade
+from zoikorum.domains.firm import facade as firm_facade
 from zoikorum.domains.identity import facade as identity_facade
 from zoikorum.shared import clock
-from zoikorum.shared.auth import Actor, AuthStrength, OrgRole
+from zoikorum.shared.auth import Actor, AuthStrength, OrgRole, PlatformRole
 from zoikorum.shared.crypto import sha256_hex
 from zoikorum.shared.errors import Conflict, Forbidden, NotFound, StepUpRequired, ValidationFailed
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_audit, record_event
-from zoikorum.shared.http import expect_version
+from zoikorum.shared.http import clamp_limit, expect_version, next_cursor, paginate
 from zoikorum.shared.money import Money, MoneyDTO
 
 INVITE_TTL = timedelta(days=7)
@@ -648,3 +653,77 @@ async def merge_business_units(session: AsyncSession, actor: Actor, org_id: uuid
                  details={"source": str(source.id), "target": str(target.id)})
     await session.flush()
     return await list_business_units(session, actor, org_id)
+
+
+# ---- Staff admin console: every organisation (buyers, enterprises and, from the firm domain, firms) -------------------
+
+ORG_VIEWERS = (PlatformRole.PLATFORM_ADMIN, PlatformRole.TS_ANALYST, PlatformRole.COMPLIANCE_OFFICER, PlatformRole.SUPPORT_AGENT)
+
+
+def _like(text: str) -> str:
+    return "%" + text.strip().lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
+
+async def admin_organizations(session: AsyncSession, actor: Actor, q: str | None, kind: str | None, status: str | None,
+                              cursor: str | None, limit: int | None) -> dict:
+    """Staff Organisations list, newest first. Buyer organisations and firms are read newest first after the same
+    cursor and merged, so one cursor pages through both. Every read is audited."""
+    actor.require_platform_role(*ORG_VIEWERS)
+    lim = clamp_limit(limit)
+    orgs: list[Organization] = []
+    if kind != "FIRM":
+        stmt = select(Organization)
+        if q and q.strip():
+            stmt = stmt.where(func.lower(Organization.name).like(_like(q), escape="\\"))
+        if kind == "ENTERPRISE":
+            stmt = stmt.where(Organization.org_type == "ENTERPRISE")
+        elif kind == "BUYER":
+            stmt = stmt.where(Organization.org_type != "ENTERPRISE")
+        if status:
+            stmt = stmt.where(Organization.status == status)
+        stmt, _ = paginate(stmt, Organization, cursor, lim)
+        orgs = list((await session.scalars(stmt)).all())
+    firms = await firm_facade.admin_rows(session, q, status, cursor, lim) if kind in (None, "FIRM") else []
+    rows = sorted([*orgs, *firms], key=lambda r: (r.created_at, r.id), reverse=True)[:lim + 1]
+    page = rows[:lim]
+    org_ids = [r.id for r in page if isinstance(r, Organization)]
+    firm_ids = [r.id for r in page if not isinstance(r, Organization)]
+    members = dict((await session.execute(select(OrgMember.organization_id, func.count()).where(
+        OrgMember.organization_id.in_(org_ids), OrgMember.status == "ACTIVE").group_by(OrgMember.organization_id))).all()) if org_ids else {}
+    contacts: dict[uuid.UUID, OrgMember] = {}
+    for m in (await session.scalars(select(OrgMember).where(
+            OrgMember.organization_id.in_(org_ids), OrgMember.status == "ACTIVE", OrgMember.roles.contains([OrgRole.ORG_ADMIN]))
+            .order_by(OrgMember.created_at))).all() if org_ids else []:
+        contacts.setdefault(m.organization_id, m)
+    by_org, by_firm = await contract_facade.counts_by_party(session, org_ids, firm_ids)
+    items = []
+    for r in page:
+        if isinstance(r, Organization):
+            c = contacts.get(r.id)
+            items.append(AdminOrganizationOut(
+                id=r.id, name=r.name, kind="ENTERPRISE" if r.org_type == "ENTERPRISE" else "BUYER", status=r.status,
+                country=r.country, industry=r.industry, memberCount=members.get(r.id, 0), verificationStatus=None,
+                contractCount=by_org.get(r.id, 0), createdAt=r.created_at,
+                primaryContact=AdminContactOut(name=c.display_name, email=c.email) if c else None))
+        else:
+            items.append(AdminOrganizationOut(
+                id=r.id, name=r.name, kind="FIRM", status=r.status, country=r.country, industry=r.category,
+                memberCount=r.member_count, verificationStatus=r.verification_status, contractCount=by_firm.get(r.id, 0),
+                createdAt=r.created_at,
+                primaryContact=AdminContactOut(name=r.primary_contact[0], email=r.primary_contact[1]) if r.primary_contact else None))
+    record_audit(session, "buyer.admin.organizations_listed", object_type="Identity", object_id=actor.identity_id,
+                 details={"search": bool(q and q.strip()), "kind": kind, "status": status, "count": len(items)})
+    return {"items": items, "nextCursor": next_cursor(rows, lim)}
+
+
+async def admin_organization_summary(session: AsyncSession, actor: Actor) -> AdminOrganizationSummaryOut:
+    """Counts for the Organisations page cards: by kind, suspended, and created in the last 30 days."""
+    actor.require_platform_role(*ORG_VIEWERS)
+    since = clock.now() - timedelta(days=30)
+    enterprise = Organization.org_type == "ENTERPRISE"
+    total, ent, suspended, new = (await session.execute(select(
+        func.count(), func.count().filter(enterprise), func.count().filter(Organization.status == "SUSPENDED"),
+        func.count().filter(Organization.created_at >= since)).select_from(Organization))).one()
+    firms = await firm_facade.admin_counts(session, since)
+    return AdminOrganizationSummaryOut(total=total + firms["total"], buyer=total - ent, enterprise=ent, firm=firms["total"],
+                                       suspended=suspended + firms["suspended"], newLast30Days=new + firms["new"])

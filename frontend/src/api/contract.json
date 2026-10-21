@@ -11,6 +11,144 @@
  "AddPersonaIn": [
   "accountType"
  ],
+ "AdminBuyerPartyOut": [
+  "country",
+  "name",
+  "organizationId"
+ ],
+ "AdminConfigGroupOut": [
+  "domain",
+  "settings"
+ ],
+ "AdminConfigOut": [
+  "environment",
+  "groups",
+  "version"
+ ],
+ "AdminConfigSettingOut": [
+  "description",
+  "key",
+  "value"
+ ],
+ "AdminContactOut": [
+  "email",
+  "name"
+ ],
+ "AdminContractOut": [
+  "buyer",
+  "createdAt",
+  "currency",
+  "fundedMinor",
+  "hasOpenDispute",
+  "id",
+  "milestones",
+  "professional",
+  "releasedMinor",
+  "signedAt",
+  "status",
+  "title",
+  "totalMinor",
+  "updatedAt",
+  "version"
+ ],
+ "AdminContractSummaryOut": [
+  "byStatus",
+  "milestonesByStatus",
+  "openDisputes",
+  "total"
+ ],
+ "AdminEscrowBucketOut": [
+  "amountMinor",
+  "count",
+  "currency",
+  "status"
+ ],
+ "AdminEscrowRowOut": [
+  "amountMinor",
+  "buyerName",
+  "contractId",
+  "contractTitle",
+  "currency",
+  "id",
+  "milestoneId",
+  "milestoneSequence",
+  "professionalName",
+  "provider",
+  "providerReference",
+  "status",
+  "updatedAt"
+ ],
+ "AdminEscrowSummaryOut": [
+  "buckets"
+ ],
+ "AdminMilestoneOut": [
+  "amountMinor",
+  "dueDate",
+  "id",
+  "sequence",
+  "status",
+  "title"
+ ],
+ "AdminOrganizationOut": [
+  "contractCount",
+  "country",
+  "createdAt",
+  "id",
+  "industry",
+  "kind",
+  "memberCount",
+  "name",
+  "primaryContact",
+  "status",
+  "verificationStatus"
+ ],
+ "AdminOrganizationSummaryOut": [
+  "buyer",
+  "enterprise",
+  "firm",
+  "newLast30Days",
+  "suspended",
+  "total"
+ ],
+ "AdminProfessionalOut": [
+  "activeEngagements",
+  "category",
+  "country",
+  "createdAt",
+  "displayName",
+  "headline",
+  "id",
+  "identityId",
+  "lifetimeEngagements",
+  "publication",
+  "specialization",
+  "tier",
+  "verification"
+ ],
+ "AdminProfessionalPartyOut": [
+  "country",
+  "id",
+  "name"
+ ],
+ "AdminProfessionalSummaryOut": [
+  "draft",
+  "identityVerified",
+  "inReview",
+  "published",
+  "restricted",
+  "tiers",
+  "total"
+ ],
+ "AdminTiersOut": [
+  "A",
+  "B",
+  "C"
+ ],
+ "AdminVerificationOut": [
+  "credentials",
+  "identity",
+  "jurisdiction"
+ ],
  "AlertsIn": [
   "on"
  ],
@@ -1124,6 +1262,22 @@
   "country",
   "name",
   "percent"
+ ],
+ "Page_AdminContractOut_": [
+  "items",
+  "nextCursor"
+ ],
+ "Page_AdminEscrowRowOut_": [
+  "items",
+  "nextCursor"
+ ],
+ "Page_AdminOrganizationOut_": [
+  "items",
+  "nextCursor"
+ ],
+ "Page_AdminProfessionalOut_": [
+  "items",
+  "nextCursor"
  ],
  "Page_AppealQueueItemOut_": [
   "items",

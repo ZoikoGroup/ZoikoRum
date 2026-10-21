@@ -101,3 +101,21 @@ async def kpis(session: AsyncSession, since, until) -> dict:
     return {"opened": opened, "decided": len(decided_rows), "openNow": open_now, "byDecisionPath": by_path,
             "medianDaysToDecision": round(days[len(days) // 2], 1) if days else None,
             "decidedWithoutPlatform": sum(v for k, v in by_path.items() if k in ("DIRECT", "MEDIATION"))}
+
+
+async def contracts_with_open_disputes(session: AsyncSession, contract_ids: list[uuid.UUID]) -> set[uuid.UUID]:
+    from zoikorum.domains.dispute.service import OPEN
+
+    if not contract_ids:
+        return set()
+    return set((await session.scalars(select(DisputeCase.contract_id).where(
+        DisputeCase.contract_id.in_(contract_ids), DisputeCase.status.in_(OPEN)))).all())
+
+
+async def open_count(session: AsyncSession) -> int:
+    """Disputes still being worked (evidence, direct resolution or mediation)."""
+    from sqlalchemy import func
+
+    from zoikorum.domains.dispute.service import OPEN
+
+    return await session.scalar(select(func.count()).select_from(DisputeCase).where(DisputeCase.status.in_(OPEN))) or 0

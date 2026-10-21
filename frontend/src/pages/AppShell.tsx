@@ -21,12 +21,63 @@ function Item({ to, icon, children, end, count }: { to: string; icon: IconName; 
   )
 }
 
+/* Staff console navigation (admin designs): seven groups; each item shows only to the roles its page accepts. */
+type NavItem = { to: string; label: string; icon: IconName; roles?: string[] }
+const FIN = ['FINANCIAL_OPS', 'PLATFORM_ADMIN']
+const STAFF_NAV: { title: string; items: NavItem[] }[] = [
+  { title: 'Overview', items: [
+    { to: '/app/ops', label: 'Command Center', icon: 'home' },
+    { to: '/app/ops/queue', label: 'My Work Queue', icon: 'list' },
+    { to: '/app/ops/analytics', label: 'Analytics & Insights', icon: 'chart' },
+  ] },
+  { title: 'People & Organizations', items: [
+    { to: '/app/ops/users', label: 'Accounts & Organizations', icon: 'building', roles: ['PLATFORM_ADMIN', 'TS_ANALYST'] },
+    { to: '/app/ops/professionals', label: 'Professional Directory', icon: 'team', roles: ['PLATFORM_ADMIN', 'TS_ANALYST', 'COMPLIANCE_OFFICER', 'SUPPORT_AGENT'] },
+    { to: '/app/ops/enterprise', label: 'Enterprise Readiness', icon: 'contract', roles: ['COMPLIANCE_OFFICER'] },
+    { to: '/app/ops/duplicates', label: 'Duplicate Identity Cases', icon: 'team', roles: ['TS_ANALYST', 'PLATFORM_ADMIN'] },
+  ] },
+  { title: 'Trust, Risk & Compliance', items: [
+    { to: '/app/ops/verification', label: 'Verification Center', icon: 'shield', roles: ['COMPLIANCE_OFFICER'] },
+    { to: '/app/ops/safety', label: 'Trust & Safety', icon: 'shield' },
+    { to: '/app/ops/disputes', label: 'Dispute Resolution', icon: 'scale', roles: ['MEDIATOR', 'LEGAL', 'PLATFORM_ADMIN'] },
+    { to: '/app/ops/audit', label: 'Audit & Evidence', icon: 'contract' },
+  ] },
+  { title: 'Engagement Operations', items: [
+    { to: '/app/ops/engagements', label: 'Engagement Oversight', icon: 'briefcase', roles: ['PLATFORM_ADMIN', 'COMPLIANCE_OFFICER', 'LEGAL', 'MEDIATOR', 'FINANCIAL_OPS'] },
+    { to: '/app/ops/contracts', label: 'Contracts & Milestones', icon: 'contract', roles: ['PLATFORM_ADMIN', 'COMPLIANCE_OFFICER', 'LEGAL', 'MEDIATOR', 'FINANCIAL_OPS'] },
+    { to: '/app/ops/taxonomy', label: 'Taxonomy & Standards', icon: 'layers', roles: ['PLATFORM_ADMIN'] },
+  ] },
+  { title: 'Financial Operations', items: [
+    { to: '/app/ops/payments', label: 'Protected Payments', icon: 'wallet', roles: FIN },
+    { to: '/app/ops/reconciliation', label: 'Reconciliation', icon: 'refresh', roles: FIN },
+    { to: '/app/ops/money', label: 'Financial Exceptions', icon: 'alert', roles: FIN },
+  ] },
+  { title: 'Platform Reliability', items: [
+    { to: '/app/ops/incidents', label: 'Incident Command', icon: 'alert' },
+    { to: '/app/ops/health', label: 'Service Health & Workers', icon: 'pulse', roles: FIN },
+    { to: '/app/ops/switches', label: 'Feature Controls', icon: 'sliders', roles: FIN },
+    { to: '/app/ops/dead-letters', label: 'Failed Event Deliveries', icon: 'mail', roles: FIN },
+  ] },
+  { title: 'Administration & Support', items: [
+    { to: '/app/ops/staff', label: 'Staff & Access Control', icon: 'lock', roles: ['PLATFORM_ADMIN'] },
+    { to: '/app/ops/support', label: 'Support Cases', icon: 'help', roles: ['SUPPORT_AGENT', 'PLATFORM_ADMIN'] },
+    { to: '/app/ops/config', label: 'Platform Configuration', icon: 'gear', roles: ['PLATFORM_ADMIN'] },
+    { to: '/app/ops/ai', label: 'AI Governance', icon: 'eye', roles: ['AI_SAFETY_REVIEWER'] },
+  ] },
+]
+const COLLAPSED_KEY = 'zk.staffNav.collapsed'
+function readCollapsed(): Set<string> {
+  try { return new Set(JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? '[]') as string[]) } catch { return new Set() }
+}
+
 
 export default function AppShell() {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const [inFirm, setInFirm] = useState(false)
+  const [collapsed, setCollapsed] = useState<Set<string>>(readCollapsed)
+  useEffect(() => { try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...collapsed])) } catch { /* private mode */ } }, [collapsed])
   const [unreadMessages, setUnreadMessages] = useState(0)
   const [unreadNotifications, setUnreadNotifications] = useState(0)
   // Menus remember the page they were opened on, so navigating closes them without an effect.
@@ -107,8 +158,6 @@ export default function AppShell() {
 
   const dashboards = new Set(user.personas.map((p) => DASHBOARD_FOR_PERSONA[p]))
   const isStaff = user.platformRoles.length > 0
-  const isAdmin = user.platformRoles.includes('PLATFORM_ADMIN')
-  const isOfficer = user.platformRoles.includes('COMPLIANCE_OFFICER')
   const customer = dashboards.has('enterprise') ? 'enterprise' : dashboards.has('buyer') ? 'buyer' : null
   const initials = user.displayName.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase()
   // Staff: the most senior role (PLATFORM_ROLES runs from Platform Admin down), not the first alphabetically.
@@ -172,28 +221,19 @@ export default function AppShell() {
           <Item to="/app/firm/verification" icon="shield">Firm Verification</Item>
         </>}
 
-        {isStaff && <>
-          <div className="side-group">Administration</div>
-          <Item to="/app/ops" icon="building" end>Admin Dashboard</Item>
-          {isOfficer && <Item to="/app/ops/verification" count={n('/app/ops/verification')} icon="shield">Verification Reviews</Item>}
-          {isOfficer && <Item to="/app/ops/enterprise" icon="building">Enterprise Ready</Item>}
-          {user.platformRoles.some((r) => ['PLATFORM_ADMIN', 'TS_ANALYST'].includes(r)) && <Item to="/app/ops/users" icon="user">Users</Item>}
-          {isAdmin && <Item to="/app/ops/staff" icon="team">Staff &amp; Roles</Item>}
-          {isAdmin && <Item to="/app/ops/taxonomy" count={n('/app/ops/taxonomy')} icon="folder">Taxonomy</Item>}
-          {user.platformRoles.some((r) => ['FINANCIAL_OPS', 'PLATFORM_ADMIN'].includes(r)) && <Item to="/app/ops/reconciliation" count={n('/app/ops/reconciliation')} icon="wallet">Reconciliation</Item>}
-          {user.platformRoles.some((r) => ['TS_ANALYST', 'PLATFORM_ADMIN'].includes(r)) && <Item to="/app/ops/duplicates" count={n('/app/ops/duplicates')} icon="team">Duplicate Accounts</Item>}
-          {!customer && <Item to="/professionals" icon="search">Professionals</Item>}
-          {user.platformRoles.some((r) => ['MEDIATOR', 'LEGAL', 'PLATFORM_ADMIN'].includes(r)) && <Item to="/app/ops/disputes" count={n('/app/ops/disputes')} icon="shield">Disputes</Item>}
-          <Item to="/app/ops/analytics" icon="contract">Platform Analytics</Item>
-          <Item to="/app/ops/audit" icon="contract">Audit Exports</Item>
-          <Item to="/app/ops/safety" icon="shield">Safety Cases</Item>
-          {user.platformRoles.includes('AI_SAFETY_REVIEWER') && <Item to="/app/ops/ai" icon="gear">AI Governance</Item>}
-          {user.platformRoles.some((r) => ['FINANCIAL_OPS', 'PLATFORM_ADMIN'].includes(r)) && <Item to="/app/ops/switches" icon="lock">Switches &amp; Worker</Item>}
-          {user.platformRoles.some((r) => ['SUPPORT_AGENT', 'PLATFORM_ADMIN'].includes(r)) && <Item to="/app/ops/support" icon="help">Help Requests</Item>}
-          <Item to="/app/ops/incidents" icon="bell">Incidents</Item>
-          {user.platformRoles.some((r) => ['FINANCIAL_OPS', 'PLATFORM_ADMIN'].includes(r)) && <Item to="/app/ops/money" icon="wallet">Money Problems</Item>}
-          {user.platformRoles.some((r) => ['FINANCIAL_OPS', 'PLATFORM_ADMIN'].includes(r)) && <Item to="/app/ops/dead-letters" icon="gear">Failed Deliveries</Item>}
-        </>}
+        {isStaff && STAFF_NAV.map((section) => {
+          const items = section.items.filter((i) => !i.roles || i.roles.some((r) => (user.platformRoles as string[]).includes(r)))
+          if (!items.length) return null
+          const here = items.some((i) => location.pathname === i.to || (i.to !== '/app/ops' && location.pathname.startsWith(`${i.to}/`)))
+          return (
+            <details key={section.title} className="side-section" open={here || !collapsed.has(section.title)}
+              onToggle={(e) => { const isOpen = (e.currentTarget as HTMLDetailsElement).open
+                setCollapsed((s) => { const next = new Set(s); if (isOpen) next.delete(section.title); else next.add(section.title); return next }) }}>
+              <summary className="side-group">{section.title}</summary>
+              {items.map((i) => <Item key={i.to} to={i.to} icon={i.icon} end={i.to === '/app/ops'} count={n(i.to)}>{i.label}</Item>)}
+            </details>
+          )
+        })}
 
         <div className="side-group">Account</div>
         {customer && <>

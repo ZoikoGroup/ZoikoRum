@@ -5,13 +5,15 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Query, status
 
 from zoikorum.domains.buyer import service
 from zoikorum.domains.buyer.schemas import (
     BillingContactOut,
     BillingContactsIn,
     AcceptByTokenIn,
+    AdminOrganizationOut,
+    AdminOrganizationSummaryOut,
     BusinessUnitIn,
     BusinessUnitOut,
     CostCenterIn,
@@ -27,7 +29,7 @@ from zoikorum.domains.buyer.schemas import (
 )
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
-from zoikorum.shared.http import IfMatch
+from zoikorum.shared.http import IfMatch, Page
 
 router = APIRouter(prefix="/v1/organizations", tags=["buyer organizations"])
 
@@ -194,3 +196,22 @@ async def create_api_key(org_id: uuid.UUID, body: ApiKeyIn, actor: CurrentActor,
 async def revoke_api_key(org_id: uuid.UUID, key_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> dict:
     from zoikorum.domains.buyer import api_keys
     return await api_keys.revoke_key(session, actor, org_id, key_id)
+
+
+# Staff admin console: every organisation on the platform (outside the /v1/organizations prefix).
+admin_router = APIRouter(prefix="/v1/admin/organizations", tags=["buyer organizations"])
+
+
+@admin_router.get("", response_model=Page[AdminOrganizationOut])
+async def admin_organizations(actor: CurrentActor, session: DbSession, q: str | None = Query(default=None, max_length=200),
+                              kind: Literal["BUYER", "ENTERPRISE", "FIRM"] | None = None,
+                              status_: Literal["ACTIVE", "SUSPENDED"] | None = Query(default=None, alias="status"),
+                              cursor: str | None = None, limit: int | None = Query(default=None, ge=1, le=100)):
+    """Platform Admin / Trust & Safety / Compliance / Support: buyer organisations, enterprises and firms, searchable by
+    name. Reads are audited."""
+    return await service.admin_organizations(session, actor, q, kind, status_, cursor, limit)
+
+
+@admin_router.get("/summary", response_model=AdminOrganizationSummaryOut)
+async def admin_organization_summary(actor: CurrentActor, session: DbSession):
+    return await service.admin_organization_summary(session, actor)

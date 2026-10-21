@@ -305,3 +305,48 @@ class SavedBuyerOut(BaseModel):
     completed: int
     lastActivityAt: datetime | None
     savedAt: datetime
+
+
+# ---- Staff admin console ------------------------------------------------------------------------------------------
+
+Publication = Literal["PUBLISHED", "DRAFT", "IN_REVIEW", "RESTRICTED"]
+
+
+class AdminVerificationOut(BaseModel):
+    identity: str  # VERIFIED | PENDING | NONE (trust dimensions, as on the public profile)
+    credentials: str  # VALIDATED | PARTIAL | PENDING | NOT_APPLICABLE | NONE
+    jurisdiction: str  # ELIGIBLE | RESTRICTED | UNKNOWN
+
+
+class AdminProfessionalOut(BaseModel):
+    id: uuid.UUID
+    identityId: uuid.UUID
+    displayName: str
+    headline: str | None
+    specialization: str | None  # primary specialization slug
+    category: str | None  # primary category slug
+    country: str | None
+    tier: Literal["A", "B", "C"] | None
+    # PUBLISHED: visible to buyers; RESTRICTED: suspended or visibility reduced by enforcement; IN_REVIEW: not published,
+    # with a verification check waiting for a decision; DRAFT: not published (never, or taken down by the professional).
+    publication: Publication
+    verification: AdminVerificationOut
+    activeEngagements: int
+    lifetimeEngagements: int
+    createdAt: datetime
+
+
+class AdminTiersOut(BaseModel):
+    A: int
+    B: int
+    C: int
+
+
+class AdminProfessionalSummaryOut(BaseModel):
+    total: int
+    published: int
+    inReview: int
+    draft: int
+    restricted: int
+    identityVerified: int
+    tiers: AdminTiersOut

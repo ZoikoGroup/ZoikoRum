@@ -313,3 +313,28 @@ async def verify_audit_archive(archive_id: uuid.UUID, actor: CurrentActor, sessi
     """Read an archive back and check its fingerprint and hash chain."""
     from zoikorum.domains.audit import facade as audit_facade
     return await audit_facade.verify_archive(session, actor, archive_id)
+
+
+
+class AdminConfigSettingOut(BaseModel):
+    key: str  # the environment variable, e.g. ZK_PLATFORM_FEE_BPS
+    value: str
+    description: str | None
+
+
+class AdminConfigGroupOut(BaseModel):
+    domain: str
+    settings: list[AdminConfigSettingOut]
+
+
+class AdminConfigOut(BaseModel):
+    environment: str
+    version: str | None
+    groups: list[AdminConfigGroupOut]
+
+
+@router.get("/v1/admin/config", response_model=AdminConfigOut)
+async def admin_config(actor: CurrentActor):
+    """Platform Admin: the business rules in force (fees, windows, limits, service levels, providers). Secrets,
+    credentials and connection strings are never included."""
+    return service.admin_config(actor)

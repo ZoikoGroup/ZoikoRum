@@ -315,3 +315,51 @@ class ContractSummaryOut(BaseModel):
     role: Literal["buyer", "professional"]
     contracts: dict[str, int]  # by contract status
     milestones: dict[str, int]  # by milestone status
+
+
+# ---- Staff admin console ------------------------------------------------------------------------------------------
+
+class AdminMilestoneOut(BaseModel):
+    id: uuid.UUID
+    sequence: int
+    title: str
+    status: str
+    amountMinor: int
+    dueDate: date | None
+
+
+class AdminBuyerPartyOut(BaseModel):
+    organizationId: uuid.UUID
+    name: str
+    country: str | None
+
+
+class AdminProfessionalPartyOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    country: str | None
+
+
+class AdminContractOut(BaseModel):
+    id: uuid.UUID
+    title: str
+    status: str
+    version: int  # the signed terms' version (contract_version)
+    currency: str
+    totalMinor: int
+    buyer: AdminBuyerPartyOut
+    professional: AdminProfessionalPartyOut
+    milestones: list[AdminMilestoneOut]
+    fundedMinor: int  # escrow, in the contract's currency
+    releasedMinor: int
+    hasOpenDispute: bool
+    createdAt: datetime
+    signedAt: datetime | None  # both parties signed (the engagement became active)
+    updatedAt: datetime
+
+
+class AdminContractSummaryOut(BaseModel):
+    total: int
+    byStatus: dict[str, int]
+    milestonesByStatus: dict[str, int]
+    openDisputes: int

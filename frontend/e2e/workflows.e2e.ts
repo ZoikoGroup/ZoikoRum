@@ -117,14 +117,13 @@ test('dialogs work from the keyboard: focus moves in, stays in, Escape closes, f
 test('an administrator pauses sign-ups during an incident and switches them back on', async ({ page }) => {
   const admin = await staffMember('Ada Operations', ['PLATFORM_ADMIN'])
   await signIn(page, admin.email, { staff: true })
-  await page.getByRole('link', { name: 'Switches & Worker' }).click()
-  await expect(page.getByRole('heading', { name: 'Switches and Worker' })).toBeVisible()
-  await expect(page.getByText('Events waiting')).toBeVisible()
+  await page.getByRole('link', { name: 'Feature Controls' }).click()
+  await expect(page.getByRole('heading', { name: 'Feature Controls', level: 1 })).toBeVisible()
 
   const row = page.getByRole('row').filter({ hasText: 'New accounts' })
-  await row.getByRole('button', { name: 'Pause' }).click()
-  await row.getByLabel('Reason (recorded in the audit trail)').fill('Fraud wave of fake accounts')
-  await row.getByRole('button', { name: 'Pause now' }).click()
+  await row.getByRole('button', { name: 'Pause', exact: true }).click()
+  await page.getByLabel('Reason (recorded in the audit trail)').fill('Fraud wave of fake accounts')
+  await page.getByRole('button', { name: 'Pause now' }).click()
   await expect(row.getByText('Paused', { exact: true })).toBeVisible()
   await expect(row.getByText(/Fraud wave of fake accounts/)).toBeVisible()
   const refused = await admin.api.post('/v1/auth/register', { data: {
@@ -133,9 +132,11 @@ test('an administrator pauses sign-ups during an incident and switches them back
   expect(refused.status()).toBe(503)
 
   await row.getByRole('button', { name: 'Switch back on' }).click()
-  await row.getByLabel('Reason (recorded in the audit trail)').fill('Fraud wave contained')
-  await row.getByRole('button', { name: 'Switch on' }).click()
+  await page.getByLabel('Reason (recorded in the audit trail)').fill('Fraud wave contained')
+  await page.getByRole('button', { name: 'Switch on', exact: true }).click()
   await expect(row.getByText('On', { exact: true })).toBeVisible()
+  await page.getByRole('link', { name: 'Service Health & Workers' }).click()
+  await expect(page.getByText('Events waiting').first()).toBeVisible()
   await page.screenshot({ path: 'test-results/switches.png', fullPage: true })
 })
 

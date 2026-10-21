@@ -28,6 +28,7 @@ export default defineConfig(({ command, mode }) => {
         // uvicorn binds 127.0.0.1; target it directly (Windows may resolve "localhost" to IPv6 ::1).
         '/v1': { target: api, changeOrigin: true },
         '/health': { target: api, changeOrigin: true },
+        '/ready': { target: api, changeOrigin: true },
       },
     },
   }

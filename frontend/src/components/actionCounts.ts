@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react'
 import type { User } from '../api/auth'
+import { api } from '../api/client'
 import { contractApi } from '../api/contracts'
 import { disputeApi, OPEN_PHASES } from '../api/disputes'
 import { duplicatesApi } from '../api/duplicates'
 import { paymentsApi } from '../api/escrow'
 import { firmApi, orgApi } from '../api/orgs'
 import { taxonomyApi } from '../api/professional'
+import { proApi } from '../api/professional'
 import { proposalApi } from '../api/proposals'
+import { supportApi } from '../api/support'
 import { verificationApi } from '../api/verification'
 
 /* "Waiting for you" counts per sidebar tab, and the bell's total (until full notifications arrive with Step 10).
@@ -37,6 +40,20 @@ async function collect(user: User): Promise<ActionItem[]> {
     (await paymentsApi.reconciliations()).filter((r) => r.status === 'MISMATCH').length)
   if (has(user, 'MEDIATOR', 'LEGAL', 'PLATFORM_ADMIN')) add('/app/ops/disputes', 'Disputes in mediation', async () =>
     (await disputeApi.list('operator')).filter((d) => d.status === 'MEDIATION').length)
+  if (has(user, 'COMPLIANCE_OFFICER')) add('/app/ops/enterprise', 'Enterprise applications', async () => (await proApi.enterpriseApplications()).length)
+  if (user.platformRoles.length) {
+    add('/app/ops/safety', 'Safety cases to triage', async () => {
+      const q = (status: string) => api<unknown[]>('/v1/admin/enforcement-cases', { query: { status, limit: '100' } })
+      return (await Promise.all([q('TRIAGE'), q('ASSESSED')])).flat().length
+    })
+    add('/app/ops/incidents', 'Open incidents', async () =>
+      (await api<{ status: string }[]>('/v1/admin/incidents')).filter((i) => i.status !== 'CLOSED' && i.status !== 'RESOLVED').length)
+  }
+  if (has(user, 'SUPPORT_AGENT', 'PLATFORM_ADMIN')) add('/app/ops/support', 'Help requests', async () => (await supportApi.queue('OPEN')).length)
+  if (has(user, 'FINANCIAL_OPS', 'PLATFORM_ADMIN')) {
+    add('/app/ops/money', 'Financial exceptions', async () => (await paymentsApi.opsWorklist()).open)
+    add('/app/ops/dead-letters', 'Failed event deliveries', async () => (await api<unknown[]>('/v1/admin/dead-letters', { query: { limit: '100' } })).length)
+  }
 
   // Professional
   if (user.personas.includes('PROFESSIONAL')) {
@@ -76,5 +93,8 @@ export function useActionCounts(user: User | null, pathname: string): { byPath: 
     return () => { live = false; window.clearInterval(t); window.clearTimeout(timer); window.removeEventListener('zk:activity', changed) }
   }, [user, pathname])
   const shown = items.filter((i) => i.count > 0)
-  return { byPath: Object.fromEntries(items.map((i) => [i.to, i.count])), items: shown, total: shown.reduce((s, i) => s + i.count, 0) }
+  const byPath: Record<string, number> = Object.fromEntries(items.map((i) => [i.to, i.count]))
+  // My Work Queue: everything waiting in the staff queues this person can work.
+  byPath['/app/ops/queue'] = items.filter((i) => i.to.startsWith('/app/ops/')).reduce((s, i) => s + i.count, 0)
+  return { byPath, items: shown, total: shown.reduce((s, i) => s + i.count, 0) }
 }

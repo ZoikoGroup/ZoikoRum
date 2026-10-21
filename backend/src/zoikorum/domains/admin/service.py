@@ -334,3 +334,87 @@ async def queue(session, actor, status: str | None, level: int | None, overdue: 
         stmt = stmt.where(is_overdue)
     stmt = stmt.order_by(sql_case((is_overdue, 0), else_=1), EnforcementCase.created_at.desc()).limit(limit).offset(offset)
     return [case_out(c) for c in (await session.scalars(stmt)).all()]
+
+
+# ---- Staff admin console: platform configuration (read-only) --------------------------------------------------------
+
+# An explicit allowlist: only business rules and switch positions are shown, never a secret, key, token, password,
+# connection string or address that may carry credentials. A setting added to config.py stays hidden until listed here.
+CONFIG_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
+    ("Fees and payments", (
+        ("platform_fee_bps", "Platform fee in basis points (1000 = 10%), fixed on each contract when it activates"),
+        ("payout_settlement_business_days", "Business days a payout is expected to take to reach the professional's bank"),
+        ("fx_margin_bps", "Safety margin (basis points) added when a spend limit in another currency is converted"),
+        ("fx_rates", "Units of each currency per 1 USD, set by Finance, for spend limits in another currency"),
+        ("tax_rules", "Invoice tax by the buyer's country (label, rate, basis)"),
+        ("payment_provider", "Payment provider in use"),
+        ("payment_operating_countries", "Countries where funds may be taken and paid out"),
+        ("payment_flow_approved", "The configured funds flow has partner and business approval"),
+        ("funding_reminder_days", "Days before an unfunded milestone or retainer cycle is due that the buyer is reminded"),
+    )),
+    ("Contracts and delivery", (
+        ("signature_deadline_days", "Days both parties have to sign before an unsigned contract escalates"),
+        ("request_response_hours", "Hours a professional has to answer a request (reminded a day before)"),
+        ("max_professionals_per_request", "Professionals one requirement can be sent to at once"),
+        ("acceptance_window_days", "Days a buyer has to review a submitted milestone"),
+        ("release_block_escalation_days", "Days between reminders when an approver has refused or let a release expire"),
+        ("termination_response_days", "Days a request to end an engagement by agreement stays open"),
+    )),
+    ("Disputes", (
+        ("dispute_evidence_days", "Days each side has to add evidence"),
+        ("dispute_direct_resolution_business_days", "Business days for the parties to settle directly before mediation"),
+        ("dispute_challenge_window_days", "Days after acceptance in which accepted work may still be disputed (payment held)"),
+        ("dispute_retention_years", "Minimum years closed dispute records are kept"),
+    )),
+    ("Trust, verification and enforcement", (
+        ("verification_provider", "Identity verification provider in use"),
+        ("verification_second_look_pct", "Share (%) of automatically approved checks a compliance officer looks at again"),
+        ("verification_appeal_days", "Days to appeal a failed or revoked verification"),
+        ("enforcement_triage_hours", "Target hours for a new safety case to be looked at"),
+        ("enforcement_appeal_days", "Days to appeal an enforcement action"),
+        ("enforcement_policy_version", "Trust & Safety playbook recorded with every enforcement decision"),
+        ("trust_completion_half_life_days", "Half-life (days) of a completed engagement's weight in trust scoring"),
+        ("trust_completion_full_credit", "Completed engagements that earn full delivery credit"),
+    )),
+    ("Privacy and retention", (
+        ("erasure_cooling_off_days", "Days an account deletion can still be cancelled"),
+        ("data_export_days", "Days a personal data export can be downloaded"),
+        ("idempotency_retention_days", "Days replayed-request records are kept"),
+        ("event_retention_days", "Days handled events are kept"),
+    )),
+    ("Operations", (
+        ("ai_provider", "AI assistance provider"),
+        ("ai_model", "AI model used for assistance"),
+        ("ai_disabled_prompts", "Built-in AI prompts switched off (their features use non-AI rules)"),
+        ("email_provider", "Email delivery"),
+        ("storage_provider", "File storage"),
+        ("malware_scanner", "Upload malware scanning"),
+        ("event_bus", "Event bus"),
+        ("rate_limit_enabled", "Request rate limits are on"),
+        ("provider_breaker_failures", "Consecutive provider errors before calls to it pause"),
+        ("provider_breaker_reset_seconds", "Seconds a paused provider waits before a trial call"),
+        ("log_level", "Log level"),
+        ("tracing_sample_ratio", "Share of new traces kept"),
+    )),
+)
+
+
+def _config_value(value) -> str:
+    import json
+
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, sort_keys=True)
+    return "" if value is None else str(value)
+
+
+def admin_config(actor: Actor) -> dict:
+    """Platform Admin: the environment, the release and the business rules in force. Changing them is a deployment
+    (environment variables), never done here."""
+    actor.require_platform_role(PlatformRole.PLATFORM_ADMIN)
+    s = get_settings()
+    return {"environment": s.env, "version": s.release or None,
+            "groups": [{"domain": domain, "settings": [{"key": f"ZK_{name.upper()}", "value": _config_value(getattr(s, name)),
+                                                        "description": description} for name, description in settings]}
+                       for domain, settings in CONFIG_GROUPS]}

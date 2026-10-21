@@ -26,3 +26,14 @@ def require_available() -> None:
     from zoikorum.shared.errors import ServiceUnavailable
     if not configuration()["configured"]:
         raise ServiceUnavailable("Payment integration is not configured; no funding was requested", code="INTEGRATION_NOT_CONFIGURED")
+
+
+async def intent_refs(session: AsyncSession, funding_ids: list[uuid.UUID]) -> dict[uuid.UUID, tuple[str, str | None]]:
+    """Per escrow funding: the payment provider that took the money and its reference for the payment."""
+    from zoikorum.domains.payments.models import PaymentIntent
+
+    if not funding_ids:
+        return {}
+    rows = (await session.execute(select(PaymentIntent.funding_id, PaymentIntent.provider, PaymentIntent.provider_ref)
+                                  .where(PaymentIntent.funding_id.in_(funding_ids)))).all()
+    return {fid: (provider, ref) for fid, provider, ref in rows}

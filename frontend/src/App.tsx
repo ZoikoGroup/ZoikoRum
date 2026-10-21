@@ -12,7 +12,30 @@ import Legal from './pages/Legal'
 import SignIn from './pages/SignIn'
 
 // Pages load on demand (one file per page module), so signing in does not download the whole app.
-const AuditExportsPage = lazy(() => import('./pages/AuditExports'))
+const StaffAccounts = lazy(() => import('./pages/staff/Accounts'))
+const StaffAnalytics = lazy(() => import('./pages/staff/Analytics'))
+const StaffAuditEvidence = lazy(() => import('./pages/staff/AuditEvidence'))
+const StaffCommandCenter = lazy(() => import('./pages/staff/CommandCenter'))
+const StaffContractsMilestones = lazy(() => import('./pages/staff/ContractsMilestones'))
+const StaffDisputeResolution = lazy(() => import('./pages/staff/DisputeResolution'))
+const StaffDuplicateIdentity = lazy(() => import('./pages/staff/DuplicateIdentity'))
+const StaffEngagementOversight = lazy(() => import('./pages/staff/EngagementOversight'))
+const StaffEnterpriseReadinessAdmin = lazy(() => import('./pages/staff/EnterpriseReadinessAdmin'))
+const StaffFailedDeliveries = lazy(() => import('./pages/staff/FailedDeliveries'))
+const StaffFeatureControls = lazy(() => import('./pages/staff/FeatureControls'))
+const StaffFinancialExceptions = lazy(() => import('./pages/staff/FinancialExceptions'))
+const StaffIncidentCommand = lazy(() => import('./pages/staff/IncidentCommand'))
+const StaffPlatformConfig = lazy(() => import('./pages/staff/PlatformConfig'))
+const StaffProfessionalDirectory = lazy(() => import('./pages/staff/ProfessionalDirectory'))
+const StaffProtectedPayments = lazy(() => import('./pages/staff/ProtectedPayments'))
+const StaffReconciliationCenter = lazy(() => import('./pages/staff/ReconciliationCenter'))
+const StaffServiceHealth = lazy(() => import('./pages/staff/ServiceHealth'))
+const StaffStaffAccess = lazy(() => import('./pages/staff/StaffAccess'))
+const StaffSupportCases = lazy(() => import('./pages/staff/SupportCases'))
+const StaffTaxonomyStandards = lazy(() => import('./pages/staff/TaxonomyStandards'))
+const StaffTrustSafety = lazy(() => import('./pages/staff/TrustSafety'))
+const StaffVerificationCenter = lazy(() => import('./pages/staff/VerificationCenter'))
+const StaffWorkQueue = lazy(() => import('./pages/staff/WorkQueue'))
 const EnterpriseAccess = lazy(() => import('./pages/EnterpriseAccess'))
 const EnterpriseStructurePage = lazy(() => import('./pages/EnterprisePages').then((m) => ({ default: m.EnterpriseStructurePage })))
 const EnterpriseTeamPage = lazy(() => import('./pages/EnterprisePages').then((m) => ({ default: m.EnterpriseTeamPage })))
@@ -33,16 +56,9 @@ const CategoryPage = lazy(() => import('./pages/CategoryPage'))
 const SsoCallbackPage = lazy(() => import('./components/SingleSignOn').then((m) => ({ default: m.SsoCallbackPage })))
 const FirmVerificationPage = lazy(() => import('./pages/VerificationPages').then((m) => ({ default: m.FirmVerificationPage })))
 const ProfessionalVerificationPage = lazy(() => import('./pages/VerificationPages').then((m) => ({ default: m.ProfessionalVerificationPage })))
-const ReviewQueuePage = lazy(() => import('./pages/VerificationPages').then((m) => ({ default: m.ReviewQueuePage })))
 const Security = lazy(() => import('./pages/Security'))
 const ComparePage = lazy(() => import('./pages/customer/ComparePage'))
-const DuplicateAccountsPage = lazy(() => import('./pages/DuplicateAccounts'))
-const TaxonomyAdminPage = lazy(() => import('./pages/TaxonomyAdmin'))
-const ReconciliationPage = lazy(() => import('./pages/Reconciliation'))
-const StaffAdmin = lazy(() => import('./pages/StaffAdmin'))
-const UsersAdmin = lazy(() => import('./pages/UsersAdmin'))
 const SavedBuyersPage = lazy(() => import('./pages/SavedBuyers'))
-const StaffHome = lazy(() => import('./pages/StaffHome').then((m) => ({ default: m.StaffHome })))
 const BuyerHome = lazy(() => import('./pages/WorkspaceHome').then((m) => ({ default: m.BuyerHome })))
 const EnterpriseHome = lazy(() => import('./pages/WorkspaceHome').then((m) => ({ default: m.EnterpriseHome })))
 const CustomerVerification = lazy(() => import('./pages/customer/CustomerVerification'))
@@ -56,7 +72,6 @@ const MessagesPage = lazy(() => import('./pages/customer/Pipeline').then((m) => 
 const CustomerPaymentsPage = lazy(() => import('./pages/Money').then((m) => ({ default: m.CustomerPaymentsPage })))
 const PerformanceInsights = lazy(() => import('./pages/PerformanceInsights'))
 const EnterpriseReadinessPage = lazy(() => import('./pages/EnterpriseReadiness').then((m) => ({ default: m.EnterpriseReadinessPage })))
-const EnterpriseApplicationsPage = lazy(() => import('./pages/EnterpriseReadiness').then((m) => ({ default: m.EnterpriseApplicationsPage })))
 const EarningsPage = lazy(() => import('./pages/Money').then((m) => ({ default: m.EarningsPage })))
 const DisputeDetail = lazy(() => import('./pages/Disputes').then((m) => ({ default: m.DisputeDetail })))
 const DisputesPage = lazy(() => import('./pages/Disputes').then((m) => ({ default: m.DisputesPage })))
@@ -73,12 +88,6 @@ const WebhooksPage = lazy(() => import('./pages/Notifications').then((m) => ({ d
 const SafetyPage = lazy(() => import('./pages/Operations').then((m) => ({ default: m.SafetyPage })))
 const AIAdminPage = lazy(() => import('./pages/Operations').then((m) => ({ default: m.AIAdminPage })))
 const ReportsPage = lazy(() => import('./pages/Operations').then((m) => ({ default: m.ReportsPage })))
-const PlatformAnalyticsPage = lazy(() => import('./pages/Operations').then((m) => ({ default: m.PlatformAnalyticsPage })))
-const DeadLettersPage = lazy(() => import('./pages/Operations').then((m) => ({ default: m.DeadLettersPage })))
-const MoneyProblemsPage = lazy(() => import('./pages/Operations').then((m) => ({ default: m.MoneyProblemsPage })))
-const SupportQueuePage = lazy(() => import('./pages/Operations').then((m) => ({ default: m.SupportQueuePage })))
-const IncidentsPage = lazy(() => import('./pages/Operations').then((m) => ({ default: m.IncidentsPage })))
-const SwitchesPage = lazy(() => import('./pages/Operations').then((m) => ({ default: m.SwitchesPage })))
 
 const ENTERPRISE: ('ENTERPRISE_ADMIN' | 'ENTERPRISE_MEMBER')[] = ['ENTERPRISE_ADMIN', 'ENTERPRISE_MEMBER']
 const CUSTOMER: ('BUYER' | 'ENTERPRISE_ADMIN' | 'ENTERPRISE_MEMBER')[] = ['BUYER', ...ENTERPRISE]
@@ -147,33 +156,40 @@ export default function App() {
             <Route path="messages" element={<RequireRole any={[...CUSTOMER, 'PROFESSIONAL']}><MessagesPage /></RequireRole>} />
             <Route path="disputes" element={<RequireRole any={CUSTOMER}><DisputesPage role="buyer" /></RequireRole>} />
             <Route path="professional/disputes" element={<RequireRole any={['PROFESSIONAL']}><DisputesPage role="professional" /></RequireRole>} />
-            <Route path="ops/disputes" element={<RequireRole any={['MEDIATOR', 'LEGAL', 'PLATFORM_ADMIN']}><DisputesPage role="operator" /></RequireRole>} />
+            <Route path="ops" element={<RequireRole any={[...PLATFORM_ROLES]}><StaffCommandCenter /></RequireRole>} />
+            <Route path="ops/queue" element={<RequireRole any={[...PLATFORM_ROLES]}><StaffWorkQueue /></RequireRole>} />
+            <Route path="ops/analytics" element={<RequireRole any={[...PLATFORM_ROLES]}><StaffAnalytics /></RequireRole>} />
+            <Route path="ops/users" element={<RequireRole any={['PLATFORM_ADMIN', 'TS_ANALYST']}><StaffAccounts /></RequireRole>} />
+            <Route path="ops/professionals" element={<RequireRole any={['PLATFORM_ADMIN', 'TS_ANALYST', 'COMPLIANCE_OFFICER', 'SUPPORT_AGENT']}><StaffProfessionalDirectory /></RequireRole>} />
+            <Route path="ops/enterprise" element={<RequireRole any={['COMPLIANCE_OFFICER']}><StaffEnterpriseReadinessAdmin /></RequireRole>} />
+            <Route path="ops/duplicates" element={<RequireRole any={['TS_ANALYST', 'PLATFORM_ADMIN']}><StaffDuplicateIdentity /></RequireRole>} />
+            <Route path="ops/verification" element={<RequireRole any={['COMPLIANCE_OFFICER']}><StaffVerificationCenter /></RequireRole>} />
+            <Route path="ops/safety" element={<RequireRole any={[...PLATFORM_ROLES]}><StaffTrustSafety /></RequireRole>} />
+            <Route path="ops/disputes" element={<RequireRole any={['MEDIATOR', 'LEGAL', 'PLATFORM_ADMIN']}><StaffDisputeResolution /></RequireRole>} />
+            <Route path="ops/audit" element={<RequireRole any={[...PLATFORM_ROLES]}><StaffAuditEvidence /></RequireRole>} />
+            <Route path="ops/engagements" element={<RequireRole any={['PLATFORM_ADMIN', 'COMPLIANCE_OFFICER', 'LEGAL', 'MEDIATOR', 'FINANCIAL_OPS']}><StaffEngagementOversight /></RequireRole>} />
+            <Route path="ops/contracts" element={<RequireRole any={['PLATFORM_ADMIN', 'COMPLIANCE_OFFICER', 'LEGAL', 'MEDIATOR', 'FINANCIAL_OPS']}><StaffContractsMilestones /></RequireRole>} />
+            <Route path="ops/taxonomy" element={<RequireRole any={['PLATFORM_ADMIN']}><StaffTaxonomyStandards /></RequireRole>} />
+            <Route path="ops/payments" element={<RequireRole any={['FINANCIAL_OPS', 'PLATFORM_ADMIN']}><StaffProtectedPayments /></RequireRole>} />
+            <Route path="ops/reconciliation" element={<RequireRole any={['FINANCIAL_OPS', 'PLATFORM_ADMIN']}><StaffReconciliationCenter /></RequireRole>} />
+            <Route path="ops/money" element={<RequireRole any={['FINANCIAL_OPS', 'PLATFORM_ADMIN']}><StaffFinancialExceptions /></RequireRole>} />
+            <Route path="ops/incidents" element={<RequireRole any={[...PLATFORM_ROLES]}><StaffIncidentCommand /></RequireRole>} />
+            <Route path="ops/health" element={<RequireRole any={['FINANCIAL_OPS', 'PLATFORM_ADMIN']}><StaffServiceHealth /></RequireRole>} />
+            <Route path="ops/switches" element={<RequireRole any={['FINANCIAL_OPS', 'PLATFORM_ADMIN']}><StaffFeatureControls /></RequireRole>} />
+            <Route path="ops/dead-letters" element={<RequireRole any={['FINANCIAL_OPS', 'PLATFORM_ADMIN']}><StaffFailedDeliveries /></RequireRole>} />
+            <Route path="ops/staff" element={<RequireRole any={['PLATFORM_ADMIN']}><StaffStaffAccess /></RequireRole>} />
+            <Route path="ops/support" element={<RequireRole any={['SUPPORT_AGENT', 'PLATFORM_ADMIN']}><StaffSupportCases /></RequireRole>} />
+            <Route path="ops/config" element={<RequireRole any={['PLATFORM_ADMIN']}><StaffPlatformConfig /></RequireRole>} />
             <Route path="disputes/:id" element={<DisputeDetail />} />
             <Route path="organisation" element={<RequireRole any={CUSTOMER}><OrganisationPage /></RequireRole>} />
             <Route path="verification" element={<RequireRole any={CUSTOMER}><CustomerVerification /></RequireRole>} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="help" element={<HelpPage />} />
             <Route path="invitations" element={<InvitationsPage />} />
-            <Route path="ops" element={<RequireRole any={[...PLATFORM_ROLES]}><StaffHome /></RequireRole>} />
-            <Route path="ops/staff" element={<RequireRole any={['PLATFORM_ADMIN']}><StaffAdmin /></RequireRole>} />
-            <Route path="ops/users" element={<RequireRole any={['PLATFORM_ADMIN', 'TS_ANALYST']}><UsersAdmin /></RequireRole>} />
-            <Route path="ops/reconciliation" element={<RequireRole any={['FINANCIAL_OPS', 'PLATFORM_ADMIN']}><ReconciliationPage /></RequireRole>} />
-            <Route path="ops/duplicates" element={<RequireRole any={['TS_ANALYST', 'PLATFORM_ADMIN']}><DuplicateAccountsPage /></RequireRole>} />
-            <Route path="ops/taxonomy" element={<RequireRole any={['PLATFORM_ADMIN']}><TaxonomyAdminPage /></RequireRole>} />
-            <Route path="ops/verification" element={<RequireRole any={['COMPLIANCE_OFFICER']}><ReviewQueuePage /></RequireRole>} />
-            <Route path="ops/audit" element={<RequireRole any={[...PLATFORM_ROLES]}><AuditExportsPage /></RequireRole>} />
             <Route path="account" element={<AccountPage />} />
             <Route path="safety" element={<SafetyPage />} />
             <Route path="reports" element={<ReportsPage />} />
-            <Route path="ops/safety" element={<RequireRole any={[...PLATFORM_ROLES]}><SafetyPage operator /></RequireRole>} />
             <Route path="ops/ai" element={<RequireRole any={['AI_SAFETY_REVIEWER']}><AIAdminPage /></RequireRole>} />
-            <Route path="ops/analytics" element={<RequireRole any={[...PLATFORM_ROLES]}><PlatformAnalyticsPage /></RequireRole>} />
-            <Route path="ops/dead-letters" element={<RequireRole any={['FINANCIAL_OPS', 'PLATFORM_ADMIN']}><DeadLettersPage /></RequireRole>} />
-            <Route path="ops/money" element={<RequireRole any={['FINANCIAL_OPS', 'PLATFORM_ADMIN']}><MoneyProblemsPage /></RequireRole>} />
-            <Route path="ops/support" element={<RequireRole any={['SUPPORT_AGENT', 'PLATFORM_ADMIN']}><SupportQueuePage /></RequireRole>} />
-            <Route path="ops/incidents" element={<RequireRole any={[...PLATFORM_ROLES]}><IncidentsPage /></RequireRole>} />
-            <Route path="ops/enterprise" element={<RequireRole any={['COMPLIANCE_OFFICER']}><EnterpriseApplicationsPage /></RequireRole>} />
-            <Route path="ops/switches" element={<RequireRole any={['FINANCIAL_OPS', 'PLATFORM_ADMIN']}><SwitchesPage /></RequireRole>} />
             <Route path="security" element={<Security />} />
             <Route path="forbidden" element={<ForbiddenPage />} />
           </Route>
