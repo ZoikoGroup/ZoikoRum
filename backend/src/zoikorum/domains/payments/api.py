@@ -5,10 +5,12 @@ from typing import Literal
 
 from fastapi import APIRouter, Header, Query, Request, Response
 
+from zoikorum.domains.admin import facade as admin_facade
+from zoikorum.domains.admin.facade import ApprovalRequestOut
 from zoikorum.domains.payments import operations, reconciliation, service, webhooks
 from zoikorum.domains.payments.schemas import (
-    ChargeOut, EarningsOut, InvoiceOut, OpsResolveIn, OpsWorklistOut, PayoutAccountIn, PayoutAccountOut, ReconcileIn,
-    ReconciliationOut, RefundOut,
+    BreakAdvanceIn, ChargeOut, EarningsOut, InvoiceOut, OpsResolveIn, OpsWorklistOut, PayoutAccountIn, PayoutAccountOut, ReconcileIn,
+    ReconciliationBreakOut, ReconciliationOut, RefundOut,
 )
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
@@ -98,10 +100,15 @@ async def ops_retry(kind: Literal["PAYOUT", "REFUND"], item_id: uuid.UUID, actor
     return await operations.retry(session, actor, kind, item_id)
 
 
-@router.post("/v1/payments/ops/{kind}/{item_id}/resolve", response_model=OpsWorklistOut)
+@router.post("/v1/payments/ops/{kind}/{item_id}/resolve", status_code=202, response_model=ApprovalRequestOut)
 async def ops_resolve(kind: Literal["PAYOUT", "REFUND", "CHARGEBACK_LOSS"], item_id: uuid.UUID, body: OpsResolveIn,
                       actor: CurrentActor, session: DbSession):
-    return await operations.resolve(session, actor, kind, item_id, body)
+    """Financial Ops: ask to close an item by hand with its outcome (written off, settled outside, recovered). 202: a
+    maker-checker approval request (FINANCIAL_EXCEPTION_RESOLVE, status REQUESTED); the item is closed only when a
+    second member of Financial Operations (or a Platform Admin) approves it. Retrying stays immediate."""
+    payload = {"itemKind": kind, "itemId": str(item_id), "outcome": body.outcome, "note": body.note}
+    return await admin_facade.request_approval(session, actor, "FINANCIAL_EXCEPTION_RESOLVE", payload,
+                                               body.justification or body.note)
 
 
 @router.get("/v1/payments/reconciliations", response_model=list[ReconciliationOut])
@@ -114,3 +121,17 @@ async def reconciliations(actor: CurrentActor, session: DbSession):
 async def run_reconciliation(body: ReconcileIn, actor: CurrentActor, session: DbSession):
     """Financial Ops: (re-)run reconciliation for one day."""
     return await reconciliation.run(session, actor, body.day)
+
+
+@router.get("/v1/payments/reconciliation-breaks", response_model=list[ReconciliationBreakOut])
+async def reconciliation_breaks(actor: CurrentActor, session: DbSession,
+                                status: Literal["OPEN", "EVIDENCE_GATHERING", "REVIEWED", "CLOSED"] | None = None):
+    """Financial Ops: suspense items (unmatched differences) found by reconciliation runs, newest day first."""
+    return await reconciliation.list_breaks(session, actor, status)
+
+
+@router.post("/v1/payments/reconciliation-breaks/{break_id}/advance", response_model=ReconciliationBreakOut)
+async def advance_reconciliation_break(break_id: uuid.UUID, body: BreakAdvanceIn, actor: CurrentActor, session: DbSession):
+    """Financial Ops: move a break one step (OPEN -> EVIDENCE_GATHERING -> REVIEWED -> CLOSED). Closing needs a fresh
+    step-up and a different person from the reviewer. Audited."""
+    return await reconciliation.advance_break(session, actor, break_id, body)

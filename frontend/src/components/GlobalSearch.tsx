@@ -4,6 +4,8 @@ import { useNavigate } from 'react-router-dom'
 import { contractApi, type Contract } from '../api/contracts'
 import { proposalApi, type ProposalRequest } from '../api/proposals'
 import { searchApi } from '../api/search'
+import { ApiError } from '../api/client'
+import { comboKey, STAFF_SEARCH_MIN, staffSearchApi, type ComboState, type StaffSearchHit, type StaffSearchResult } from '../api/staffSearch'
 import { Icon } from './dashboard'
 
 /* Dashboard-scoped global search (Buyer Dashboard s.15): one box across professionals, engagements/contracts and
@@ -15,7 +17,113 @@ interface Hit { kind: Exclude<Kind, 'all'>; id: string; title: string; sub: stri
 const KINDS: [Kind, string][] = [['all', 'All'], ['professionals', 'Professionals'], ['engagements', 'Engagements'], ['requests', 'Requests'],
   ['messages', 'Messages']]
 
-export function GlobalSearch({ side }: { side: 'buyer' | 'professional' | null }) {
+/* One box in the top bar: staff working in the staff console (/platform-admin/*) get the scoped staff search; everyone else
+   keeps the dashboard search below, unchanged. */
+export function GlobalSearch({ side, staff = false }: { side: 'buyer' | 'professional' | null; staff?: boolean }) {
+  return staff ? <StaffSearch /> : <CustomerSearch side={side} />
+}
+
+/* Staff console search: debounced (250 ms) GET /v1/admin/search, results grouped by kind. The server only searches what
+   the person's roles may see and masks email addresses. Combobox + listbox semantics, keyboard model in comboKey. */
+type StaffStatus = 'idle' | 'loading' | 'done' | 'error'
+const LISTBOX_ID = 'staff-search-results'
+const optionId = (i: number) => `staff-search-option-${i}`
+
+function StaffSearch() {
+  const navigate = useNavigate()
+  const [q, setQ] = useState('')
+  const [combo, setCombo] = useState<ComboState>({ open: false, active: -1 })
+  const [status, setStatus] = useState<StaffStatus>('idle')
+  const [result, setResult] = useState<StaffSearchResult | null>(null)
+  const [error, setError] = useState('')
+  const box = useRef<HTMLFormElement>(null)
+  const term = q.trim()
+  const ready = term.length >= STAFF_SEARCH_MIN
+
+  useEffect(() => {
+    if (!ready) return  // too short: nothing is fetched or shown
+    let live = true
+    const t = window.setTimeout(() => {
+      setStatus('loading')
+      staffSearchApi.search(term).then((r) => {
+        if (!live) return
+        setResult(r); setStatus('done'); setCombo((c) => ({ ...c, active: -1 }))
+      }).catch((e: unknown) => {
+        if (!live) return
+        setResult(null); setStatus('error')
+        setError(e instanceof ApiError && e.status === 429 ? 'Too many searches. Wait a moment and try again.'
+          : e instanceof ApiError && e.status === 403 ? 'Your staff access does not allow searching here.'
+            : 'Search is unavailable right now. Try again.')
+      })
+    }, 250)
+    return () => { live = false; window.clearTimeout(t) }
+  }, [term, ready])
+
+  useEffect(() => {
+    const close = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as Node)) setCombo({ open: false, active: -1 }) }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [])
+
+  const current = ready && result && result.query === term.split(/\s+/).join(' ') ? result : null
+  const flat: StaffSearchHit[] = current ? current.groups.flatMap((g) => g.items) : []
+  const expanded = combo.open && ready
+  const go = (hit: StaffSearchHit) => { setCombo({ open: false, active: -1 }); setQ(''); setResult(null); navigate(hit.link) }
+  function keys(e: KeyboardEvent<HTMLInputElement>) {
+    const out = comboKey(e.key, combo, flat.length)
+    if (out.handled) e.preventDefault()
+    setCombo(out.state)
+    if (out.choose !== undefined && flat[out.choose]) go(flat[out.choose])
+    if (out.clear) { setQ(''); setResult(null) }
+  }
+  useEffect(() => {  // keep the highlighted option in view
+    if (combo.active >= 0) document.getElementById(optionId(combo.active))?.scrollIntoView?.({ block: 'nearest' })
+  }, [combo.active])
+
+  const busy = ready && (status === 'loading' || (status !== 'error' && !current))
+  const message = !ready ? '' : status === 'error' ? error : busy ? 'Searching…'
+    : flat.length === 0 ? 'No matches' : `${flat.length} result${flat.length === 1 ? '' : 's'}`
+  let index = -1
+  return (
+    <form ref={box} className="top-search staff-search" role="search" aria-label="Staff console" onSubmit={(e: FormEvent) => e.preventDefault()}>
+      <Icon name="search" />
+      <input type="search" aria-label="Search accounts, cases, contracts and disputes" placeholder="Search accounts, cases, contracts, disputes…"
+        value={q} autoComplete="off" spellCheck={false} role="combobox" aria-autocomplete="list" aria-expanded={expanded}
+        aria-controls={LISTBOX_ID} aria-activedescendant={expanded && combo.active >= 0 ? optionId(combo.active) : undefined}
+        aria-describedby="staff-search-status"
+        onChange={(e) => {
+          setQ(e.target.value); setCombo({ open: true, active: -1 })
+          if (e.target.value.trim().length >= STAFF_SEARCH_MIN) setStatus('loading')
+        }}
+        onFocus={() => setCombo((c) => ({ ...c, open: true }))} onKeyDown={keys} />
+      <span id="staff-search-status" className="sr-only" role="status" aria-live="polite">{expanded ? message : ''}</span>
+      <div className="search-pop card staff-search-pop" hidden={!expanded}>
+        {expanded && (status === 'error' ? <p className="staff-search-msg error" role="alert">{error}</p>
+          : busy ? <p className="staff-search-msg muted small">Searching…</p>
+            : flat.length === 0 ? <p className="staff-search-msg muted small">No matches for “{term}” in the areas you can see.</p> : null)}
+        <ul id={LISTBOX_ID} role="listbox" aria-label="Search results">
+          {expanded && current?.groups.map((g) => (
+            <li key={g.kind} role="presentation">
+              <ul role="group" aria-labelledby={`staff-search-group-${g.kind}`}>
+                <li role="presentation" id={`staff-search-group-${g.kind}`} className="staff-search-group">{g.label}</li>
+                {g.items.map((h) => {
+                  const i = ++index
+                  return (
+                    <li key={h.kind + h.id} id={optionId(i)} role="option" aria-selected={i === combo.active}
+                      className={`search-hit ${i === combo.active ? 'active' : ''}`}
+                      onMouseDown={(e) => e.preventDefault()} onMouseEnter={() => setCombo((c) => ({ ...c, active: i }))} onClick={() => go(h)}>
+                      <span><strong>{h.title}</strong>{h.subtitle && <><br /><span className="muted small">{h.subtitle}</span></>}</span>
+                    </li>)
+                })}
+              </ul>
+            </li>))}
+        </ul>
+      </div>
+    </form>
+  )
+}
+
+function CustomerSearch({ side }: { side: 'buyer' | 'professional' | null }) {
   const navigate = useNavigate()
   const [q, setQ] = useState('')
   const [kind, setKind] = useState<Kind>('all')

@@ -175,3 +175,19 @@ async def deactivate_member(session: AsyncSession, org_id: uuid.UUID, identity_i
     m.status = "REMOVED"
     _evt(session, E.ORG_MEMBER_REMOVED, await session.get(Organization, org_id), identityId=identity_id, removedBy=None, via="SCIM")
     await session.flush()
+
+
+# ---- Staff console search (admin/search.py) --------------------------------------------------------------------------
+
+async def staff_search_organizations(session: AsyncSession, term: str, exact_id: uuid.UUID | None, limit: int) -> list[dict]:
+    """Buyer organisations and enterprises whose name contains ``term`` (or whose id is ``exact_id``), names A-Z:
+    [{"id", "name", "kind" (BUYER | ENTERPRISE), "status", "country"}]."""
+    from sqlalchemy import func, or_
+
+    like = "%" + term.strip().lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    match = [func.lower(Organization.name).like(like, escape="\\")]
+    if exact_id:
+        match.append(Organization.id == exact_id)
+    rows = (await session.scalars(select(Organization).where(or_(*match)).order_by(Organization.name, Organization.id).limit(limit))).all()
+    return [{"id": o.id, "name": o.name, "kind": "ENTERPRISE" if o.org_type == "ENTERPRISE" else "BUYER", "status": o.status,
+             "country": o.country} for o in rows]

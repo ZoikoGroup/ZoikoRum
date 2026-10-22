@@ -119,3 +119,20 @@ async def open_count(session: AsyncSession) -> int:
     from zoikorum.domains.dispute.service import OPEN
 
     return await session.scalar(select(func.count()).select_from(DisputeCase).where(DisputeCase.status.in_(OPEN))) or 0
+
+
+# ---- Staff console search (admin/search.py) --------------------------------------------------------------------------
+
+async def staff_search_disputes(session: AsyncSession, term: str, exact_id: uuid.UUID | None, limit: int) -> list[dict]:
+    """Disputes whose reference, contract reference or summary contains ``term`` (or whose id is ``exact_id``), newest
+    first: [{"id", "reference", "contractReference", "summary", "category", "status"}]."""
+    from sqlalchemy import func, or_
+
+    like = "%" + term.strip().lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    match = [func.lower(DisputeCase.reference).like(like, escape="\\"), func.lower(DisputeCase.contract_reference).like(like, escape="\\"),
+             func.lower(DisputeCase.summary).like(like, escape="\\")]
+    if exact_id:
+        match.append(DisputeCase.id == exact_id)
+    rows = (await session.scalars(select(DisputeCase).where(or_(*match)).order_by(DisputeCase.created_at.desc(), DisputeCase.id).limit(limit))).all()
+    return [{"id": d.id, "reference": d.reference, "contractReference": d.contract_reference, "summary": d.summary,
+             "category": d.category, "status": d.status} for d in rows]

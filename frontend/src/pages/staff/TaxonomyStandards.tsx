@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { taxonomyApi, type SpecializationFlags, type SpecializationSuggestion, type TaxonomyCategory, type TaxonomyGroup,
   type TaxonomySpecialization } from '../../api/professional'
 import { AdminHeader, AdminKpi, Callout, CountTabs, DetailPanel, Facts, FilterBar, HBars, KpiStrip, ListDetail, MetricList, Panel, PanelRow,
-  Pill, TableFoot, shortDate } from '../../components/admin'
+  Pill, TableFoot, shortDate, pickRow } from '../../components/admin'
+import { CaseOwner, OwnerCell, useAssignments } from '../../components/CaseOwner'
 import { ErrorAlert, useStepUp } from '../../components/ui'
 
 /* Taxonomy & Standards (design 56). Platform Admin maintains the specialization list (every change makes a new taxonomy
@@ -43,6 +44,7 @@ export default function TaxonomyStandards() {
   const [tab, setTab] = useState<Tab>('registry')
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<string | null>(null)
+  const owners = useAssignments(['TAXONOMY_SUGGESTION'])  // suggestions only: the registry itself has no case owner
 
   const load = useCallback(() => Promise.all([taxonomyApi.queue(), taxonomyApi.all()]).then(([q, t]) => {
     setRows(q); setTaxonomy(t)
@@ -126,14 +128,14 @@ export default function TaxonomyStandards() {
             <FilterBar search={search} onSearch={setSearch} placeholder={tab === 'registry' ? 'Search category or specialization…' : 'Search suggestion or professional…'} />
             {tab === 'registry' ? <>
               <div className="adm-table-wrap"><table className="data">
-                <thead><tr><th>Category</th><th>Version</th><th>Groups</th><th>Terms</th><th>Requirements</th><th>Suggestions</th></tr></thead>
+                <thead><tr><th scope="col">Category</th><th scope="col">Version</th><th scope="col">Groups</th><th scope="col">Terms</th><th scope="col">Requirements</th><th scope="col">Suggestions</th></tr></thead>
                 <tbody>
                   {taxonomy && shownCats.length === 0 && <tr><td colSpan={6} className="empty-row">{cats.length ? 'No categories match.' : 'No categories yet. Load the default list to start.'}</td></tr>}
                   {shownCats.map((c) => {
                     const sp = specsOf(c)
                     const p = pendingFor(c)
                     return (
-                      <tr key={c.slug} className={`pick ${selected === c.slug ? 'selected' : ''}`} onClick={() => setSelected(c.slug)}>
+                      <tr {...pickRow} key={c.slug} className={`pick ${selected === c.slug ? 'selected' : ''}`} onClick={() => setSelected(c.slug)}>
                         <td><div className="cell-main">{c.name}</div><div className="cell-sub">{c.slug}</div></td>
                         <td><Pill tone="grey">v{c.version}</Pill></td>
                         <td className="small">{c.groups.length}</td>
@@ -147,15 +149,16 @@ export default function TaxonomyStandards() {
               <TableFoot shown={shownCats.length} total={cats.length} noun="categories" />
             </> : <>
               <div className="adm-table-wrap"><table className="data">
-                <thead><tr><th>Suggestion</th><th>Their words</th><th>Source</th><th>Proposed group</th></tr></thead>
+                <thead><tr><th scope="col">Suggestion</th><th scope="col">Their words</th><th scope="col">Source</th><th scope="col">Proposed group</th><th scope="col">Owner</th></tr></thead>
                 <tbody>
-                  {rows && shownSugs.length === 0 && <tr><td colSpan={4} className="empty-row"><strong>No suggestions waiting.</strong></td></tr>}
+                  {rows && shownSugs.length === 0 && <tr><td colSpan={5} className="empty-row"><strong>No suggestions waiting.</strong></td></tr>}
                   {shownSugs.map((s) => (
-                    <tr key={s.id} className={`pick ${selected === s.id ? 'selected' : ''}`} onClick={() => setSelected(s.id)}>
+                    <tr {...pickRow} key={s.id} className={`pick ${selected === s.id ? 'selected' : ''}`} onClick={() => setSelected(s.id)}>
                       <td><div className="cell-main">{s.name}</div><div className="cell-sub">{s.professionalName ?? '—'} · {shortDate(s.createdAt)}</div></td>
                       <td className="small" style={{ maxWidth: 260 }}>“{s.text}”</td>
                       <td className="small">{sourceLabel(s)}{s.credentialLikely && <div><Pill tone="amber">Credential likely</Pill></div>}</td>
                       <td className="small">{cats.flatMap((c) => c.groups).find((g) => g.slug === s.groupSlug)?.name ?? '—'}</td>
+                      <td><OwnerCell assignment={owners.get('TAXONOMY_SUGGESTION', s.id)} /></td>
                     </tr>))}
                 </tbody>
               </table></div>
@@ -165,7 +168,9 @@ export default function TaxonomyStandards() {
         }
         detail={selCat ? <CategoryEditor key={selCat.slug} c={selCat} pending={pendingFor(selCat)} run={run} onChanged={load} notify={setNotice} onClose={() => setSelected(null)} />
           : selSug && drafts[selSug.id] ? <SuggestionDecision s={selSug} d={drafts[selSug.id]} taxonomy={cats} set={(p) => set(selSug.id, p)}
-            decide={(a) => decide(selSug, a)} onClose={() => setSelected(null)} /> : undefined}
+            decide={(a) => decide(selSug, a)} onClose={() => setSelected(null)}
+            owner={<CaseOwner key={selSug.id} kind="TAXONOMY_SUGGESTION" caseId={selSug.id} assignment={owners.get('TAXONOMY_SUGGESTION', selSug.id)} onChange={owners.put} />} />
+            : undefined}
       />
     </>
   )
@@ -253,8 +258,8 @@ function CategoryEditor({ c, pending, run, onChanged, notify, onClose }: {
   )
 }
 
-function SuggestionDecision({ s, d, taxonomy, set, decide, onClose }: {
-  s: SpecializationSuggestion; d: Draft; taxonomy: TaxonomyCategory[]; set: (p: Partial<Draft>) => void
+function SuggestionDecision({ s, d, taxonomy, set, decide, onClose, owner }: {
+  s: SpecializationSuggestion; d: Draft; owner?: ReactNode; taxonomy: TaxonomyCategory[]; set: (p: Partial<Draft>) => void
   decide: (a: 'APPROVE' | 'MERGE' | 'REJECT') => void; onClose: () => void
 }) {
   return (
@@ -267,6 +272,7 @@ function SuggestionDecision({ s, d, taxonomy, set, decide, onClose }: {
       <Callout tone="blue" title="Their words">“{s.text}”{s.description && s.description !== s.text && <div>{s.description}</div>}</Callout>
       <Facts rows={[['Source', sourceLabel(s)], ['Credential likely', s.credentialLikely ? 'Yes' : 'No'],
         ['Proposed category', taxonomy.find((c) => c.slug === s.categorySlug)?.name ?? '—']]} />
+      {owner}
       <div style={{ display: 'grid', gap: 8 }}>
         <label className="label" htmlFor="tax-final-name" style={{ margin: 0 }}>Approve as a new specialization</label>
         <input id="tax-final-name" className="input" value={d.name} onChange={(e) => set({ name: e.target.value })} aria-label="Final name" />

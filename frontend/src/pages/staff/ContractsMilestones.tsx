@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { adminConsoleApi, type AdminContract, type AdminContractSummary } from '../../api/adminConsole'
 import { AdminHeader, AdminKpi, Callout, CountTabs, DetailPanel, Facts, FilterBar, FilterSelect, HBars, KpiStrip, ListDetail, MetricList,
-  Panel, PanelRow, Pill, Progress, StackBar, StatusPill, TableFoot, dueText, money, shortDate } from '../../components/admin'
+  Panel, PanelRow, Pill, Progress, StackBar, StatusPill, TableFoot, dueText, money, shortDate, pickRow, useSelectedParam } from '../../components/admin'
 import { ErrorAlert } from '../../components/ui'
 import { CONTRACT_COLOR, CONTRACT_LABEL, CONTRACT_ORDER, MILESTONE_COLOR, MILESTONE_LABEL, MILESTONE_ORDER, currentMilestone, fundingState,
   msLabel, nextAction, orderedEntries, route, sortedMilestones, useCursorList, useDebounced } from './staffData'
@@ -19,6 +19,7 @@ export default function ContractsMilestones() {
   const [milestone, setMilestone] = useState('')
   const q = useDebounced(search.trim())
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  useSelectedParam(setSelectedId)
   const [detailTab, setDetailTab] = useState('Overview')
 
   useEffect(() => { adminConsoleApi.contractSummary().then(setSummary).catch(setError) }, [])
@@ -83,7 +84,7 @@ export default function ContractsMilestones() {
             </FilterBar>
             <div className="adm-table-wrap">
               <table className="data">
-                <thead><tr><th>Contract</th><th>Buyer / professional</th><th>Jurisd.</th><th>Agreement</th><th>Milestone</th><th>Funding state</th><th>Next action / due</th></tr></thead>
+                <thead><tr><th scope="col">Contract</th><th scope="col">Buyer / professional</th><th scope="col">Jurisd.</th><th scope="col">Agreement</th><th scope="col">Milestone</th><th scope="col">Funding state</th><th scope="col">Next action / due</th></tr></thead>
                 <tbody>
                   {list.rows && rows.length === 0 && <tr><td colSpan={7} className="empty-row">No contracts match.</td></tr>}
                   {!list.rows && !error && <tr><td colSpan={7} className="empty-row">Loading…</td></tr>}
@@ -93,7 +94,7 @@ export default function ContractsMilestones() {
                     const due = dueText(next.due)
                     const f = fundingState(c)
                     return (
-                      <tr key={c.id} className={`pick ${selectedId === c.id ? 'selected' : ''}`} onClick={() => setSelectedId(c.id)}>
+                      <tr {...pickRow} key={c.id} className={`pick ${selectedId === c.id ? 'selected' : ''}`} onClick={() => setSelectedId(c.id)}>
                         <td><div className="cell-id">{c.title}</div><div className="cell-sub">{money(c.totalMinor, c.currency)}</div></td>
                         <td><div className="cell-main">{c.buyer.name}</div><div className="cell-sub">{c.professional.name}</div></td>
                         <td className="small">{route(c)}</td>

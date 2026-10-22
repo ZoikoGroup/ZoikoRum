@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+from approvalhelp import approved
 from zoikorum.shared import clock
 
 
@@ -65,15 +66,19 @@ async def test_mfa_login_and_step_up(client, make_user):
 
 async def test_platform_role_grant_requires_admin_and_step_up(client, make_user):
     admin = await make_user("admin", platform_roles=("PLATFORM_ADMIN",))
+    checker = await make_user("checker", platform_roles=("PLATFORM_ADMIN",))
     target = await make_user("target")
     url = f"/v1/admin/identities/{target.id}/platform-roles"
-    r = await client.post(url, headers=target.h, json={"role": "MEDIATOR"})
+    body = {"role": "MEDIATOR", "justification": "Covers mediation while the team is short"}
+    r = await client.post(url, headers=target.h, json=body)
     assert r.status_code == 403
-    r = await client.post(url, headers=admin.h, json={"role": "MEDIATOR"})
+    r = await client.post(url, headers=admin.h, json=body)
     assert r.status_code == 401 and r.json()["code"] == "STEP_UP_REQUIRED"
     await admin.step_up()
-    r = await client.post(url, headers=admin.h, json={"role": "MEDIATOR"})
-    assert r.status_code == 200 and "MEDIATOR" in r.json()["platformRoles"]
+    r = await client.post(url, headers=admin.h, json=body)
+    assert r.status_code == 202 and r.json()["status"] == "REQUESTED"  # nothing granted yet
+    assert (await client.get("/v1/admin/identities/lookup", params={"email": target.email}, headers=admin.h)).json()["platformRoles"] == []
+    assert "MEDIATOR" in (await approved(client, r, checker))["result"]["platformRoles"]
 
 
 async def test_resend_email_confirmation(client, make_user, drain, sf):

@@ -3,8 +3,8 @@ import { Link } from 'react-router-dom'
 import { proApi } from '../../api/professional'
 import {
   AdminHeader, AdminKpi, Callout, Checklist, CountTabs, DetailPanel, Facts, FilterBar, Initials, KpiStrip, ListDetail,
-  Pill, Progress, TableFoot, shortDate, useSelection,
-} from '../../components/admin'
+  Pill, Progress, TableFoot, shortDate, useSelection,pickRow } from '../../components/admin'
+import { CaseOwner, OwnerCell, useAssignments } from '../../components/CaseOwner'
 import { ErrorAlert, useStepUp } from '../../components/ui'
 
 type Application = Awaited<ReturnType<typeof proApi.enterpriseApplications>>[number] & { id: string }
@@ -21,6 +21,7 @@ export default function EnterpriseReadinessAdmin() {
   const [reason, setReason] = useState('')
   const { run, modal } = useStepUp(setError)
   const { selected, select } = useSelection(items)
+  const owners = useAssignments(['ENTERPRISE_APPLICATION'])  // keyed by the applying professional
 
   const load = useCallback(() => {
     proApi.enterpriseApplications().then((list) => setItems(list.map((a) => ({ ...a, id: a.professionalId })))).catch(setError)
@@ -57,14 +58,14 @@ export default function EnterpriseReadinessAdmin() {
       <FilterBar search={q} onSearch={setQ} placeholder="Search applicant…" />
       <div className="adm-table-wrap">
         <table className="data">
-          <thead><tr><th>Applicant</th><th>Subject</th><th>Requirements</th><th>Statements</th><th>Applied</th></tr></thead>
+          <thead><tr><th scope="col">Applicant</th><th scope="col">Subject</th><th scope="col">Requirements</th><th scope="col">Statements</th><th scope="col">Applied</th><th scope="col">Owner</th></tr></thead>
           <tbody>
-            {rows.length === 0 && <tr><td colSpan={5} className="empty-row">{items ? 'No applications waiting.' : 'Loading…'}</td></tr>}
+            {rows.length === 0 && <tr><td colSpan={6} className="empty-row">{items ? 'No applications waiting.' : 'Loading…'}</td></tr>}
             {rows.map((a) => {
               const met = a.requirements.filter((r) => r.met).length
               const total = a.requirements.length
               return (
-                <tr key={a.id} className={`pick ${selected?.id === a.id ? 'selected' : ''}`} onClick={() => { select(a); setReason('') }}>
+                <tr {...pickRow} key={a.id} className={`pick ${selected?.id === a.id ? 'selected' : ''}`} onClick={() => { select(a); setReason('') }}>
                   <td><div className="name-cell"><Initials name={a.name} /><div><div className="cell-main">{a.name}</div>
                     <div className="cell-sub">{a.headline ?? ''}</div></div></div></td>
                   <td>Professional</td>
@@ -73,6 +74,7 @@ export default function EnterpriseReadinessAdmin() {
                     <strong className="small">{met}/{total}</strong></div></td>
                   <td>{a.attestation ? <span className="small">v{a.attestation.version}</span> : <Pill tone="red">Missing</Pill>}</td>
                   <td>{shortDate(a.appliedAt)}</td>
+                  <td><OwnerCell assignment={owners.get('ENTERPRISE_APPLICATION', a.professionalId)} /></td>
                 </tr>
               )
             })}
@@ -105,6 +107,8 @@ export default function EnterpriseReadinessAdmin() {
           ['Statements confirmed', shortDate(a.attestation?.attestedAt)],
           ['Public profile', <Link key="profile" to={`/professionals/${a.professionalId}`} target="_blank" rel="noreferrer">Open ↗</Link>],
         ]} />
+        <CaseOwner key={a.professionalId} kind="ENTERPRISE_APPLICATION" caseId={a.professionalId}
+          assignment={owners.get('ENTERPRISE_APPLICATION', a.professionalId)} onChange={owners.put} />
         <Checklist title="Readiness evidence" items={a.requirements.map((r) => ({
           label: r.label, state: r.met ? 'done' : 'missing', note: r.met ? 'Holds' : 'Missing',
         }))} />

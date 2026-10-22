@@ -19,7 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.domains.audit.models import AuditArchive, AuditRecord
 from zoikorum.shared import clock
-from zoikorum.shared.auth import Actor, PlatformRole
+from zoikorum.shared.auth import Actor
+from zoikorum.shared.capabilities import Cap
 from zoikorum.shared.errors import NotFound
 from zoikorum.shared.relay import schedule_timer
 from zoikorum.shared.storage import get_storage
@@ -76,13 +77,15 @@ def _out(a: AuditArchive) -> dict:
 
 
 async def list_archives(session: AsyncSession, actor: Actor) -> list[dict]:
-    actor.require_platform_role(PlatformRole.PLATFORM_ADMIN, PlatformRole.LEGAL, PlatformRole.RISK_LEAD)
+    # The Audit & Evidence page (every staff member), then the archives on it (narrower).
+    actor.require_capability(Cap.AUDIT_READ)
+    actor.require_capability(Cap.AUDIT_ARCHIVES_READ)
     return [_out(a) for a in (await session.scalars(select(AuditArchive).order_by(AuditArchive.to_seq.desc()).limit(200))).all()]
 
 
 async def verify(session: AsyncSession, actor: Actor, archive_id: uuid.UUID) -> dict:
     """Read the archive back: its SHA-256 must match, and each record must chain to the one before it."""
-    actor.require_platform_role(PlatformRole.PLATFORM_ADMIN, PlatformRole.LEGAL, PlatformRole.RISK_LEAD)
+    actor.require_capability(Cap.AUDIT_ARCHIVES_READ)
     a = await session.get(AuditArchive, archive_id, with_for_update=True)
     if a is None:
         raise NotFound("Archive not found")

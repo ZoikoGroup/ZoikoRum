@@ -44,6 +44,8 @@ from zoikorum.domains.identity.schemas import (
     StepUpIn,
     TokenPair,
 )
+from zoikorum.domains.admin import facade as admin_facade
+from zoikorum.domains.admin.facade import ApprovalRequestOut
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession, session_factory
 from zoikorum.shared.errors import RateLimited, Unauthenticated
@@ -309,10 +311,15 @@ async def list_staff(actor: CurrentActor, session: DbSession) -> list[StaffMembe
     return await service.list_staff(session, actor)
 
 
-@router.post("/admin/identities/{identity_id}/platform-roles", response_model=IdentityOut)
-async def grant_role(identity_id: uuid.UUID, body: GrantRoleIn, actor: CurrentActor, session: DbSession) -> IdentityOut:
-    identity = await service.grant_platform_role(session, actor, identity_id, body.role)
-    return service.to_out(identity, [])
+@router.post("/admin/identities/{identity_id}/platform-roles", status_code=status.HTTP_202_ACCEPTED,
+             response_model=ApprovalRequestOut)
+async def grant_role(identity_id: uuid.UUID, body: GrantRoleIn, actor: CurrentActor, session: DbSession) -> dict:
+    """Platform Admin: ask to grant a staff role, optionally until ``expiresAt`` (just-in-time). 202: a maker-checker
+    approval request (GRANT_PLATFORM_ROLE, status REQUESTED). The role is granted only when another Platform Admin, not
+    the person receiving it, approves it. Nobody can ask for a role for themselves."""
+    payload = {"identityId": str(identity_id), "role": body.role,
+               "expiresAt": body.expiresAt.isoformat() if body.expiresAt else None}
+    return await admin_facade.request_approval(session, actor, "GRANT_PLATFORM_ROLE", payload, body.justification)
 
 
 @router.post("/admin/identities/{identity_id}/mfa-reset", response_model=IdentityOut)
@@ -322,10 +329,14 @@ async def mfa_reset(identity_id: uuid.UUID, body: MfaResetIn, actor: CurrentActo
     return service.to_out(await service.reset_mfa(session, actor, identity_id, body.reason), [])
 
 
-@router.delete("/admin/identities/{identity_id}/platform-roles/{role}", response_model=IdentityOut)
-async def revoke_role(identity_id: uuid.UUID, role: str, actor: CurrentActor, session: DbSession) -> IdentityOut:
-    identity = await service.revoke_platform_role(session, actor, identity_id, role)
-    return service.to_out(identity, [])
+@router.delete("/admin/identities/{identity_id}/platform-roles/{role}", status_code=status.HTTP_202_ACCEPTED,
+               response_model=ApprovalRequestOut)
+async def revoke_role(identity_id: uuid.UUID, role: str, actor: CurrentActor, session: DbSession,
+                      justification: str = Query(min_length=10, max_length=2000)) -> dict:
+    """Platform Admin: ask to remove a staff role. 202: a maker-checker approval request (REVOKE_PLATFORM_ROLE). When
+    another Platform Admin approves it the role is removed and the person is signed out everywhere."""
+    return await admin_facade.request_approval(session, actor, "REVOKE_PLATFORM_ROLE",
+                                               {"identityId": str(identity_id), "role": role}, justification)
 
 
 @router.get("/admin/users", response_model=Page[UserOut])

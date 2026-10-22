@@ -5,6 +5,7 @@ import { authApi, type AccountType } from '../api/auth'
 import { ApiError } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { AuthLayout, ErrorAlert, Field, PasswordInput, PasswordStrength } from '../components/ui'
+import { dashboardPath } from '../staffRoutes'
 
 const TYPES: { value: AccountType; title: string; desc: string }[] = [
   { value: 'BUYER', title: 'Buyer', desc: 'Find verified professionals and engage them under contract and escrow.' },
@@ -72,7 +73,7 @@ export default function Join() {
       // at once, which would drop navigation state. The token is only returned in local development.
       try { sessionStorage.setItem(WELCOME_KEY, JSON.stringify({ confirmToken: result.emailConfirmationToken })) } catch { /* private mode */ }
       accept(result)
-      const dest = result.user.mfaRequired ? '/app/security' : safeNext ?? `/app/${result.user.defaultDashboard}`
+      const dest = result.user.mfaRequired ? '/app/security' : safeNext ?? dashboardPath(result.user)
       navigate(dest, { replace: true })
     } catch (err) {
       if (err instanceof ApiError && err.code === 'EMAIL_TAKEN') setFieldErrors({ email: err.message })

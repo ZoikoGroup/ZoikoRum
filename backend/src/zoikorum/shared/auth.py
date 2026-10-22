@@ -105,6 +105,9 @@ class Actor:
     firm_roles: dict[str, frozenset[str]] = field(default_factory=dict)
     auth_strength: str = AuthStrength.PASSWORD
     auth_time: datetime | None = None
+    # Signed in on the staff sign-in page (admin audience). Platform roles only take effect in such sessions: the same
+    # person's customer session works as a customer only (identity facade validate_session_actor).
+    admin_session: bool = False
 
     # ---- RBAC ---------------------------------------------------------------
     def has_platform_role(self, *roles: str) -> bool:
@@ -113,9 +116,23 @@ class Actor:
     def require_platform_role(self, *roles: str) -> None:
         if not self.has_platform_role(*roles):
             raise Forbidden(f"Requires one of platform roles: {', '.join(roles)}")
+        self._require_staff_mfa()
+
+    def _require_staff_mfa(self) -> None:
         # Staff accounts must always work from an MFA-backed session (except the development switch ZK_DEV_SKIP_MFA).
         if self.auth_strength not in AuthStrength.ELEVATED and not get_settings().mfa_bypass:
             raise StepUpRequired("Staff access requires multi-factor authentication")
+
+    # ---- Staff capabilities (shared/capabilities.py): the staff console asks for these, not for roles ----------------
+    def has_capability(self, *caps: str) -> bool:
+        from zoikorum.shared.capabilities import has_capability
+        return has_capability(self, *caps)
+
+    def require_capability(self, *caps: str) -> None:
+        """At least one of ``caps``, from the live roles of a staff session, with MFA (same 403 as require_platform_role)."""
+        if not self.has_capability(*caps):
+            raise Forbidden(f"Requires capability: {' or '.join(caps)}")
+        self._require_staff_mfa()
 
     @property
     def is_operator(self) -> bool:
@@ -189,13 +206,14 @@ def decode_access_token(token: str) -> Actor:
         identity_id=uuid.UUID(claims["sub"]),
         session_id=uuid.UUID(claims["sid"]) if claims.get("sid") else None,
         email=claims.get("email"),
-        platform_roles=frozenset(claims.get("roles", [])),
+        platform_roles=frozenset(claims.get("roles", [])) if claims.get("adm") else frozenset(),
         personas=frozenset(claims.get("personas", [])),
         org_roles={k: frozenset(v) for k, v in claims.get("orgs", {}).items()},
         professional_id=uuid.UUID(claims["pro"]) if claims.get("pro") else None,
         firm_roles={k: frozenset(v) for k, v in claims.get("firms", {}).items()},
         auth_strength=claims.get("amr", AuthStrength.PASSWORD),
         auth_time=datetime.fromtimestamp(claims["auth_time"], tz=timezone.utc) if claims.get("auth_time") else None,
+        admin_session=bool(claims.get("adm")),
     )
 
 

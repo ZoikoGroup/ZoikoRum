@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { authApi, ROLE_LABEL, type UserRoleFilter, type UserRow } from '../../api/auth'
 import { adminConsoleApi, type AdminOrganization, type AdminOrganizationSummary } from '../../api/adminConsole'
 import { adminApi, type AdminOverview } from '../../api/saved'
 import { useAuth } from '../../auth/AuthContext'
+import { useCapabilities } from '../../auth/capabilities'
 import {
   AdminHeader, AdminKpi, Checklist, CountTabs, DetailPanel, Facts, FilterBar, FilterSelect, Initials, KpiStrip, ListDetail,
-  Pill, StatusPill, TableFoot, label, shortDate, shortDateTime, toneFor, type CheckState,
-} from '../../components/admin'
+  Pill, StatusPill, TableFoot, label, shortDate, shortDateTime, toneFor, type CheckState, pickRow, useSelectedParam } from '../../components/admin'
 import { ErrorAlert, useStepUp } from '../../components/ui'
 
 type Tab = 'all' | 'orgs' | 'pros' | 'buyers' | 'admins' | 'suspended'
@@ -42,9 +42,11 @@ export default function Accounts() {
   const [overview, setOverview] = useState<AdminOverview | null>(null)
   const [orgSummary, setOrgSummary] = useState<AdminOrganizationSummary | null>(null)
   const [selId, setSelId] = useState<string | null>(null)
+  const [linkParams] = useSearchParams()
+  useSelectedParam((id) => { if (linkParams.get('tab') === 'orgs') setTab('orgs'); setSelId(id) })
   const { run, modal } = useStepUp(setError)
   const { user: me } = useAuth()
-  const isAdmin = !!me?.platformRoles.includes('PLATFORM_ADMIN')
+  const isAdmin = useCapabilities().has('accounts.reset_mfa')
 
   // KPI sources load independently; one being unavailable does not hide the others.
   useEffect(() => {
@@ -124,11 +126,11 @@ export default function Accounts() {
       <div className="adm-table-wrap">
         {isOrgs ? (
           <table className="data">
-            <thead><tr><th>Organisation</th><th>Type</th><th>Status</th><th>Country</th><th>Verification</th><th>Members</th><th>Contracts</th><th>Joined</th></tr></thead>
+            <thead><tr><th scope="col">Organisation</th><th scope="col">Type</th><th scope="col">Status</th><th scope="col">Country</th><th scope="col">Verification</th><th scope="col">Members</th><th scope="col">Contracts</th><th scope="col">Joined</th></tr></thead>
             <tbody>
               {orgs.length === 0 && <tr><td colSpan={8} className="empty-row">{loading ? 'Loading…' : 'No organisations match.'}</td></tr>}
               {orgs.map((o) => (
-                <tr key={o.id} className={`pick ${selId === o.id ? 'selected' : ''}`} onClick={() => setSelId(o.id)}>
+                <tr {...pickRow} key={o.id} className={`pick ${selId === o.id ? 'selected' : ''}`} onClick={() => setSelId(o.id)}>
                   <td><div className="name-cell"><Initials name={o.name} /><div><div className="cell-main">{o.name}</div>
                     <div className="cell-sub">{o.primaryContact?.email ?? o.industry ?? ''}</div></div></div></td>
                   <td><Pill tone={o.kind === 'ENTERPRISE' ? 'violet' : o.kind === 'FIRM' ? 'blue' : 'grey'}>{label(o.kind)}</Pill></td>
@@ -143,11 +145,11 @@ export default function Accounts() {
           </table>
         ) : (
           <table className="data">
-            <thead><tr><th>Name</th><th>Roles</th><th>Status</th><th>Country</th><th>Email</th><th>Two-step</th><th>Joined</th><th>Last sign-in</th></tr></thead>
+            <thead><tr><th scope="col">Name</th><th scope="col">Roles</th><th scope="col">Status</th><th scope="col">Country</th><th scope="col">Email</th><th scope="col">Two-step</th><th scope="col">Joined</th><th scope="col">Last sign-in</th></tr></thead>
             <tbody>
               {users.length === 0 && <tr><td colSpan={8} className="empty-row">{loading ? 'Loading…' : 'No accounts match.'}</td></tr>}
               {users.map((u) => (
-                <tr key={u.id} className={`pick ${selId === u.id ? 'selected' : ''}`} onClick={() => setSelId(u.id)}>
+                <tr {...pickRow} key={u.id} className={`pick ${selId === u.id ? 'selected' : ''}`} onClick={() => setSelId(u.id)}>
                   <td><div className="name-cell"><Initials name={u.displayName} /><div><div className="cell-main">{u.displayName}</div>
                     <div className="cell-sub">{u.email}</div></div></div></td>
                   <td><div className="badges">{[...u.personas, ...u.platformRoles].map((r) => <Pill key={r} tone={u.platformRoles.includes(r) ? 'violet' : 'grey'}>{ROLE_LABEL[r] ?? r}</Pill>)}</div></td>
@@ -176,7 +178,7 @@ export default function Accounts() {
     detail = (
       <DetailPanel title={u.displayName} subtitle={u.email} badge={<StatusPill status={u.status} />} onClose={() => setSelId(null)}
         footer={(canSafety || canReset) ? <>
-          {canSafety && <Link className="btn btn-secondary btn-sm" to={`/app/ops/safety?subjectType=IDENTITY&subjectId=${u.id}`}>Open safety case</Link>}
+          {canSafety && <Link className="btn btn-secondary btn-sm" to={`/platform-admin/trust-safety?subjectType=IDENTITY&subjectId=${u.id}`}>Open safety case</Link>}
           {canReset && <button type="button" className="btn btn-ghost btn-sm" onClick={() => resetTwoStep(u)}>Reset two-step</button>}
         </> : undefined}>
         <Facts title="Key information" rows={[

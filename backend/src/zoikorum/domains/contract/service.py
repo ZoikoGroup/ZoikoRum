@@ -39,7 +39,8 @@ from zoikorum.domains.firm import facade as firm_facade
 from zoikorum.domains.identity import facade as identity_facade
 from zoikorum.domains.professional import facade as professional_facade
 from zoikorum.shared import clock, pdf
-from zoikorum.shared.auth import Actor, OrgRole, PlatformRole
+from zoikorum.shared.auth import Actor, OrgRole
+from zoikorum.shared.capabilities import Cap
 from zoikorum.shared.errors import Conflict, Forbidden, NotFound, ValidationFailed
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_audit, record_event
@@ -70,7 +71,6 @@ MILESTONE_STATES = StateMachine("Milestone", {
     "CANCELLED": set(),
 })
 DECIDERS = (OrgRole.REQUESTER, OrgRole.APPROVER)
-VIEWERS = (PlatformRole.PLATFORM_ADMIN, PlatformRole.COMPLIANCE_OFFICER, PlatformRole.LEGAL, PlatformRole.MEDIATOR)
 TIMER_SIGNATURE = "contract.signature_deadline"
 TIMER_SIGNATURE_EXPIRY = "contract.signature_expiry"  # a never-signed contract ends; nobody is left waiting forever"
 TIMER_REVIEW_REMINDER = "contract.review_reminder"  # one day before the buyer's review window closes
@@ -433,8 +433,8 @@ async def _viewer(session: AsyncSession, actor: Actor, c: Contract) -> str:
     pro = await professional_facade.get_professional(session, c.professional_id)
     if pro is not None and pro.identity_id == actor.identity_id:
         return "PROFESSIONAL"
-    if actor.has_platform_role(*VIEWERS):
-        actor.require_platform_role(*VIEWERS)
+    if actor.has_capability(Cap.CONTRACTS_DETAIL_READ):
+        actor.require_capability(Cap.CONTRACTS_DETAIL_READ)
         return "OPERATOR"
     raise NotFound("Contract not found")
 
@@ -2009,10 +2009,6 @@ async def policy_state(session: AsyncSession, actor: Actor, contract_id: uuid.UU
 
 # ---- Staff admin console: every contract ---------------------------------------------------------------------------
 
-CONTRACT_VIEWERS = (PlatformRole.PLATFORM_ADMIN, PlatformRole.COMPLIANCE_OFFICER, PlatformRole.LEGAL, PlatformRole.MEDIATOR,
-                    PlatformRole.FINANCIAL_OPS)
-
-
 async def admin_contracts(session: AsyncSession, actor: Actor, q: str | None, status: str | None, cursor: str | None,
                           limit: int | None) -> dict:
     """Staff Contracts list, newest first: search by title or reference, filter by status. Each contract carries its
@@ -2021,7 +2017,7 @@ async def admin_contracts(session: AsyncSession, actor: Actor, q: str | None, st
 
     from zoikorum.shared.http import next_cursor
 
-    actor.require_platform_role(*CONTRACT_VIEWERS)
+    actor.require_capability(Cap.CONTRACTS_READ, Cap.ENGAGEMENTS_READ)
     stmt = select(Contract)
     if q and q.strip():
         term = "%" + q.strip().lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
@@ -2062,7 +2058,7 @@ async def admin_contracts(session: AsyncSession, actor: Actor, q: str | None, st
 
 async def admin_contract_summary(session: AsyncSession, actor: Actor) -> AdminContractSummaryOut:
     """Counts for the Contracts page cards: contracts and milestones by status, and disputes still open."""
-    actor.require_platform_role(*CONTRACT_VIEWERS)
+    actor.require_capability(Cap.CONTRACTS_READ, Cap.ENGAGEMENTS_READ)
     by_status = dict((await session.execute(select(Contract.status, func.count()).group_by(Contract.status))).all())
     milestones = dict((await session.execute(select(Milestone.status, func.count()).group_by(Milestone.status))).all())
     return AdminContractSummaryOut(total=sum(by_status.values()), byStatus=by_status, milestonesByStatus=milestones,

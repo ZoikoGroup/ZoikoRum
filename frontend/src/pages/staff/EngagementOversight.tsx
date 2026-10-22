@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { adminConsoleApi, type AdminContract, type AdminContractSummary } from '../../api/adminConsole'
 import { AdminHeader, AdminKpi, Callout, Checklist, CountTabs, DetailPanel, Facts, FilterBar, KpiStrip, ListDetail, MetricList, Panel,
-  PanelRow, Pill, StackBar, StatusPill, TableFoot, dueText, money, shortDate, type CheckState } from '../../components/admin'
+  PanelRow, Pill, StackBar, StatusPill, TableFoot, dueText, money, shortDate, type CheckState, pickRow } from '../../components/admin'
 import { ErrorAlert } from '../../components/ui'
 import { CONTRACT_COLOR, CONTRACT_LABEL, CONTRACT_ORDER, MILESTONE_LABEL, MILESTONE_ORDER, currentMilestone, fundingState, msLabel,
   nextAction, orderedEntries, route, sortedMilestones, useCursorList, useDebounced } from './staffData'
@@ -90,7 +90,7 @@ export default function EngagementOversight() {
             <FilterBar search={search} onSearch={setSearch} placeholder="Search engagement, buyer or professional…" />
             <div className="adm-table-wrap">
               <table className="data">
-                <thead><tr><th>Engagement / buyer</th><th>Professional</th><th>Jurisdiction</th><th>Stage</th><th>Next action</th><th>Due</th></tr></thead>
+                <thead><tr><th scope="col">Engagement / buyer</th><th scope="col">Professional</th><th scope="col">Jurisdiction</th><th scope="col">Stage</th><th scope="col">Next action</th><th scope="col">Due</th></tr></thead>
                 <tbody>
                   {list.rows && rows.length === 0 && <tr><td colSpan={6} className="empty-row">No engagements match.</td></tr>}
                   {!list.rows && !error && <tr><td colSpan={6} className="empty-row">Loading…</td></tr>}
@@ -98,7 +98,7 @@ export default function EngagementOversight() {
                     const next = nextAction(c)
                     const due = dueText(next.due)
                     return (
-                      <tr key={c.id} className={`pick ${selectedId === c.id ? 'selected' : ''}`} onClick={() => setSelectedId(c.id)}>
+                      <tr {...pickRow} key={c.id} className={`pick ${selectedId === c.id ? 'selected' : ''}`} onClick={() => setSelectedId(c.id)}>
                         <td><div className="cell-id">{c.title}</div><div className="cell-sub">{c.buyer.name}</div></td>
                         <td><div className="cell-main">{c.professional.name}</div></td>
                         <td className="small">{route(c)}</td>

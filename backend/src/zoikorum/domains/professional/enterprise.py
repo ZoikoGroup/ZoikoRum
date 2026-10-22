@@ -17,7 +17,8 @@ from zoikorum.domains.professional.models import Professional
 from zoikorum.domains.professional.service import _mine
 from zoikorum.domains.trust import facade as trust_facade
 from zoikorum.shared import clock
-from zoikorum.shared.auth import Actor, PlatformRole
+from zoikorum.shared.auth import Actor
+from zoikorum.shared.capabilities import Cap
 from zoikorum.shared.errors import Conflict, NotFound, ValidationFailed
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_audit, record_event
@@ -31,7 +32,6 @@ ATTESTATION = {
     "returnOrDelete": "When an engagement ends I return or delete client data as the contract says.",
     "noSubcontracting": "I will not pass client work or data to anyone else without the client's written agreement.",
 }
-REVIEWERS = (PlatformRole.COMPLIANCE_OFFICER,)
 
 
 async def _requirements(session: AsyncSession, pro: Professional) -> list[dict]:
@@ -89,7 +89,7 @@ async def apply(session: AsyncSession, actor: Actor, attestation: dict[str, bool
 
 
 async def queue(session: AsyncSession, actor: Actor) -> list[dict]:
-    actor.require_platform_role(*REVIEWERS)
+    actor.require_capability(Cap.ENTERPRISE_READ)
     rows = (await session.scalars(select(Professional).where(Professional.enterprise_status == "PENDING")
                                   .order_by(Professional.enterprise_applied_at))).all()
     out = []
@@ -102,7 +102,7 @@ async def queue(session: AsyncSession, actor: Actor) -> list[dict]:
 
 async def decide(session: AsyncSession, actor: Actor, professional_id: uuid.UUID, approve: bool, reason: str) -> dict:
     """Compliance approves or declines. Approval needs every requirement to hold at the moment of the decision."""
-    actor.require_platform_role(*REVIEWERS)
+    actor.require_capability(Cap.ENTERPRISE_DECIDE)
     actor.require_step_up()
     pro = await session.get(Professional, professional_id, with_for_update=True)
     if pro is None:

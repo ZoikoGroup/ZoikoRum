@@ -12,9 +12,10 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.domains.audit.models import AuditRecord, ExportJob
-from zoikorum.shared.auth import Actor, OrgRole, PlatformRole
+from zoikorum.shared.auth import Actor, OrgRole
+from zoikorum.shared.capabilities import Cap
 from zoikorum.shared.crypto import canonical_json, sha256_hex
-from zoikorum.shared.errors import Forbidden, NotFound, ValidationFailed
+from zoikorum.shared.errors import Conflict, Forbidden, NotFound, ValidationFailed
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import EventEnvelope, record_audit, record_event
 
@@ -126,9 +127,9 @@ async def verify_chain(session: AsyncSession, batch: int = 5000) -> dict:
 
 
 def _authorise_scope(actor: Actor, tenant_id: str | None) -> None:
-    if actor.has_platform_role(PlatformRole.COMPLIANCE_OFFICER, PlatformRole.LEGAL, PlatformRole.PLATFORM_ADMIN):
+    if actor.has_capability(Cap.AUDIT_RECORDS_READ):
         # Same rule as every staff tool: staff read the audit trail only with two-step verification on.
-        actor.require_platform_role(PlatformRole.COMPLIANCE_OFFICER, PlatformRole.LEGAL, PlatformRole.PLATFORM_ADMIN)
+        actor.require_capability(Cap.AUDIT_RECORDS_READ)
         return
     if tenant_id and actor.has_org_role(tenant_id, OrgRole.ORG_ADMIN, OrgRole.LEGAL_REVIEWER):
         return
@@ -143,6 +144,12 @@ async def query(
     _authorise_scope(actor, tenant_id)
     if not any([tenant_id, object_id, correlation_id]) and not actor.is_operator:
         raise ValidationFailed("Provide tenantId, objectId or correlationId")
+    return await _select(session, tenant_id=tenant_id, object_type=object_type, object_id=object_id,
+                         correlation_id=correlation_id, since=since, until=until, limit=limit, newest_first=newest_first)
+
+
+async def _select(session: AsyncSession, *, tenant_id, object_type, object_id, correlation_id, since, until, limit,
+                  newest_first=False) -> list[AuditRecord]:
     stmt = select(AuditRecord)
     if tenant_id:
         stmt = stmt.where(AuditRecord.tenant_id == tenant_id)
@@ -166,14 +173,72 @@ def record_to_dict(r: AuditRecord) -> dict:
     return d
 
 
-async def create_export(session: AsyncSession, actor: Actor, scope: dict, fmt: str) -> ExportJob:
+def _scope_json(scope: dict) -> dict:
+    return {k: (v.isoformat() if isinstance(v, datetime) else v) for k, v in scope.items()}
+
+
+def _when(value):
+    return datetime.fromisoformat(value) if isinstance(value, str) else value
+
+
+async def create_export(session: AsyncSession, actor: Actor, scope: dict, fmt: str, justification: str | None = None):
+    """An organisation admin's export of their own organisation's trail is made at once. A staff export (any scope) is
+    evidence-grade material: it is only requested here and is made once a second person, a Compliance Officer or Legal,
+    approves it (admin/approvals.py). Returns the finished job, or the approval request for a staff export."""
     if fmt not in ("json", "csv"):
         raise ValidationFailed("format must be json or csv")
+    if actor.has_capability(Cap.AUDIT_EXPORT):
+        from zoikorum.domains.admin import facade as admin_facade
+
+        actor.require_capability(Cap.AUDIT_EXPORT)
+        if not justification:
+            raise ValidationFailed("Say why the export is needed: a second person approves it", code="JUSTIFICATION_REQUIRED")
+        return await admin_facade.request_approval(session, actor, "AUDIT_EXPORT", {"scope": _scope_json(scope), "format": fmt},
+                                                   justification)
     rows = await query(
         session, actor, tenant_id=scope.get("tenantId"), object_type=scope.get("objectType"),
         object_id=scope.get("objectId"), correlation_id=scope.get("correlationId"),
         since=scope.get("since"), until=scope.get("until"), limit=50_000,
     )
+    job = ExportJob(requested_by=actor.identity_id, scope=_scope_json(scope), status="REQUESTED", format=fmt)
+    session.add(job)
+    await session.flush()
+    _fill(session, job, rows)
+    return job
+
+
+async def open_export(session: AsyncSession, requested_by: uuid.UUID, scope: dict, fmt: str) -> uuid.UUID:
+    """A staff export waiting for approval: recorded now (status REQUESTED), made only when approved."""
+    if fmt not in ("json", "csv"):
+        raise ValidationFailed("format must be json or csv")
+    job = ExportJob(requested_by=requested_by, scope=_scope_json(scope), status="REQUESTED", format=fmt)
+    session.add(job)
+    await session.flush()
+    return job.id
+
+
+async def complete_export(session: AsyncSession, export_id: uuid.UUID) -> dict:
+    """Makes an approved staff export from the scope it was requested with."""
+    job = await session.get(ExportJob, export_id, with_for_update=True)
+    if job is None or job.status != "REQUESTED":
+        raise Conflict("This export is not waiting for approval", code="EXPORT_NOT_REQUESTED")
+    s = job.scope
+    rows = await _select(session, tenant_id=s.get("tenantId"), object_type=s.get("objectType"), object_id=s.get("objectId"),
+                         correlation_id=s.get("correlationId"), since=_when(s.get("since")), until=_when(s.get("until")),
+                         limit=50_000)
+    _fill(session, job, rows)
+    return {"exportId": job.id, "recordCount": job.record_count}
+
+
+async def close_export(session: AsyncSession, export_id: uuid.UUID, status: str) -> None:
+    """A staff export whose approval request was rejected, expired, cancelled or failed is never made."""
+    job = await session.get(ExportJob, export_id, with_for_update=True)
+    if job is not None and job.status == "REQUESTED":
+        job.status = status
+
+
+def _fill(session: AsyncSession, job: ExportJob, rows: list[AuditRecord]) -> None:
+    fmt = job.format
     records = [record_to_dict(r) for r in rows]
     if fmt == "json":
         content = json.dumps({"records": records, "attestation": {"recordCount": len(records)}}, default=str)
@@ -185,22 +250,11 @@ async def create_export(session: AsyncSession, actor: Actor, scope: dict, fmt: s
         w.writeheader()
         w.writerows(records)
         content = buf.getvalue()
-    job = ExportJob(
-        requested_by=actor.identity_id,
-        scope={k: (v.isoformat() if isinstance(v, datetime) else v) for k, v in scope.items()},
-        status="COMPLETED",
-        format=fmt,
-        record_count=len(records),
-        content=content,
-        content_sha256=sha256_hex(content),
-        chain_head_hash=records[-1]["hash"] if records else None,
-    )
-    session.add(job)
-    await session.flush()
+    job.status, job.record_count, job.content = "COMPLETED", len(records), content
+    job.content_sha256, job.chain_head_hash = sha256_hex(content), records[-1]["hash"] if records else None
     record_event(session, E.AUDIT_EXPORT_REQUESTED, aggregate_type="AuditExport", aggregate_id=job.id,
                  payload={"exportId": job.id, "scope": job.scope, "format": fmt, "recordCount": len(records)},
-                 tenant_id=scope.get("tenantId"))
-    return job
+                 tenant_id=job.scope.get("tenantId"))
 
 
 async def get_export(session: AsyncSession, actor: Actor, export_id: uuid.UUID) -> ExportJob:

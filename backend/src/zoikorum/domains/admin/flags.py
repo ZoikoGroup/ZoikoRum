@@ -16,7 +16,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.domains.admin.models import FeatureFlag
-from zoikorum.shared.auth import Actor, PlatformRole
+from zoikorum.shared.auth import Actor
+from zoikorum.shared.capabilities import Cap
 from zoikorum.shared.errors import Conflict, NotFound
 from zoikorum.shared.events import record_audit
 
@@ -90,7 +91,7 @@ async def set_flag(session: AsyncSession, actor: Actor, key: str, rollout_pct: i
 
     if key not in FLAGS:
         raise NotFound("Unknown flag")
-    await staff(session, actor, PlatformRole.PLATFORM_ADMIN)
+    await staff(session, actor, Cap.FLAGS_MANAGE)
     actor.require_step_up()
     if FLAGS[key].ranking_experiment and (rollout_pct > 0 or organization_ids):
         report = await fairness(session, key)

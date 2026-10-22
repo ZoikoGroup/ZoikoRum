@@ -26,7 +26,8 @@ from zoikorum.domains.escrow.schemas import (
 )
 from zoikorum.domains.professional import facade as professional_facade
 from zoikorum.shared import clock, fx
-from zoikorum.shared.auth import Actor, OrgRole, PlatformRole
+from zoikorum.shared.auth import Actor, OrgRole
+from zoikorum.shared.capabilities import Cap
 from zoikorum.shared.errors import ValidationFailed, Conflict, DomainError, Forbidden, NotFound, PolicyBlocked
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_audit, record_event
@@ -48,7 +49,6 @@ ALLOCATION_STATES = StateMachine("Allocation", {
 FUNDERS = (OrgRole.REQUESTER, OrgRole.APPROVER, OrgRole.BUDGET_OWNER)
 TIMER_FUNDING_CHECK = "escrow.funding_check"
 FUNDING_CHECK_AFTER = timedelta(hours=1)  # longer than every consumer retry together (about 42 minutes)
-VIEWERS = (PlatformRole.FINANCIAL_OPS, PlatformRole.PLATFORM_ADMIN)
 
 
 def _m(minor: int, ccy: str) -> MoneyDTO:
@@ -100,8 +100,8 @@ async def _viewer(session: AsyncSession, actor: Actor, a: EscrowAccount) -> str:
     pro = await professional_facade.get_professional(session, a.professional_id)
     if pro is not None and pro.identity_id == actor.identity_id:
         return "PROFESSIONAL"
-    if actor.has_platform_role(*VIEWERS):
-        actor.require_platform_role(*VIEWERS)  # read-only: operators can never move money
+    if actor.has_capability(Cap.PAYMENTS_READ):
+        actor.require_capability(Cap.PAYMENTS_READ)  # read-only: operators can never move money
         return "OPERATOR"
     raise NotFound("Escrow account not found")
 
@@ -870,9 +870,6 @@ async def auto_fund_cycle(session: AsyncSession, payload: dict) -> None:
 
 # ---- Staff admin console: protected funds ---------------------------------------------------------------------------
 
-ESCROW_VIEWERS = (PlatformRole.FINANCIAL_OPS, PlatformRole.PLATFORM_ADMIN)
-
-
 async def admin_escrow(session: AsyncSession, actor: Actor, status: str | None, currency: str | None, cursor: str | None,
                        limit: int | None) -> dict:
     """Staff Protected funds list: every milestone allocation, newest first, filtered by state and currency, with the
@@ -880,7 +877,7 @@ async def admin_escrow(session: AsyncSession, actor: Actor, status: str | None, 
     from zoikorum.domains.payments import facade as payments_facade
     from zoikorum.shared.http import next_cursor, paginate
 
-    actor.require_platform_role(*ESCROW_VIEWERS)
+    actor.require_capability(Cap.PAYMENTS_READ)
     stmt = select(Allocation, EscrowAccount).join(EscrowAccount, EscrowAccount.id == Allocation.account_id)
     if status:
         stmt = stmt.where(Allocation.state == status)
@@ -910,7 +907,7 @@ async def admin_escrow(session: AsyncSession, actor: Actor, status: str | None, 
 
 async def admin_escrow_summary(session: AsyncSession, actor: Actor) -> AdminEscrowSummaryOut:
     """Allocations and their amounts per state and currency. Currencies are never added together."""
-    actor.require_platform_role(*ESCROW_VIEWERS)
+    actor.require_capability(Cap.PAYMENTS_READ)
     rows = (await session.execute(
         select(Allocation.state, EscrowAccount.currency, func.count(), func.coalesce(func.sum(Allocation.amount_minor), 0))
         .join(EscrowAccount, EscrowAccount.id == Allocation.account_id)

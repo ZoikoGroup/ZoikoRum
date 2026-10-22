@@ -8,6 +8,7 @@ from datetime import timedelta
 
 from sqlalchemy import text
 
+from approvalhelp import approved
 from test_contract import C, signed_contract
 from test_dispute import staff
 from test_escrow import BANK, E, balanced, escrow_of
@@ -213,9 +214,17 @@ async def test_money_problems_reach_financial_operations_who_retry_or_close_them
 
     # The loss is closed with a recorded outcome; it stays visible in the history.
     loss = kinds["CHARGEBACK_LOSS"]["id"]
+    # A maker-checker request: closed only when a second member of Financial Operations approves it.
     r = await client.post(f"/v1/payments/ops/CHARGEBACK_LOSS/{loss}/resolve", headers=ops.h,
                           json={"outcome": "WRITTEN_OFF", "note": "Card issuer ruled for the buyer; under the threshold."})
-    assert r.status_code == 200 and r.json()["open"] == 0
+    assert r.status_code == 202 and r.json()["kind"] == "FINANCIAL_EXCEPTION_RESOLVE"
+    assert (await client.get("/v1/payments/ops/worklist", headers=ops.h)).json()["open"] == 1  # nothing changed yet
+    pending = await client.post(f"/v1/payments/ops/CHARGEBACK_LOSS/{loss}/resolve", headers=ops.h,
+                                json={"outcome": "RECOVERED", "note": "A second request for the same item."})
+    assert pending.json()["code"] == "APPROVAL_ALREADY_PENDING"
+    await approved(client, r, await staff(make_user, "fin2", "FINANCIAL_OPS"))
+    assert (await client.get("/v1/payments/ops/worklist", headers=ops.h)).json()["open"] == 0
+    await ops.step_up()
     again = await client.post(f"/v1/payments/ops/CHARGEBACK_LOSS/{loss}/resolve", headers=ops.h,
                               json={"outcome": "RECOVERED", "note": "Changing my mind later."})
     assert again.json()["code"] == "ALREADY_RESOLVED"

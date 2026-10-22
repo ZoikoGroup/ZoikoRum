@@ -1,18 +1,20 @@
 import { useCallback, useEffect, useState } from 'react'
+import { submittedNotice, type ApprovalRequest } from '../../api/approvals'
 import { api } from '../../api/client'
 import { openStoredFile } from '../../api/files'
 import { verifyAuditChain, type ChainCheck } from '../../api/audit'
-import { useAuth } from '../../auth/AuthContext'
+import { useCapabilities } from '../../auth/capabilities'
 import {
   AdminHeader, AdminKpi, Callout, CountTabs, DetailPanel, Facts, FilterBar, FilterSelect, KpiStrip, ListDetail, MetricList,
-  Panel, PanelRow, Pill, StatusPill, TableFoot, label, shortDate, shortDateTime,
-} from '../../components/admin'
+  Panel, PanelRow, Pill, StatusPill, TableFoot, label, shortDate, shortDateTime,pickRow } from '../../components/admin'
 import { Icon } from '../../components/dashboard'
 import { ErrorAlert, useStepUp } from '../../components/ui'
 
 /* Audit & Evidence (staff design 53). Replaces AuditExportsPage and the AuditArchives panel: ledger integrity check,
    export requests (step-up), write-once archives, and the audit record stream from /v1/audit/records. Figures shown
-   are only those the API returns; the chain check result is from the check run on this page. */
+   are only those the API returns; the chain check result is from the check run on this page. A staff export is a
+   maker-checker request: it stays REQUESTED (nothing to download) until a Compliance Officer or Legal reviewer other than
+   the requester approves it on the Approvals page, and is made only then. */
 
 interface AuditRow {
   id: string; seq: number; action: string; actorId: string | null; actorType?: string | null; authStrength?: string | null
@@ -21,14 +23,17 @@ interface AuditRow {
   details: Record<string, unknown>; occurredAt: string; prevHash?: string; hash?: string
 }
 interface AuditExport { id: string; status: string; format: string; recordCount: number | null; contentSha256: string | null; chainHeadHash: string | null; createdAt?: string }
+const ready = (j: AuditExport) => j.status === 'COMPLETED'
+function ExportStatus({ status }: { status: string }) {
+  return status === 'REQUESTED' ? <Pill tone="amber">Awaiting approval</Pill> : <StatusPill status={status} />
+}
 interface Archive { id: string; fromSeq: number; toSeq: number; records: number; sha256: string; objectKey: string; locked: boolean; archivedAt: string; lastVerifiedAt: string | null }
 
 type Tab = 'events' | 'exports' | 'archives'
 type Sel = { kind: Tab; id: string } | null
 
 export default function AuditEvidence() {
-  const { user } = useAuth()
-  const canVerify = !!user?.platformRoles.some((r) => r === 'COMPLIANCE_OFFICER' || r === 'PLATFORM_ADMIN')
+  const canVerify = useCapabilities().has('audit.chain.verify')
   const [error, setError] = useState<unknown>(null)
   const [tab, setTab] = useState<Tab>('events')
   const [sel, setSel] = useState<Sel>(null)
@@ -69,7 +74,12 @@ export default function AuditEvidence() {
   const [jobs, setJobs] = useState<AuditExport[]>([])
   const [showExport, setShowExport] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [notice, setNotice] = useState('')
   const { run, modal } = useStepUp(setError)
+  /** Staff exports wait for a second person's approval: re-read each one's status. */
+  async function refreshJobs() {
+    try { setJobs(await Promise.all(jobs.map((j) => api<AuditExport>(`/v1/audit/exports/${j.id}`).then((fresh) => ({ ...j, ...fresh }))))) } catch (err) { setError(err) }
+  }
 
   const rows = records ?? []
   const actions = [...new Set(rows.map((r) => r.action))].sort()
@@ -147,12 +157,16 @@ export default function AuditEvidence() {
         </Panel>
       </PanelRow>
 
+      {notice && <div className="alert alert-success" role="status">{notice}</div>}
       {showExport && <ExportForm busy={busy} onCancel={() => setShowExport(false)} onSubmit={(body) => {
         setBusy(true)
         run(async () => {
           try {
-            const job = await api<AuditExport>('/v1/audit/exports', { method: 'POST', body })
+            const request = await api<ApprovalRequest>('/v1/audit/exports', { method: 'POST', body })
+            const job: AuditExport = { id: String(request.payload.exportId), status: 'REQUESTED', format: String(body.format), recordCount: null,
+              contentSha256: null, chainHeadHash: null, createdAt: request.requestedAt }
             setJobs((list) => [job, ...list]); setTab('exports'); setSel({ kind: 'exports', id: job.id }); setShowExport(false)
+            setNotice(`Audit export: ${submittedNotice(request)}`)
           } finally { setBusy(false) }
         })
       }} />}
@@ -182,12 +196,12 @@ export default function AuditEvidence() {
             <div className="adm-note">Latest records · newest first · timestamps in your local time</div>
             <div className="adm-table-wrap">
               <table className="data">
-                <thead><tr><th>Time</th><th>Record</th><th>Event / action</th><th>Actor</th><th>Object</th><th><span className="sr-only">Actions</span></th></tr></thead>
+                <thead><tr><th scope="col">Time</th><th scope="col">Record</th><th scope="col">Event / action</th><th scope="col">Actor</th><th scope="col">Object</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
                 <tbody>
                   {!records && <tr><td colSpan={6} className="empty-row"><span role="status">Loading records…</span></td></tr>}
                   {records && filtered.length === 0 && <tr><td colSpan={6} className="empty-row">No audit records in this scope.</td></tr>}
                   {shown.map((r) => (
-                    <tr key={r.id} className={`pick ${sel?.id === r.id ? 'selected' : ''}`} onClick={() => setSel({ kind: 'events', id: r.id })}>
+                    <tr {...pickRow} key={r.id} className={`pick ${sel?.id === r.id ? 'selected' : ''}`} onClick={() => setSel({ kind: 'events', id: r.id })}>
                       <td className="small">{shortDateTime(r.occurredAt)}</td>
                       <td><div className="cell-id">#{r.seq}</div>{r.hash && <div className="cell-sub"><code>{r.hash.slice(0, 10)}…</code></div>}</td>
                       <td className="cell-main">{r.action}</td>
@@ -202,22 +216,23 @@ export default function AuditEvidence() {
           </>}
 
           {tab === 'exports' && <>
-            <div className="adm-note">Exports requested in this session · each carries its content fingerprint and chain head hash</div>
+            <div className="adm-note">Exports requested in this session · each is made only after a second person approves it · each carries its content fingerprint and chain head hash
+              {jobs.length > 0 && <button type="button" className="btn btn-ghost btn-sm" style={{ marginLeft: 8 }} onClick={() => void refreshJobs()}>Refresh status</button>}</div>
             <div className="adm-table-wrap">
               <table className="data">
-                <thead><tr><th>Export</th><th>Status</th><th>Format</th><th>Records</th><th>Content fingerprint</th><th><span className="sr-only">Actions</span></th></tr></thead>
+                <thead><tr><th scope="col">Export</th><th scope="col">Status</th><th scope="col">Format</th><th scope="col">Records</th><th scope="col">Content fingerprint</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
                 <tbody>
                   {jobs.length === 0 && <tr><td colSpan={6} className="empty-row">No export bundles requested in this session. Use “Request export” to generate an audit package.</td></tr>}
                   {jobs.map((j) => (
-                    <tr key={j.id} className={`pick ${sel?.id === j.id ? 'selected' : ''}`} onClick={() => setSel({ kind: 'exports', id: j.id })}>
+                    <tr {...pickRow} key={j.id} className={`pick ${sel?.id === j.id ? 'selected' : ''}`} onClick={() => setSel({ kind: 'exports', id: j.id })}>
                       <td><div className="cell-id">{j.id.slice(0, 8)}</div>{j.createdAt && <div className="cell-sub">{shortDateTime(j.createdAt)}</div>}</td>
-                      <td><StatusPill status={j.status} /></td>
+                      <td><ExportStatus status={j.status} /></td>
                       <td>{j.format.toUpperCase()}</td>
                       <td>{j.recordCount ?? '—'}</td>
                       <td><code>{j.contentSha256 ? `${j.contentSha256.slice(0, 16)}…` : '—'}</code></td>
-                      <td style={{ textAlign: 'right' }}><button type="button" className="btn btn-secondary btn-sm"
+                      <td style={{ textAlign: 'right' }}>{ready(j) ? <button type="button" className="btn btn-secondary btn-sm"
                         onClick={(e) => { e.stopPropagation(); openStoredFile(`/v1/audit/exports/${j.id}/download`).catch(setError) }}>
-                        <Icon name="download" /> Download {j.format.toUpperCase()}</button></td>
+                        <Icon name="download" /> Download {j.format.toUpperCase()}</button> : <span className="muted small">{j.status === 'REQUESTED' ? 'Not made yet' : 'Not made'}</span>}</td>
                     </tr>))}
                 </tbody>
               </table>
@@ -229,12 +244,12 @@ export default function AuditEvidence() {
             <div className="adm-note">Write-once copies of records older than 90 days</div>
             <div className="adm-table-wrap">
               <table className="data">
-                <thead><tr><th>Records</th><th>Archived</th><th>Lock</th><th>Fingerprint</th><th>Check</th></tr></thead>
+                <thead><tr><th scope="col">Records</th><th scope="col">Archived</th><th scope="col">Lock</th><th scope="col">Fingerprint</th><th scope="col">Check</th></tr></thead>
                 <tbody>
                   {!archives && <tr><td colSpan={5} className="empty-row">Archives are not available to your role.</td></tr>}
                   {archives && archives.length === 0 && <tr><td colSpan={5} className="empty-row">Nothing archived yet.</td></tr>}
                   {archives?.map((a) => (
-                    <tr key={a.id} className={`pick ${sel?.id === a.id ? 'selected' : ''}`} onClick={() => setSel({ kind: 'archives', id: a.id })}>
+                    <tr {...pickRow} key={a.id} className={`pick ${sel?.id === a.id ? 'selected' : ''}`} onClick={() => setSel({ kind: 'archives', id: a.id })}>
                       <td><div className="cell-main">#{a.fromSeq}–#{a.toSeq}</div><div className="cell-sub">{a.records.toLocaleString()} records</div></td>
                       <td>{shortDate(a.archivedAt)}</td>
                       <td><Pill tone={a.locked ? 'violet' : 'grey'}>{a.locked ? 'Legal hold' : 'Write-once'}</Pill></td>
@@ -251,9 +266,13 @@ export default function AuditEvidence() {
       } detail={
         selRecord ? <RecordDetail r={selRecord} onClose={() => setSel(null)} />
           : selJob ? <DetailPanel title={`Export ${selJob.id.slice(0, 8)}`} subtitle={selJob.createdAt ? shortDateTime(selJob.createdAt) : undefined}
-            badge={<StatusPill status={selJob.status} />} onClose={() => setSel(null)}
-            footer={<button type="button" className="btn btn-primary btn-sm" onClick={() => openStoredFile(`/v1/audit/exports/${selJob.id}/download`).catch(setError)}>
-              <Icon name="download" /> Download {selJob.format.toUpperCase()}</button>}>
+            badge={<ExportStatus status={selJob.status} />} onClose={() => setSel(null)}
+            footer={ready(selJob) ? <button type="button" className="btn btn-primary btn-sm" onClick={() => openStoredFile(`/v1/audit/exports/${selJob.id}/download`).catch(setError)}>
+              <Icon name="download" /> Download {selJob.format.toUpperCase()}</button> : undefined}>
+            {selJob.status === 'REQUESTED' && <Callout tone="amber" title="Awaiting approval">A Compliance Officer or Legal reviewer other than you must
+              approve this export on the Approvals page. It is made only then; refresh to see its status.</Callout>}
+            {['REJECTED', 'EXPIRED', 'CANCELLED', 'FAILED'].includes(selJob.status) && <Callout tone="red" title={label(selJob.status)}>This export was
+              not approved and was never made.</Callout>}
             <Facts rows={[['Format', selJob.format.toUpperCase()], ['Records', selJob.recordCount ?? '—']]} />
             <Facts title="Fingerprints" rows={[
               ['Content SHA-256', <code key="c" style={{ overflowWrap: 'anywhere' }}>{selJob.contentSha256 ?? '—'}</code>],
@@ -269,7 +288,6 @@ export default function AuditEvidence() {
                 ['Records', selArchive.records.toLocaleString()],
                 ['Sequence', `#${selArchive.fromSeq}–#${selArchive.toSeq}`],
                 ['Last read-back check', shortDateTime(selArchive.lastVerifiedAt)],
-                ['Storage key', <code key="k" style={{ overflowWrap: 'anywhere' }}>{selArchive.objectKey}</code>],
                 ['SHA-256', <code key="s" style={{ overflowWrap: 'anywhere' }}>{selArchive.sha256}</code>],
               ]} />
             </DetailPanel>
@@ -321,6 +339,7 @@ function ExportForm({ busy, onSubmit, onCancel }: { busy: boolean; onSubmit: (bo
         objectId: d.get('objectId') || null,
         since: d.get('since') ? new Date(String(d.get('since'))).toISOString() : null,
         until: d.get('until') ? new Date(String(d.get('until'))).toISOString() : null,
+        justification: String(d.get('justification') ?? '').trim(),
       })
     }}>
       <div className="adm-panel-head"><h2>Request export bundle</h2><span className="muted small">Step-up authenticated</span></div>
@@ -348,8 +367,13 @@ function ExportForm({ busy, onSubmit, onCancel }: { busy: boolean; onSubmit: (bo
           <select id="auditexports-format" className="input" name="format"><option value="json">JSON</option><option value="csv">CSV</option></select>
         </div>
       </div>
+      <div className="field" style={{ marginBottom: 16 }}>
+        <label htmlFor="auditexports-justification">Why is this export needed? (the approver reads it)</label>
+        <textarea id="auditexports-justification" className="input" name="justification" rows={2} minLength={10} maxLength={2000} required
+          placeholder="e.g. Regulator request ref. FCA-2026-114" />
+      </div>
       <div className="row">
-        <button type="submit" className="btn btn-primary" disabled={busy}>Generate Authorised Export (Step-Up Authenticated)</button>
+        <button type="submit" className="btn btn-primary" disabled={busy}>Request Export (Second-Person Approval)</button>
         <button type="button" className="btn btn-ghost" onClick={onCancel}>Cancel</button>
       </div>
     </form>

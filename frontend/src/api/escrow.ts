@@ -1,3 +1,4 @@
+import type { ApprovalRequest } from './approvals'
 import { allPages, api } from './client'
 import type { Money } from './orgs'
 
@@ -48,7 +49,15 @@ export interface Refund { id: string; contractId: string; milestoneId: string | 
 export interface OpsItem { kind: 'PAYOUT' | 'REFUND' | 'CHARGEBACK_LOSS'; id: string; amount: Money; engagement: string; contractId: string
   buyer: string; professional: string; problem: string; since: string; canRetry: boolean; resolution: string | null; resolvedAt: string | null }
 export interface ReconciliationCheck { name: string; currency: string; ledger: number; payments: number; provider: number | null; difference: number; ok: boolean }
-export interface Reconciliation { id: string; day: string; status: 'MATCHED' | 'MISMATCH'; mismatches: number; checks: ReconciliationCheck[]; runBy: string; updatedAt: string }
+export interface Reconciliation { id: string; day: string; status: 'MATCHED' | 'MISMATCH'; mismatches: number; checks: ReconciliationCheck[]; runBy: string; updatedAt: string
+  /** CLEAN only when nothing differed and no break for the day is unresolved. */
+  runStatus: 'CLEAN' | 'BREAKS_OPEN' | 'BREAKS_RESOLVED'; breaks: number; openBreaks: number }
+export type BreakStatus = 'OPEN' | 'EVIDENCE_GATHERING' | 'REVIEWED' | 'CLOSED'
+export interface ReconciliationBreak { id: string; batchId: string; day: string; kind: string; currency: string; amountMinor: number
+  references: { batchId?: string; ledger?: number; payments?: number; provider?: number | null }; status: BreakStatus
+  ownerId: string | null; owner: string | null; resolutionNote: string | null; reviewedBy: string | null; reviewedAt: string | null
+  closedBy: string | null; closedAt: string | null; history: { at: string; by: string; fromStatus: string | null; toStatus: string; note: string | null }[]
+  createdAt: string; updatedAt: string }
 
 const idem = () => ({ 'Idempotency-Key': crypto.randomUUID() })
 
@@ -88,10 +97,16 @@ export const paymentsApi = {
   opsWorklist: (includeResolved = false) =>
     api<{ items: OpsItem[]; open: number }>('/v1/payments/ops/worklist', { query: includeResolved ? { includeResolved: 'true' } : {} }),
   opsRetry: (kind: 'PAYOUT' | 'REFUND', id: string) => api<{ items: OpsItem[]; open: number }>(`/v1/payments/ops/${kind}/${id}/retry`, { method: 'POST' }),
+  /** A maker-checker request (202): the item is closed only when a second Financial Operations member approves it. */
   opsResolve: (kind: OpsItem['kind'], id: string, outcome: 'RECOVERED' | 'WRITTEN_OFF' | 'SETTLED_OUTSIDE', note: string) =>
-    api<{ items: OpsItem[]; open: number }>(`/v1/payments/ops/${kind}/${id}/resolve`, { method: 'POST', body: { outcome, note } }),
+    api<ApprovalRequest>(`/v1/payments/ops/${kind}/${id}/resolve`, { method: 'POST', body: { outcome, note } }),
   reconciliations: () => api<Reconciliation[]>('/v1/payments/reconciliations'),
   reconcile: (day: string) => api<Reconciliation>('/v1/payments/reconciliations', { method: 'POST', body: { day } }),
+  reconciliationBreaks: (status?: BreakStatus) =>
+    api<ReconciliationBreak[]>('/v1/payments/reconciliation-breaks', { query: status ? { status } : {} }),
+  /** One step on: OPEN -> EVIDENCE_GATHERING -> REVIEWED -> CLOSED (closing needs step-up and a different person from the reviewer). */
+  advanceBreak: (id: string, status: Exclude<BreakStatus, 'OPEN'>, note: string) =>
+    api<ReconciliationBreak>(`/v1/payments/reconciliation-breaks/${id}/advance`, { method: 'POST', body: { status, note } }),
 }
 
 // Test-mode payment methods from the (fake) payment provider. A real provider's card form returns a token like these.

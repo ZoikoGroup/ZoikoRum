@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { Navigate, useLocation, useSearchParams } from 'react-router-dom'
 import type { Persona, PlatformRole } from '../api/auth'
 import { useAuth } from './AuthContext'
+import { dashboardPath, isStaffPath } from '../staffRoutes'
 
 /** Signed-in users only. Accounts whose role demands MFA are sent to set it up first. */
 export function RequireAuth({ children }: { children: ReactNode }) {
@@ -9,7 +10,7 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   const location = useLocation()
   if (loading) return <div className="page-loading" aria-busy="true">Loading…</div>
   if (!user) {
-    const staffArea = location.pathname.startsWith('/app/ops')
+    const staffArea = isStaffPath(location.pathname)
     return <Navigate to={staffArea ? '/staff/login' : '/login'} replace state={{ from: location.pathname }} />
   }
   if (user.status === 'SUSPENDED' && location.pathname !== '/app/safety') return <Navigate to="/app/safety" replace />
@@ -31,10 +32,10 @@ export function RequireRole({ any, children }: { any: (Persona | PlatformRole)[]
   return <>{children}</>
 }
 
-/** Only same-site app/invite paths may be used as a post-login destination (no open redirects). */
+/** Only same-site app/invite/platform-admin paths may be used as a post-login destination (no open redirects). */
 // eslint-disable-next-line react-refresh/only-export-components
 export function safeNextPath(next: string | null | undefined): string | null {
-  return next && /^\/(app|invite)(\/|\?|$)/.test(next) ? next : null
+  return next && /^\/(app|invite|platform-admin)(\/|\?|$)/.test(next) ? next : null
 }
 
 /** Pages like /login: bounce signed-in users to ?next (e.g. an invite link) or their dashboard. */
@@ -43,7 +44,7 @@ export function GuestOnly({ children }: { children: ReactNode }) {
   const [params] = useSearchParams()
   if (loading) return null
   if (user) {
-    const dest = user.status === 'SUSPENDED' ? '/app/safety' : user.mfaRequired ? '/app/security' : safeNextPath(params.get('next')) ?? `/app/${user.defaultDashboard}`
+    const dest = user.status === 'SUSPENDED' ? '/app/safety' : user.mfaRequired ? '/app/security' : safeNextPath(params.get('next')) ?? dashboardPath(user)
     return <Navigate to={dest} replace />
   }
   return <>{children}</>

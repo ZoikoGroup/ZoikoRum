@@ -69,3 +69,14 @@ async def open_case_subjects(session: AsyncSession) -> dict[str, set[uuid.UUID]]
                                                            .distinct())).all():
         out.setdefault(subject_type, set()).add(subject_id)
     return out
+
+
+async def case_exists(session: AsyncSession, case_id: uuid.UUID) -> bool:
+    """A verification case with this id (staff case ownership checks the case is real)."""
+    return await session.get(VerificationCase, case_id) is not None
+
+
+async def appeal_exists(session: AsyncSession, appeal_id: uuid.UUID) -> bool:
+    from zoikorum.domains.verification.models import Appeal
+
+    return await session.get(Appeal, appeal_id) is not None

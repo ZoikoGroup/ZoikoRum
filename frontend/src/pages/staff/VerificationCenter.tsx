@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import {
   CASE_STATUS, evidenceFileUrl, HOSTED_NOTE, PARTNER_NAME, trustApi, verificationApi,
@@ -6,8 +6,8 @@ import {
 } from '../../api/verification'
 import {
   AdminHeader, AdminKpi, Callout, Checklist, CountTabs, DetailPanel, Facts, FilterBar, FilterSelect, KpiStrip, ListDetail,
-  Pill, TableFoot, dueText, label, shortDate, shortDateTime, type CheckState, type PillTone,
-} from '../../components/admin'
+  Pill, TableFoot, dueText, label, shortDate, shortDateTime, type CheckState, type PillTone,pickRow } from '../../components/admin'
+import { CaseOwner, OwnerCell, useAssignments } from '../../components/CaseOwner'
 import { FileLink } from '../../components/FileLink'
 import { Icon } from '../../components/dashboard'
 import { ErrorAlert, Field, useStepUp } from '../../components/ui'
@@ -35,6 +35,7 @@ export default function VerificationCenter() {
   const [appeals, setAppeals] = useState<AppealQueueItem[]>([])
   const [secondLooks, setSecondLooks] = useState<VerificationCase[]>([])
   const [tab, setTab] = useState<Tab>('open')
+  const owners = useAssignments(['VERIFICATION_CASE', 'VERIFICATION_APPEAL'])
   const [sel, setSel] = useState<Selection>(null)
   const [opened, setOpened] = useState<VerificationCase | null>(null)
   const [opening, setOpening] = useState<string | null>(null)
@@ -120,6 +121,7 @@ export default function VerificationCenter() {
       <div role="region" aria-label="Open verification case">
         {opening && !opened ? <section className="card adm-detail"><div className="adm-detail-body"><p role="status">Loading verification case…</p></div></section>
           : opened && <CaseDetail c={opened} onClose={close}
+            owner={<CaseOwner key={opened.id} kind="VERIFICATION_CASE" caseId={opened.id} assignment={owners.get('VERIFICATION_CASE', opened.id)} onChange={owners.put} />}
             onDecided={async () => { setNotice(`Decision recorded for ${opened.label}.`); close(); await load(true) }}
             onRevoked={async (msg) => { setNotice(msg); close(); await load(true) }} onError={setError} />}
       </div>
@@ -127,6 +129,7 @@ export default function VerificationCenter() {
   } else if (sel?.kind === 'appeal') {
     const a = appeals.find((x) => x.id === sel.id)
     if (a) detail = <AppealDetail key={a.id} appeal={a} onClose={close} onError={setError}
+      owner={<CaseOwner key={a.id} kind="VERIFICATION_APPEAL" caseId={a.id} assignment={owners.get('VERIFICATION_APPEAL', a.id)} onChange={owners.put} />}
       onDecided={async (msg) => { setNotice(msg); close(); await loadAppeals(); await load(true) }} />
   } else if (sel?.kind === 'second') {
     const c = secondLooks.find((x) => x.id === sel.id)
@@ -162,7 +165,7 @@ export default function VerificationCenter() {
       <ListDetail detail={detail} list={
         <div className="card">
           <CountTabs tabs={tabs} value={tab} onChange={(t) => { changeTab(t); close() }} />
-          {tab === 'appeals' ? <AppealsTable rows={appeals} selectedId={sel?.kind === 'appeal' ? sel.id : null}
+          {tab === 'appeals' ? <AppealsTable rows={appeals} selectedId={sel?.kind === 'appeal' ? sel.id : null} owner={(id) => <OwnerCell assignment={owners.get('VERIFICATION_APPEAL', id)} />}
             onPick={(a) => { openSequence.current++; setOpened(null); setSel({ kind: 'appeal', id: a.id }) }} />
             : tab === 'second' ? <SecondLooksTable rows={secondLooks} selectedId={sel?.kind === 'second' ? sel.id : null}
               onPick={(c) => { openSequence.current++; setOpened(null); setSel({ kind: 'second', id: c.id }) }} />
@@ -180,15 +183,15 @@ export default function VerificationCenter() {
                 <div className="adm-table-wrap">
                   {loading && items.length === 0 ? <p role="status" style={{ padding: 16 }}>Loading checks…</p> : (
                     <table className="data">
-                      <thead><tr><th>Check</th><th>Subject</th><th>Verification type</th><th>Jur.</th><th>Review state</th><th>Evidence</th><th>SLA due</th>
-                        <th><span className="sr-only">Actions</span></th></tr></thead>
+                      <thead><tr><th scope="col">Check</th><th scope="col">Subject</th><th scope="col">Verification type</th><th scope="col">Jur.</th><th scope="col">Review state</th><th scope="col">Evidence</th><th scope="col">SLA due</th><th scope="col">Owner</th>
+                        <th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
                       <tbody>
-                        {filtered.length === 0 && <tr><td colSpan={8} className="empty-row">{items.length ? 'No checks match these filters.' : 'No open checks waiting for review.'}</td></tr>}
+                        {filtered.length === 0 && <tr><td colSpan={9} className="empty-row">{items.length ? 'No checks match these filters.' : 'No open checks waiting for review.'}</td></tr>}
                         {filtered.slice(0, visibleCount).map((i) => {
                           const due = OPEN.includes(i.status) ? dueText(i.estimatedCompletion) : null
                           const selected = sel?.kind === 'case' && sel.id === i.id
                           return (
-                            <tr key={i.id} className={`pick ${selected ? 'selected' : ''}`} onClick={() => openCase(i.id)}>
+                            <tr {...pickRow} key={i.id} className={`pick ${selected ? 'selected' : ''}`} onClick={() => openCase(i.id)}>
                               <td><div className="cell-main">{i.label}</div><div className="cell-sub">{i.id.slice(0, 8)}</div></td>
                               <td><div className="cell-main">{i.subjectName ?? '—'}</div><div className="cell-sub">{i.subjectType === 'FIRM' ? 'Firm' : 'Professional'}</div></td>
                               <td>{label(i.verificationType)}
@@ -200,6 +203,7 @@ export default function VerificationCenter() {
                               <td>{i.evidenceCount}{(i.flaggedEvidence ?? 0) > 0 && <> <Pill tone="amber">{i.flaggedEvidence} flagged</Pill></>}</td>
                               <td>{shortDate(i.estimatedCompletion)}
                                 {due && <div className={`cell-sub ${i.overdue || due.late ? 'late' : ''}`}>{i.overdue ? 'Overdue' : due.text}</div>}</td>
+                              <td><OwnerCell assignment={owners.get('VERIFICATION_CASE', i.id)} /></td>
                               <td style={{ textAlign: 'right' }}><button type="button" className="btn btn-secondary btn-sm" disabled={opening === i.id}
                                 onClick={(e) => { e.stopPropagation(); void openCase(i.id) }}>{opening === i.id ? 'Loading…' : OPEN.includes(i.status) ? 'Review' : 'View case'}</button></td>
                             </tr>
@@ -243,8 +247,8 @@ function AutomaticCheck({ check }: { check?: EvidenceCheck | null }) {
 /** Partner answers that leave the decision to staff (verification service PARTNER_REVIEW). */
 const PARTNER_CAPTURED = ['declined', 'failed', 'needs_review', 'completed', 'resubmission_requested']
 
-function CaseDetail({ c, onClose, onDecided, onRevoked, onError }: {
-  c: VerificationCase; onClose: () => void; onDecided: () => Promise<void>; onRevoked: (msg: string) => Promise<void>; onError: (e: unknown) => void
+function CaseDetail({ c, owner, onClose, onDecided, onRevoked, onError }: {
+  c: VerificationCase; owner?: ReactNode; onClose: () => void; onDecided: () => Promise<void>; onRevoked: (msg: string) => Promise<void>; onError: (e: unknown) => void
 }) {
   const [preset, setPreset] = useState<'NEEDS_INFO' | null>(null)
   const isOpen = OPEN.includes(c.status)
@@ -294,6 +298,8 @@ function CaseDetail({ c, onClose, onDecided, onRevoked, onError }: {
             <div key={k}>{k.replace(/([A-Z])/g, ' $1').replace(/^./, (x) => x.toUpperCase())}: <strong>{String(v)}</strong></div>)}
         </span></div>
       )}
+
+      {owner}
 
       {readiness.length > 0 && <Checklist title="Evidence readiness" items={readiness} />}
 
@@ -455,22 +461,24 @@ function TierHistory({ professionalId }: { professionalId: string }) {
 
 /* ---------------- appeals ---------------- */
 
-function AppealsTable({ rows, selectedId, onPick }: { rows: AppealQueueItem[]; selectedId: string | null; onPick: (a: AppealQueueItem) => void }) {
+function AppealsTable({ rows, selectedId, onPick, owner }: { rows: AppealQueueItem[]; selectedId: string | null; onPick: (a: AppealQueueItem) => void
+  owner: (id: string) => ReactNode }) {
   return (
     <>
       <div className="adm-note">Open appeals · the officer who made the original decision cannot decide its appeal</div>
       <div className="adm-table-wrap">
         <table className="data">
-          <thead><tr><th>Check</th><th>Subject</th><th>Original outcome</th><th>Filed</th><th>Evidence</th><th><span className="sr-only">Actions</span></th></tr></thead>
+          <thead><tr><th scope="col">Check</th><th scope="col">Subject</th><th scope="col">Original outcome</th><th scope="col">Filed</th><th scope="col">Evidence</th><th scope="col">Owner</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
           <tbody>
-            {rows.length === 0 && <tr><td colSpan={6} className="empty-row">No open appeals.</td></tr>}
+            {rows.length === 0 && <tr><td colSpan={7} className="empty-row">No open appeals.</td></tr>}
             {rows.map((a) => (
-              <tr key={a.id} className={`pick ${selectedId === a.id ? 'selected' : ''}`} onClick={() => onPick(a)}>
+              <tr {...pickRow} key={a.id} className={`pick ${selectedId === a.id ? 'selected' : ''}`} onClick={() => onPick(a)}>
                 <td><div className="cell-main">{a.caseLabel}</div><div className="cell-sub clamp">{a.statement}</div></td>
                 <td>{a.subjectName ?? '—'}</td>
                 <td><StatePill status={a.caseStatus} /></td>
                 <td>{shortDate(a.filedAt)}</td>
                 <td>{a.evidenceCount}</td>
+                <td>{owner(a.id)}</td>
                 <td style={{ textAlign: 'right' }}>{a.canDecide
                   ? <button type="button" className="btn btn-secondary btn-sm" onClick={(e) => { e.stopPropagation(); onPick(a) }}>Review</button>
                   : <span className="muted small" title="You made the original decision">Another reviewer decides</span>}</td>
@@ -483,8 +491,8 @@ function AppealsTable({ rows, selectedId, onPick }: { rows: AppealQueueItem[]; s
   )
 }
 
-function AppealDetail({ appeal, onClose, onDecided, onError }: {
-  appeal: AppealQueueItem; onClose: () => void; onDecided: (msg: string) => Promise<void>; onError: (e: unknown) => void
+function AppealDetail({ appeal, owner, onClose, onDecided, onError }: {
+  appeal: AppealQueueItem; owner?: ReactNode; onClose: () => void; onDecided: (msg: string) => Promise<void>; onError: (e: unknown) => void
 }) {
   const [c, setC] = useState<VerificationCase | null>(null)
   const [note, setNote] = useState('')
@@ -504,6 +512,7 @@ function AppealDetail({ appeal, onClose, onDecided, onError }: {
       {modal}
       {!appeal.canDecide && <Callout tone="amber" title="Another reviewer decides">You made the original decision, so a different reviewer must decide this appeal.</Callout>}
       <Facts rows={[['Original outcome', statusLabel(appeal.caseStatus)], ['Original reason', appeal.originalReason ?? '—'], ['Evidence files', appeal.evidenceCount]]} />
+      {owner}
       <div><h3 style={{ fontSize: 13.5, margin: '0 0 6px' }}>Appeal statement</h3><p className="small" style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{appeal.statement}</p></div>
       <div>
         <h3 style={{ fontSize: 13.5, margin: '0 0 6px' }}>Evidence</h3>
@@ -525,11 +534,11 @@ function SecondLooksTable({ rows, selectedId, onPick }: { rows: VerificationCase
       <div className="adm-note">Automatic partner approvals picked for a person's second look</div>
       <div className="adm-table-wrap">
         <table className="data">
-          <thead><tr><th>Check</th><th>Subject</th><th>Approved</th><th><span className="sr-only">Actions</span></th></tr></thead>
+          <thead><tr><th scope="col">Check</th><th scope="col">Subject</th><th scope="col">Approved</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
           <tbody>
             {rows.length === 0 && <tr><td colSpan={4} className="empty-row">No automatic approvals waiting for a second look.</td></tr>}
             {rows.map((c) => (
-              <tr key={c.id} className={`pick ${selectedId === c.id ? 'selected' : ''}`} onClick={() => onPick(c)}>
+              <tr {...pickRow} key={c.id} className={`pick ${selectedId === c.id ? 'selected' : ''}`} onClick={() => onPick(c)}>
                 <td><div className="cell-main">{c.label}</div><div className="cell-sub">{PARTNER_NAME[c.hostedProvider ?? ''] ?? c.hostedProvider ?? 'Partner'}</div></td>
                 <td>{c.subjectType === 'PROFESSIONAL' ? 'Professional' : c.subjectType === 'FIRM' ? 'Firm' : 'Person'}</td>
                 <td>{shortDate(c.verifiedAt)}</td>

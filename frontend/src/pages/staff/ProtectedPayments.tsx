@@ -4,7 +4,7 @@ import { ALLOCATION_STATE, escrowApi, type Escrow } from '../../api/escrow'
 import { formatMoney } from '../../api/orgs'
 import type { IconName, Tone } from '../../components/dashboard'
 import { AdminHeader, AdminKpi, Callout, Checklist, CountTabs, DetailPanel, Donut, Facts, FilterBar, FilterSelect, KpiStrip, ListDetail,
-  MetricList, Panel, PanelRow, StatusPill, TableFoot, money, shortDate, shortDateTime, type CheckState } from '../../components/admin'
+  MetricList, Panel, PanelRow, StatusPill, TableFoot, money, shortDate, shortDateTime, type CheckState, pickRow } from '../../components/admin'
 import { ErrorAlert } from '../../components/ui'
 import { useCursorList } from './staffData'
 
@@ -20,6 +20,9 @@ const META: Record<string, { icon: IconName; tone: Tone; color: string }> = {
 }
 const statusLabel = (s: string) => (ALLOCATION_STATE as Record<string, { label: string }>)[s]?.label ?? s.toLowerCase().replace(/_/g, ' ')
 const rank = (s: string) => (ORDER.includes(s) ? ORDER.indexOf(s) : ORDER.length)
+
+/** Provider references are shown shortened: enough to match a provider statement line, not the full identifier. */
+const shortRef = (ref: string) => (ref.length > 8 ? `…${ref.slice(-6)}` : ref)
 
 export default function ProtectedPayments() {
   const [error, setError] = useState<unknown>(null)
@@ -89,16 +92,16 @@ export default function ProtectedPayments() {
             </FilterBar>
             <div className="adm-table-wrap">
               <table className="data">
-                <thead><tr><th>Engagement / milestone</th><th>Buyer / professional</th><th>Amount</th><th>Provider evidence</th><th>State</th><th>Updated</th></tr></thead>
+                <thead><tr><th scope="col">Engagement / milestone</th><th scope="col">Buyer / professional</th><th scope="col">Amount</th><th scope="col">Provider evidence</th><th scope="col">State</th><th scope="col">Updated</th></tr></thead>
                 <tbody>
                   {list.rows && rows.length === 0 && <tr><td colSpan={6} className="empty-row">No payment records match.</td></tr>}
                   {!list.rows && !error && <tr><td colSpan={6} className="empty-row">Loading…</td></tr>}
                   {rows.map((r) => (
-                    <tr key={r.id} className={`pick ${selectedId === r.id ? 'selected' : ''}`} onClick={() => setSelectedId(r.id)}>
+                    <tr {...pickRow} key={r.id} className={`pick ${selectedId === r.id ? 'selected' : ''}`} onClick={() => setSelectedId(r.id)}>
                       <td><div className="cell-id">{r.contractTitle}</div><div className="cell-sub">{r.milestoneSequence != null ? `Milestone ${r.milestoneSequence}` : 'Contract level'}</div></td>
                       <td><div className="cell-main">{r.buyerName}</div><div className="cell-sub">{r.professionalName}</div></td>
                       <td><strong>{money(r.amountMinor, r.currency)}</strong><div className="cell-sub">{r.currency}</div></td>
-                      <td className="small">{r.providerReference ? <>{r.provider ?? 'Provider'}<div className="cell-sub">{r.providerReference}</div></> : <span className="muted">No provider reference</span>}</td>
+                      <td className="small">{r.providerReference ? <>{r.provider ?? 'Provider'}<div className="cell-sub" title="Provider reference (shortened)">{shortRef(r.providerReference)}</div></> : <span className="muted">No provider reference</span>}</td>
                       <td><StatusPill status={r.status} /></td>
                       <td className="small">{shortDate(r.updatedAt)}</td>
                     </tr>))}
@@ -148,7 +151,7 @@ function PaymentDetail({ r, onClose }: { r: AdminEscrowRow; onClose: () => void 
         </div>
         <Facts title="Source-linked payment context" rows={[
           ['Buyer', r.buyerName], ['Professional', r.professionalName],
-          ['Provider', r.provider ?? '—'], ['Provider reference', r.providerReference ?? '—'],
+          ['Provider', r.provider ?? '—'], ['Provider reference', r.providerReference ? shortRef(r.providerReference) : '—'],
           ...(alloc?.releaseReference ? [['Release reference', alloc.releaseReference] as [string, string]] : []),
           ['Currency', r.currency], ['Last update', shortDateTime(r.updatedAt)],
         ]} />

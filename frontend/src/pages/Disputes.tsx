@@ -11,6 +11,7 @@ import { formatMoney } from '../api/orgs'
 import { DOC_ACCEPT, toUpload, type Upload } from '../api/files'
 import { FileLinks } from '../components/FileLink'
 import { useAuth } from '../auth/AuthContext'
+import { useCapabilities } from '../auth/capabilities'
 import { saveBlob } from '../lib/exports'
 import { Icon } from '../components/dashboard'
 import { EmptyTable, PortalHeader, SidePanel, StatCard } from '../components/portal'
@@ -180,6 +181,7 @@ function useAllocation(d: Dispute) {
 export function DisputeDetail() {
   const { id = '' } = useParams()
   const { user } = useAuth()
+  const { has: can } = useCapabilities()  // Legal / Mediator actions (staff sign-in)
   const [d, setD] = useState<Dispute | null>(null)
   const [error, setError] = useState<unknown>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -201,7 +203,7 @@ export function DisputeDetail() {
   return (
     <>
       {modal}
-      <PortalHeader eyebrow={<Link to={party ? (d.viewerRole === 'BUYER' ? '/app/disputes' : '/app/professional/disputes') : '/app/ops/disputes'}>← Disputes</Link>}
+      <PortalHeader eyebrow={<Link to={party ? (d.viewerRole === 'BUYER' ? '/app/disputes' : '/app/professional/disputes') : '/platform-admin/dispute-resolution'}>← Disputes</Link>}
         title={`Dispute ${d.reference}`}
         subtitle={<>Engagement {d.contractReference} · <span className="badge">{CATEGORY_LABEL[d.category]}</span> <span className={`badge ${ph.tone}`}>{ph.label}</span>
           {deadline && <> · <Icon name="clock" /> {timeLeft(deadline)}</>}</>}
@@ -229,20 +231,20 @@ export function DisputeDetail() {
           {d.retainUntil && <section className="card panel small">
             <strong>Record retention:</strong> kept until at least {new Date(d.retainUntil).toLocaleDateString()} ({d.retentionBasis}).
             {d.legalHold && <span className="badge warn" style={{ marginLeft: 8 }}>Legal hold</span>}
-            {user?.platformRoles.includes('LEGAL') && <button className="btn btn-ghost btn-sm" style={{ marginLeft: 8 }} onClick={() => {
+            {can('disputes.adjudicate') && <button className="btn btn-ghost btn-sm" style={{ marginLeft: 8 }} onClick={() => {
               const reason = prompt(d.legalHold ? 'Why lift the hold?' : 'Why hold this record? (e.g. litigation, a request from a regulator)')
               if (reason && reason.trim().length >= 10) stepUp(() => disputeApi.legalHold(d.id, !d.legalHold, reason.trim()), d.legalHold ? 'Hold lifted.' : 'Legal hold placed.')
             }}>{d.legalHold ? 'Lift legal hold' : 'Place legal hold'}</button>}
           </section>}
           {d.viewerRole === 'MEDIATOR' && <AIAssistance purpose="dispute-summary" subjectId={d.id} />}
-          {d.decision?.decisionPath === 'PLATFORM' && <DisputeAppealPanel caseId={d.id} canFile={party} canReview={!!user?.platformRoles.includes('LEGAL')} />}
+          {d.decision?.decisionPath === 'PLATFORM' && <DisputeAppealPanel caseId={d.id} canFile={party} canReview={can('disputes.adjudicate')} />}
 
           {(d.mediationRequired || d.legalReviewRequired) && d.status !== 'DECIDED' && d.status !== 'ENFORCED' && d.status !== 'CLOSED' &&
             <div className="tip"><Icon name="shield" /><span>The buyer organisation's policy applies to this dispute:
               {d.mediationRequired ? ' a mediator handles any settlement of this size;' : ''}
               {d.legalReviewRequired ? " the organisation's Legal Reviewer must agree to its settlement." : ''}</span></div>}
 
-          {d.status === 'MEDIATION' && <ArbitrationPanel d={d} busy={busy} isLegal={!!user?.platformRoles.includes('LEGAL')}
+          {d.status === 'MEDIATION' && <ArbitrationPanel d={d} busy={busy} isLegal={can('disputes.adjudicate')}
             onRefer={(forum, reason) => stepUp(() => disputeApi.referToArbitration(d.id, forum, reason), 'Referred to external arbitration. The money stays frozen.')}
             onAward={(body) => stepUp(() => disputeApi.recordAward(d.id, body), 'Award recorded. The money moves as awarded.')} />}
 
@@ -252,7 +254,7 @@ export function DisputeDetail() {
             onRecommend={(body) => stepUp(() => disputeApi.recommend(d.id, body), 'Recommendation issued to both parties.')}
             onDecide={(body) => stepUp(() => disputeApi.proposeDecision(d.id, body), 'Platform decision proposed; a Legal reviewer must approve it.')}
             onApprove={() => stepUp(() => disputeApi.approveDecision(d.id), 'Decision approved and issued.')}
-            canApprove={!!user?.platformRoles.includes('LEGAL')} isMediatorRole={!!user?.platformRoles.includes('MEDIATOR')} />}
+            canApprove={can('disputes.adjudicate')} isMediatorRole={can('disputes.mediate')} />}
 
           {(d.status === 'DIRECT_RESOLUTION' || d.proposals.length > 0) && <ProposalsPanel d={d} busy={busy} party={party}
             onPropose={(body) => act(() => disputeApi.propose(d.id, body), 'Proposal sent. The other party can accept it or decline.')}

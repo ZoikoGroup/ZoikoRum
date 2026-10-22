@@ -160,6 +160,9 @@ class Settings(BaseSettings):
     enforcement_triage_hours: int = 48  # a new safety case is looked at within this (overdue cases show first)
     enforcement_appeal_days: int = 14  # time to appeal an enforcement action after it is applied
     enforcement_policy_version: str = "trust-safety-playbook@2026.1"  # recorded with every enforcement decision  # time to appeal a failed or revoked verification (Governance playbook s.11)
+    # Maker-checker: a privileged staff request (role grants, switches, money exceptions, audit exports) waits this long
+    # for a second person to approve it, then expires unused.
+    approval_expiry_hours: int = Field(default=24, ge=1, le=168)
     dispute_direct_resolution_business_days: int = 5
     # Invoice tax by the buyer's country (their contracting legal entity, else the organisation). Amounts are tax-inclusive:
     # the invoice shows "of which <label> <rate>%" and the money moved does not change. Finance sets the rules, e.g.

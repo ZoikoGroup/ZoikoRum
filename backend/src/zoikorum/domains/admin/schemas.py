@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime
 from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
@@ -73,3 +74,60 @@ class RemediationDoneIn(BaseModel):
 
 class OverrideIn(BaseModel):
     reason: str = Field(min_length=20, max_length=4000)
+
+
+
+# ---- Maker-checker approvals (admin/approvals.py) ---------------------------------------------------------------------
+
+ApprovalKind = Literal["GRANT_PLATFORM_ROLE", "REVOKE_PLATFORM_ROLE", "SWITCH_CHANGE", "FINANCIAL_EXCEPTION_RESOLVE",
+                       "DEAD_LETTER_REPLAY_FINANCIAL", "AUDIT_EXPORT"]
+ApprovalStatus = Literal["REQUESTED", "APPLIED", "FAILED", "REJECTED", "EXPIRED", "CANCELLED"]
+
+
+class ApprovalRequestIn(BaseModel):
+    kind: ApprovalKind
+    payload: dict = Field(default_factory=dict)  # per kind, see admin/approvals.py PAYLOADS
+    justification: str = Field(min_length=10, max_length=2000)
+
+
+class ApprovalDecisionIn(BaseModel):
+    approve: bool
+    note: str | None = Field(default=None, max_length=1000)  # required (5+ characters) to reject
+
+
+class ApprovalPersonOut(BaseModel):
+    id: uuid.UUID
+    displayName: str | None
+    email: str | None
+
+
+class ApprovalRequestOut(BaseModel):
+    """A privileged staff action waiting for, or decided by, a second person. ``status`` is the whole lifecycle:
+    REQUESTED (nothing has changed yet), APPLIED (approved and carried out), FAILED (approved, could not be carried
+    out: see applyError), REJECTED, EXPIRED or CANCELLED (never carried out)."""
+    id: uuid.UUID
+    kind: ApprovalKind
+    status: ApprovalStatus
+    summary: str
+    payload: dict
+    justification: str
+    requestedBy: ApprovalPersonOut
+    requestedAt: datetime
+    expiresAt: datetime
+    approverRoles: list[str]
+    decidedBy: ApprovalPersonOut | None
+    decidedAt: datetime | None
+    decisionNote: str | None
+    appliedAt: datetime | None
+    applyError: str | None
+    result: dict | None
+    canDecide: bool  # the signed-in staff member may approve or reject it
+    canCancel: bool  # the signed-in staff member asked for it and it is still waiting
+
+
+class ApprovalSummaryOut(BaseModel):
+    awaitingMe: int
+    myOpen: int
+    applied7d: int
+    rejectedOrExpired7d: int
+    failed7d: int

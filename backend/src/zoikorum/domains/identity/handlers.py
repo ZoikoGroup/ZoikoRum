@@ -27,6 +27,12 @@ async def on_erasure_due(session: AsyncSession, key: str, payload: dict) -> None
     await privacy_requests.run_erasure(session, payload)
 
 
+@on_timer(service.ROLE_EXPIRY_TIMER)
+async def on_platform_role_expiry(session: AsyncSession, key: str, payload: dict) -> None:
+    identity_id, role = key.split(":", 1)
+    await service.expire_platform_role(session, uuid.UUID(identity_id), role)
+
+
 def _uuid(v) -> uuid.UUID:
     return v if isinstance(v, uuid.UUID) else uuid.UUID(str(v))
 

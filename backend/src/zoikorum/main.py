@@ -85,7 +85,8 @@ def create_app() -> FastAPI:
         from zoikorum.shared.errors import Forbidden
         allow_restricted = path.startswith("/v1/enforcement-cases") or (path == "/v1/me" and method == "GET") or (path == "/v1/auth/logout" and method == "POST")
         async with session_factory()() as session:
-            actor = await identity.validate_session_actor(session, actor, allow_restricted=allow_restricted)
+            actor = await identity.validate_session_actor(session, actor, allow_restricted=allow_restricted,
+                                                          staff_path=path.startswith("/v1/admin/"))
             restrictions = await admin.active_restrictions(session, "IDENTITY", actor.identity_id)
             if set(restrictions).intersection({"SUSPEND_ACCOUNT", "OFFBOARD"}) and not allow_restricted:
                 raise Forbidden("This account is restricted", code="ACCOUNT_NOT_ACTIVE")

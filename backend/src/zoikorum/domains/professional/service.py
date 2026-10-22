@@ -48,7 +48,8 @@ from zoikorum.domains.professional.schemas import (
     SpecializationsIn,
 )
 from zoikorum.shared import clock
-from zoikorum.shared.auth import Actor, Persona, PlatformRole
+from zoikorum.shared.auth import Actor, Persona
+from zoikorum.shared.capabilities import Cap
 from zoikorum.shared.errors import Conflict, DomainError, Forbidden, NotFound, ValidationFailed, VersionConflict
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_audit, record_event
@@ -777,10 +778,6 @@ async def _enterprise_signals(session: AsyncSession, pro: Professional) -> dict:
 
 # ---- Staff admin console: every professional profile ------------------------------------------------------------------
 
-PROFESSIONAL_VIEWERS = (PlatformRole.PLATFORM_ADMIN, PlatformRole.TS_ANALYST, PlatformRole.COMPLIANCE_OFFICER,
-                        PlatformRole.SUPPORT_AGENT)
-
-
 async def _publication(session: AsyncSession):
     """The console's publication state as one SQL expression, so the list filter and the summary counts always agree."""
     from sqlalchemy import case, or_
@@ -800,7 +797,7 @@ async def admin_professionals(session: AsyncSession, actor: Actor, q: str | None
 
     from zoikorum.shared.http import next_cursor, paginate
 
-    actor.require_platform_role(*PROFESSIONAL_VIEWERS)
+    actor.require_capability(Cap.PROFESSIONALS_READ)
     state = await _publication(session)
     stmt = select(Professional, state)
     if q and q.strip():
@@ -840,7 +837,7 @@ async def admin_professionals(session: AsyncSession, actor: Actor, q: str | None
 
 async def admin_professional_summary(session: AsyncSession, actor: Actor) -> AdminProfessionalSummaryOut:
     """Counts for the Professionals page cards. Tier C includes profiles not assessed yet."""
-    actor.require_platform_role(*PROFESSIONAL_VIEWERS)
+    actor.require_capability(Cap.PROFESSIONALS_READ)
     state = await _publication(session)
     by_state = dict((await session.execute(select(state, func.count()).group_by(state))).all())
     total = sum(by_state.values())

@@ -190,10 +190,35 @@
   "subjectType",
   "verificationType"
  ],
- "ApprovalDecisionIn": [
-  "decision",
-  "reason",
-  "stepId"
+ "ApprovalPersonOut": [
+  "displayName",
+  "email",
+  "id"
+ ],
+ "ApprovalRequestIn": [
+  "justification",
+  "kind",
+  "payload"
+ ],
+ "ApprovalRequestOut": [
+  "appliedAt",
+  "applyError",
+  "approverRoles",
+  "canCancel",
+  "canDecide",
+  "decidedAt",
+  "decidedBy",
+  "decisionNote",
+  "expiresAt",
+  "id",
+  "justification",
+  "kind",
+  "payload",
+  "requestedAt",
+  "requestedBy",
+  "result",
+  "status",
+  "summary"
  ],
  "ApprovalRouteIn": [
   "escalationRole",
@@ -204,6 +229,13 @@
  "ApprovalStepIn": [
   "count",
   "role"
+ ],
+ "ApprovalSummaryOut": [
+  "applied7d",
+  "awaitingMe",
+  "failed7d",
+  "myOpen",
+  "rejectedOrExpired7d"
  ],
  "ArbitrationAwardIn": [
   "allocations",
@@ -222,8 +254,24 @@
   "level",
   "reasonCode"
  ],
- "AssignIn": [
-  "mediatorIdentityId"
+ "AssignableStaffOut": [
+  "email",
+  "id",
+  "name",
+  "roles",
+  "you"
+ ],
+ "AssignmentOut": [
+  "caseId",
+  "escalated",
+  "escalatedAt",
+  "escalationReason",
+  "kind",
+  "ownerId",
+  "ownerName",
+  "updatedAt",
+  "updatedBy",
+  "updatedByName"
  ],
  "AttachmentOut": [
   "contentType",
@@ -256,6 +304,10 @@
  "BillingContactsIn": [
   "backupIdentityId",
   "primaryIdentityId"
+ ],
+ "BreakAdvanceIn": [
+  "note",
+  "status"
  ],
  "BriefIn": [
   "budget",
@@ -572,6 +624,13 @@
   "requested",
   "status"
  ],
+ "DestinationOut": [
+  "group",
+  "id",
+  "route",
+  "slug",
+  "title"
+ ],
  "DisputeOut": [
   "arbitration",
   "canCooldown",
@@ -676,6 +735,9 @@
   "approve",
   "reason"
  ],
+ "EscalateIn": [
+  "reason"
+ ],
  "EscrowOut": [
   "allocations",
   "autoFundingEnabledAt",
@@ -735,6 +797,7 @@
  "ExportIn": [
   "correlationId",
   "format",
+  "justification",
   "objectId",
   "objectType",
   "since",
@@ -886,6 +949,8 @@
   "mustContain"
  ],
  "GrantRoleIn": [
+  "expiresAt",
+  "justification",
   "role"
  ],
  "HTTPValidationError": [
@@ -933,6 +998,7 @@
   "completeRemediation",
   "note",
   "notified",
+  "recoveryNote",
   "review",
   "rootCause",
   "severity"
@@ -1163,6 +1229,10 @@
   "heldMinor",
   "releasedMinor"
  ],
+ "MyCapabilitiesOut": [
+  "capabilities",
+  "destinations"
+ ],
  "NoticeIn": [
   "howToGetHelp",
   "whatChanged",
@@ -1221,6 +1291,7 @@
   "since"
  ],
  "OpsResolveIn": [
+  "justification",
   "note",
   "outcome"
  ],
@@ -1639,6 +1710,33 @@
  "ReconcileIn": [
   "day"
  ],
+ "ReconciliationBreakEvent": [
+  "at",
+  "by",
+  "fromStatus",
+  "note",
+  "toStatus"
+ ],
+ "ReconciliationBreakOut": [
+  "amountMinor",
+  "batchId",
+  "closedAt",
+  "closedBy",
+  "createdAt",
+  "currency",
+  "day",
+  "history",
+  "id",
+  "kind",
+  "owner",
+  "ownerId",
+  "references",
+  "resolutionNote",
+  "reviewedAt",
+  "reviewedBy",
+  "status",
+  "updatedAt"
+ ],
  "ReconciliationCheck": [
   "currency",
   "difference",
@@ -1649,11 +1747,14 @@
   "provider"
  ],
  "ReconciliationOut": [
+  "breaks",
   "checks",
   "day",
   "id",
   "mismatches",
+  "openBreaks",
   "runBy",
+  "runStatus",
   "status",
   "updatedAt"
  ],
@@ -1685,6 +1786,9 @@
  ],
  "RemediationDoneIn": [
   "note"
+ ],
+ "ReplayIn": [
+  "justification"
  ],
  "ReportIn": [
   "category",
@@ -2009,7 +2113,25 @@
   "id",
   "mfaEnabled",
   "platformRoles",
+  "roleExpiries",
   "status"
+ ],
+ "StaffSearchGroupOut": [
+  "items",
+  "kind",
+  "label"
+ ],
+ "StaffSearchHitOut": [
+  "id",
+  "kind",
+  "link",
+  "subtitle",
+  "title"
+ ],
+ "StaffSearchOut": [
+  "groups",
+  "query",
+  "scopes"
  ],
  "StepUpIn": [
   "totpCode"
@@ -2123,6 +2245,7 @@
   "topic"
  ],
  "SupportRequestOut": [
+  "assignedTo",
   "assignedToName",
   "context",
   "createdAt",
@@ -2282,6 +2405,10 @@
   "deliverableKey",
   "verdict"
  ],
+ "zoikorum__domains__admin__assignments__AssignIn": [
+  "note",
+  "ownerId"
+ ],
  "zoikorum__domains__admin__schemas__AppealDecisionIn": [
   "reason",
   "upheld"
@@ -2289,6 +2416,10 @@
  "zoikorum__domains__admin__schemas__AppealIn": [
   "evidence",
   "reason"
+ ],
+ "zoikorum__domains__admin__schemas__ApprovalDecisionIn": [
+  "approve",
+  "note"
  ],
  "zoikorum__domains__admin__schemas__CaseIn": [
   "evidenceRefs",
@@ -2343,6 +2474,9 @@
   "evidence",
   "explanation",
   "grounds"
+ ],
+ "zoikorum__domains__dispute__schemas__AssignIn": [
+  "mediatorIdentityId"
  ],
  "zoikorum__domains__dispute__schemas__DisputeIn": [
   "category",
@@ -2407,6 +2541,11 @@
  "zoikorum__domains__messaging__schemas__UploadIn": [
   "dataBase64",
   "name"
+ ],
+ "zoikorum__domains__policy__schemas__ApprovalDecisionIn": [
+  "decision",
+  "reason",
+  "stepId"
  ],
  "zoikorum__domains__professional__schemas__RegisterIn": [
   "country",

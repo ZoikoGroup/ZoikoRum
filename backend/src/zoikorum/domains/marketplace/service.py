@@ -24,7 +24,8 @@ from zoikorum.domains.search import facade as search_facade
 from zoikorum.domains.trust import facade as trust_facade
 from zoikorum.domains.verification import facade as verification_facade
 from zoikorum.shared import clock
-from zoikorum.shared.auth import Actor, PlatformRole
+from zoikorum.shared.auth import Actor
+from zoikorum.shared.capabilities import Cap
 from zoikorum.shared.errors import Conflict, NotFound, ValidationFailed
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_event
@@ -68,7 +69,7 @@ async def tree(session: AsyncSession, category_slug: str | None = None) -> list[
 # Specializations are never deleted: professionals and contracts keep referencing their slugs.
 
 async def admin_seed(session: AsyncSession, actor: Actor) -> dict:
-    actor.require_platform_role(PlatformRole.PLATFORM_ADMIN)
+    actor.require_capability(Cap.TAXONOMY_EDIT)
     await seed_default_taxonomy(session)
     count = await session.scalar(select(func.count()).select_from(TaxonomyNode).where(TaxonomyNode.level == "SPECIALIZATION"))
     return {"specializations": count}
@@ -102,7 +103,7 @@ async def _bump_version(session: AsyncSession, actor: Actor, spec: TaxonomyNode,
 
 
 async def create_specialization(session: AsyncSession, actor: Actor, body: SpecializationIn) -> SpecializationAdminOut:
-    actor.require_platform_role(PlatformRole.PLATFORM_ADMIN)
+    actor.require_capability(Cap.TAXONOMY_EDIT)
     group = await session.scalar(select(TaxonomyNode).where(TaxonomyNode.slug == body.groupSlug, TaxonomyNode.level == "GROUP"))
     if group is None:
         raise NotFound("Group not found")
@@ -121,7 +122,7 @@ async def create_specialization(session: AsyncSession, actor: Actor, body: Speci
 
 
 async def update_specialization(session: AsyncSession, actor: Actor, slug: str, patch: SpecializationPatch) -> SpecializationAdminOut:
-    actor.require_platform_role(PlatformRole.PLATFORM_ADMIN)
+    actor.require_capability(Cap.TAXONOMY_EDIT)
     spec = await _spec(session, slug)
     fields = {"name": "name", "requiresCredential": "requires_credential", "regulated": "regulated",
               "requiresInsurance": "requires_insurance",
@@ -135,7 +136,7 @@ async def update_specialization(session: AsyncSession, actor: Actor, slug: str, 
 
 async def deprecate_specialization(session: AsyncSession, actor: Actor, slug: str) -> SpecializationAdminOut:
     """Deprecated specializations can no longer be chosen; existing profiles keep them."""
-    actor.require_platform_role(PlatformRole.PLATFORM_ADMIN)
+    actor.require_capability(Cap.TAXONOMY_EDIT)
     spec = await _spec(session, slug)
     if spec.status == "DEPRECATED":
         raise Conflict("Specialization is already deprecated", code="ALREADY_DEPRECATED")
@@ -446,7 +447,7 @@ async def pending_names(session: AsyncSession, professional_id: uuid.UUID) -> li
 
 
 async def suggestion_queue(session: AsyncSession, actor: Actor, cursor: str | None = None, limit: int | None = None) -> dict:
-    actor.require_platform_role(PlatformRole.PLATFORM_ADMIN)
+    actor.require_capability(Cap.TAXONOMY_READ)
     stmt, lim = paginate(select(SpecializationSuggestion).where(SpecializationSuggestion.status == "PENDING"),
                          SpecializationSuggestion, cursor, limit, oldest_first=True)
     rows = (await session.scalars(stmt)).all()
@@ -455,7 +456,7 @@ async def suggestion_queue(session: AsyncSession, actor: Actor, cursor: str | No
 
 
 async def decide_suggestion(session: AsyncSession, actor: Actor, suggestion_id: uuid.UUID, body: SuggestionDecisionIn) -> SuggestionOut:
-    actor.require_platform_role(PlatformRole.PLATFORM_ADMIN)
+    actor.require_capability(Cap.TAXONOMY_EDIT)
     s = await session.get(SpecializationSuggestion, suggestion_id, with_for_update=True)
     if s is None:
         raise NotFound("Suggestion not found")

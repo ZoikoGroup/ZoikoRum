@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { submittedNotice } from '../../api/approvals'
 import { paymentsApi, type OpsItem, type Reconciliation } from '../../api/escrow'
 import { formatMoney } from '../../api/orgs'
 import { AdminHeader, AdminKpi, Callout, CountTabs, DetailPanel, Facts, FilterBar, FilterSelect, KpiStrip, ListDetail, MetricList, Panel,
-  PanelRow, Pill, StackBar, TableFoot, shortDate } from '../../components/admin'
+  PanelRow, Pill, StackBar, TableFoot, shortDate, pickRow } from '../../components/admin'
 import { ErrorAlert, useStepUp } from '../../components/ui'
 
 /* Financial Exceptions (design 62): payouts and refunds that still failed after the automatic retries, and chargebacks
-   the platform paid for. Staff retry them or close them with what happened. Amounts are shown per currency only. */
+   the platform paid for. Staff retry them or ask to close them with what happened; a close is a maker-checker request
+   that a second Financial Operations member approves before it is recorded. Amounts are shown per currency only. */
 
 const OPS_KIND: Record<OpsItem['kind'], string> = { PAYOUT: 'Payout to a professional', REFUND: 'Refund to a buyer', CHARGEBACK_LOSS: 'Chargeback loss' }
 const SHORT: Record<OpsItem['kind'], string> = { PAYOUT: 'Payouts', REFUND: 'Refunds', CHARGEBACK_LOSS: 'Chargebacks' }
@@ -89,7 +91,7 @@ export default function FinancialExceptions() {
         {latestRecon && <Panel title="Separate reconciliation control" meta={`Run ${latestRecon.day}`}>
           <Callout tone={latestRecon.status === 'MATCHED' ? 'green' : 'red'} title={latestRecon.status === 'MATCHED' ? 'Latest run matched' : `${latestRecon.mismatches} reconciliation break(s)`}>
             Not included above. Reconciliation breaks are tracked on the Reconciliation page.</Callout>
-          <p className="adm-foot-note"><Link to="/app/ops/reconciliation">Open reconciliation</Link></p>
+          <p className="adm-foot-note"><Link to="/platform-admin/reconciliation">Open reconciliation</Link></p>
         </Panel>}
       </PanelRow>
 
@@ -105,13 +107,13 @@ export default function FinancialExceptions() {
               {currencies.length > 1 && <FilterSelect label="All currencies" value={currency} onChange={setCurrency} options={currencies.map((c) => [c, c])} />}
             </FilterBar>
             <div className="adm-table-wrap"><table className="data">
-              <thead><tr><th>Problem</th><th>Engagement</th><th>Amount</th><th>Since</th><th>State</th></tr></thead>
+              <thead><tr><th scope="col">Problem</th><th scope="col">Engagement</th><th scope="col">Amount</th><th scope="col">Since</th><th scope="col">State</th></tr></thead>
               <tbody>
                 {items && rows.length === 0 && <tr><td colSpan={5} className="empty-row">{tab === 'closed' ? 'No closed cases.' : <><strong>Nothing needs attention.</strong> Failed payouts and refunds
                   are retried automatically first; only what still fails shows here.</>}</td></tr>}
                 {!items && !error && <tr><td colSpan={5} className="empty-row">Loading…</td></tr>}
                 {rows.map((i) => (
-                  <tr key={keyOf(i)} className={`pick ${selected === keyOf(i) ? 'selected' : ''}`} onClick={() => setSelected(keyOf(i))}>
+                  <tr {...pickRow} key={keyOf(i)} className={`pick ${selected === keyOf(i) ? 'selected' : ''}`} onClick={() => setSelected(keyOf(i))}>
                     <td><div className="cell-main">{OPS_KIND[i.kind]}</div><div className="cell-sub">{i.problem}</div></td>
                     <td><div className="cell-id">{i.engagement}</div><div className="cell-sub">{i.buyer} · {i.professional}</div></td>
                     <td><strong>{formatMoney(i.amount)}</strong></td>
@@ -126,8 +128,8 @@ export default function FinancialExceptions() {
         detail={sel && <ExceptionDetail key={keyOf(sel)} i={sel} now={now} onClose={() => setSelected(null)}
           onRetry={() => run(async () => { setItems((await paymentsApi.opsRetry(sel.kind as 'PAYOUT' | 'REFUND', sel.id)).items); setNotice('Sent again.') })}
           onResolve={(outcome, note) => run(async () => {
-            setItems((await paymentsApi.opsResolve(sel.kind, sel.id, outcome, note)).items)
-            setSelected(null); setNotice('Closed and recorded.')
+            const request = await paymentsApi.opsResolve(sel.kind, sel.id, outcome, note)
+            setSelected(null); setNotice(`${OPS_KIND[sel.kind]}: ${submittedNotice(request)}`)
           })} />}
       />
     </>
@@ -156,7 +158,8 @@ function ExceptionDetail({ i, now, onClose, onRetry, onResolve }: {
         ['Reference', <code key="r">{i.id}</code>],
       ]} />
       {closing && <form onSubmit={(e) => { e.preventDefault(); onResolve(outcome, note.trim()) }}>
-        <p className="muted small" style={{ marginTop: 0 }}>Record what happened. This cannot be changed later and goes into the audit trail.</p>
+        <p className="muted small" style={{ marginTop: 0 }}>Record what happened. Another Financial Operations member approves it before
+          the item is closed; it cannot be changed later and goes into the audit trail.</p>
         <label className="label" htmlFor="ops-outcome">Outcome</label>
         <select id="ops-outcome" className="input" value={outcome} onChange={(e) => setOutcome(e.target.value as Outcome)}>
           <option value="SETTLED_OUTSIDE">Settled another way (e.g. bank transfer)</option>
@@ -166,7 +169,7 @@ function ExceptionDetail({ i, now, onClose, onRetry, onResolve }: {
         <label className="label" htmlFor="ops-note" style={{ marginTop: 10 }}>What happened</label>
         <textarea id="ops-note" className="input" rows={3} maxLength={1000} value={note} onChange={(e) => setNote(e.target.value)} required />
         <div className="row" style={{ marginTop: 10 }}>
-          <button className="btn btn-primary btn-sm" disabled={note.trim().length < 5}>Close and record</button>
+          <button className="btn btn-primary btn-sm" disabled={note.trim().length < 10}>Request approval to close</button>
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => setClosing(false)}>Cancel</button>
         </div>
       </form>}

@@ -83,8 +83,9 @@ async def test_a_mediator_must_hold_the_role(client, make_user, drain):
 
 async def test_nobody_grants_staff_roles_to_themselves(client, make_user):
     admin = await staff(make_user, "ada", "PLATFORM_ADMIN")
-    r = await client.post(f"/v1/admin/identities/{admin.id}/platform-roles", headers=admin.h, json={"role": "FINANCIAL_OPS"})
-    assert r.status_code == 403 and r.json()["code"] == "SELF_GRANT"
+    r = await client.post(f"/v1/admin/identities/{admin.id}/platform-roles", headers=admin.h,
+                          json={"role": "FINANCIAL_OPS", "justification": "I would like to approve payouts too"})
+    assert r.status_code == 403 and r.json()["code"] == "SELF_GRANT"  # cannot even be requested
 
 
 async def test_unconfirmed_sign_ups_do_not_see_invitations(client, make_user, drain):

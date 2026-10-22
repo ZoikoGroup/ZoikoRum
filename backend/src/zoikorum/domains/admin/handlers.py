@@ -1,5 +1,5 @@
 import uuid
-from zoikorum.domains.admin import service, switches
+from zoikorum.domains.admin import approvals, service, switches
 from zoikorum.shared.events import subscribe
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.relay import on_timer
@@ -15,6 +15,11 @@ async def signal(session, event):
 
 for kind in (E.RISK_FLAG_RAISED, E.MESSAGE_FLAGGED, E.TRUST_PROFILE_FLAGGED, E.VERIFICATION_FRAUD_SUSPECTED, E.DISPUTE_PATTERN_FLAGGED):
     subscribe(kind, consumer="admin.triage")(signal)
+
+
+@on_timer(approvals.EXPIRY_TIMER)
+async def approval_expired(session, key, payload):
+    await approvals.expire(session, uuid.UUID(key))
 
 
 @on_timer(service.EXPIRY_TIMER)

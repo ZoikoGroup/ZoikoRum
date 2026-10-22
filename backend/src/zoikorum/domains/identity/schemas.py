@@ -55,6 +55,9 @@ class MfaVerifyIn(BaseModel):
 
 class GrantRoleIn(BaseModel):
     role: str
+    # Why the role is needed: the second administrator approving the request reads it.
+    justification: str = Field(min_length=10, max_length=2000)
+    expiresAt: datetime | None = None  # just-in-time: the role ends at this time; empty means permanent
 
 
 class AddPersonaIn(BaseModel):
@@ -136,6 +139,7 @@ class StaffMemberOut(BaseModel):
     platformRoles: list[str]
     mfaEnabled: bool
     status: str
+    roleExpiries: dict[str, datetime] = Field(default_factory=dict)  # just-in-time roles: when each one ends
 
 
 class UserOut(BaseModel):

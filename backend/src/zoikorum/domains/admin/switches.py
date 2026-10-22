@@ -1,7 +1,9 @@
 """Operational switches (Engineering Handbook 23.3 "feature flags, kill switches").
 
 Staff pause one kind of action at once, without a release, for example while a payment partner has an incident or a
-fraud wave is under way. Every change needs step-up, a reason, and is audited.
+fraud wave is under way. Every change needs step-up, a reason, and a second person's approval (admin/approvals.py:
+one staff member requests the change, another with the same authority approves it, and only then does it take effect).
+Every step is audited.
 
 * Refused while paused (503 FEATURE_PAUSED): sign-up, new proposal requests, proposal submission, escrow funding.
 * Deferred while paused, never lost: escrow releases and payouts wait and are retried every 10 minutes, so they go out
@@ -19,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.domains.admin.models import FeatureSwitch
 from zoikorum.shared.auth import Actor, PlatformRole
+from zoikorum.shared.capabilities import Cap
 from zoikorum.shared.errors import Forbidden, NotFound, ServiceUnavailable
 from zoikorum.shared.events import record_audit
 
@@ -65,24 +68,36 @@ async def list_switches(session: AsyncSession) -> list[dict]:
     return [_out(k, rows.get(k)) for k in SWITCHES]
 
 
-async def set_switch(session: AsyncSession, actor: Actor, key: str, paused: bool, reason: str) -> dict:
-    from zoikorum.domains.admin.service import staff
-
+def authority(key: str) -> tuple[str, ...]:
+    """Who may approve a change (recorded on the approval request): money switches Platform Admin or Financial
+    Operations, the others Platform Admin. Asking needs switches.request_money / switches.request, held by the same roles."""
     s = SWITCHES.get(key)
     if s is None:
         raise NotFound("Unknown switch")
-    roles = (PlatformRole.PLATFORM_ADMIN, PlatformRole.FINANCIAL_OPS) if s.money else (PlatformRole.PLATFORM_ADMIN,)
+    return (PlatformRole.PLATFORM_ADMIN, PlatformRole.FINANCIAL_OPS) if s.money else (PlatformRole.PLATFORM_ADMIN,)
+
+
+async def check_authority(session: AsyncSession, actor: Actor, key: str) -> tuple[str, ...]:
+    from zoikorum.domains.admin.service import staff
+
+    roles = authority(key)
     try:
-        await staff(session, actor, *roles)
+        await staff(session, actor, Cap.SWITCHES_REQUEST_MONEY if SWITCHES[key].money else Cap.SWITCHES_REQUEST)
     except Forbidden as exc:
-        raise Forbidden("Only a Platform Admin" + (" or Financial Operations" if s.money else "") + " can change this switch") from exc
-    actor.require_step_up()
+        raise Forbidden("Only a Platform Admin" + (" or Financial Operations" if SWITCHES[key].money else "")
+                        + " can change this switch") from exc
+    return roles
+
+
+async def apply_switch(session: AsyncSession, key: str, paused: bool, reason: str, changed_by: uuid.UUID) -> dict:
+    """Carries out an approved change (admin/approvals.py). ``changed_by`` is the person who asked for it."""
+    authority(key)
     row = await session.scalar(select(FeatureSwitch).where(FeatureSwitch.key == key).with_for_update())
     if row is None:
         row = FeatureSwitch(id=uuid.uuid4(), key=key, paused=False)
         session.add(row)
     changed = row.paused != paused
-    row.paused, row.reason, row.changed_by = paused, reason.strip(), actor.identity_id
+    row.paused, row.reason, row.changed_by = paused, reason.strip(), changed_by
     await session.flush()
     if changed:
         record_audit(session, "admin.switch." + ("paused" if paused else "resumed"), object_type="FeatureSwitch",

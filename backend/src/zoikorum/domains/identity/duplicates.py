@@ -16,13 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from zoikorum.domains.identity.models import DuplicateSuspicion, Identity
 from zoikorum.domains.identity.schemas import DuplicateAnswerIn, DuplicateOut, DuplicateResolveIn
 from zoikorum.shared import clock
-from zoikorum.shared.auth import Actor, PlatformRole
+from zoikorum.shared.auth import Actor
+from zoikorum.shared.capabilities import Cap
 from zoikorum.shared.errors import Conflict, NotFound, ValidationFailed
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_event
 from zoikorum.shared.http import page_of, paginate
-
-RESOLVERS = (PlatformRole.PLATFORM_ADMIN, PlatformRole.TS_ANALYST)
 
 
 def _evt(session: AsyncSession, event_type: str, d: DuplicateSuspicion, **extra) -> None:
@@ -93,7 +92,7 @@ async def answer(session: AsyncSession, actor: Actor, suspicion_id: uuid.UUID, b
 
 
 async def queue(session: AsyncSession, actor: Actor, cursor: str | None = None, limit: int | None = None) -> dict:
-    actor.require_platform_role(*RESOLVERS)
+    actor.require_capability(Cap.IDENTITY_CASES_READ)
     stmt, lim = paginate(select(DuplicateSuspicion).where(DuplicateSuspicion.status.in_(("OPEN", "ANSWERED"))),
                          DuplicateSuspicion, cursor, limit, oldest_first=True)
     rows = (await session.scalars(stmt)).all()
@@ -103,7 +102,7 @@ async def queue(session: AsyncSession, actor: Actor, cursor: str | None = None, 
 
 async def resolve(session: AsyncSession, actor: Actor, suspicion_id: uuid.UUID, body: DuplicateResolveIn) -> DuplicateOut:
     """Support decision. CONFIRMED closes the duplicate account (``keepIdentityId`` stays); NOT_DUPLICATE dismisses."""
-    actor.require_platform_role(*RESOLVERS)
+    actor.require_capability(Cap.IDENTITY_CASES_RESOLVE)
     actor.require_step_up()
     d = await session.get(DuplicateSuspicion, suspicion_id, with_for_update=True)
     if d is None:

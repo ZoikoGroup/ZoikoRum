@@ -195,7 +195,8 @@ async def login(session: AsyncSession, credential: dict, user_agent: str | None,
     if portal == "customer" and staff:
         return service.LoginFailure("Staff accounts sign in on the staff sign-in page.", "USE_STAFF_SIGN_IN")
     identity.failed_login_count, identity.locked_until = 0, None
-    pair = await service._start_session(session, identity, AuthStrength.PASSKEY, user_agent)
+    pair = await service._start_session(session, identity, AuthStrength.PASSKEY, user_agent,
+                                        audience="ADMIN" if portal == "staff" else "APP")
     service._evt(session, E.AUTHENTICATION_SUCCEEDED, identity, authStrength=AuthStrength.PASSKEY)
     return AuthOut(tokens=pair, user=service.to_out(identity, await service._links(session, identity.id)))
 
@@ -227,11 +228,11 @@ async def step_up(session: AsyncSession, actor: Actor, credential: dict, user_ag
         service._evt(session, E.AUTHENTICATION_FAILED, identity, reason="BAD_PASSKEY_STEP_UP", lockedUntil=identity.locked_until)
         return service.LoginFailure("The passkey could not be verified", "PASSKEY_INVALID")
     identity.failed_login_count = 0
-    family = None
+    family, audience = None, "APP"
     if actor.session_id:
         old = await session.get(Session, actor.session_id)
-        family = old.family_id if old else None
-    pair = await service._start_session(session, identity, AuthStrength.PASSKEY, user_agent, family_id=family)
+        family, audience = (old.family_id, old.audience) if old else (None, "APP")
+    pair = await service._start_session(session, identity, AuthStrength.PASSKEY, user_agent, family_id=family, audience=audience)
     record_event(session, E.STEP_UP_COMPLETED, aggregate_type="Identity", aggregate_id=identity.id,
                  payload={"identityId": identity.id, "method": "PASSKEY"})
     return pair

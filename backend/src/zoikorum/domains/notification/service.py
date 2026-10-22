@@ -16,6 +16,7 @@ from zoikorum.domains.identity import facade as identity
 from zoikorum.domains.contract import facade as contract
 from zoikorum.domains.notification.schemas import PreferencesIO
 from zoikorum.shared.auth import Actor, OrgRole
+from zoikorum.shared.capabilities import destination_route
 from zoikorum.shared.event_catalog import E, ALL_EVENTS, domain_of
 from zoikorum.shared.events import record_event, record_audit
 from zoikorum.shared import clock
@@ -84,6 +85,11 @@ EVENT_TITLES = {
     E.SESSION_CREATED: 'New sign-in to your account', E.TRUST_TIER_NUDGE: 'Verify to work with this buyer',
     E.USER_REPORT_SUBMITTED: 'Report received', E.USER_REPORT_CLOSED: 'Your report was reviewed',
     E.SUPPORT_REQUEST_ANSWERED: 'Support replied to your request', E.SUPPORT_REQUEST_RESOLVED: 'Your support request was resolved',
+    E.CASE_ASSIGNED: 'A case was assigned to you',
+    # Staff maker-checker (admin/approvals.py): approvers hear about new requests, the requester about the outcome.
+    E.STAFF_APPROVAL_REQUESTED: 'A staff action is waiting for your approval', E.STAFF_APPROVAL_REJECTED: 'Your request was rejected',
+    E.STAFF_APPROVAL_APPLIED: 'Your request was approved and applied', E.STAFF_APPROVAL_FAILED: 'Your approved request could not be applied',
+    E.STAFF_APPROVAL_EXPIRED: 'Your request expired without a decision', E.PLATFORM_ROLE_EXPIRED: 'A time-limited staff role ended',
 }
 # Always shown in the app (email still follows the person's preferences): disputes and money that needs action.
 MUST_SEE = frozenset({E.PAYMENT_FAILED, E.MILESTONE_FUNDING_REVERSED, E.REFUND_FAILED, E.ESCROW_RELEASE_BLOCKED, E.ESCROW_RELEASE_ESCALATED, E.PAYOUT_FAILED,
@@ -136,8 +142,14 @@ def target_url(event, recipient, professional_identity):
     p = event.payload
     if event.eventType in (E.DATA_REQUEST_CREATED, E.DATA_REQUEST_COMPLETED, E.DATA_REQUEST_BLOCKED, E.DATA_REQUEST_CANCELLED):
         return '/app/settings'  # Settings > Privacy
+    if event.eventType == E.PLATFORM_ROLE_EXPIRED:
+        return destination_route('D01')  # staff: Command Center
     if domain_of(event.eventType) == 'identity':
         return '/app/security'
+    if event.eventType.startswith('zoikorum.admin.approval_request.'):
+        return destination_route('APPROVALS') + '?request=' + str(p.get('approvalRequestId') or '')
+    if event.eventType == E.CASE_ASSIGNED:
+        return destination_route('D02')  # staff: My Work Queue
     if domain_of(event.eventType) == 'admin':
         return '/app/safety'
     if event.eventType == E.OPEN_BRIEF_INTEREST:

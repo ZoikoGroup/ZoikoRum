@@ -19,15 +19,15 @@ from zoikorum.domains.escrow import facade as escrow_facade
 from zoikorum.domains.payments import service
 from zoikorum.domains.payments.models import OpsResolution, PaymentIntent, Payout, PayoutAccount, Refund
 from zoikorum.domains.payments.providers import get_provider
-from zoikorum.domains.payments.schemas import OpsItemOut, OpsResolveIn, OpsWorklistOut
+from zoikorum.domains.payments.schemas import OpsItemOut, OpsWorklistOut
 from zoikorum.domains.professional import facade as professional_facade
 from zoikorum.shared import clock
-from zoikorum.shared.auth import Actor, PlatformRole
+from zoikorum.shared.auth import Actor
+from zoikorum.shared.capabilities import Cap
 from zoikorum.shared.errors import Conflict, DomainError, NotFound
 from zoikorum.shared.events import record_audit
 from zoikorum.shared.money import MoneyDTO
 
-STAFF = (PlatformRole.FINANCIAL_OPS, PlatformRole.PLATFORM_ADMIN)
 WAITING_TOO_LONG = timedelta(days=14)  # a payout still waiting for the professional's account after this is chased
 
 
@@ -41,7 +41,7 @@ async def _names(session: AsyncSession, contract_id, organization_id=None, profe
 
 
 async def worklist(session: AsyncSession, actor: Actor, include_resolved: bool = False) -> OpsWorklistOut:
-    actor.require_platform_role(*STAFF)
+    actor.require_capability(Cap.FINEXCEPTIONS_READ)
     resolved = {(r.item_kind, r.item_id): r for r in (await session.scalars(select(OpsResolution))).all()}
     items: list[OpsItemOut] = []
 
@@ -78,7 +78,7 @@ async def worklist(session: AsyncSession, actor: Actor, include_resolved: bool =
 
 async def retry(session: AsyncSession, actor: Actor, kind: str, item_id: uuid.UUID) -> OpsWorklistOut:
     """Retry a failed payout or refund now instead of waiting for the automatic retry. Needs a fresh confirmation."""
-    actor.require_platform_role(*STAFF)
+    actor.require_capability(Cap.PAYMENTS_OPS)
     actor.require_step_up()
     if kind == "PAYOUT":
         p = await session.get(Payout, item_id, with_for_update=True)
@@ -113,17 +113,20 @@ async def retry(session: AsyncSession, actor: Actor, kind: str, item_id: uuid.UU
     return await worklist(session, actor)
 
 
-async def resolve(session: AsyncSession, actor: Actor, kind: str, item_id: uuid.UUID, body: OpsResolveIn) -> OpsWorklistOut:
-    """Close an item by hand with what happened (e.g. refunded by bank transfer, loss written off). Append-only."""
-    actor.require_platform_role(*STAFF)
-    actor.require_step_up()
+async def check_resolution(session: AsyncSession, kind: str, item_id: uuid.UUID) -> None:
+    """A manual resolution must name a known kind of item that is not resolved yet (checked on request and on apply)."""
     if kind not in ("PAYOUT", "REFUND", "CHARGEBACK_LOSS"):
         raise NotFound("Unknown item")
     if await session.scalar(select(OpsResolution.id).where(OpsResolution.item_kind == kind, OpsResolution.item_id == item_id)):
         raise Conflict("This item was already resolved", code="ALREADY_RESOLVED")
-    session.add(OpsResolution(item_kind=kind, item_id=item_id, outcome=body.outcome, note=body.note.strip(),
-                              resolved_by=actor.identity_id))
+
+
+async def apply_resolution(session: AsyncSession, kind: str, item_id: uuid.UUID, outcome: str, note: str,
+                           resolved_by: uuid.UUID, approved_by: uuid.UUID) -> None:
+    """Close an item by hand with what happened (e.g. refunded by bank transfer, loss written off). Append-only. Only
+    ever called for a request a second member of Financial Operations approved (admin/approvals.py)."""
+    await check_resolution(session, kind, item_id)
+    session.add(OpsResolution(item_kind=kind, item_id=item_id, outcome=outcome, note=note.strip(), resolved_by=resolved_by))
     record_audit(session, "payments.ops.resolved", object_type=kind.title(), object_id=item_id,
-                 details={"outcome": body.outcome, "note": body.note.strip()})
+                 details={"outcome": outcome, "note": note.strip(), "requestedBy": str(resolved_by), "approvedBy": str(approved_by)})
     await session.flush()
-    return await worklist(session, actor)
