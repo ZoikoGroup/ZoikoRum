@@ -5,6 +5,7 @@ useDefault = true
 [allowlist]
 description = "Example values in the product documents (e.g. Idempotency-Key: buyer_123-escrow_123-ms_001), and made-up test values"
 # The product documents were removed from the repository but stay in its history, which the scan reads.
-paths = ['''docs/product/text/.*\.md''']
+# backend/tests/test_redaction.py: made-up tokens, keys and a fake JWT that the test proves are hidden from staff screens.
+paths = ['''docs/product/text/.*\.md''', '''backend/tests/test_redaction\.py''']
 # backend/tests/test_push.py: the "auth" value of a made-up browser push subscription (sending is replaced in the test).
 regexes = ['''^tBHItJI5svbpez7KI4CCXg$''']
