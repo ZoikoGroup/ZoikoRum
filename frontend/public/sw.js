@@ -3,7 +3,7 @@ self.addEventListener('push', (event) => {
   let data = {}
   try { data = event.data ? event.data.json() : {} } catch { data = { title: 'Zoikorum', body: event.data ? event.data.text() : '' } }
   event.waitUntil(self.registration.showNotification(data.title || 'Zoikorum', {
-    body: data.body || '', tag: data.tag, icon: '/logo.png', data: { url: data.url || '/' },
+    body: data.body || '', tag: data.tag, icon: '/icon-192.png', badge: '/favicon.png', data: { url: data.url || '/' },
   }))
 })
 
