@@ -37,11 +37,11 @@ On failure, `test-results/` holds screenshots and a trace (`npx playwright show-
 | `/enterprise` | enterprise buyers | Target of the site's "Enterprise Access" button |
 | `/forgot-password`, `/reset-password`, `/confirm-email` | everyone | Account recovery and email confirmation |
 | `/app/buyer` · `/app/professional` · `/app/firm` · `/app/enterprise` | by account role | Role workspaces (summary cards fill in later steps) |
-| `/app/ops`, `/app/ops/staff` | platform staff / Platform Admin | Operations home; grant/revoke staff roles (step-up MFA) |
-| `/app/ops/reconciliation` | Financial Ops, Platform Admin | Nightly reconciliation results per day; re-run a day; mismatch details |
-| `/app/ops/users` | Platform Admin, T&S analyst | Every account: search, role and status filters, last sign-in; "Open safety case" to restrict one (audited) |
-| `/app/ops/duplicates` | Platform Admin, T&S analyst | Possible duplicate accounts (same ID document): keep one, close the other, or dismiss |
-| `/app/ops/taxonomy` | Platform Admin | Specializations suggested by professionals: approve, merge into an existing one, or reject |
+| `/platform-admin/command-center`, `/platform-admin/staff-access-control` | platform staff / Platform Admin | Operations home; grant/revoke staff roles (step-up MFA) |
+| `/platform-admin/reconciliation` | Financial Ops, Platform Admin | Nightly reconciliation results per day; re-run a day; mismatch details |
+| `/platform-admin/accounts-organizations` | Platform Admin, T&S analyst | Every account: search, role and status filters, last sign-in; "Open safety case" to restrict one (audited) |
+| `/platform-admin/duplicate-identity-cases` | Platform Admin, T&S analyst | Possible duplicate accounts (same ID document): keep one, close the other, or dismiss |
+| `/platform-admin/taxonomy-standards` | Platform Admin | Specializations suggested by professionals: approve, merge into an existing one, or reject |
 | `/app/compare?ids=` | Buyer, Enterprise | Shared comparison of up to 3 professionals (signed-in link) |
 | `/app/account`, `/app/security` | signed in | Roles held, add Buyer/Professional role, set up two-step verification |
 
@@ -71,7 +71,7 @@ On failure, `test-results/` holds screenshots and a trace (`npx playwright show-
 |---|---|---|
 | `/app/professional/verification` | Professional | Trust tier, the five verification areas and why; start identity, jurisdiction and insurance checks; submit documents |
 | `/app/firm/verification` | Firm Admin | Start and follow the firm-registration check |
-| `/app/ops/verification` | Compliance Officer | Review queue: evidence, decision (verified / more info / not verified) with step-up MFA |
+| `/platform-admin/verification-center` | Compliance Officer | Review queue: evidence, decision (verified / more info / not verified) with step-up MFA |
 
 Documents: the browser computes each file's SHA-256; only name, size and fingerprint are sent until secure storage is connected.
 
@@ -80,7 +80,7 @@ Documents: the browser computes each file's SHA-256; only name, size and fingerp
 | Route | Who | Purpose |
 |---|---|---|
 | `/professionals` | anyone (no sign-in) | Browse and filter published professionals; each result shows its Trust Tier and why it matched. Filters live in the URL |
-| `/app/buyer`, `/app/enterprise`, `/app/professional`, `/app/firm`, `/app/ops` | by role | One dashboard design: greeting, summary cards, pending actions with priority, plus role panels (recent activity, verified professionals, verification). Only real data; future areas say when they arrive |
+| `/app/buyer`, `/app/enterprise`, `/app/professional`, `/app/firm`, `/platform-admin/command-center` | by role | One dashboard design: greeting, summary cards, pending actions with priority, plus role panels (recent activity, verified professionals, verification). Only real data; future areas say when they arrive |
 
 ## Customer portal (management designs; built)
 
@@ -99,7 +99,7 @@ an explanation of how the step will work. Nothing is invented: no wallet balance
 | `/app/professional/engagements`, `/app/professional/engagements/:id` | Professional | Countersign, deliver milestones (note + file fingerprints), resubmit after revision |
 | `/app/payments` | Buyer, Enterprise | Payments & Protection: escrow per engagement, payments into escrow, invoices with printable receipts, CSV export (test mode) |
 | `/app/professional/earnings` | Professional | Payout account (two-step), payouts with gross / fee / net |
-| `/app/disputes`, `/app/professional/disputes`, `/app/ops/disputes`, `/app/disputes/:id` | Parties; Mediator / Legal / Platform Admin | Raise a dispute from an engagement; evidence, structured proposals, escalation, mediation, two-person platform decision, decision package and timeline |
+| `/app/disputes`, `/app/professional/disputes`, `/platform-admin/dispute-resolution`, `/app/disputes/:id` | Parties; Mediator / Legal / Platform Admin | Raise a dispute from an engagement; evidence, structured proposals, escalation, mediation, two-person platform decision, decision package and timeline |
 | `/app/messages` | Buyer, Enterprise | Layout until messaging exists |
 | `/app/organisation?tab=` | Buyer, Enterprise | Profile (name, industry, time zone), members & access, roles & authority, billing contacts, audit log + CSV export |
 | `/app/verification` | Buyer, Enterprise | Verification status of the professionals on your shortlist; what each check and Tier means |

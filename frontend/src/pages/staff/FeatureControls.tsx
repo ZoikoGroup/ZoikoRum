@@ -1,16 +1,17 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { submittedNotice, type ApprovalRequest } from '../../api/approvals'
 import { api } from '../../api/client'
-import { useAuth } from '../../auth/AuthContext'
+import { useCapabilities } from '../../auth/capabilities'
 import { ErrorAlert, useStepUp } from '../../components/ui'
 import { Icon } from '../../components/dashboard'
 import {
   AdminHeader, AdminKpi, Callout, CountTabs, DetailPanel, Facts, FilterBar, HBars, KpiStrip, ListDetail, MetricList, Panel, PanelRow, Pill,
-  StackBar, TableFoot, shortDateTime,
-} from '../../components/admin'
+  StackBar, TableFoot, shortDateTime,pickRow } from '../../components/admin'
 
 /* Feature Controls (design 68): operational switches (pause one kind of action at once) and feature flags (gradual
    rollout). Sources: GET/PUT /v1/admin/switches, GET/PUT /v1/admin/flags, GET /v1/admin/flags/{key}/fairness. Every
-   change needs two-step sign-in (step-up) and a reason, and is audited by the server. */
+   change needs two-step sign-in (step-up) and a reason, and is audited by the server. A switch change is a
+   maker-checker request: it takes effect only when a second person with the same authority approves it (Approvals). */
 
 interface OpsSwitch { key: string; label: string; effect: string; money: boolean; paused: boolean; reason: string | null; changedAt: string | null }
 interface Flag {
@@ -23,8 +24,8 @@ type TabKey = 'switches' | 'paused' | 'money' | 'flags'
 type Sel = { type: 'switch' | 'flag'; key: string } | null
 
 export default function FeatureControls() {
-  const { user } = useAuth()
-  const admin = !!user?.platformRoles.includes('PLATFORM_ADMIN')
+  const { has } = useCapabilities()
+  const admin = has('flags.manage')  // feature flags (Platform Admin)
   const [switches, setSwitches] = useState<OpsSwitch[] | null>(null)
   const [flags, setFlags] = useState<Flag[] | null>(null)
   const [error, setError] = useState<unknown>(null)
@@ -44,7 +45,7 @@ export default function FeatureControls() {
   const sw = switches ?? []
   const fl = flags ?? []
   const paused = sw.filter((s) => s.paused)
-  const canChange = (s: OpsSwitch) => admin || s.money
+  const canChange = (s: OpsSwitch) => has(s.money ? 'switches.request_money' : 'switches.request')
   const partial = fl.filter((f) => f.rolloutPct > 0 && f.rolloutPct < 100).length
   const s = q.trim().toLowerCase()
   const match = (...v: string[]) => !s || v.some((x) => x.toLowerCase().includes(s))
@@ -118,7 +119,7 @@ export default function FeatureControls() {
                     {switches === null && <tr><td colSpan={5} className="empty-row">Loading switches…</td></tr>}
                     {switches && shownSwitches.length === 0 && <tr><td colSpan={5} className="empty-row">No switches here.</td></tr>}
                     {shownSwitches.map((x) => (
-                      <tr key={x.key} className={`pick ${selSwitch?.key === x.key ? 'selected' : ''}`} onClick={() => pick({ type: 'switch', key: x.key })}>
+                      <tr {...pickRow} key={x.key} className={`pick ${selSwitch?.key === x.key ? 'selected' : ''}`} onClick={() => pick({ type: 'switch', key: x.key })}>
                         <td><div className="cell-main">{x.label}</div><div className="cell-sub">{x.key}</div></td>
                         <td className="small">{x.effect}</td>
                         <td className="small">{x.money ? 'Platform Admin or Financial Ops' : 'Platform Admin'}</td>
@@ -135,11 +136,11 @@ export default function FeatureControls() {
                 </table>
               ) : (
                 <table className="data">
-                  <thead><tr><th>Flag</th><th>Rollout</th><th>Named organisations</th><th>Last change</th><th><span className="sr-only">Change</span></th></tr></thead>
+                  <thead><tr><th scope="col">Flag</th><th scope="col">Rollout</th><th scope="col">Named organisations</th><th scope="col">Last change</th><th scope="col"><span className="sr-only">Change</span></th></tr></thead>
                   <tbody>
                     {shownFlags.length === 0 && <tr><td colSpan={5} className="empty-row">No flags here.</td></tr>}
                     {shownFlags.map((f) => (
-                      <tr key={f.key} className={`pick ${selFlag?.key === f.key ? 'selected' : ''}`} onClick={() => pick({ type: 'flag', key: f.key })}>
+                      <tr {...pickRow} key={f.key} className={`pick ${selFlag?.key === f.key ? 'selected' : ''}`} onClick={() => pick({ type: 'flag', key: f.key })}>
                         <td><div className="cell-main">{f.label}{f.rankingExperiment && <> <Pill tone="violet">ranking experiment</Pill></>}</div><div className="cell-sub">{f.description}</div></td>
                         <td>{f.rolloutPct}%</td><td>{f.organizationIds.length}</td>
                         <td className="small">{f.changedAt ? `${shortDateTime(f.changedAt)}: ${f.reason}` : '—'}</td>
@@ -156,9 +157,9 @@ export default function FeatureControls() {
         detail={selSwitch ? (
           <SwitchDetail key={selSwitch.key} s={selSwitch} allowed={canChange(selSwitch)} editing={editing} setEditing={setEditing} onClose={() => setSel(null)}
             save={(reason) => run(async () => {
-              await api(`/v1/admin/switches/${selSwitch.key}`, { method: 'PUT', body: { paused: !selSwitch.paused, reason } })
+              const request = await api<ApprovalRequest>(`/v1/admin/switches/${selSwitch.key}`, { method: 'PUT', body: { paused: !selSwitch.paused, reason } })
               setEditing(false); await reload()
-              setNotice(`${selSwitch.label} ${selSwitch.paused ? 'switched back on' : 'paused'}.`)
+              setNotice(`${selSwitch.paused ? 'Switching back on' : 'Pausing'} ${selSwitch.label}: ${submittedNotice(request)}`)
             })} />
         ) : selFlag ? (
           <FlagDetail key={selFlag.key} f={selFlag} editing={editing} setEditing={setEditing} onClose={() => setSel(null)} onError={setError}
@@ -195,10 +196,11 @@ function SwitchDetail({ s, allowed, editing, setEditing, onClose, save }: {
           <label className="small" htmlFor={`reason-${s.key}`}>Reason (recorded in the audit trail)</label>
           <input id={`reason-${s.key}`} className="input" value={reason} onChange={(e) => setReason(e.target.value)} minLength={10} maxLength={500} required />
           <div style={{ display: 'flex', gap: 6 }}>
-            <button className="btn btn-primary btn-sm">{s.paused ? 'Switch on' : 'Pause now'}</button>
+            <button className="btn btn-primary btn-sm">{s.paused ? 'Request switch on' : 'Request pause'}</button>
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing(false)}>Cancel</button>
           </div>
-          <p className="adm-foot-note">You will be asked for a fresh two-step code.</p>
+          <p className="adm-foot-note">You will be asked for a fresh two-step code. The change applies once another
+            {s.money ? ' Platform Admin or Financial Operations member' : ' Platform Admin'} approves it.</p>
         </form>
       )}
     </DetailPanel>
@@ -227,7 +229,7 @@ function FlagDetail({ f, editing, setEditing, onClose, onError, save }: {
       {fairness && <>
         <Callout tone={fairness.passes ? 'green' : 'amber'} title={`Fairness check ${fairness.passes ? 'passes' : 'fails'}`}>
           No group may lose more than {Math.round(fairness.maxRelativeDrop * 100)}% of its share of top-10 search places.</Callout>
-        <table className="data small"><thead><tr><th>Group</th><th>Share now</th><th>With the change</th><th /></tr></thead>
+        <table className="data small"><thead><tr><th scope="col">Group</th><th scope="col">Share now</th><th scope="col">With the change</th><th scope="col" /></tr></thead>
           <tbody>{fairness.groups.map((g) => <tr key={g.group}><td>{g.group}</td><td>{Math.round(g.before * 100)}%</td>
             <td>{Math.round(g.after * 100)}%</td><td><Pill tone={g.ok ? 'green' : 'amber'}>{g.ok ? 'ok' : 'loses too much'}</Pill></td></tr>)}</tbody></table>
       </>}

@@ -11,6 +11,7 @@ from zoikorum.domains.verification.schemas import (
     RevokeIn, SecondLookIn,
 )
 from zoikorum.shared.auth import CurrentActor
+from zoikorum.shared.capabilities import Cap
 from zoikorum.shared.db import DbSession
 from zoikorum.shared.http import Page
 
@@ -22,7 +23,7 @@ async def decision_reasons(actor: CurrentActor, verificationType: str | None = N
     """Standard reasons for review decisions (staff), each with the message pre-filled for the professional."""
     from zoikorum.domains.verification.reasons import reasons_for
 
-    actor.require_platform_role(*service.REVIEWERS)
+    actor.require_capability(Cap.VERIFICATION_READ)
     return reasons_for(verificationType)
 
 

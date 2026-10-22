@@ -7,6 +7,7 @@ from datetime import timedelta
 import pytest
 from fastapi import APIRouter, Depends
 
+from approvalhelp import approved
 from zoikorum.shared import clock
 from zoikorum.shared.auth import Persona, PlatformRole, require_roles
 
@@ -103,24 +104,26 @@ async def test_staff_roles_need_mfa_session(client, make_user):
 
 async def test_admin_grants_lists_and_revokes_staff_roles(client, make_user):
     admin = await make_user("admin", platform_roles=(PlatformRole.PLATFORM_ADMIN,))
+    second = await make_user("second", platform_roles=(PlatformRole.PLATFORM_ADMIN,))
     target = await make_user("analyst")
     await admin.step_up()
 
     r = await client.get("/v1/admin/identities/lookup", params={"email": target.email}, headers=admin.h)
     assert r.status_code == 200 and r.json()["id"] == str(target.id)
 
-    r = await client.post(f"/v1/admin/identities/{target.id}/platform-roles", headers=admin.h, json={"role": "TS_ANALYST"})
-    assert r.status_code == 200 and r.json()["platformRoles"] == ["TS_ANALYST"]
+    why = {"justification": "Joins the Trust & Safety rota this week"}
+    r = await client.post(f"/v1/admin/identities/{target.id}/platform-roles", headers=admin.h, json={"role": "TS_ANALYST", **why})
+    assert (await approved(client, r, second))["result"]["platformRoles"] == ["TS_ANALYST"]  # granted only on approval
 
     staff = (await client.get("/v1/admin/staff", headers=admin.h)).json()
-    assert {s["email"] for s in staff} == {admin.email, target.email}
+    assert {s["email"] for s in staff} == {admin.email, second.email, target.email}
 
-    r = await client.delete(f"/v1/admin/identities/{target.id}/platform-roles/TS_ANALYST", headers=admin.h)
-    assert r.status_code == 200 and r.json()["platformRoles"] == []
+    r = await client.delete(f"/v1/admin/identities/{target.id}/platform-roles/TS_ANALYST", headers=admin.h, params=why)
+    assert (await approved(client, r, second))["result"]["platformRoles"] == []
     # Revocation kills the target's sessions so the role disappears immediately.
     assert (await client.post("/v1/auth/refresh", json={"refreshToken": target.refresh_token})).status_code == 401
 
-    r = await client.delete(f"/v1/admin/identities/{admin.id}/platform-roles/PLATFORM_ADMIN", headers=admin.h)
+    r = await client.delete(f"/v1/admin/identities/{admin.id}/platform-roles/PLATFORM_ADMIN", headers=admin.h, params=why)
     assert r.status_code == 409 and r.json()["code"] == "SELF_DEMOTION"
 
 

@@ -27,6 +27,9 @@ class Identity(Base, UUIDPk, Timestamps, Versioned):
     country: Mapped[str] = mapped_column(String(2), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="ACTIVE")  # ACTIVE|SUSPENDED|DELETED
     platform_roles: Mapped[list[str]] = mapped_column(ARRAY(String(50)), nullable=False, default=list)
+    # Just-in-time staff roles: {role: ISO end time}. A role listed here stops counting at that time and is then removed
+    # (identity/handlers.py); roles not listed are permanent until revoked.
+    platform_role_expiry: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
     # Marketplace account roles (shared.auth.Persona) - BUYER, PROFESSIONAL, FIRM_ADMIN, ENTERPRISE_ADMIN.
     personas: Mapped[list[str]] = mapped_column(ARRAY(String(30)), nullable=False, default=list)
     primary_persona: Mapped[str | None] = mapped_column(String(30))
@@ -47,6 +50,14 @@ class Identity(Base, UUIDPk, Timestamps, Versioned):
     language: Mapped[str] = mapped_column(String(10), nullable=False, default="en", server_default="en")
     time_zone: Mapped[str | None] = mapped_column(String(64))
 
+    def live_platform_roles(self, now: datetime) -> list[str]:
+        """Staff roles in force now: a suspended account has none, and a time-limited grant past its end time no longer counts
+        (even before the expiry timer has removed it)."""
+        if self.status != "ACTIVE":
+            return []
+        expiry = self.platform_role_expiry or {}
+        return sorted(r for r in (self.platform_roles or []) if r not in expiry or datetime.fromisoformat(expiry[r]) > now)
+
 
 class Session(Base, UUIDPk, CreatedAt):
     """Refresh-token session. Refresh tokens rotate; reuse revokes the family."""
@@ -65,6 +76,9 @@ class Session(Base, UUIDPk, CreatedAt):
     rotated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     user_agent: Mapped[str | None] = mapped_column(String(500))
+    # ADMIN: signed in on the staff sign-in page, the only sessions in which platform roles take effect. APP: everything
+    # else (customer sign-in, SSO, API clients). Refreshes and step-ups keep the audience of the sign-in they continue.
+    audience: Mapped[str] = mapped_column(String(10), nullable=False, default="APP", server_default="APP")
 
 
 class Passkey(Base, UUIDPk, CreatedAt):

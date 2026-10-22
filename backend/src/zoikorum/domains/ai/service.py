@@ -50,10 +50,10 @@ def prompt_out(p):
 async def create_prompt(session, actor, body):
     from zoikorum.domains.admin import facade as admin
     from zoikorum.domains.identity import facade as identity
-    from zoikorum.shared.auth import PlatformRole
+    from zoikorum.shared.capabilities import Cap, capabilities_for
     from zoikorum.shared.errors import Forbidden
-    actor.require_platform_role(PlatformRole.AI_SAFETY_REVIEWER); actor.require_step_up()
-    if PlatformRole.AI_SAFETY_REVIEWER not in await identity.live_platform_roles(session, actor.identity_id):
+    actor.require_capability(Cap.AI_PROMPTS_MANAGE); actor.require_step_up()
+    if Cap.AI_PROMPTS_MANAGE not in capabilities_for(await identity.live_platform_roles(session, actor.identity_id)):
         raise Forbidden("Requires live AI Safety Reviewer authority")
     from sqlalchemy import text
     await session.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": f"prompt:{body.promptKey}"})
@@ -66,10 +66,10 @@ async def create_prompt(session, actor, body):
 
 async def approve_prompt(session, actor, prompt_id):
     from zoikorum.domains.identity import facade as identity
-    from zoikorum.shared.auth import PlatformRole
+    from zoikorum.shared.capabilities import Cap, capabilities_for
     from zoikorum.shared.errors import Forbidden
-    actor.require_platform_role(PlatformRole.AI_SAFETY_REVIEWER); actor.require_step_up()
-    if PlatformRole.AI_SAFETY_REVIEWER not in await identity.live_platform_roles(session, actor.identity_id):
+    actor.require_capability(Cap.AI_PROMPTS_MANAGE); actor.require_step_up()
+    if Cap.AI_PROMPTS_MANAGE not in capabilities_for(await identity.live_platform_roles(session, actor.identity_id)):
         raise Forbidden("Requires live AI Safety Reviewer authority")
     p = await session.get(PromptVersion, prompt_id, with_for_update=True)
     if not p:

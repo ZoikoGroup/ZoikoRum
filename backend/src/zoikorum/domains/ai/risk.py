@@ -15,7 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.domains.ai.models import RiskObservation
 from zoikorum.shared import clock
-from zoikorum.shared.auth import Actor, PlatformRole
+from zoikorum.shared.auth import Actor
+from zoikorum.shared.capabilities import Cap
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_event
 
@@ -75,7 +76,7 @@ async def observe(session: AsyncSession, event_id: uuid.UUID, subject_type: str,
 
 async def top(session: AsyncSession, actor: Actor, limit: int = 25) -> list[dict]:
     """Trust & Safety: the highest risk scores now."""
-    actor.require_platform_role(PlatformRole.TS_ANALYST, PlatformRole.RISK_LEAD, PlatformRole.PLATFORM_ADMIN)
+    actor.require_capability(Cap.SAFETY_RISK_READ)
     since = clock.now() - WINDOW
     subjects = (await session.execute(select(RiskObservation.subject_type, RiskObservation.identity_id).where(
         RiskObservation.created_at >= since, RiskObservation.kind != SCORE_FLAG).distinct())).all()
@@ -84,5 +85,5 @@ async def top(session: AsyncSession, actor: Actor, limit: int = 25) -> list[dict
 
 
 async def explain(session: AsyncSession, actor: Actor, subject_type: str, subject_id: uuid.UUID) -> dict:
-    actor.require_platform_role(PlatformRole.TS_ANALYST, PlatformRole.RISK_LEAD, PlatformRole.PLATFORM_ADMIN)
+    actor.require_capability(Cap.SAFETY_RISK_READ)
     return await score(session, subject_type, subject_id)

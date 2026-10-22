@@ -5,6 +5,7 @@ import { useAuth } from '../auth/AuthContext'
 import { ErrorAlert } from '../components/ui'
 import { ResendConfirmation } from '../components/ResendConfirmation'
 import { WELCOME_KEY } from '../lib/welcome'
+import { dashboardPath } from '../staffRoutes'
 
 /** Set by Join.tsx; shown on the first dashboard view after sign-up. */
 function readWelcome(): { confirmToken?: string | null } | null {
@@ -107,7 +108,7 @@ export function ForbiddenPage() {
         {needed.length ? `It is available to ${needed.join(' or ')} accounts.` : 'Your account roles do not include this area.'}{' '}
         If you think this is a mistake, ask your organization admin or contact support.
       </p>
-      {user && <Link className="btn btn-primary" to={`/app/${user.defaultDashboard}`}>Back to your dashboard</Link>}
+      {user && <Link className="btn btn-primary" to={dashboardPath(user)}>Back to your dashboard</Link>}
     </section>
   )
 }

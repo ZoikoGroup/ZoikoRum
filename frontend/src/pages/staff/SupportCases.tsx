@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import { SUPPORT_STATUS, SUPPORT_TOPICS, supportApi, type SupportRequest } from '../../api/support'
+import { CaseOwner, OwnerCell, useAssignments } from '../../components/CaseOwner'
 import { SupportThread } from '../../components/SupportThread'
 import { ErrorAlert } from '../../components/ui'
 import { Icon } from '../../components/dashboard'
 import {
   AdminHeader, AdminKpi, Callout, CountTabs, DetailPanel, Facts, FilterBar, FilterSelect, HBars, KpiStrip, ListDetail, MetricList, Panel,
-  PanelRow, Pill, StackBar, TableFoot, shortDateTime, type PillTone,
-} from '../../components/admin'
+  PanelRow, Pill, StackBar, TableFoot, shortDateTime, type PillTone, pickRow, useSelectedParam } from '../../components/admin'
 
 /* Support Cases (design 74): the support agents' queue. Sources: GET /v1/admin/support/requests (open: with our team
    and awaiting the customer; ?status=RESOLVED for resolved, newest 200), GET /v1/admin/support/requests/{id} and
@@ -26,12 +26,21 @@ export default function SupportCases() {
   const [q, setQ] = useState('')
   const [topic, setTopic] = useState('')
   const [selected, setSelected] = useState<SupportRequest | null>(null)
+  const [linkedId, setLinkedId] = useState<string | null>(null)
+  useSelectedParam(setLinkedId)
+  // Owner = the request's own assignee (assignedTo); the shared assignments add escalations and write the owner back to it.
+  const assigned = useAssignments(['SUPPORT_REQUEST'])
 
   const reload = useCallback(async () => {
     const [o, r] = await Promise.all([supportApi.queue(), supportApi.queue('RESOLVED')])
     setOpen(o); setResolved(r)
   }, [])
   useEffect(() => { reload().catch(setError) }, [reload])
+
+  useEffect(() => {  // a search result: open that request once the lists have loaded
+    const hit = linkedId ? [...(open ?? []), ...(resolved ?? [])].find((r) => r.id === linkedId) : undefined
+    if (hit) { setSelected(hit); setLinkedId(null) }
+  }, [linkedId, open, resolved])
 
   const active = open ?? []
   const done = resolved ?? []
@@ -103,17 +112,17 @@ export default function SupportCases() {
             <div className="adm-note">Late first answers first · no impersonation or financial actions</div>
             <div className="adm-table-wrap">
               <table className="data">
-                <thead><tr><th>Request</th><th>From</th><th>Topic</th><th>Status</th><th>Owner</th><th>First answer due</th></tr></thead>
+                <thead><tr><th scope="col">Request</th><th scope="col">From</th><th scope="col">Topic</th><th scope="col">Status</th><th scope="col">Owner</th><th scope="col">First answer due</th></tr></thead>
                 <tbody>
                   {open === null && <tr><td colSpan={6} className="empty-row">Loading requests…</td></tr>}
                   {open && shown.length === 0 && <tr><td colSpan={6} className="empty-row">No requests here.</td></tr>}
                   {shown.map((r) => (
-                    <tr key={r.id} className={`pick ${r.id === selected?.id ? 'selected' : ''}`} onClick={() => void pick(r)}>
+                    <tr {...pickRow} key={r.id} className={`pick ${r.id === selected?.id ? 'selected' : ''}`} onClick={() => void pick(r)}>
                       <td><div className="cell-id">{r.reference}</div><div className="cell-main">{r.subject}</div></td>
                       <td className="small">{r.requesterName ?? '—'}</td>
                       <td className="small">{topicLabel(r.topic)}</td>
                       <td><Pill tone={STATUS_TONE[r.status]}>{AGENT_STATUS[r.status]}</Pill></td>
-                      <td className="small">{r.assignedToName ?? 'Unassigned'}</td>
+                      <td><OwnerCell assignment={assigned.get('SUPPORT_REQUEST', r.id)} name={r.assignedToName} /></td>
                       <td className="small">{r.firstRespondedAt ? 'Answered'
                         : <span className={r.overdue ? 'late' : ''}>{shortDateTime(r.firstResponseDueAt)}{r.overdue ? ' · late' : ''}</span>}</td>
                     </tr>
@@ -136,9 +145,12 @@ export default function SupportCases() {
               ...(selected.context.errorReference ? [['Error reference', selected.context.errorReference] as [string, string]] : []),
               ['Customer sees', SUPPORT_STATUS[selected.status].label],
             ]} />
+            <CaseOwner key={selected.id} kind="SUPPORT_REQUEST" caseId={selected.id} assignment={assigned.get('SUPPORT_REQUEST', selected.id)}
+              nativeOwner={{ id: selected.assignedTo ?? null, name: selected.assignedToName }}
+              onChange={(a) => { assigned.put(a); void supportApi.agentGet(selected.id).then(setSelected).catch(setError); void reload().catch(setError) }} />
             <Callout tone="blue" title="Support boundary">No impersonation, forced acceptance or ledger edits. Point money, verification and safety questions to their teams.</Callout>
             <SupportThread request={selected} agent onReply={async (m, resolve) => {
-              setSelected(await supportApi.agentReply(selected.id, m, resolve)); await reload()
+              setSelected(await supportApi.agentReply(selected.id, m, resolve)); await reload(); assigned.reload()
             }} />
           </DetailPanel>
         )}

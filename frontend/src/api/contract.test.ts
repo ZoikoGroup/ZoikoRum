@@ -23,6 +23,7 @@ const MIRRORS: Record<string, string | string[]> = {
   SupportMessage: 'SupportMessageOut', SupportRequest: 'SupportRequestOut', VerificationCase: 'CaseOut', Appeal: 'AppealOut',
   AppealQueueItem: 'AppealQueueItemOut', QueueItem: 'QueueItemOut', Trust: 'TrustOut', TrustHistory: 'TrustHistoryOut',
   StoredFile: 'StoredFileOut', DeviceSession: 'SessionOut', Passkey: 'PasskeyOut', StaffMember: 'StaffMemberOut',
+  ApprovalRequest: 'ApprovalRequestOut', ApprovalSummary: 'ApprovalSummaryOut',
 }
 
 const here = dirname(fileURLToPath(import.meta.url))

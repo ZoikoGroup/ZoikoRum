@@ -25,7 +25,8 @@ from zoikorum.domains.messaging import facade as messaging_facade
 from zoikorum.domains.professional import facade as professional_facade
 from zoikorum.domains.review import facade as review_facade
 from zoikorum.shared import clock
-from zoikorum.shared.auth import Actor, PlatformRole
+from zoikorum.shared.auth import Actor
+from zoikorum.shared.capabilities import Cap
 from zoikorum.shared.errors import Conflict, NotFound, RateLimited, ValidationFailed
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_event
@@ -35,7 +36,6 @@ CATEGORY_LABEL = {"MISCONDUCT": "Professional misconduct", "FRAUD_OR_SCAM": "Fra
                   "MISREPRESENTATION": "False credentials or misrepresentation", "HARASSMENT_OR_ABUSE": "Harassment or abuse",
                   "OFF_PLATFORM_PAYMENT": "Asked to pay outside Zoikorum", "UNSAFE_OR_ILLEGAL": "Unsafe or illegal",
                   "FAKE_REVIEW": "Fake or abusive review", "OTHER": "Other"}
-SEE_CONFIDENTIAL = (PlatformRole.RISK_LEAD, PlatformRole.LEGAL)
 
 
 async def _resolve(session: AsyncSession, actor: Actor, body: ReportIn) -> tuple[str, uuid.UUID, str]:
@@ -134,7 +134,7 @@ async def mine(session: AsyncSession, actor: Actor) -> list[dict]:
 async def for_case(session: AsyncSession, actor: Actor, case_id: uuid.UUID) -> list[dict]:
     """Staff view of the reports behind a case. Confidential reporters are named only to Risk Lead and Legal."""
     rows = (await session.scalars(select(UserReport).where(UserReport.case_id == case_id).order_by(UserReport.created_at))).all()
-    sees_all = actor.has_platform_role(*SEE_CONFIDENTIAL)
+    sees_all = actor.has_capability(Cap.SAFETY_REPORTS_CONFIDENTIAL)
     people = await identity_facade.get_identities(session, [r.reporter_identity_id for r in rows])
     out = []
     for r in rows:

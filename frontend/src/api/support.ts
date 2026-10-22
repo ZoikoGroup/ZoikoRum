@@ -15,6 +15,7 @@ export interface SupportRequest {
   overdue: boolean
   resolvedAt: string | null
   requesterName: string | null
+  assignedTo?: string | null  // staff view: the owner (also set through /v1/admin/assignments)
   assignedToName: string | null
   messages: SupportMessage[]
   createdAt: string

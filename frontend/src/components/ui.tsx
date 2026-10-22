@@ -6,6 +6,7 @@ import { ApiError, tokens } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { passkeyCancelled, passkeysSupported, signWithPasskey } from '../lib/passkeys'
 import { PASSWORD_LABEL, passwordScore } from '../lib/password'
+import { dashboardPath } from '../staffRoutes'
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 const openDialogs: HTMLElement[] = []  // innermost last: only it answers Escape and keeps Tab inside
@@ -66,7 +67,7 @@ export function SiteHeader() {
           </nav>
           <div className="actions">
             {user ? (
-              <Link className="btn btn-primary btn-sm" to={`/app/${user.defaultDashboard}`}>Go to dashboard</Link>
+              <Link className="btn btn-primary btn-sm" to={dashboardPath(user)}>Go to dashboard</Link>
             ) : (
               <>
                 <Link className="btn btn-ghost btn-sm" to="/login">Sign In</Link>

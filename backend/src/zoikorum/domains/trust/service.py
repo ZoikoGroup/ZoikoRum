@@ -24,12 +24,12 @@ from zoikorum.domains.dispute import facade as dispute_facade
 from zoikorum.domains.proposal import facade as proposal_facade
 from zoikorum.shared import clock
 from zoikorum.shared.relay import schedule_timer
-from zoikorum.shared.auth import Actor, PlatformRole
+from zoikorum.shared.auth import Actor
+from zoikorum.shared.capabilities import Cap
 from zoikorum.shared.errors import NotFound
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import EventEnvelope, record_event
 
-OPERATORS = (PlatformRole.TS_ANALYST, PlatformRole.COMPLIANCE_OFFICER, PlatformRole.RISK_LEAD, PlatformRole.PLATFORM_ADMIN)
 _ADVERSE = {E.VERIFICATION_FAILED, E.VERIFICATION_EXPIRED, E.VERIFICATION_REVOKED}
 
 
@@ -169,8 +169,8 @@ async def _require_visible(session: AsyncSession, actor: Actor | None, professio
     """Raises if the caller may not see it. Returns True for the owner and Trust & Safety (full detail)."""
     pro = await professional_facade.get_professional(session, professional_id)
     own = bool(actor and pro and pro.identity_id == actor.identity_id)
-    if actor and not own and actor.has_platform_role(*OPERATORS):
-        actor.require_platform_role(*OPERATORS)  # also enforces an MFA session
+    if actor and not own and actor.has_capability(Cap.TRUST_RECORDS_READ):
+        actor.require_capability(Cap.TRUST_RECORDS_READ)  # also enforces an MFA session
         return True
     if pro is None or (not own and (owner_only or pro.status != "PUBLISHED")):
         raise NotFound("Professional not found")

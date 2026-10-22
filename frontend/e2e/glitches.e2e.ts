@@ -6,7 +6,8 @@ test('reviewer filters all cases by person and opens the correct case', async ({
   const first = await credentialInReview('Review Person Alpha')
   const second = await credentialInReview('Review Person Beta')
   await signIn(page, officer.email, { staff: true })
-  await page.goto('/app/ops/verification')
+  await page.goto('/app/ops/verification?from=bookmark')  // an old staff console address still opens the page
+  await expect(page).toHaveURL(/\/platform-admin\/verification-center\?from=bookmark$/)
   await expect(page.getByLabel('Professional or firm').locator(`option[value="PROFESSIONAL:${first.pro.id}"]`)).toHaveCount(1)
   await page.getByLabel('Professional or firm').selectOption(`PROFESSIONAL:${first.pro.id}`)
   await expect(page.getByRole('row').filter({ hasText: 'Review Person Alpha' })).toHaveCount(1)

@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { submittedNotice } from '../../api/approvals'
 import { authApi, PLATFORM_ROLES, ROLE_LABEL, type PlatformRole, type StaffMember } from '../../api/auth'
 import { useAuth } from '../../auth/AuthContext'
 import { ErrorAlert, Field, useStepUp } from '../../components/ui'
 import {
   AdminHeader, AdminKpi, Callout, CountTabs, DetailPanel, Facts, FilterBar, FilterSelect, HBars, Initials, KpiStrip, ListDetail, Panel,
-  PanelRow, Pill, StatusPill, TableFoot,
-} from '../../components/admin'
+  PanelRow, Pill, StatusPill, TableFoot, shortDateTime,pickRow } from '../../components/admin'
 
 /* Staff & Access Control (design 72), replacing StaffAdmin. Sources: GET /v1/admin/staff, GET /v1/admin/identities/lookup,
    POST/DELETE /v1/admin/identities/{id}/platform-roles. Platform roles are never self-assigned; every change asks for
-   a fresh two-step code and is audited. */
+   a fresh two-step code, is a maker-checker request that another Platform Admin approves (Approvals page) before it
+   applies, and is audited. A grant can be just-in-time: it ends on its own after the chosen time. */
 
 const ROLE_SCOPE: Record<PlatformRole, string> = {
   PLATFORM_ADMIN: 'System operations, staff roles, switches and flags',
@@ -29,6 +30,11 @@ const isPrivileged = (m: StaffMember) => m.platformRoles.some((r) => PRIVILEGED.
 
 type TabKey = 'all' | 'privileged' | 'nomfa' | 'inactive'
 
+/** Just-in-time access: how long a grant lasts ('' = permanent). */
+const DURATIONS: [string, string][] = [['1', '1 hour'], ['8', '8 hours'], ['24', '24 hours'], ['', 'Permanent']]
+const endsAt = (hours: string) => (hours ? new Date(Date.now() + Number(hours) * 3_600_000).toISOString() : null)
+const REASON_MIN = 10
+
 export default function StaffAccess() {
   const { user } = useAuth()
   const [staff, setStaff] = useState<StaffMember[] | null>(null)
@@ -36,6 +42,8 @@ export default function StaffAccess() {
   const [notice, setNotice] = useState('')
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<PlatformRole>('TS_ANALYST')
+  const [hours, setHours] = useState('8')
+  const [reason, setReason] = useState('')
   const [tab, setTab] = useState<TabKey>('all')
   const [q, setQ] = useState('')
   const [roleFilter, setRoleFilter] = useState('')
@@ -52,28 +60,28 @@ export default function StaffAccess() {
     setError(null); setNotice('')
     void run(async () => {
       const target = await authApi.lookup(email.trim())
-      await authApi.grantRole(target.id, role)
-      setNotice(`${ROLE_LABEL[role]} granted to ${target.email}.`)
-      setEmail('')
+      const request = await authApi.grantRole(target.id, role, reason.trim(), endsAt(hours))
+      setNotice(`${ROLE_LABEL[role]} for ${target.email}: ${submittedNotice(request)}`)
+      setEmail(''); setReason('')
       await load()
     })
   }
 
-  function grantTo(member: StaffMember, r: PlatformRole) {
+  function grantTo(member: StaffMember, r: PlatformRole, why: string, duration: string) {
     setError(null); setNotice('')
     void run(async () => {
-      await authApi.grantRole(member.id, r)
-      setNotice(`${ROLE_LABEL[r]} granted to ${member.email}.`)
+      const request = await authApi.grantRole(member.id, r, why, endsAt(duration))
+      setNotice(`${ROLE_LABEL[r]} for ${member.email}: ${submittedNotice(request)}`)
       await load()
     })
   }
 
-  function revoke(member: StaffMember, r: PlatformRole) {
-    if (!confirm(`Remove ${ROLE_LABEL[r]} from ${member.email}? They will be signed out everywhere.`)) return
+  function revoke(member: StaffMember, r: PlatformRole, why: string) {
+    if (!confirm(`Ask to remove ${ROLE_LABEL[r]} from ${member.email}? Once another Platform Admin approves, they are signed out everywhere.`)) return
     setError(null); setNotice('')
     void run(async () => {
-      await authApi.revokeRole(member.id, r)
-      setNotice(`${ROLE_LABEL[r]} removed from ${member.email}.`)
+      const request = await authApi.revokeRole(member.id, r, why)
+      setNotice(`Removing ${ROLE_LABEL[r]} from ${member.email}: ${submittedNotice(request)}`)
       await load()
     })
   }
@@ -92,7 +100,7 @@ export default function StaffAccess() {
   return (
     <>
       <AdminHeader crumb="Administration & support / Identity governance" title="Staff & Access Control"
-        subtitle="Grant and revoke internal platform roles. Roles are never self-assigned; every change asks for a fresh two-step code and is audited." />
+        subtitle="Ask to grant or revoke internal platform roles. Roles are never self-assigned; every change needs a fresh two-step code and a second Platform Admin's approval, and is audited." />
       <ErrorAlert error={error} />
       {notice && <div className="alert alert-success" role="status">{notice}</div>}
       {modal}
@@ -114,7 +122,7 @@ export default function StaffAccess() {
         <Panel title="Role holders" meta="Staff per role">
           <HBars rows={PLATFORM_ROLES.map((r) => ({ label: ROLE_LABEL[r], value: holders(r) }))} />
         </Panel>
-        <Panel title="Grant a staff role" meta="The person must already have a Zoikorum account">
+        <Panel title="Request a staff role" meta="The person must already have a Zoikorum account">
           <form onSubmit={grant}>
             <Field label="Account email" id="staff-email">
               <input id="staff-email" className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
@@ -124,7 +132,15 @@ export default function StaffAccess() {
                 {PLATFORM_ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
               </select>
             </Field>
-            <button className="btn btn-primary" disabled={!email}>Grant role</button>
+            <Field label="Access for" id="staff-duration">
+              <select id="staff-duration" className="input" value={hours} onChange={(e) => setHours(e.target.value)}>
+                {DURATIONS.map(([v, l]) => <option key={l} value={v}>{l}</option>)}
+              </select>
+            </Field>
+            <Field label="Reason (the approver reads it)" id="staff-reason">
+              <textarea id="staff-reason" className="input" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
+            </Field>
+            <button className="btn btn-primary" disabled={!email || reason.trim().length < REASON_MIN}>Request approval</button>
           </form>
         </Panel>
       </PanelRow>
@@ -141,17 +157,18 @@ export default function StaffAccess() {
             <FilterBar search={q} onSearch={setQ} placeholder="Search name, email or role…">
               <FilterSelect label="Role" value={roleFilter} onChange={setRoleFilter} options={PLATFORM_ROLES.map((r) => [r, ROLE_LABEL[r]])} />
             </FilterBar>
-            <div className="adm-note">No self-grants · removing a role signs the person out everywhere</div>
+            <div className="adm-note">No self-grants · every change needs a second Platform Admin · removing a role signs the person out everywhere</div>
             <div className="adm-table-wrap">
               <table className="data">
-                <thead><tr><th>Name</th><th>Roles</th><th>Two-step</th><th>Status</th><th><span className="sr-only">Action</span></th></tr></thead>
+                <thead><tr><th scope="col">Name</th><th scope="col">Roles</th><th scope="col">Two-step</th><th scope="col">Status</th><th scope="col"><span className="sr-only">Action</span></th></tr></thead>
                 <tbody>
                   {staff === null && <tr><td colSpan={5} className="empty-row">Loading staff…</td></tr>}
                   {staff && shown.length === 0 && <tr><td colSpan={5} className="empty-row">No staff here.</td></tr>}
                   {shown.map((m) => (
-                    <tr key={m.id} className={`pick ${m.id === selectedId ? 'selected' : ''}`} onClick={() => setSelectedId(m.id)}>
+                    <tr {...pickRow} key={m.id} className={`pick ${m.id === selectedId ? 'selected' : ''}`} onClick={() => setSelectedId(m.id)}>
                       <td><span className="name-cell"><Initials name={m.displayName} /><span><div className="cell-main">{m.displayName}</div><div className="cell-sub">{m.email}</div></span></span></td>
-                      <td><div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>{m.platformRoles.map((r) => <Pill key={r} tone={PRIVILEGED.includes(r) ? 'violet' : 'blue'}>{ROLE_LABEL[r]}</Pill>)}</div></td>
+                      <td><div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>{m.platformRoles.map((r) => <Pill key={r} tone={PRIVILEGED.includes(r) ? 'violet' : 'blue'}>
+                        {ROLE_LABEL[r]}{m.roleExpiries?.[r] ? ` · until ${shortDateTime(m.roleExpiries[r])}` : ''}</Pill>)}</div></td>
                       <td>{m.mfaEnabled ? <Pill tone="green">On</Pill> : <Pill tone="amber">Off</Pill>}</td>
                       <td><StatusPill status={m.status} /></td>
                       <td><button type="button" className="btn btn-secondary btn-sm" onClick={(e) => { e.stopPropagation(); setSelectedId(m.id) }}>Review</button></td>
@@ -173,31 +190,43 @@ export default function StaffAccess() {
 
 function MemberDetail({ m, self, onClose, revoke, grant }: {
   m: StaffMember; self: boolean; onClose: () => void
-  revoke: (m: StaffMember, r: PlatformRole) => void; grant: (m: StaffMember, r: PlatformRole) => void
+  revoke: (m: StaffMember, r: PlatformRole, why: string) => void; grant: (m: StaffMember, r: PlatformRole, why: string, hours: string) => void
 }) {
   const missing = PLATFORM_ROLES.filter((r) => !m.platformRoles.includes(r))
   const [role, setRole] = useState<PlatformRole | ''>('')
+  const [hours, setHours] = useState('8')
+  const [why, setWhy] = useState('')
+  const reasoned = why.trim().length >= REASON_MIN
   return (
     <DetailPanel title={m.displayName} subtitle={m.email} badge={<StatusPill status={m.status} />} onClose={onClose}>
       {!m.mfaEnabled && <Callout tone="amber" title="Two-step sign-in is off">This person cannot complete actions that need a fresh two-step code until they turn it on.</Callout>}
       {isPrivileged(m) && <Callout tone="blue" title="Privileged access">Holds a role that can move money, change platform controls or override decisions.</Callout>}
       <Facts title="Account" rows={[['Status', m.status.toLowerCase()], ['Two-step sign-in', m.mfaEnabled ? 'On' : 'Off'], ['Roles held', m.platformRoles.length]]} />
+      <Field label="Reason for a change (the approving admin reads it)" id={`why-${m.id}`}>
+        <textarea id={`why-${m.id}`} className="input" rows={2} value={why} onChange={(e) => setWhy(e.target.value)} />
+      </Field>
       <div className="adm-facts"><h3>Roles</h3>
         {m.platformRoles.length === 0 ? <p className="muted small" style={{ margin: 0 }}>No platform role.</p> : (
           <ul className="adm-metrics">{m.platformRoles.map((r) => (
-            <li key={r}><span>{ROLE_LABEL[r]}<span className="cell-sub" style={{ display: 'block' }}>{ROLE_SCOPE[r]}</span></span>
+            <li key={r}><span>{ROLE_LABEL[r]}<span className="cell-sub" style={{ display: 'block' }}>
+              {m.roleExpiries?.[r] ? `Time-limited: ends ${shortDateTime(m.roleExpiries[r])}` : ROLE_SCOPE[r]}</span></span>
               {self && r === 'PLATFORM_ADMIN' ? <span className="muted small">Your own admin role</span> : (
-                <button type="button" className="btn btn-ghost btn-sm" style={{ color: 'var(--zk-danger)' }} aria-label={`Remove ${ROLE_LABEL[r]} from ${m.email}`}
-                  onClick={() => revoke(m, r)}>Revoke</button>)}</li>))}</ul>)}
+                <button type="button" className="btn btn-ghost btn-sm" style={{ color: 'var(--zk-danger)' }} aria-label={`Ask to remove ${ROLE_LABEL[r]} from ${m.email}`}
+                  disabled={!reasoned} title={reasoned ? undefined : 'Give a reason first'} onClick={() => revoke(m, r, why.trim())}>Request removal</button>)}</li>))}</ul>)}
       </div>
-      {missing.length > 0 && (
-        <form onSubmit={(e) => { e.preventDefault(); if (role) { grant(m, role); setRole('') } }} style={{ display: 'grid', gap: 6 }}>
-          <label className="small" htmlFor={`grant-${m.id}`}>Grant another role</label>
+      {self && <Callout tone="blue" title="Your own account">Another Platform Admin must ask for, and a third approve, any role you need.</Callout>}
+      {!self && missing.length > 0 && (
+        <form onSubmit={(e) => { e.preventDefault(); if (role && reasoned) { grant(m, role, why.trim(), hours); setRole('') } }} style={{ display: 'grid', gap: 6 }}>
+          <label className="small" htmlFor={`grant-${m.id}`}>Request another role</label>
           <select id={`grant-${m.id}`} className="input" value={role} onChange={(e) => setRole(e.target.value as PlatformRole | '')}>
             <option value="">Choose a role</option>
             {missing.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
           </select>
-          <button className="btn btn-primary btn-sm" disabled={!role}>Grant role to {m.displayName}</button>
+          <label className="small" htmlFor={`hours-${m.id}`}>Access for</label>
+          <select id={`hours-${m.id}`} className="input" value={hours} onChange={(e) => setHours(e.target.value)}>
+            {DURATIONS.map(([v, l]) => <option key={l} value={v}>{l}</option>)}
+          </select>
+          <button className="btn btn-primary btn-sm" disabled={!role || !reasoned}>Request approval for {m.displayName}</button>
         </form>
       )}
     </DetailPanel>

@@ -166,6 +166,8 @@ async def test_protected_funds_per_allocation_and_currency_buckets(client, make_
 
 
 SECRET_LOOKING = ("secret", "password", "key", "token", "dsn", "credential", "url", "endpoint", "username", "bucket", "host")
+# Which providers, models and infrastructure the platform runs on is not shown either.
+INFRASTRUCTURE = ("provider", "model", "scanner", "event_bus", "log_level", "tracing", "breaker")
 
 
 def test_the_configuration_allowlist_names_real_settings_and_nothing_secret():
@@ -174,6 +176,7 @@ def test_the_configuration_allowlist_names_real_settings_and_nothing_secret():
         for name, description in settings:
             assert name in fields, f"{name} is not a setting"
             assert not any(word in name.lower() for word in SECRET_LOOKING), f"{name} looks secret"
+            assert not any(word in name.lower() for word in INFRASTRUCTURE), f"{name} describes infrastructure"
             assert description
 
 

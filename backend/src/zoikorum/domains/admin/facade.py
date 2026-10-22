@@ -38,3 +38,18 @@ async def flag_enabled(session: AsyncSession, key: str, identity_id: uuid.UUID |
     """Whether a feature flag (admin/flags.py) is on for this organisation or person."""
     from zoikorum.domains.admin import flags
     return await flags.enabled(session, key, identity_id, org_id)
+
+
+
+# ---- Maker-checker approvals (admin/approvals.py) ---------------------------------------------------------------------
+
+from zoikorum.domains.admin.schemas import ApprovalRequestOut  # noqa: E402,F401  (response model of 202 answers)
+
+
+async def request_approval(session: AsyncSession, actor, kind: str, payload: dict, justification: str) -> dict:
+    """Records a privileged staff action for a second person to approve (status REQUESTED; nothing changes yet) and
+    returns the request (ApprovalRequestOut). Raises when the requester lacks the authority or the action could never
+    be carried out. Kinds: GRANT_PLATFORM_ROLE, REVOKE_PLATFORM_ROLE, SWITCH_CHANGE, FINANCIAL_EXCEPTION_RESOLVE,
+    DEAD_LETTER_REPLAY_FINANCIAL, AUDIT_EXPORT."""
+    from zoikorum.domains.admin import approvals
+    return await approvals.request(session, actor, kind, payload, justification)

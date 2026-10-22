@@ -47,6 +47,7 @@ class SupportRequestOut(BaseModel):
     overdue: bool
     resolvedAt: datetime | None
     requesterName: str | None = None  # staff view
+    assignedTo: uuid.UUID | None = None  # staff view: the request's owner
     assignedToName: str | None = None
     messages: list[SupportMessageOut] = []
     createdAt: datetime

@@ -16,12 +16,12 @@ from zoikorum.domains.identity import facade as identity_facade
 from zoikorum.domains.support.models import SupportMessage, SupportRequest
 from zoikorum.domains.support.schemas import SupportMessageOut, SupportReplyIn, SupportRequestIn, SupportRequestOut
 from zoikorum.shared import clock
-from zoikorum.shared.auth import Actor, PlatformRole
+from zoikorum.shared.auth import Actor
+from zoikorum.shared.capabilities import Cap
 from zoikorum.shared.errors import Conflict, NotFound, RateLimited
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_event
 
-AGENTS = (PlatformRole.SUPPORT_AGENT, PlatformRole.PLATFORM_ADMIN)
 OPEN = ("OPEN", "WAITING_ON_YOU")
 MAX_OPEN = 10
 
@@ -43,7 +43,7 @@ async def _out(session: AsyncSession, r: SupportRequest, staff: bool, with_messa
         firstResponseDueAt=r.first_response_due_at, firstRespondedAt=r.first_responded_at,
         overdue=r.first_responded_at is None and r.status in OPEN and r.first_response_due_at < clock.now(),
         resolvedAt=r.resolved_at, requesterName=name(r.requester_identity_id) if staff else None,
-        assignedToName=name(r.assigned_to) if staff and r.assigned_to else None,
+        assignedTo=r.assigned_to if staff else None, assignedToName=name(r.assigned_to) if staff and r.assigned_to else None,
         messages=[SupportMessageOut(id=m.id, fromStaff=m.from_staff,
                                     authorName=("Zoikorum support" if m.from_staff and not staff else name(m.author_identity_id)),
                                     body=m.body, createdAt=m.created_at) for m in msgs],
@@ -109,7 +109,7 @@ async def resolve_mine(session: AsyncSession, actor: Actor, request_id: uuid.UUI
 
 async def queue(session: AsyncSession, actor: Actor, status: str | None = None) -> list[SupportRequestOut]:
     """Open requests first, late first-answers on top, then oldest."""
-    actor.require_platform_role(*AGENTS)
+    actor.require_capability(Cap.SUPPORT_READ)
     stmt = select(SupportRequest)
     stmt = stmt.where(SupportRequest.status == status) if status else stmt.where(SupportRequest.status.in_(OPEN))
     late = case((SupportRequest.first_responded_at.is_(None) & (SupportRequest.first_response_due_at < clock.now()), 0), else_=1)
@@ -118,7 +118,7 @@ async def queue(session: AsyncSession, actor: Actor, status: str | None = None) 
 
 
 async def get_for_agent(session: AsyncSession, actor: Actor, request_id: uuid.UUID) -> SupportRequestOut:
-    actor.require_platform_role(*AGENTS)
+    actor.require_capability(Cap.SUPPORT_READ)
     r = await session.get(SupportRequest, request_id)
     if r is None:
         raise NotFound("Support request not found")
@@ -126,7 +126,7 @@ async def get_for_agent(session: AsyncSession, actor: Actor, request_id: uuid.UU
 
 
 async def agent_reply(session: AsyncSession, actor: Actor, request_id: uuid.UUID, body: SupportReplyIn) -> SupportRequestOut:
-    actor.require_platform_role(*AGENTS)
+    actor.require_capability(Cap.SUPPORT_REPLY)
     r = await session.get(SupportRequest, request_id, with_for_update=True)
     if r is None:
         raise NotFound("Support request not found")

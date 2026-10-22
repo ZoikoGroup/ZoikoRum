@@ -5,6 +5,7 @@ import { api } from '../api/client'
 import { formatMoney, orgApi, type Organization } from '../api/orgs'
 import { reportApi, type UserReport } from '../api/reports'
 import { useAuth } from '../auth/AuthContext'
+import { useCapabilities } from '../auth/capabilities'
 import { ErrorAlert, useStepUp } from '../components/ui'
 import { DOC_ACCEPT, openStoredFile, toUpload, type Upload } from '../api/files'
 import { EmptyTable, PortalHeader, StatCard } from '../components/portal'
@@ -39,8 +40,7 @@ const actions: Record<number, string[]> = {
 }
 
 export function SafetyPage({ operator = false }: { operator?: boolean }) {
-  const { user } = useAuth()
-  const can = (...roles: string[]) => roles.some((role) => user?.platformRoles.some((held) => held === role))
+  const { has: can } = useCapabilities()  // staff capabilities (none on a customer sign-in)
   const [rows, setRows] = useState<Case[]>([])
   const [params] = useSearchParams()  // the Users page links here with ?subjectType=IDENTITY&subjectId=<id>
   const [offset, setOffset] = useState(0)
@@ -92,9 +92,9 @@ export function SafetyPage({ operator = false }: { operator?: boolean }) {
       <ErrorAlert error={error} />
       {modal}
       {!operator && <MyReports />}
-      {operator && can('TS_ANALYST', 'RISK_LEAD', 'PLATFORM_ADMIN') && <RiskScores />}
+      {operator && can('safety.risk.read') && <RiskScores />}
 
-      {operator && can('TS_ANALYST') && (
+      {operator && can('safety.open') && (
         <form
           className="card panel"
           onSubmit={(e) => {
@@ -227,12 +227,12 @@ export function SafetyPage({ operator = false }: { operator?: boolean }) {
               )}
 
               {operator && c.signalSource === 'USER_REPORT' && <CaseReports caseId={c.id} />}
-              {operator && can('TS_ANALYST', 'RISK_LEAD') && ['TRIAGE', 'ASSESSED'].includes(c.status) && (
+              {operator && can('safety.act') && ['TRIAGE', 'ASSESSED'].includes(c.status) && (
                 <div style={{ marginTop: 10 }}>
                   <ReasonForm label="Close: no action needed" busy={busy} submit={(reason) => act(`/v1/admin/enforcement-cases/${c.id}/close`, { reason })} />
                 </div>
               )}
-              {operator && can('RISK_LEAD') && ['TRIAGE', 'ASSESSED'].includes(c.status) && (
+              {operator && can('safety.assess') && ['TRIAGE', 'ASSESSED'].includes(c.status) && (
                 <form
                   onSubmit={(e) => {
                     e.preventDefault()
@@ -262,7 +262,7 @@ export function SafetyPage({ operator = false }: { operator?: boolean }) {
                 </form>
               )}
 
-              {operator && can('TS_ANALYST', 'RISK_LEAD') && c.status === 'ASSESSED' && c.level > 0 && (
+              {operator && can('safety.act') && c.status === 'ASSESSED' && c.level > 0 && (
                 <form
                   onSubmit={(e) => {
                     e.preventDefault()
@@ -305,7 +305,7 @@ export function SafetyPage({ operator = false }: { operator?: boolean }) {
                 </form>
               )}
 
-              {operator && (c.level === 4 ? can('EXECUTIVE', 'LEGAL') : can('RISK_LEAD', 'LEGAL')) && c.status === 'AWAITING_APPROVAL' && (
+              {operator && (c.level === 4 ? can('safety.approve_severe') : can('safety.approve')) && c.status === 'AWAITING_APPROVAL' && (
                 <div style={{ marginTop: 14 }}>
                   <button className="btn btn-primary" disabled={busy} onClick={() => act(`/v1/admin/enforcement-cases/${c.id}/approve-action`)}>
                     Approve Enforcement as Independent Reviewer
@@ -313,7 +313,7 @@ export function SafetyPage({ operator = false }: { operator?: boolean }) {
                 </div>
               )}
 
-              {operator && can('RISK_LEAD', 'LEGAL') && c.status === 'ACTIVE' && (
+              {operator && can('safety.reverse') && c.status === 'ACTIVE' && (
                 <div style={{ marginTop: 12 }}>
                   <ReasonForm label="Reverse Action" busy={busy} submit={(reason) => act(`/v1/admin/enforcement-cases/${c.id}/reverse`, { reason })} />
                 </div>
@@ -331,9 +331,9 @@ export function SafetyPage({ operator = false }: { operator?: boolean }) {
                   {!operator && !t.done && c.status === 'ACTIVE' && <button className="link-button small" style={{ marginLeft: 6 }} onClick={() => {
                     const note = prompt('What did you do?'); if (note && note.trim().length >= 5) act(`/v1/enforcement-cases/${c.id}/remediation/${i}/done`, { note: note.trim() })
                   }}>Mark done</button>}
-                  {operator && can('TS_ANALYST', 'RISK_LEAD') && t.done && !t.confirmedBy && <button className="link-button small" style={{ marginLeft: 6 }}
+                  {operator && can('safety.act') && t.done && !t.confirmedBy && <button className="link-button small" style={{ marginLeft: 6 }}
                     onClick={() => act(`/v1/admin/enforcement-cases/${c.id}/remediation/${i}/confirm`)}>Confirm</button>}</li>)}</ul></div>}
-              {operator && can('EXECUTIVE') && c.status === 'ACTIVE' && <div style={{ marginTop: 10 }}>
+              {operator && can('safety.override') && c.status === 'ACTIVE' && <div style={{ marginTop: 10 }}>
                 <ReasonForm label="Executive override: end this action" busy={busy} submit={(reason) => act(`/v1/admin/enforcement-cases/${c.id}/executive-override`, { reason })} /></div>}
               {c.appeal && (
                 <div style={{ marginTop: 14, background: 'var(--zk-bg-soft)', padding: 12, borderRadius: 'var(--radius-sm)' }}>
@@ -343,7 +343,7 @@ export function SafetyPage({ operator = false }: { operator?: boolean }) {
                   </div>
                   <p style={{ margin: '0 0 6px', fontSize: 13.5 }}>{c.appeal.reason}</p>
                   {c.appeal.decisionReason && <p className="small muted">Decision Reason: {c.appeal.decisionReason}</p>}
-                  {operator && can('LEGAL') && c.appeal.status === 'PENDING' && (
+                  {operator && can('safety.appeals.decide') && c.appeal.status === 'PENDING' && (
                     <form
                       onSubmit={(e) => {
                         e.preventDefault()

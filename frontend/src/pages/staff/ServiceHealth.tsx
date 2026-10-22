@@ -5,12 +5,13 @@ import { ErrorAlert } from '../../components/ui'
 import { Icon } from '../../components/dashboard'
 import {
   AdminHeader, AdminKpi, Callout, CountTabs, DetailPanel, Facts, HBars, KpiStrip, ListDetail, MetricList, Panel, PanelRow, Pill,
-  TableFoot, TrendChart, type PillTone,
-} from '../../components/admin'
+  TableFoot, TrendChart, type PillTone,pickRow } from '../../components/admin'
 
 /* Service Health & Workers (design 66). Read-only. Sources: GET /v1/admin/worker (background worker backlog, the same
    numbers as /metrics), GET /health (liveness) and GET /ready (database reachable and migrated). /ready is served by
-   the production web server; a development server that does not proxy it shows "Not reachable from this app". */
+   the production web server; a development server that does not proxy it shows "Not reachable from this app".
+   Data freshness: "Data as of" the last successful check; older than two minutes it is marked stale and the links to
+   replay actions are paused until a refresh succeeds. */
 
 interface Backlog {
   unpublishedEvents: number; oldestUnpublishedSeconds: number; overdueTimers: number; oldestOverdueTimerSeconds: number
@@ -22,6 +23,7 @@ type Health = 'Operational' | 'Degraded' | 'Down' | 'Unknown'
 const ago = (s: number) => (s < 90 ? `${Math.round(s)} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${Math.round(s / 3600)} h`)
 const TONE: Record<Health, PillTone> = { Operational: 'green', Degraded: 'amber', Down: 'red', Unknown: 'grey' }
 const POLL_MS = 30_000
+const STALE_MS = 2 * 60_000
 const MAX_SAMPLES = 20
 
 async function probe(path: string, okWord: string): Promise<Probe> {
@@ -69,7 +71,7 @@ function rowsFor(b: Backlog | null, live: Probe, ready: Probe): Row[] {
       health: b.deadLetters ? 'Down' : 'Operational',
       signal: b.deadLetters ? `${b.deadLetters} need a replay${b.deadFinancialLetters ? ` · ${b.deadFinancialLetters} about money` : ''}` : 'None',
       facts: [['Failed deliveries', String(b.deadLetters)], ['About money', String(b.deadFinancialLetters)]],
-      note: 'Deliveries that used every retry. Each needs an authorised replay; money deliveries need Financial Operations.', to: '/app/ops/dead-letters' },
+      note: 'Deliveries that used every retry. Each needs an authorised replay; money deliveries need Financial Operations.', to: '/platform-admin/failed-event-deliveries' },
   )
   return out
 }
@@ -86,18 +88,21 @@ export default function ServiceHealth() {
   const [tab, setTab] = useState<TabKey>('all')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const timer = useRef<number | undefined>(undefined)
+  const [tick, setTick] = useState(() => Date.now())
 
   const reload = useCallback(async () => {
     const [b, l, r] = await Promise.all([api<Backlog>('/v1/admin/worker'), probe('/health', 'ok'), probe('/ready', 'ready')])
     const at = new Date()
-    setBacklog(b); setLive(l); setReady(r); setCheckedAt(at)
+    setBacklog(b); setLive(l); setReady(r); setCheckedAt(at); setTick(at.getTime())
     setSamples((s) => [...s, { at, events: b.unpublishedEvents, retrying: b.retryingDeliveries }].slice(-MAX_SAMPLES))
   }, [])
   useEffect(() => {
     reload().catch(setError)
     timer.current = window.setInterval(() => { reload().catch(setError) }, POLL_MS)
-    return () => window.clearInterval(timer.current)
+    const clockTimer = window.setInterval(() => setTick(Date.now()), 10_000)
+    return () => { window.clearInterval(timer.current); window.clearInterval(clockTimer) }
   }, [reload])
+  const stale = checkedAt !== null && tick - checkedAt.getTime() > STALE_MS
 
   const rows = rowsFor(backlog, live, ready)
   const attention = rows.filter((r) => r.health === 'Degraded' || r.health === 'Down')
@@ -112,10 +117,16 @@ export default function ServiceHealth() {
         subtitle="Inspect service readiness and how far behind the background worker is. Read-only; act from Incident Command or Failed Event Deliveries."
         actions={<>
           <button type="button" className="btn btn-secondary" onClick={() => reload().catch(setError)}><Icon name="refresh" /> Refresh</button>
-          <Link className="btn btn-primary" to="/app/ops/incidents"><Icon name="alert" /> Open incident command</Link>
+          <Link className="btn btn-primary" to="/platform-admin/incident-command"><Icon name="alert" /> Open incident command</Link>
         </>}
-        meta={checkedAt && <span className="live">Checked {fmtTime(checkedAt)} · refreshes every 30 s</span>} />
+        meta={checkedAt && <span className="live">Data as of {fmtTime(checkedAt)} · refreshes every 30 s{stale && <> <Pill tone="amber">Stale</Pill></>}</span>} />
       <ErrorAlert error={error} />
+      {stale && checkedAt && (
+        <Callout tone="amber" title={`Data is more than 2 minutes old (as of ${fmtTime(checkedAt)})`}>
+          The automatic refresh has not succeeded since. Replay actions are paused until the data is refreshed.{' '}
+          <button type="button" className="btn btn-secondary btn-sm" onClick={() => reload().catch(setError)}>Refresh now</button>
+        </Callout>
+      )}
 
       <KpiStrip>
         <AdminKpi icon="pulse" tone={ready?.state === 'ok' ? 'green' : ready?.state === 'down' ? 'red' : 'amber'} label="Readiness"
@@ -126,7 +137,7 @@ export default function ServiceHealth() {
           sub={b && (b.overdueTimers ? `oldest ${ago(b.oldestOverdueTimerSeconds)}` : 'none')} />
         <AdminKpi icon="refresh" tone={b?.retryingDeliveries ? 'amber' : 'green'} label="Retrying deliveries" value={b ? b.retryingDeliveries : '—'} />
         <AdminKpi icon="shield" tone={b?.deadLetters ? 'red' : 'green'} label="Failed deliveries" value={b ? b.deadLetters : '—'}
-          sub={b?.deadFinancialLetters ? `${b.deadFinancialLetters} about money` : undefined} to="/app/ops/dead-letters" />
+          sub={b?.deadFinancialLetters ? `${b.deadFinancialLetters} about money` : undefined} to="/platform-admin/failed-event-deliveries" />
         <AdminKpi icon="layers" tone={attention.length ? 'amber' : 'green'} label="Needing attention" value={b ? `${attention.length} / ${rows.length}` : '—'} sub="Checks degraded or down" />
       </KpiStrip>
 
@@ -162,11 +173,11 @@ export default function ServiceHealth() {
             <div className="adm-note">Current state · queue depths are per check, not a cross-platform total</div>
             <div className="adm-table-wrap">
               <table className="data">
-                <thead><tr><th>Service / worker</th><th>Health</th><th>Queue</th><th>Signal</th><th><span className="sr-only">Action</span></th></tr></thead>
+                <thead><tr><th scope="col">Service / worker</th><th scope="col">Health</th><th scope="col">Queue</th><th scope="col">Signal</th><th scope="col"><span className="sr-only">Action</span></th></tr></thead>
                 <tbody>
                   {shown.length === 0 && <tr><td colSpan={5} className="empty-row">Nothing needs attention.</td></tr>}
                   {shown.map((r) => (
-                    <tr key={r.id} className={`pick ${r.id === selectedId ? 'selected' : ''}`} onClick={() => setSelectedId(r.id)}>
+                    <tr {...pickRow} key={r.id} className={`pick ${r.id === selectedId ? 'selected' : ''}`} onClick={() => setSelectedId(r.id)}>
                       <td><div className="cell-main">{r.name}</div><div className="cell-sub">{r.kind}</div></td>
                       <td><Pill tone={TONE[r.health]}>{r.health}</Pill></td>
                       <td>{r.queue}</td>
@@ -183,13 +194,16 @@ export default function ServiceHealth() {
         detail={selected && (
           <DetailPanel title={selected.name} subtitle={selected.kind} badge={<Pill tone={TONE[selected.health]}>{selected.health}</Pill>} onClose={() => setSelectedId(null)}
             footer={<>
-              {selected.to && <Link className="btn btn-primary btn-sm" to={selected.to}>Open failed deliveries</Link>}
-              <Link className="btn btn-secondary btn-sm" to="/app/ops/incidents">Incident command</Link>
+              {selected.to && (stale
+                ? <button type="button" className="btn btn-primary btn-sm" disabled title="Refresh the data first">Open failed deliveries</button>
+                : <Link className="btn btn-primary btn-sm" to={selected.to}>Open failed deliveries</Link>)}
+              <Link className="btn btn-secondary btn-sm" to="/platform-admin/incident-command">Incident command</Link>
             </>}>
             {selected.health === 'Down' && <Callout tone="red" title="Needs action">{selected.signal}</Callout>}
             {selected.health === 'Degraded' && <Callout tone="amber" title="Degraded">{selected.signal}</Callout>}
             <p className="small" style={{ margin: 0 }}>{selected.note}</p>
-            <Facts title="Signal facts" rows={[...selected.facts, ['Checked', checkedAt ? fmtTime(checkedAt) : '—']]} />
+            {stale && <p className="adm-foot-note">These figures are stale: refresh before acting on them.</p>}
+            <Facts title="Signal facts" rows={[...selected.facts, ['Data as of', checkedAt ? fmtTime(checkedAt) : '—']]} />
           </DetailPanel>
         )}
       />

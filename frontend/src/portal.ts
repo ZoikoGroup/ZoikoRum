@@ -1,3 +1,5 @@
+import { isStaffPath } from './staffRoutes'
+
 /** Which sign-in this web app serves (VITE_PORTAL, set in vite.config.ts):
  *  - 'customer': customers, professionals, firms and enterprise teams (npm run dev, port 5173; app.your-domain.com)
  *  - 'staff':    Zoikorum staff only (npm run dev:staff, port 5174; staff.your-domain.com)
@@ -12,7 +14,7 @@ const STAFF_URL = (env.VITE_STAFF_URL ?? '').replace(/\/$/, '')
 
 /** The other app's address for a path, or null when the path is served here. */
 export function elsewhere(path: string): string | null {
-  const staffPage = path.startsWith('/staff') || path.startsWith('/app/ops')
+  const staffPage = path.startsWith('/staff') || isStaffPath(path.split(/[?#]/)[0])
   if (PORTAL === 'customer' && STAFF_URL && staffPage) return STAFF_URL + path
   if (PORTAL === 'staff' && CUSTOMER_URL && !staffPage) return CUSTOMER_URL + path
   return null

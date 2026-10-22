@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useState, type ReactNode } from 'react'
+import { Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { firmApi } from '../api/orgs'
 import { messagingApi } from '../api/messaging'
@@ -9,6 +9,8 @@ import { useAuth } from '../auth/AuthContext'
 import { Icon, type IconName } from '../components/dashboard'
 import { GlobalSearch } from '../components/GlobalSearch'
 import { DuplicateNotice } from '../components/DuplicateNotice'
+import { dashboardPath, isStaffPath, STAFF_PREFIX } from '../staffRoutes'
+import { useCapabilities } from '../auth/capabilities'
 
   /* Signed-in layout: navy sidebar (only the areas this account's roles can use) and a top bar with
    search, notifications and the account menu. Areas still being built are listed as "Soon", not linked. */
@@ -21,48 +23,50 @@ function Item({ to, icon, children, end, count }: { to: string; icon: IconName; 
   )
 }
 
-/* Staff console navigation (admin designs): seven groups; each item shows only to the roles its page accepts. */
-type NavItem = { to: string; label: string; icon: IconName; roles?: string[] }
-const FIN = ['FINANCIAL_OPS', 'PLATFORM_ADMIN']
+/* Staff console navigation (Admin Navigation Registry): seven groups; each item shows only with its page's read
+   capability (GET /v1/admin/me/capabilities). Nothing staff-only shows while those load, or if they cannot be loaded. */
+type NavItem = { to: string; label: string; icon: IconName; cap: string }
+const P = STAFF_PREFIX
 const STAFF_NAV: { title: string; items: NavItem[] }[] = [
   { title: 'Overview', items: [
-    { to: '/app/ops', label: 'Command Center', icon: 'home' },
-    { to: '/app/ops/queue', label: 'My Work Queue', icon: 'list' },
-    { to: '/app/ops/analytics', label: 'Analytics & Insights', icon: 'chart' },
+    { to: `${P}/command-center`, label: 'Command Center', icon: 'home', cap: 'dashboard.read' },
+    { to: `${P}/my-work-queue`, label: 'My Work Queue', icon: 'list', cap: 'work.read' },
+    { to: `${P}/analytics-insights`, label: 'Analytics & Insights', icon: 'chart', cap: 'analytics.read' },
   ] },
   { title: 'People & Organizations', items: [
-    { to: '/app/ops/users', label: 'Accounts & Organizations', icon: 'building', roles: ['PLATFORM_ADMIN', 'TS_ANALYST'] },
-    { to: '/app/ops/professionals', label: 'Professional Directory', icon: 'team', roles: ['PLATFORM_ADMIN', 'TS_ANALYST', 'COMPLIANCE_OFFICER', 'SUPPORT_AGENT'] },
-    { to: '/app/ops/enterprise', label: 'Enterprise Readiness', icon: 'contract', roles: ['COMPLIANCE_OFFICER'] },
-    { to: '/app/ops/duplicates', label: 'Duplicate Identity Cases', icon: 'team', roles: ['TS_ANALYST', 'PLATFORM_ADMIN'] },
+    { to: `${P}/accounts-organizations`, label: 'Accounts & Organizations', icon: 'building', cap: 'accounts.read' },
+    { to: `${P}/professional-directory`, label: 'Professional Directory', icon: 'team', cap: 'professionals.read' },
+    { to: `${P}/enterprise-readiness`, label: 'Enterprise Readiness', icon: 'contract', cap: 'enterprise.read' },
+    { to: `${P}/duplicate-identity-cases`, label: 'Duplicate Identity Cases', icon: 'team', cap: 'identity_cases.read' },
   ] },
   { title: 'Trust, Risk & Compliance', items: [
-    { to: '/app/ops/verification', label: 'Verification Center', icon: 'shield', roles: ['COMPLIANCE_OFFICER'] },
-    { to: '/app/ops/safety', label: 'Trust & Safety', icon: 'shield' },
-    { to: '/app/ops/disputes', label: 'Dispute Resolution', icon: 'scale', roles: ['MEDIATOR', 'LEGAL', 'PLATFORM_ADMIN'] },
-    { to: '/app/ops/audit', label: 'Audit & Evidence', icon: 'contract' },
+    { to: `${P}/verification-center`, label: 'Verification Center', icon: 'shield', cap: 'verification.read' },
+    { to: `${P}/trust-safety`, label: 'Trust & Safety', icon: 'shield', cap: 'safety.read' },
+    { to: `${P}/dispute-resolution`, label: 'Dispute Resolution', icon: 'scale', cap: 'disputes.read' },
+    { to: `${P}/audit-evidence`, label: 'Audit & Evidence', icon: 'contract', cap: 'audit.read' },
   ] },
   { title: 'Engagement Operations', items: [
-    { to: '/app/ops/engagements', label: 'Engagement Oversight', icon: 'briefcase', roles: ['PLATFORM_ADMIN', 'COMPLIANCE_OFFICER', 'LEGAL', 'MEDIATOR', 'FINANCIAL_OPS'] },
-    { to: '/app/ops/contracts', label: 'Contracts & Milestones', icon: 'contract', roles: ['PLATFORM_ADMIN', 'COMPLIANCE_OFFICER', 'LEGAL', 'MEDIATOR', 'FINANCIAL_OPS'] },
-    { to: '/app/ops/taxonomy', label: 'Taxonomy & Standards', icon: 'layers', roles: ['PLATFORM_ADMIN'] },
+    { to: `${P}/engagement-oversight`, label: 'Engagement Oversight', icon: 'briefcase', cap: 'engagements.read' },
+    { to: `${P}/contracts-milestones`, label: 'Contracts & Milestones', icon: 'contract', cap: 'contracts.read' },
+    { to: `${P}/taxonomy-standards`, label: 'Taxonomy & Standards', icon: 'layers', cap: 'taxonomy.read' },
   ] },
   { title: 'Financial Operations', items: [
-    { to: '/app/ops/payments', label: 'Protected Payments', icon: 'wallet', roles: FIN },
-    { to: '/app/ops/reconciliation', label: 'Reconciliation', icon: 'refresh', roles: FIN },
-    { to: '/app/ops/money', label: 'Financial Exceptions', icon: 'alert', roles: FIN },
+    { to: `${P}/protected-payments`, label: 'Protected Payments', icon: 'wallet', cap: 'payments.read' },
+    { to: `${P}/reconciliation`, label: 'Reconciliation', icon: 'refresh', cap: 'recon.read' },
+    { to: `${P}/financial-exceptions`, label: 'Financial Exceptions', icon: 'alert', cap: 'finexceptions.read' },
   ] },
   { title: 'Platform Reliability', items: [
-    { to: '/app/ops/incidents', label: 'Incident Command', icon: 'alert' },
-    { to: '/app/ops/health', label: 'Service Health & Workers', icon: 'pulse', roles: FIN },
-    { to: '/app/ops/switches', label: 'Feature Controls', icon: 'sliders', roles: FIN },
-    { to: '/app/ops/dead-letters', label: 'Failed Event Deliveries', icon: 'mail', roles: FIN },
+    { to: `${P}/incident-command`, label: 'Incident Command', icon: 'alert', cap: 'incidents.read' },
+    { to: `${P}/service-health-workers`, label: 'Service Health & Workers', icon: 'pulse', cap: 'health.read' },
+    { to: `${P}/feature-controls`, label: 'Feature Controls', icon: 'sliders', cap: 'switches.read' },
+    { to: `${P}/failed-event-deliveries`, label: 'Failed Event Deliveries', icon: 'mail', cap: 'dlq.read' },
   ] },
   { title: 'Administration & Support', items: [
-    { to: '/app/ops/staff', label: 'Staff & Access Control', icon: 'lock', roles: ['PLATFORM_ADMIN'] },
-    { to: '/app/ops/support', label: 'Support Cases', icon: 'help', roles: ['SUPPORT_AGENT', 'PLATFORM_ADMIN'] },
-    { to: '/app/ops/config', label: 'Platform Configuration', icon: 'gear', roles: ['PLATFORM_ADMIN'] },
-    { to: '/app/ops/ai', label: 'AI Governance', icon: 'eye', roles: ['AI_SAFETY_REVIEWER'] },
+    { to: `${P}/approvals`, label: 'Approvals', icon: 'check', cap: 'approvals.read' },
+    { to: `${P}/staff-access-control`, label: 'Staff & Access Control', icon: 'lock', cap: 'iam.read' },
+    { to: `${P}/support-cases`, label: 'Support Cases', icon: 'help', cap: 'support.read' },
+    { to: `${P}/platform-configuration`, label: 'Platform Configuration', icon: 'gear', cap: 'configuration.read' },
+    { to: `${P}/ai-governance`, label: 'AI Governance', icon: 'eye', cap: 'ai.read' },
   ] },
 ]
 const COLLAPSED_KEY = 'zk.staffNav.collapsed'
@@ -87,8 +91,45 @@ export default function AppShell() {
   const bellOpen = bellAt === location.pathname
   const setOpen = (value: boolean) => setOpenAt(value ? location.pathname : null)
   const setBellOpen = (value: boolean) => setBellAt(value ? location.pathname : null)
+
+  // Mobile menu drawer (WCAG 2.2 AA): focus moves into it on open and stays there (Tab wraps), Escape closes it, and
+  // focus returns to the menu button (or to the page, when a link in it was followed).
+  const sideRef = useRef<HTMLElement>(null)
+  const menuBtnRef = useRef<HTMLButtonElement>(null)
+  const mainRef = useRef<HTMLElement>(null)
+  const wasOpen = useRef(false)
+  useEffect(() => {
+    if (!open) {
+      if (wasOpen.current) {
+        wasOpen.current = false
+        const navigated = openAt !== null  // closed by following a link, not by Escape / the backdrop
+        const at = document.activeElement
+        if (!at || at === document.body || sideRef.current?.contains(at)) (navigated ? mainRef.current : menuBtnRef.current)?.focus()
+      }
+      return
+    }
+    wasOpen.current = true
+    const side = sideRef.current
+    if (!side) return
+    const focusable = () => Array.from(side.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), summary, input:not([disabled]), select, textarea, [tabindex]:not([tabindex="-1"])'))
+      .filter((el) => el.getClientRects().length > 0)  // skips links inside collapsed groups
+    focusable()[0]?.focus()
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); setOpenAt(null); return }
+      if (e.key !== 'Tab') return
+      const items = focusable()
+      if (!items.length) return
+      const first = items[0], last = items[items.length - 1], at = document.activeElement
+      if (e.shiftKey && (at === first || !side.contains(at))) { e.preventDefault(); last.focus() }
+      else if (!e.shiftKey && (at === last || !side.contains(at))) { e.preventDefault(); first.focus() }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [open, openAt])
   // "Waiting for you" counts: a red number on each tab and the total on the bell.
-  const counts = useActionCounts(user, location.pathname)
+  const capabilities = useCapabilities()
+  const counts = useActionCounts(user, location.pathname, capabilities.status === 'ready' ? capabilities.caps : null)
   const n = (path: string) => counts.byPath[path] ?? 0
 
   // Firm membership (for the "My Firm" link): once per signed-in user.
@@ -173,8 +214,9 @@ export default function AppShell() {
 
   return (
     <div className="shell">
-      <aside className={`side ${open ? 'open' : ''}`} aria-label="Workspace">
-        <NavLink className="side-logo" to={`/app/${user.defaultDashboard}`} aria-label="Dashboard home">
+      <a className="skip-link" href="#main-content" onClick={(e) => { e.preventDefault(); mainRef.current?.focus() }}>Skip to main content</a>
+      <aside ref={sideRef} id="app-sidebar" className={`side ${open ? 'open' : ''}`} aria-label="Workspace">
+        <NavLink className="side-logo" to={dashboardPath(user)} aria-label="Dashboard home">
           <img src="/logo.png" alt="Zoikorum" />
         </NavLink>
 
@@ -221,16 +263,16 @@ export default function AppShell() {
           <Item to="/app/firm/verification" icon="shield">Firm Verification</Item>
         </>}
 
-        {isStaff && STAFF_NAV.map((section) => {
-          const items = section.items.filter((i) => !i.roles || i.roles.some((r) => (user.platformRoles as string[]).includes(r)))
+        {isStaff && capabilities.status === 'ready' && STAFF_NAV.map((section) => {
+          const items = section.items.filter((i) => capabilities.has(i.cap))
           if (!items.length) return null
-          const here = items.some((i) => location.pathname === i.to || (i.to !== '/app/ops' && location.pathname.startsWith(`${i.to}/`)))
+          const here = items.some((i) => location.pathname === i.to || location.pathname.startsWith(`${i.to}/`))
           return (
             <details key={section.title} className="side-section" open={here || !collapsed.has(section.title)}
               onToggle={(e) => { const isOpen = (e.currentTarget as HTMLDetailsElement).open
                 setCollapsed((s) => { const next = new Set(s); if (isOpen) next.delete(section.title); else next.add(section.title); return next }) }}>
               <summary className="side-group">{section.title}</summary>
-              {items.map((i) => <Item key={i.to} to={i.to} icon={i.icon} end={i.to === '/app/ops'} count={n(i.to)}>{i.label}</Item>)}
+              {items.map((i) => <Item key={i.to} to={i.to} icon={i.icon} count={n(i.to)}>{i.label}</Item>)}
             </details>
           )
         })}
@@ -253,14 +295,15 @@ export default function AppShell() {
           <NavLink to="/app/help" className="btn btn-sm">Get help</NavLink>
         </div>
       </aside>
-      {open && <button className="side-backdrop" aria-label="Close menu" onClick={() => setOpen(false)} />}
+      {open && <button className="side-backdrop" aria-label="Close menu" tabIndex={-1} onClick={() => setOpen(false)} />}
 
       <div className="shell-main">
         <header className="topbar">
-          <button className="icon-btn menu-btn" aria-label="Open menu" onClick={() => setOpen(true)}>
+          <button ref={menuBtnRef} className="icon-btn menu-btn" aria-label="Open menu" aria-expanded={open} aria-controls="app-sidebar" onClick={() => setOpen(true)}>
             <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
           </button>
-          <GlobalSearch side={customer ? 'buyer' : dashboards.has('professional') ? 'professional' : null} />
+          <GlobalSearch side={customer ? 'buyer' : dashboards.has('professional') ? 'professional' : null}
+            staff={isStaff && isStaffPath(location.pathname)} />
           <div style={{ flex: 1 }} />
           <NavLink to="/app/help" className="icon-btn" aria-label="Help &amp; support"><Icon name="help" /></NavLink>
           <div className="bell-pop">
@@ -300,7 +343,7 @@ export default function AppShell() {
             </div>
           </details>
         </header>
-        <main className="main">
+        <main ref={mainRef} id="main-content" tabIndex={-1} className="main">
           {user.status === 'SUSPENDED' && <div className="alert alert-warn" role="status">Your account is restricted. <NavLink to="/app/safety">Read the notice and submit an appeal</NavLink>.</div>}
           {user.mfaBypass && <div className="alert alert-warn" role="status" style={{ margin: '0 0 12px' }}>Development mode: two-step verification (authenticator codes) is switched off. Never use this setting in production.</div>}
           <DuplicateNotice />

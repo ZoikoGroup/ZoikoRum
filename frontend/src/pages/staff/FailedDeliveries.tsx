@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { submittedNotice, type ApprovalRequest } from '../../api/approvals'
 import { api } from '../../api/client'
-import { useAuth } from '../../auth/AuthContext'
+import { useCapabilities } from '../../auth/capabilities'
 import { ErrorAlert, useStepUp } from '../../components/ui'
 import { Icon } from '../../components/dashboard'
 import {
   AdminHeader, AdminKpi, Callout, CountTabs, DetailPanel, Facts, FilterBar, FilterSelect, HBars, KpiStrip, ListDetail, MetricList, Panel,
-  PanelRow, Pill, TableFoot,
-} from '../../components/admin'
+  PanelRow, Pill, TableFoot,pickRow } from '../../components/admin'
 
 /* Failed Event Deliveries (design 70): dead-lettered consumer deliveries and governed replay. Sources:
    GET /v1/admin/dead-letters (newest first, 50 a page), GET /v1/admin/worker (totals), and
-   POST /v1/admin/dead-letters/{id}/replay (step-up; money deliveries need Financial Operations). */
+   POST /v1/admin/dead-letters/{id}/replay (step-up). Standard deliveries are replayed at once. A money delivery is a
+   maker-checker request: it is replayed only when a second Financial Operations member approves it (Approvals). */
 
 interface Failure { id: string; eventType: string; consumer: string; attempts: number; financial: boolean; lastError: string }
 interface Backlog { retryingDeliveries: number; deadLetters: number; deadFinancialLetters: number }
@@ -26,13 +27,13 @@ function group(rows: Failure[], key: (f: Failure) => string) {
 }
 
 export default function FailedDeliveries() {
-  const { user } = useAuth()
-  const financialOps = !!user?.platformRoles.includes('FINANCIAL_OPS')
+  const { has } = useCapabilities()
   const [rows, setRows] = useState<Failure[] | null>(null)
   const [backlog, setBacklog] = useState<Backlog | null>(null)
   const [page, setPage] = useState(1)
   const [error, setError] = useState<unknown>(null)
   const [notice, setNotice] = useState('')
+  const [why, setWhy] = useState('')
   const [tab, setTab] = useState<TabKey>('all')
   const [q, setQ] = useState('')
   const [consumer, setConsumer] = useState('')
@@ -58,10 +59,16 @@ export default function FailedDeliveries() {
   const consumers = group(all, (r) => r.consumer)
   const total = backlog?.deadLetters ?? null
   const pages = total ? Math.max(1, Math.ceil(total / PAGE)) : 1
-  const canReplay = (f: Failure) => !f.financial || financialOps
+  const canReplay = (f: Failure) => has('dlq.replay') && (!f.financial || has('dlq.replay_financial', 'dlq.replay'))
 
   const replay = (f: Failure) => run(async () => {
     setNotice('')
+    if (f.financial) {
+      const request = await api<ApprovalRequest>(`/v1/admin/dead-letters/${f.id}/replay`, { method: 'POST', body: { justification: why.trim() } })
+      setWhy('')
+      setNotice(`Replay of ${f.eventType} to ${f.consumer}: ${submittedNotice(request)}`)
+      return
+    }
     const res = await api<{ replayed: boolean }>(`/v1/admin/dead-letters/${f.id}/replay`, { method: 'POST' })
     await reload()
     setNotice(res.replayed ? `${f.eventType} redelivered to ${f.consumer}.` : `${f.eventType} replay to ${f.consumer} failed again; it stays in the queue.`)
@@ -73,7 +80,7 @@ export default function FailedDeliveries() {
       <AdminHeader crumb="Platform reliability / Message recovery" title="Failed Event Deliveries"
         subtitle="Inspect consumer deliveries that used every retry, and trigger authorised replays one at a time."
         actions={<>
-          <Link className="btn btn-secondary" to="/app/ops/health"><Icon name="pulse" /> Service health</Link>
+          <Link className="btn btn-secondary" to="/platform-admin/service-health-workers"><Icon name="pulse" /> Service health</Link>
           <button type="button" className="btn btn-secondary" onClick={() => reload().catch(setError)}><Icon name="refresh" /> Refresh</button>
         </>} />
       <ErrorAlert error={error} />
@@ -119,12 +126,12 @@ export default function FailedDeliveries() {
             <div className="adm-note">Scope: current dead letters only · no bulk replay</div>
             <div className="adm-table-wrap">
               <table className="data">
-                <thead><tr><th>Event</th><th>Consumer</th><th>Last failure</th><th>Attempts</th><th>Authority</th><th><span className="sr-only">Action</span></th></tr></thead>
+                <thead><tr><th scope="col">Event</th><th scope="col">Consumer</th><th scope="col">Last failure</th><th scope="col">Attempts</th><th scope="col">Authority</th><th scope="col"><span className="sr-only">Action</span></th></tr></thead>
                 <tbody>
                   {rows === null && <tr><td colSpan={6} className="empty-row">Loading failed deliveries…</td></tr>}
                   {rows && shown.length === 0 && <tr><td colSpan={6} className="empty-row">No dead-letter event failures in queue. All subscribers processed cleanly.</td></tr>}
                   {shown.map((r) => (
-                    <tr key={r.id} className={`pick ${r.id === selectedId ? 'selected' : ''}`} onClick={() => setSelectedId(r.id)}>
+                    <tr {...pickRow} key={r.id} className={`pick ${r.id === selectedId ? 'selected' : ''}`} onClick={() => setSelectedId(r.id)}>
                       <td><div className="cell-main">{r.eventType}</div><div className="cell-sub">{r.id.slice(0, 8)}</div></td>
                       <td className="small">{r.consumer}</td>
                       <td className="small" style={{ color: 'var(--zk-danger)', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.lastError}>{r.lastError}</td>
@@ -143,11 +150,14 @@ export default function FailedDeliveries() {
           <DetailPanel title={selected.eventType} subtitle={<>to <code>{selected.consumer}</code></>}
             badge={<Pill tone={selected.financial ? 'red' : 'amber'}>{selected.financial ? 'Money' : 'Standard'}</Pill>} onClose={() => setSelectedId(null)}
             footer={canReplay(selected)
-              ? <button type="button" className="btn btn-primary btn-sm" onClick={() => void replay(selected)}>Replay Event Delivery</button>
+              ? <button type="button" className="btn btn-primary btn-sm" disabled={selected.financial && why.trim().length < 10}
+                onClick={() => void replay(selected)}>{selected.financial ? 'Request approved replay' : 'Replay Event Delivery'}</button>
               : undefined}>
             {selected.financial
-              ? <Callout tone="amber" title="Financial Operations authority required">A replay redelivers the original event to this consumer only. Money deliveries are replayed by Financial Operations with two-step sign-in.</Callout>
+              ? <Callout tone="amber" title="Second Financial Operations approval required">A replay redelivers the original event to this consumer only. A money delivery is replayed only after another Financial Operations member approves the request.</Callout>
               : <Callout tone="blue" title="Governed replay">A replay redelivers the original event to this consumer only, after two-step sign-in. It is audited.</Callout>}
+            {selected.financial && canReplay(selected) && <label className="small" style={{ display: 'grid', gap: 4 }}>Reason (the approver reads it)
+              <textarea className="input" rows={2} value={why} onChange={(e) => setWhy(e.target.value)} placeholder="e.g. Ledger consumer fixed in release 2026.10.3" /></label>}
             {!canReplay(selected) && <p className="adm-foot-note">You do not hold Financial Operations, so you cannot replay this delivery.</p>}
             <Facts title="Delivery context" rows={[['Failure ID', <code key="id">{selected.id}</code>], ['Event type', selected.eventType], ['Consumer', selected.consumer], ['Attempts', selected.attempts]]} />
             <div className="adm-facts"><h3>Last error</h3>

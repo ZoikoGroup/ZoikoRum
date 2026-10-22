@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { authApi } from '../api/auth'
 import { useAuth } from '../auth/AuthContext'
 import { AuthLayout, ErrorAlert, Field, PasswordInput } from '../components/ui'
+import { dashboardPath } from '../staffRoutes'
 
 export function ForgotPassword() {
   const [email, setEmail] = useState('')
@@ -126,7 +127,7 @@ export function ConfirmEmail() {
       {state === 'done' && (
         <>
           <div className="alert alert-success" role="status">Your email is confirmed.</div>
-          <Link className="btn btn-primary" to={user ? `/app/${user.defaultDashboard}` : '/login'}>Continue</Link>
+          <Link className="btn btn-primary" to={user ? dashboardPath(user) : '/login'}>Continue</Link>
         </>
       )}
       {state === 'error' && <ErrorAlert error={error} />}

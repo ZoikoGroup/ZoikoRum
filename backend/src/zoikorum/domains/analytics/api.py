@@ -7,7 +7,8 @@ from fastapi import APIRouter, Query, Response
 from zoikorum.domains.analytics import service
 from zoikorum.domains.buyer import facade as buyer
 from zoikorum.domains.professional import facade as professional
-from zoikorum.shared.auth import CurrentActor, PlatformRole
+from zoikorum.shared.auth import CurrentActor
+from zoikorum.shared.capabilities import Cap
 from zoikorum.shared.db import AnalyticsSession, DbSession
 from zoikorum.shared.errors import NotFound, ValidationFailed
 from zoikorum.shared.event_catalog import E
@@ -51,14 +52,14 @@ async def marketplace_health(actor: CurrentActor, session: AnalyticsSession, sin
     """Marketplace health for the window [from, to): totals, a per-day (UTC) series of the key counts, and the current
     trust tier distribution, which is a snapshot rather than windowed. Totals are computed in the database, so the cost
     does not grow with the number of events kept."""
-    actor.require_platform_role(*PlatformRole.ALL)
+    actor.require_capability(Cap.ANALYTICS_READ)
     validate_dates(since, until)
     return await service.marketplace_health(session, since, until)
 
 
 @router.post("/v1/admin/analytics/rebuild")
 async def rebuild(actor: CurrentActor, session: DbSession):
-    actor.require_platform_role(PlatformRole.PLATFORM_ADMIN); actor.require_step_up()
+    actor.require_capability(Cap.ANALYTICS_REBUILD); actor.require_step_up()
     return await service.rebuild(session, actor)
 
 

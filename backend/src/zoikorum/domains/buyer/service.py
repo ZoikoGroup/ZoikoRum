@@ -32,7 +32,8 @@ from zoikorum.domains.contract import facade as contract_facade
 from zoikorum.domains.firm import facade as firm_facade
 from zoikorum.domains.identity import facade as identity_facade
 from zoikorum.shared import clock
-from zoikorum.shared.auth import Actor, AuthStrength, OrgRole, PlatformRole
+from zoikorum.shared.auth import Actor, AuthStrength, OrgRole
+from zoikorum.shared.capabilities import Cap
 from zoikorum.shared.crypto import sha256_hex
 from zoikorum.shared.errors import Conflict, Forbidden, NotFound, StepUpRequired, ValidationFailed
 from zoikorum.shared.event_catalog import E
@@ -657,9 +658,6 @@ async def merge_business_units(session: AsyncSession, actor: Actor, org_id: uuid
 
 # ---- Staff admin console: every organisation (buyers, enterprises and, from the firm domain, firms) -------------------
 
-ORG_VIEWERS = (PlatformRole.PLATFORM_ADMIN, PlatformRole.TS_ANALYST, PlatformRole.COMPLIANCE_OFFICER, PlatformRole.SUPPORT_AGENT)
-
-
 def _like(text: str) -> str:
     return "%" + text.strip().lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
 
@@ -668,7 +666,7 @@ async def admin_organizations(session: AsyncSession, actor: Actor, q: str | None
                               cursor: str | None, limit: int | None) -> dict:
     """Staff Organisations list, newest first. Buyer organisations and firms are read newest first after the same
     cursor and merged, so one cursor pages through both. Every read is audited."""
-    actor.require_platform_role(*ORG_VIEWERS)
+    actor.require_capability(Cap.ORGANIZATIONS_READ)
     lim = clamp_limit(limit)
     orgs: list[Organization] = []
     if kind != "FIRM":
@@ -718,7 +716,7 @@ async def admin_organizations(session: AsyncSession, actor: Actor, q: str | None
 
 async def admin_organization_summary(session: AsyncSession, actor: Actor) -> AdminOrganizationSummaryOut:
     """Counts for the Organisations page cards: by kind, suspended, and created in the last 30 days."""
-    actor.require_platform_role(*ORG_VIEWERS)
+    actor.require_capability(Cap.ORGANIZATIONS_READ)
     since = clock.now() - timedelta(days=30)
     enterprise = Organization.org_type == "ENTERPRISE"
     total, ent, suspended, new = (await session.execute(select(

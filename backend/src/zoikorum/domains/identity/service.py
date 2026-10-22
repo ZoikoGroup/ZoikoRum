@@ -14,7 +14,7 @@ import secrets
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import jwt
 import pyotp
@@ -31,6 +31,7 @@ from zoikorum.domains.identity.schemas import (
 )
 from zoikorum.shared import clock
 from zoikorum.shared.auth import Actor, AuthStrength, Persona, PlatformRole
+from zoikorum.shared.capabilities import Cap
 from zoikorum.shared.crypto import decrypt_field, encrypt_field, sha256_hex
 from zoikorum.shared.errors import Conflict, Forbidden, NotFound, RateLimited, Unauthenticated, ValidationFailed
 from zoikorum.shared.event_catalog import E
@@ -94,7 +95,7 @@ def to_out(identity: Identity, links: list[IdentityLink]) -> IdentityOut:
         mfaRequired=mfa_required(identity), mfaBypass=get_settings().mfa_bypass,
         personas=sorted(identity.personas or []),
         primaryPersona=identity.primary_persona,
-        platformRoles=sorted(identity.platform_roles or []) if identity.status == "ACTIVE" else [],
+        platformRoles=identity.live_platform_roles(clock.now()),
         organizationName=identity.signup_organization_name,
         defaultDashboard=default_dashboard(identity),
         links=[LinkOut(type=l.link_type, targetId=l.target_id, roles=sorted(l.roles), kind=l.target_kind) for l in links],
@@ -106,7 +107,7 @@ def to_out(identity: Identity, links: list[IdentityLink]) -> IdentityOut:
 
 async def _start_session(
     session: AsyncSession, identity: Identity, strength: str, user_agent: str | None,
-    family_id: uuid.UUID | None = None, auth_time=None,
+    family_id: uuid.UUID | None = None, auth_time=None, audience: str = "APP",
 ) -> TokenPair:
     s = get_settings()
     now = clock.now()
@@ -121,12 +122,13 @@ async def _start_session(
         auth_time=auth_time or now,
         expires_at=now + timedelta(seconds=s.refresh_token_ttl_seconds),
         user_agent=(user_agent or "")[:500],
+        audience=audience,
     )
     session.add(sess)
     await session.flush()
     access, ttl = tokens.mint_access_token(
         identity, await _links(session, identity.id),
-        session_id=sess.id, auth_strength=strength, auth_time=sess.auth_time,
+        session_id=sess.id, auth_strength=strength, auth_time=sess.auth_time, audience=audience,
     )
     return TokenPair(accessToken=access, refreshToken=refresh, expiresIn=ttl)
 
@@ -342,7 +344,8 @@ async def login(
 
     identity.failed_login_count = 0
     identity.locked_until = None
-    pair = await _start_session(session, identity, strength, user_agent)
+    # Only the staff sign-in page starts an admin-audience session: staff tools refuse every other session.
+    pair = await _start_session(session, identity, strength, user_agent, audience="ADMIN" if portal == "staff" else "APP")
     _evt(session, E.AUTHENTICATION_SUCCEEDED, identity, authStrength=strength)
     return AuthOut(tokens=pair, user=to_out(identity, await _links(session, identity.id)))
 
@@ -370,7 +373,7 @@ async def refresh(session: AsyncSession, refresh_token: str, user_agent: str | N
         raise Forbidden("This account is not active")
     sess.rotated_at = now
     # Rotation keeps the original auth strength/time; step-up freshness still decays.
-    return await _start_session(session, identity, sess.auth_strength, user_agent, sess.family_id, sess.auth_time)
+    return await _start_session(session, identity, sess.auth_strength, user_agent, sess.family_id, sess.auth_time, sess.audience)
 
 
 async def logout(session: AsyncSession, actor: Actor) -> None:
@@ -423,7 +426,7 @@ async def regenerate_recovery_codes(session: AsyncSession, actor: Actor) -> list
 async def reset_mfa(session: AsyncSession, actor: Actor, identity_id: uuid.UUID, reason: str) -> Identity:
     """Support, after confirming who the person is by other means: removes two-step verification so they can set it up
     again. Platform Admin with a fresh confirmation; never for one's own account; signs the person out everywhere."""
-    actor.require_platform_role(PlatformRole.PLATFORM_ADMIN)
+    actor.require_capability(Cap.ACCOUNTS_RESET_MFA)
     actor.require_step_up()
     if identity_id == actor.identity_id:
         raise Forbidden("Another administrator must reset your own two-step verification", code="SELF_RESET")
@@ -451,28 +454,84 @@ async def step_up(session: AsyncSession, actor: Actor, code: str, user_agent: st
              reason="REUSED_TOTP_STEP_UP" if problem == TOTP_REUSED else "BAD_TOTP_STEP_UP", lockedUntil=identity.locked_until)
         return LoginFailure(problem, "MFA_INVALID")
     identity.failed_login_count = 0
-    family = None
+    family, audience = None, "APP"
     if actor.session_id:
         old = await session.get(Session, actor.session_id)
-        family = old.family_id if old else None
-    pair = await _start_session(session, identity, AuthStrength.MFA, user_agent, family_id=family)
+        family, audience = (old.family_id, old.audience) if old else (None, "APP")
+    pair = await _start_session(session, identity, AuthStrength.MFA, user_agent, family_id=family, audience=audience)
     record_event(session, E.STEP_UP_COMPLETED, aggregate_type="Identity", aggregate_id=identity.id,
                  payload={"identityId": identity.id, "method": "TOTP"})
     return pair
 
 
-async def grant_platform_role(session: AsyncSession, actor: Actor, identity_id: uuid.UUID, role: str) -> Identity:
-    actor.require_platform_role(PlatformRole.PLATFORM_ADMIN)
-    actor.require_step_up()
+# ---- Staff roles: granted and revoked only through an approved maker-checker request (admin/approvals.py) ------------
+
+ROLE_EXPIRY_TIMER = "identity.platform_role_expiry"
+
+
+async def check_platform_role_change(session: AsyncSession, requested_by: uuid.UUID, identity_id: uuid.UUID, role: str,
+                                     grant: bool, expires_at=None, *, lock: bool = False) -> Identity:
+    """The rules a role change must meet, both when it is requested and again when it is applied: nobody grants a staff
+    role to themselves or removes their own Platform Admin role."""
     if role not in PlatformRole.ALL:
-        raise ValidationFailed(f"Unknown platform role {role}")
-    if identity_id == actor.identity_id:
-        raise Forbidden("Another administrator must grant you a staff role", code="SELF_GRANT")
-    identity = await _get_for_update(session, identity_id)
-    if role not in identity.platform_roles:
-        identity.platform_roles = sorted({*identity.platform_roles, role})
-        _evt(session, E.PLATFORM_ROLE_GRANTED, identity, role=role, grantedBy=actor.identity_id)
+        raise ValidationFailed(f"Unknown platform role {role}", code="UNKNOWN_ROLE")
+    identity = await session.get(Identity, identity_id, with_for_update=lock)
+    if identity is None:
+        raise NotFound("Identity not found")
+    if grant:
+        if identity_id == requested_by:
+            raise Forbidden("Another administrator must grant you a staff role", code="SELF_GRANT")
+        if identity.status != "ACTIVE":
+            raise Conflict("Staff roles can only be granted to an active account", code="ACCOUNT_NOT_ACTIVE")
+        if expires_at is not None and expires_at <= clock.now():
+            raise ValidationFailed("The end time of a time-limited role must be in the future", code="EXPIRY_IN_PAST")
+        if role in identity.platform_roles and role not in (identity.platform_role_expiry or {}):
+            raise Conflict("This account already holds the role permanently", code="ROLE_ALREADY_HELD")
+    else:
+        if role == PlatformRole.PLATFORM_ADMIN and identity_id == requested_by:
+            raise Conflict("You cannot remove your own Platform Admin role", code="SELF_DEMOTION")
+        if role not in identity.platform_roles:
+            raise Conflict("This account does not hold that role", code="ROLE_NOT_HELD")
     return identity
+
+
+async def apply_platform_role_grant(session: AsyncSession, identity_id: uuid.UUID, role: str, expires_at,
+                                    requested_by: uuid.UUID, approved_by: uuid.UUID) -> Identity:
+    """Carries out an approved grant. With ``expires_at`` the role is just-in-time: it stops counting at that time and a
+    timer then removes it; without, it is permanent (and replaces an earlier time limit)."""
+    from zoikorum.shared.relay import cancel_timer, schedule_timer
+
+    identity = await check_platform_role_change(session, requested_by, identity_id, role, True, expires_at, lock=True)
+    expiry = dict(identity.platform_role_expiry or {})
+    key = f"{identity_id}:{role}"
+    if expires_at is not None:
+        expiry[role] = expires_at.isoformat()
+        await schedule_timer(session, ROLE_EXPIRY_TIMER, key, expires_at)
+    else:
+        expiry.pop(role, None)
+        await cancel_timer(session, ROLE_EXPIRY_TIMER, key)
+    identity.platform_roles = sorted({*identity.platform_roles, role})
+    identity.platform_role_expiry = expiry
+    _evt(session, E.PLATFORM_ROLE_GRANTED, identity, role=role, grantedBy=requested_by, approvedBy=approved_by,
+         expiresAt=expires_at)
+    return identity
+
+
+async def expire_platform_role(session: AsyncSession, identity_id: uuid.UUID, role: str) -> None:
+    """Timer: a just-in-time role reached its end time. It already stopped counting then (live_platform_roles); this removes
+    it and records that it ended. A grant renewed in the meantime moved the end time, so nothing happens."""
+    identity = await session.get(Identity, identity_id, with_for_update=True)
+    if identity is None or role not in (identity.platform_role_expiry or {}):
+        return
+    ends = datetime.fromisoformat(identity.platform_role_expiry[role])
+    if ends > clock.now():
+        return
+    identity.platform_roles = sorted(set(identity.platform_roles) - {role})
+    identity.platform_role_expiry = {r: t for r, t in identity.platform_role_expiry.items() if r != role}
+    _evt(session, E.PLATFORM_ROLE_EXPIRED, identity, role=role, endedAt=ends,
+         message=f"Your time-limited {role.replace('_', ' ').title()} role ended at {ends:%d %b %Y %H:%M} UTC.")
+    record_audit(session, "identity.platform_role.expired", object_type="Identity", object_id=identity.id,
+                 details={"role": role, "endedAt": ends.isoformat()})
 
 
 async def set_status(session: AsyncSession, identity_id: uuid.UUID, status: str, reason: str) -> None:
@@ -580,11 +639,11 @@ async def add_persona(session: AsyncSession, actor: Actor, account_type: str, us
     if persona not in identity.personas:
         identity.personas = sorted({*identity.personas, persona})
         _evt(session, E.PERSONA_ADDED, identity, persona=persona)
-    family = None
+    family, audience = None, "APP"
     if actor.session_id:
         old = await session.get(Session, actor.session_id)
-        family = old.family_id if old else None
-    pair = await _start_session(session, identity, actor.auth_strength, user_agent, family, actor.auth_time)
+        family, audience = (old.family_id, old.audience) if old else (None, "APP")
+    pair = await _start_session(session, identity, actor.auth_strength, user_agent, family, actor.auth_time, audience)
     return AuthOut(tokens=pair, user=to_out(identity, await _links(session, identity.id)))
 
 
@@ -621,33 +680,36 @@ async def reset_password(session: AsyncSession, token: str, new_password: str) -
     _evt(session, E.PASSWORD_CHANGED, identity, method="RESET")
 
 
-async def revoke_platform_role(session: AsyncSession, actor: Actor, identity_id: uuid.UUID, role: str) -> Identity:
-    actor.require_platform_role(PlatformRole.PLATFORM_ADMIN)
-    actor.require_step_up()
-    identity = await _get_for_update(session, identity_id)
-    if role == PlatformRole.PLATFORM_ADMIN and identity_id == actor.identity_id:
-        raise Conflict("You cannot remove your own Platform Admin role", code="SELF_DEMOTION")
-    if role in identity.platform_roles:
-        identity.platform_roles = sorted(set(identity.platform_roles) - {role})
-        await session.execute(
-            update(Session).where(Session.identity_id == identity_id, Session.revoked_at.is_(None)).values(revoked_at=clock.now())
-        )
-        _evt(session, E.PLATFORM_ROLE_REVOKED, identity, role=role, revokedBy=actor.identity_id)
+async def apply_platform_role_revoke(session: AsyncSession, identity_id: uuid.UUID, role: str, requested_by: uuid.UUID,
+                                     approved_by: uuid.UUID) -> Identity:
+    """Carries out an approved revocation. The person is signed out everywhere so the role disappears at once."""
+    from zoikorum.shared.relay import cancel_timer
+
+    identity = await check_platform_role_change(session, requested_by, identity_id, role, False, lock=True)
+    identity.platform_roles = sorted(set(identity.platform_roles) - {role})
+    identity.platform_role_expiry = {r: t for r, t in (identity.platform_role_expiry or {}).items() if r != role}
+    await cancel_timer(session, ROLE_EXPIRY_TIMER, f"{identity_id}:{role}")
+    await session.execute(
+        update(Session).where(Session.identity_id == identity_id, Session.revoked_at.is_(None)).values(revoked_at=clock.now())
+    )
+    _evt(session, E.PLATFORM_ROLE_REVOKED, identity, role=role, revokedBy=requested_by, approvedBy=approved_by)
     return identity
 
 
 async def list_staff(session: AsyncSession, actor: Actor) -> list[StaffMemberOut]:
-    actor.require_platform_role(PlatformRole.PLATFORM_ADMIN)
+    actor.require_capability(Cap.IAM_READ)
     rows = (
         await session.scalars(
             select(Identity).where(Identity.platform_roles != []).order_by(Identity.display_name).limit(500)
         )
     ).all()
-    return [
-        StaffMemberOut(id=i.id, email=i.email, displayName=i.display_name, platformRoles=sorted(i.platform_roles),
-                       mfaEnabled=i.mfa_enabled_at is not None, status=i.status)
-        for i in rows
-    ]
+    return [_staff_out(i) for i in rows]
+
+
+def _staff_out(i: Identity) -> StaffMemberOut:
+    return StaffMemberOut(id=i.id, email=i.email, displayName=i.display_name, platformRoles=sorted(i.platform_roles),
+                          mfaEnabled=i.mfa_enabled_at is not None, status=i.status,
+                          roleExpiries={r: datetime.fromisoformat(t) for r, t in (i.platform_role_expiry or {}).items()})
 
 
 async def create_platform_admin(session: AsyncSession, email: str, password: str, display_name: str, country: str,
@@ -680,12 +742,11 @@ async def create_platform_admin(session: AsyncSession, email: str, password: str
 
 
 async def lookup_by_email(session: AsyncSession, actor: Actor, email: str) -> StaffMemberOut:
-    actor.require_platform_role(PlatformRole.PLATFORM_ADMIN)
+    actor.require_capability(Cap.IAM_READ)
     i = await session.scalar(select(Identity).where(Identity.email == email.strip().lower()))
     if i is None:
         raise NotFound("No account with that email")
-    return StaffMemberOut(id=i.id, email=i.email, displayName=i.display_name, platformRoles=sorted(i.platform_roles),
-                          mfaEnabled=i.mfa_enabled_at is not None, status=i.status)
+    return _staff_out(i)
 
 
 def _like_escape(text: str) -> str:
@@ -693,7 +754,6 @@ def _like_escape(text: str) -> str:
     return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-USER_ADMINS = (PlatformRole.PLATFORM_ADMIN, PlatformRole.TS_ANALYST)
 USER_FILTERS = {"BUYER", "PROFESSIONAL", "FIRM_ADMIN", "ENTERPRISE_ADMIN", "ENTERPRISE_MEMBER", "STAFF"}
 
 
@@ -701,7 +761,7 @@ async def list_users(session: AsyncSession, actor: Actor, q: str | None, role: s
                      cursor: str | None, limit: int | None) -> dict:
     """Staff Users list: search by name or email, filter by role and status, newest first. Every read is audited.
     Suspending is not done here: it goes through an evidence-based safety case (admin domain, four-eyes)."""
-    actor.require_platform_role(*USER_ADMINS)
+    actor.require_capability(Cap.ACCOUNTS_READ)
     stmt = select(Identity)
     if q and q.strip():
         term = "%" + _like_escape(q.strip().lower()) + "%"

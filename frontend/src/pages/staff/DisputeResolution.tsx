@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { CATEGORIES, CATEGORY_LABEL, disputeApi, OPEN_PHASES, OUTCOME_LABEL, PHASE, type Dispute, type DisputeStatus } from '../../api/disputes'
 import { formatMoney } from '../../api/orgs'
 import {
   AdminHeader, AdminKpi, Callout, Checklist, CountTabs, DetailPanel, Facts, FilterBar, FilterSelect, KpiStrip, ListDetail,
-  MetricList, Panel, PanelRow, Pill, Progress, TableFoot, TrendChart, dueText, shortDate, shortDateTime, type CheckState, type PillTone,
-} from '../../components/admin'
+  MetricList, Panel, PanelRow, Pill, Progress, TableFoot, TrendChart, dueText, shortDate, shortDateTime, type CheckState, type PillTone,pickRow } from '../../components/admin'
+import { CaseOwner, OwnerCell, useAssignments } from '../../components/CaseOwner'
 import { Icon } from '../../components/dashboard'
 import { ErrorAlert } from '../../components/ui'
 import { formatCurrencies, sumByCurrency } from '../../lib/money'
@@ -27,6 +27,7 @@ export default function DisputeResolution() {
   const [list, setList] = useState<Dispute[] | null>(null)
   const [error, setError] = useState<unknown>(null)
   const [tab, setTab] = useState<Tab>('open')
+  const owners = useAssignments(['DISPUTE'])
   const [q, setQ] = useState('')
   const [category, setCategory] = useState('')
   const [currency, setCurrency] = useState('')
@@ -132,15 +133,15 @@ export default function DisputeResolution() {
           <div className="adm-note">{open.length} active cases · {needsMediator.length} need a mediator · frozen {formatCurrencies(open.map((d) => d.disputed))}</div>
           <div className="adm-table-wrap">
             <table className="data">
-              <thead><tr><th>Case</th><th>Engagement</th><th>Dispute type</th><th>Amount</th><th>Stage</th><th>Due date</th><th>Opened</th><th><span className="sr-only">Actions</span></th></tr></thead>
+              <thead><tr><th scope="col">Case</th><th scope="col">Engagement</th><th scope="col">Dispute type</th><th scope="col">Amount</th><th scope="col">Stage</th><th scope="col">Due date</th><th scope="col">Opened</th><th scope="col">Owner</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
               <tbody>
-                {!list && !error && <tr><td colSpan={8} className="empty-row"><span role="status">Loading disputes…</span></td></tr>}
-                {list && filtered.length === 0 && <tr><td colSpan={8} className="empty-row">{rows.length ? 'No disputes match these filters.' : 'No disputes. Cases appear here when a party opens one.'}</td></tr>}
+                {!list && !error && <tr><td colSpan={9} className="empty-row"><span role="status">Loading disputes…</span></td></tr>}
+                {list && filtered.length === 0 && <tr><td colSpan={9} className="empty-row">{rows.length ? 'No disputes match these filters.' : 'No disputes. Cases appear here when a party opens one.'}</td></tr>}
                 {shown.map((d) => {
                   const dl = deadlineOf(d)
                   const due = dl ? dueText(dl) : null
                   return (
-                    <tr key={d.id} className={`pick ${selId === d.id ? 'selected' : ''}`} onClick={() => setSelId(d.id)}>
+                    <tr {...pickRow} key={d.id} className={`pick ${selId === d.id ? 'selected' : ''}`} onClick={() => setSelId(d.id)}>
                       <td><div className="cell-id">{d.reference}</div><div className="cell-sub clamp">{d.summary}</div></td>
                       <td className="small">{d.contractReference}</td>
                       <td className="small">{CATEGORY_LABEL[d.category]}</td>
@@ -149,6 +150,7 @@ export default function DisputeResolution() {
                         {d.status === 'MEDIATION' && !d.mediatorAssigned && <div className="cell-sub late">Needs a mediator</div>}</td>
                       <td>{dl ? <><div>{shortDate(dl)}</div><div className={`cell-sub ${due?.late ? 'late' : ''}`}>{due?.text}</div></> : '—'}</td>
                       <td className="small">{shortDate(d.createdAt)}</td>
+                      <td><OwnerCell assignment={owners.get('DISPUTE', d.id)} /></td>
                       <td style={{ textAlign: 'right' }}><Link className="btn btn-secondary btn-sm" to={`/app/disputes/${d.id}`} onClick={(e) => e.stopPropagation()}>Open case</Link></td>
                     </tr>
                   )
@@ -158,12 +160,14 @@ export default function DisputeResolution() {
           </div>
           <TableFoot shown={shown.length} total={filtered.length} noun="cases" page={page} pages={pages} onPage={setPage} />
         </div>
-      } detail={selected && <DisputeSummary key={selected.id} d={selected} onClose={() => setSelId(null)} />} />
+      } detail={selected && <DisputeSummary key={selected.id} d={selected} onClose={() => setSelId(null)}
+        owner={<CaseOwner key={selected.id} kind="DISPUTE" caseId={selected.id} assignment={owners.get('DISPUTE', selected.id)} onChange={owners.put}
+          note="The operational owner keeps the case moving. It is separate from the neutral mediator, who is assigned in the case itself." />} />} />
     </>
   )
 }
 
-function DisputeSummary({ d, onClose }: { d: Dispute; onClose: () => void }) {
+function DisputeSummary({ d, owner, onClose }: { d: Dispute; owner?: ReactNode; onClose: () => void }) {
   const dl = deadlineOf(d)
   const isOpen = OPEN_PHASES.includes(d.status)
   const readiness: { label: string; state: CheckState; note?: string }[] = [
@@ -202,6 +206,7 @@ function DisputeSummary({ d, onClose }: { d: Dispute; onClose: () => void }) {
         <h3 style={{ fontSize: 13.5, margin: '0 0 6px' }}>Milestones</h3>
         <ul className="adm-metrics">{d.milestones.map((m) => <li key={m.id}><span>M{m.sequence} {m.title}</span><strong>{formatMoney(m.amount)}</strong></li>)}</ul>
       </div>
+      {owner}
       <Checklist title="Evidence and neutrality readiness" items={readiness} />
       {(d.mediationRequired || d.legalReviewRequired) && <Callout tone="blue" title="Buyer organisation policy">
         {d.mediationRequired ? 'A mediator handles any settlement of this size. ' : ''}{d.legalReviewRequired ? "The organisation's Legal Reviewer must agree to its settlement." : ''}</Callout>}

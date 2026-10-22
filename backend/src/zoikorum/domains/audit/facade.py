@@ -45,6 +45,26 @@ async def replay_events(session: AsyncSession, after_seq: int, limit: int = 500)
         payload=r.details)) for r in rows]
 
 
+# ---- Staff audit exports through maker-checker approval (admin/approvals.py) ------------------------------------------
+
+async def open_export(session: AsyncSession, requested_by, scope: dict, fmt: str):
+    """Records a staff export request (status REQUESTED, no content yet); returns its id."""
+    from zoikorum.domains.audit import service
+    return await service.open_export(session, requested_by, scope, fmt)
+
+
+async def complete_export(session: AsyncSession, export_id) -> dict:
+    """Makes an approved export; returns {exportId, recordCount}."""
+    from zoikorum.domains.audit import service
+    return await service.complete_export(session, export_id)
+
+
+async def close_export(session: AsyncSession, export_id, status: str) -> None:
+    """A requested export that will never be made: REJECTED | EXPIRED | CANCELLED | FAILED."""
+    from zoikorum.domains.audit import service
+    await service.close_export(session, export_id, status)
+
+
 async def list_archives(session, actor):
     from zoikorum.domains.audit import archive
     return await archive.list_archives(session, actor)

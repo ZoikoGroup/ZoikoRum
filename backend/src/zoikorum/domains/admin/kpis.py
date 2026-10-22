@@ -11,7 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.domains.admin.models import EnforcementCase, Incident
 from zoikorum.shared import clock
-from zoikorum.shared.auth import Actor, PlatformRole
+from zoikorum.shared.auth import Actor
+from zoikorum.shared.capabilities import Cap
 
 
 async def _enforcement(session: AsyncSession, since: datetime, until: datetime) -> dict:
@@ -33,8 +34,7 @@ async def _enforcement(session: AsyncSession, since: datetime, until: datetime) 
 
 
 async def report(session: AsyncSession, actor: Actor, since: datetime | None, until: datetime | None) -> dict:
-    actor.require_platform_role(PlatformRole.PLATFORM_ADMIN, PlatformRole.TS_ANALYST, PlatformRole.FINANCIAL_OPS,
-                                PlatformRole.RISK_LEAD, PlatformRole.LEGAL, PlatformRole.COMPLIANCE_OFFICER)
+    actor.require_capability(Cap.ANALYTICS_KPIS_READ)
     from zoikorum.domains.contract import facade as contract_facade
     from zoikorum.domains.dispute import facade as dispute_facade
     from zoikorum.domains.escrow import facade as escrow_facade

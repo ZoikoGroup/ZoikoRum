@@ -29,7 +29,8 @@ from zoikorum.domains.identity import facade as identity_facade
 from zoikorum.domains.policy import facade as policy_facade
 from zoikorum.domains.professional import facade as professional_facade
 from zoikorum.shared import clock, fx
-from zoikorum.shared.auth import Actor, OrgRole, PlatformRole
+from zoikorum.shared.auth import Actor, OrgRole
+from zoikorum.shared.capabilities import Cap, capabilities_for
 from zoikorum.shared.errors import Conflict, Forbidden, NotFound, PolicyBlocked, ValidationFailed
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_audit, record_event
@@ -50,7 +51,6 @@ CASE_STATES = StateMachine("DisputeCase", {
 OPEN = ("EVIDENCE_COLLECTION", "DIRECT_RESOLUTION", "MEDIATION")
 DISPUTABLE = ("IN_PROGRESS", "SUBMITTED", "REVISION_REQUESTED")  # funded and not yet accepted
 SKIP_DIRECT = ("PROFESSIONAL_CONDUCT", "COMPLIANCE_BREACH")  # conduct/compliance bypass negotiation (doc s.4)
-OPERATORS = (PlatformRole.MEDIATOR, PlatformRole.LEGAL, PlatformRole.PLATFORM_ADMIN)
 TIMER_EVIDENCE = "dispute.evidence_window"
 TIMER_DIRECT = "dispute.direct_resolution_window"
 TIMER_RECOMMENDATION = "dispute.recommendation_answer"  # an unanswered recommendation counts as declined
@@ -125,8 +125,8 @@ async def _viewer(session: AsyncSession, actor: Actor, c: DisputeCase) -> str:
     party = await _party_of(session, actor, c.organization_id, c.professional_id)
     if party:
         return party
-    if actor.has_platform_role(*OPERATORS):
-        actor.require_platform_role(*OPERATORS)
+    if actor.has_capability(Cap.DISPUTES_READ):
+        actor.require_capability(Cap.DISPUTES_READ)
         return "MEDIATOR" if c.mediator_identity_id == actor.identity_id else "OPERATOR"
     raise NotFound("Dispute not found")
 
@@ -272,7 +272,7 @@ async def list_disputes(session: AsyncSession, actor: Actor, role: str, contract
             return {"items": [], "nextCursor": None}
         stmt = stmt.where(DisputeCase.professional_id == pro.id)
     else:
-        actor.require_platform_role(*OPERATORS)
+        actor.require_capability(Cap.DISPUTES_READ)
     stmt, lim = paginate(stmt, DisputeCase, cursor, limit)
     rows = (await session.scalars(stmt)).all()
     out = []
@@ -501,7 +501,7 @@ async def escalate(session: AsyncSession, actor: Actor, case_id: uuid.UUID) -> D
 # ---- Mediation ---------------------------------------------------------------------------------------------
 
 async def assign_mediator(session: AsyncSession, actor: Actor, case_id: uuid.UUID, body: AssignIn) -> DisputeOut:
-    actor.require_platform_role(PlatformRole.PLATFORM_ADMIN, PlatformRole.MEDIATOR)
+    actor.require_capability(Cap.DISPUTES_ASSIGN)
     actor.require_step_up()
     c = await _case(session, case_id, lock=True)
     if c.status != "MEDIATION":
@@ -511,7 +511,7 @@ async def assign_mediator(session: AsyncSession, actor: Actor, case_id: uuid.UUI
         raise NotFound("Mediator not found")
     if await _party_of(session, Actor(identity_id=who.id, session_id=None, email=who.email), c.organization_id, c.professional_id):
         raise Forbidden("A party to the dispute cannot mediate it", code="CONFLICT_OF_INTEREST")
-    if PlatformRole.MEDIATOR not in await identity_facade.live_platform_roles(session, who.id):
+    if Cap.DISPUTES_MEDIATE not in capabilities_for(await identity_facade.live_platform_roles(session, who.id)):
         raise ValidationFailed("Choose someone with the Mediator role and an active account", code="NOT_A_MEDIATOR")
     if c.pending_decision:
         raise Conflict("A platform decision is awaiting approval; the mediator cannot change now", code="DECISION_PENDING")
@@ -522,7 +522,7 @@ async def assign_mediator(session: AsyncSession, actor: Actor, case_id: uuid.UUI
 
 
 async def _require_mediator(session: AsyncSession, actor: Actor, c: DisputeCase) -> None:
-    actor.require_platform_role(PlatformRole.MEDIATOR)
+    actor.require_capability(Cap.DISPUTES_MEDIATE)
     if c.mediator_identity_id != actor.identity_id:
         raise Forbidden("Only the assigned mediator can do this")
     if c.status != "MEDIATION":
@@ -600,7 +600,7 @@ async def propose_decision(session: AsyncSession, actor: Actor, case_id: uuid.UU
 
 async def approve_decision(session: AsyncSession, actor: Actor, case_id: uuid.UUID) -> DisputeOut:
     """Second approver with the Legal role: no single person initiates and finalises a platform decision."""
-    actor.require_platform_role(PlatformRole.LEGAL)
+    actor.require_capability(Cap.DISPUTES_ADJUDICATE)
     actor.require_step_up()
     c = await _case(session, case_id, lock=True)
     if c.status != "MEDIATION" or not c.pending_decision:
@@ -701,7 +701,7 @@ async def file_appeal(session: AsyncSession, actor: Actor, case_id: uuid.UUID, b
 
 
 async def decide_appeal(session: AsyncSession, actor: Actor, case_id: uuid.UUID, body) -> dict:
-    actor.require_platform_role(PlatformRole.LEGAL)
+    actor.require_capability(Cap.DISPUTES_ADJUDICATE)
     actor.require_step_up()
     c = await _case(session, case_id, lock=True)
     if await _party_of(session, actor, c.organization_id, c.professional_id):
@@ -1018,7 +1018,7 @@ async def refer_to_arbitration(session: AsyncSession, actor: Actor, case_id: uui
 
 async def record_arbitration_award(session: AsyncSession, actor: Actor, case_id: uuid.UUID, body: ArbitrationAwardIn) -> DisputeOut:
     """Legal records the outside arbitrator's award; the platform then moves the money exactly as for any other decision."""
-    actor.require_platform_role(PlatformRole.LEGAL)
+    actor.require_capability(Cap.DISPUTES_ADJUDICATE)
     actor.require_step_up()
     c = await _case(session, case_id, lock=True)
     if c.status != "MEDIATION" or not c.arbitration:
@@ -1084,7 +1084,7 @@ async def retention_due(session: AsyncSession, payload: dict) -> None:
 
 async def set_legal_hold(session: AsyncSession, actor: Actor, case_id: uuid.UUID, hold: bool, reason: str) -> DisputeOut:
     """Legal places or lifts a hold (litigation, a regulator's request): the record is kept regardless of its date."""
-    actor.require_platform_role(PlatformRole.LEGAL)
+    actor.require_capability(Cap.DISPUTES_ADJUDICATE)
     actor.require_step_up()
     c = await _case(session, case_id, lock=True)
     if c.legal_hold == hold:
@@ -1102,7 +1102,7 @@ async def set_legal_hold(session: AsyncSession, actor: Actor, case_id: uuid.UUID
 
 async def retention_queue(session: AsyncSession, actor: Actor) -> list[dict]:
     """Legal: closed records whose retention period has ended, and records on hold."""
-    actor.require_platform_role(PlatformRole.LEGAL, PlatformRole.PLATFORM_ADMIN)
+    actor.require_capability(Cap.DISPUTES_RETENTION_READ)
     rows = (await session.scalars(select(DisputeCase).where(or_(DisputeCase.retention_review_due.is_(True), DisputeCase.legal_hold.is_(True)))
                                   .order_by(DisputeCase.retain_until))).all()
     return [{"id": c.id, "reference": c.reference, "closedAt": c.closed_at, "retainUntil": c.retain_until, "basis": c.retention_basis,

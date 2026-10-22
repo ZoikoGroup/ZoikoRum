@@ -94,6 +94,8 @@ class OpsWorklistOut(BaseModel):
 class OpsResolveIn(BaseModel):
     outcome: Literal["RECOVERED", "WRITTEN_OFF", "SETTLED_OUTSIDE"]
     note: str = Field(min_length=5, max_length=1000)
+    # Why the exception should be closed this way, for the second person who approves it (defaults to the note).
+    justification: str | None = Field(default=None, min_length=10, max_length=2000)
 
 
 class RefundOut(BaseModel):
@@ -126,7 +128,48 @@ class ReconciliationOut(BaseModel):
     checks: list[ReconciliationCheck]
     runBy: str
     updatedAt: datetime
+    # CLEAN only when nothing differed and no break for the day is unresolved; BREAKS_OPEN while any break is not CLOSED.
+    runStatus: Literal["CLEAN", "BREAKS_OPEN", "BREAKS_RESOLVED"]
+    breaks: int = 0
+    openBreaks: int = 0
 
 
 class ReconcileIn(BaseModel):
     day: date
+
+
+BreakStatus = Literal["OPEN", "EVIDENCE_GATHERING", "REVIEWED", "CLOSED"]
+
+
+class ReconciliationBreakEvent(BaseModel):
+    at: datetime
+    by: str
+    fromStatus: str | None
+    toStatus: str
+    note: str | None
+
+
+class ReconciliationBreakOut(BaseModel):
+    id: uuid.UUID
+    batchId: uuid.UUID
+    day: date
+    kind: str
+    currency: str
+    amountMinor: int
+    references: dict
+    status: BreakStatus
+    ownerId: uuid.UUID | None
+    owner: str | None
+    resolutionNote: str | None
+    reviewedBy: uuid.UUID | None
+    reviewedAt: datetime | None
+    closedBy: uuid.UUID | None
+    closedAt: datetime | None
+    history: list[ReconciliationBreakEvent]
+    createdAt: datetime
+    updatedAt: datetime
+
+
+class BreakAdvanceIn(BaseModel):
+    status: Literal["EVIDENCE_GATHERING", "REVIEWED", "CLOSED"]
+    note: str = Field(min_length=5, max_length=2000)

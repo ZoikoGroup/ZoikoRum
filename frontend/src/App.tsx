@@ -1,8 +1,8 @@
 import { lazy, Suspense, useEffect, type ReactNode } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { elsewhere, PORTAL } from './portal'
-import { PLATFORM_ROLES } from './api/auth'
 import { AuthProvider } from './auth/AuthContext'
+import { CapabilitiesProvider, RequireCapability } from './auth/capabilities'
 import { GuestOnly, RequireAuth, RequireRole } from './auth/guards'
 import { ConfirmEmail, ForgotPassword, ResetPassword } from './pages/AccountPages'
 import AppShell from './pages/AppShell'
@@ -10,6 +10,7 @@ import { AccountPage, ForbiddenPage } from './pages/Dashboards'
 import Join from './pages/Join'
 import Legal from './pages/Legal'
 import SignIn from './pages/SignIn'
+import { isStaffPath, legacyOpsPath, STAFF_HOME, STAFF_PREFIX } from './staffRoutes'
 
 // Pages load on demand (one file per page module), so signing in does not download the whole app.
 const StaffAccounts = lazy(() => import('./pages/staff/Accounts'))
@@ -36,6 +37,7 @@ const StaffTaxonomyStandards = lazy(() => import('./pages/staff/TaxonomyStandard
 const StaffTrustSafety = lazy(() => import('./pages/staff/TrustSafety'))
 const StaffVerificationCenter = lazy(() => import('./pages/staff/VerificationCenter'))
 const StaffWorkQueue = lazy(() => import('./pages/staff/WorkQueue'))
+const StaffApprovals = lazy(() => import('./pages/staff/Approvals'))
 const EnterpriseAccess = lazy(() => import('./pages/EnterpriseAccess'))
 const EnterpriseStructurePage = lazy(() => import('./pages/EnterprisePages').then((m) => ({ default: m.EnterpriseStructurePage })))
 const EnterpriseTeamPage = lazy(() => import('./pages/EnterprisePages').then((m) => ({ default: m.EnterpriseTeamPage })))
@@ -95,6 +97,7 @@ const CUSTOMER: ('BUYER' | 'ENTERPRISE_ADMIN' | 'ENTERPRISE_MEMBER')[] = ['BUYER
 export default function App() {
   return (
     <AuthProvider>
+      <CapabilitiesProvider>
       <BrowserRouter>
         <Suspense fallback={<p className="muted page-loading">Loading…</p>}>
         <PortalGate>
@@ -156,30 +159,6 @@ export default function App() {
             <Route path="messages" element={<RequireRole any={[...CUSTOMER, 'PROFESSIONAL']}><MessagesPage /></RequireRole>} />
             <Route path="disputes" element={<RequireRole any={CUSTOMER}><DisputesPage role="buyer" /></RequireRole>} />
             <Route path="professional/disputes" element={<RequireRole any={['PROFESSIONAL']}><DisputesPage role="professional" /></RequireRole>} />
-            <Route path="ops" element={<RequireRole any={[...PLATFORM_ROLES]}><StaffCommandCenter /></RequireRole>} />
-            <Route path="ops/queue" element={<RequireRole any={[...PLATFORM_ROLES]}><StaffWorkQueue /></RequireRole>} />
-            <Route path="ops/analytics" element={<RequireRole any={[...PLATFORM_ROLES]}><StaffAnalytics /></RequireRole>} />
-            <Route path="ops/users" element={<RequireRole any={['PLATFORM_ADMIN', 'TS_ANALYST']}><StaffAccounts /></RequireRole>} />
-            <Route path="ops/professionals" element={<RequireRole any={['PLATFORM_ADMIN', 'TS_ANALYST', 'COMPLIANCE_OFFICER', 'SUPPORT_AGENT']}><StaffProfessionalDirectory /></RequireRole>} />
-            <Route path="ops/enterprise" element={<RequireRole any={['COMPLIANCE_OFFICER']}><StaffEnterpriseReadinessAdmin /></RequireRole>} />
-            <Route path="ops/duplicates" element={<RequireRole any={['TS_ANALYST', 'PLATFORM_ADMIN']}><StaffDuplicateIdentity /></RequireRole>} />
-            <Route path="ops/verification" element={<RequireRole any={['COMPLIANCE_OFFICER']}><StaffVerificationCenter /></RequireRole>} />
-            <Route path="ops/safety" element={<RequireRole any={[...PLATFORM_ROLES]}><StaffTrustSafety /></RequireRole>} />
-            <Route path="ops/disputes" element={<RequireRole any={['MEDIATOR', 'LEGAL', 'PLATFORM_ADMIN']}><StaffDisputeResolution /></RequireRole>} />
-            <Route path="ops/audit" element={<RequireRole any={[...PLATFORM_ROLES]}><StaffAuditEvidence /></RequireRole>} />
-            <Route path="ops/engagements" element={<RequireRole any={['PLATFORM_ADMIN', 'COMPLIANCE_OFFICER', 'LEGAL', 'MEDIATOR', 'FINANCIAL_OPS']}><StaffEngagementOversight /></RequireRole>} />
-            <Route path="ops/contracts" element={<RequireRole any={['PLATFORM_ADMIN', 'COMPLIANCE_OFFICER', 'LEGAL', 'MEDIATOR', 'FINANCIAL_OPS']}><StaffContractsMilestones /></RequireRole>} />
-            <Route path="ops/taxonomy" element={<RequireRole any={['PLATFORM_ADMIN']}><StaffTaxonomyStandards /></RequireRole>} />
-            <Route path="ops/payments" element={<RequireRole any={['FINANCIAL_OPS', 'PLATFORM_ADMIN']}><StaffProtectedPayments /></RequireRole>} />
-            <Route path="ops/reconciliation" element={<RequireRole any={['FINANCIAL_OPS', 'PLATFORM_ADMIN']}><StaffReconciliationCenter /></RequireRole>} />
-            <Route path="ops/money" element={<RequireRole any={['FINANCIAL_OPS', 'PLATFORM_ADMIN']}><StaffFinancialExceptions /></RequireRole>} />
-            <Route path="ops/incidents" element={<RequireRole any={[...PLATFORM_ROLES]}><StaffIncidentCommand /></RequireRole>} />
-            <Route path="ops/health" element={<RequireRole any={['FINANCIAL_OPS', 'PLATFORM_ADMIN']}><StaffServiceHealth /></RequireRole>} />
-            <Route path="ops/switches" element={<RequireRole any={['FINANCIAL_OPS', 'PLATFORM_ADMIN']}><StaffFeatureControls /></RequireRole>} />
-            <Route path="ops/dead-letters" element={<RequireRole any={['FINANCIAL_OPS', 'PLATFORM_ADMIN']}><StaffFailedDeliveries /></RequireRole>} />
-            <Route path="ops/staff" element={<RequireRole any={['PLATFORM_ADMIN']}><StaffStaffAccess /></RequireRole>} />
-            <Route path="ops/support" element={<RequireRole any={['SUPPORT_AGENT', 'PLATFORM_ADMIN']}><StaffSupportCases /></RequireRole>} />
-            <Route path="ops/config" element={<RequireRole any={['PLATFORM_ADMIN']}><StaffPlatformConfig /></RequireRole>} />
             <Route path="disputes/:id" element={<DisputeDetail />} />
             <Route path="organisation" element={<RequireRole any={CUSTOMER}><OrganisationPage /></RequireRole>} />
             <Route path="verification" element={<RequireRole any={CUSTOMER}><CustomerVerification /></RequireRole>} />
@@ -189,15 +168,47 @@ export default function App() {
             <Route path="account" element={<AccountPage />} />
             <Route path="safety" element={<SafetyPage />} />
             <Route path="reports" element={<ReportsPage />} />
-            <Route path="ops/ai" element={<RequireRole any={['AI_SAFETY_REVIEWER']}><AIAdminPage /></RequireRole>} />
             <Route path="security" element={<Security />} />
             <Route path="forbidden" element={<ForbiddenPage />} />
           </Route>
+          {/* Staff console (Admin Navigation Registry): each page needs its read capability (GET /v1/admin/me/capabilities). */}
+          <Route path={STAFF_PREFIX} element={<RequireAuth><AppShell /></RequireAuth>}>
+            <Route index element={<Navigate to={STAFF_HOME} replace />} />
+            <Route path="command-center" element={<RequireCapability cap="dashboard.read"><StaffCommandCenter /></RequireCapability>} />
+            <Route path="my-work-queue" element={<RequireCapability cap="work.read"><StaffWorkQueue /></RequireCapability>} />
+            <Route path="analytics-insights" element={<RequireCapability cap="analytics.read"><StaffAnalytics /></RequireCapability>} />
+            <Route path="accounts-organizations" element={<RequireCapability cap="accounts.read"><StaffAccounts /></RequireCapability>} />
+            <Route path="professional-directory" element={<RequireCapability cap="professionals.read"><StaffProfessionalDirectory /></RequireCapability>} />
+            <Route path="enterprise-readiness" element={<RequireCapability cap="enterprise.read"><StaffEnterpriseReadinessAdmin /></RequireCapability>} />
+            <Route path="duplicate-identity-cases" element={<RequireCapability cap="identity_cases.read"><StaffDuplicateIdentity /></RequireCapability>} />
+            <Route path="verification-center" element={<RequireCapability cap="verification.read"><StaffVerificationCenter /></RequireCapability>} />
+            <Route path="trust-safety" element={<RequireCapability cap="safety.read"><StaffTrustSafety /></RequireCapability>} />
+            <Route path="dispute-resolution" element={<RequireCapability cap="disputes.read"><StaffDisputeResolution /></RequireCapability>} />
+            <Route path="audit-evidence" element={<RequireCapability cap="audit.read"><StaffAuditEvidence /></RequireCapability>} />
+            <Route path="engagement-oversight" element={<RequireCapability cap="engagements.read"><StaffEngagementOversight /></RequireCapability>} />
+            <Route path="contracts-milestones" element={<RequireCapability cap="contracts.read"><StaffContractsMilestones /></RequireCapability>} />
+            <Route path="taxonomy-standards" element={<RequireCapability cap="taxonomy.read"><StaffTaxonomyStandards /></RequireCapability>} />
+            <Route path="protected-payments" element={<RequireCapability cap="payments.read"><StaffProtectedPayments /></RequireCapability>} />
+            <Route path="reconciliation" element={<RequireCapability cap="recon.read"><StaffReconciliationCenter /></RequireCapability>} />
+            <Route path="financial-exceptions" element={<RequireCapability cap="finexceptions.read"><StaffFinancialExceptions /></RequireCapability>} />
+            <Route path="incident-command" element={<RequireCapability cap="incidents.read"><StaffIncidentCommand /></RequireCapability>} />
+            <Route path="service-health-workers" element={<RequireCapability cap="health.read"><StaffServiceHealth /></RequireCapability>} />
+            <Route path="feature-controls" element={<RequireCapability cap="switches.read"><StaffFeatureControls /></RequireCapability>} />
+            <Route path="failed-event-deliveries" element={<RequireCapability cap="dlq.read"><StaffFailedDeliveries /></RequireCapability>} />
+            <Route path="approvals" element={<RequireCapability cap="approvals.read"><StaffApprovals /></RequireCapability>} />
+            <Route path="staff-access-control" element={<RequireCapability cap="iam.read"><StaffStaffAccess /></RequireCapability>} />
+            <Route path="support-cases" element={<RequireCapability cap="support.read"><StaffSupportCases /></RequireCapability>} />
+            <Route path="platform-configuration" element={<RequireCapability cap="configuration.read"><StaffPlatformConfig /></RequireCapability>} />
+            <Route path="ai-governance" element={<RequireCapability cap="ai.read"><AIAdminPage /></RequireCapability>} />
+          </Route>
+          {/* Old staff console addresses (bookmarks, older emails) open the same page at its new address. */}
+          <Route path="/app/ops/*" element={<LegacyOpsRedirect />} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
         </PortalGate>
         </Suspense>
       </BrowserRouter>
+      </CapabilitiesProvider>
     </AuthProvider>
   )
 }
@@ -211,10 +222,16 @@ function PortalGate({ children }: { children: ReactNode }) {
     if (pathname === '/' || pathname === '/login') return <Navigate to={`/staff/login${search}`} replace state={state} />
     if (CUSTOMER_ONLY.test(pathname)) return <Away to={elsewhere(pathname + search)} />
   }
-  if (PORTAL === 'customer' && (pathname.startsWith('/staff') || pathname.startsWith('/app/ops'))) {
+  if (PORTAL === 'customer' && (pathname.startsWith('/staff') || isStaffPath(pathname))) {
     return <Away to={elsewhere(pathname + search)} />
   }
   return <>{children}</>
+}
+
+/** /app/ops/<old page>?<query>#<hash> -> /platform-admin/<registry slug>?<query>#<hash> */
+function LegacyOpsRedirect() {
+  const { pathname, search, hash } = useLocation()
+  return <Navigate to={legacyOpsPath(pathname) + search + hash} replace />
 }
 
 function Away({ to }: { to: string | null }) {

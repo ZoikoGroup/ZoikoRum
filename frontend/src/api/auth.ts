@@ -1,3 +1,4 @@
+import type { ApprovalRequest } from './approvals'
 import { api, type TokenPair } from './client'
 
 export type AccountType = 'BUYER' | 'PROFESSIONAL' | 'FIRM' | 'ENTERPRISE'
@@ -68,6 +69,8 @@ export interface StaffMember {
   platformRoles: PlatformRole[]
   mfaEnabled: boolean
   status: string
+  /** Just-in-time roles: when each one ends (roles not listed are permanent). */
+  roleExpiries?: Partial<Record<PlatformRole, string>>
 }
 
 export const authApi = {
@@ -110,10 +113,11 @@ export const authApi = {
       Object.entries({ ...filters, limit: '50' }).filter(([, v]) => v)) as Record<string, string> }),
   listStaff: () => api<StaffMember[]>('/v1/admin/staff'),
   lookup: (email: string) => api<StaffMember>('/v1/admin/identities/lookup', { query: { email } }),
-  grantRole: (id: string, role: PlatformRole) =>
-    api<User>(`/v1/admin/identities/${id}/platform-roles`, { method: 'POST', body: { role } }),
-  revokeRole: (id: string, role: PlatformRole) =>
-    api<User>(`/v1/admin/identities/${id}/platform-roles/${role}`, { method: 'DELETE' }),
+  /** Staff role changes are maker-checker requests (202): another Platform Admin approves them before they apply. */
+  grantRole: (id: string, role: PlatformRole, justification: string, expiresAt?: string | null) =>
+    api<ApprovalRequest>(`/v1/admin/identities/${id}/platform-roles`, { method: 'POST', body: { role, justification, expiresAt: expiresAt ?? null } }),
+  revokeRole: (id: string, role: PlatformRole, justification: string) =>
+    api<ApprovalRequest>(`/v1/admin/identities/${id}/platform-roles/${role}`, { method: 'DELETE', query: { justification } }),
 }
 
 export const ROLE_LABEL: Record<string, string> = {

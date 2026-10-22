@@ -30,7 +30,8 @@ from zoikorum.domains.verification.schemas import (
     QueueItemOut, RevokeIn, SecondLookIn,
 )
 from zoikorum.shared import clock
-from zoikorum.shared.auth import Actor, FirmRole, PlatformRole
+from zoikorum.shared.auth import Actor, FirmRole
+from zoikorum.shared.capabilities import Cap
 from zoikorum.shared.errors import Conflict, Forbidden, NotFound, ValidationFailed
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_audit, record_event
@@ -56,8 +57,6 @@ EXPIRY_REQUIRED = ("INSURANCE",)  # verified only with an end date
 SLA = {"IDENTITY": timedelta(hours=24), "CREDENTIAL": timedelta(hours=48)}
 DEFAULT_SLA = timedelta(hours=72)
 REMINDER_DAYS = (30, 14, 7)
-REVIEWERS = (PlatformRole.COMPLIANCE_OFFICER,)
-VIEWERS = (PlatformRole.COMPLIANCE_OFFICER, PlatformRole.PLATFORM_ADMIN, PlatformRole.TS_ANALYST)
 LABELS = {"IDENTITY": "Identity", "JURISDICTION": "Jurisdiction eligibility", "INSURANCE": "Professional indemnity insurance",
           "RESTRICTIONS": "Sanctions & restrictions screening", "BACKGROUND": "Background check",
           "FIRM_REGISTRATION": "Firm registration", "BENEFICIAL_OWNERSHIP": "Beneficial ownership"}
@@ -100,8 +99,8 @@ async def _require_view(session: AsyncSession, actor: Actor, subject_type: str, 
     """Returns True when the caller is the subject's owner; operators get read access (MFA enforced)."""
     if await _is_owner(session, actor, subject_type, subject_id):
         return True
-    if actor.has_platform_role(*VIEWERS):
-        actor.require_platform_role(*VIEWERS)
+    if actor.has_capability(Cap.VERIFICATION_SUBJECT_READ):
+        actor.require_capability(Cap.VERIFICATION_SUBJECT_READ)
         return False
     raise NotFound("Verification case not found")
 
@@ -529,7 +528,7 @@ def _sampled(case: VerificationCase) -> bool:
 
 async def second_looks(session: AsyncSession, actor: Actor) -> list[CaseOut]:
     """Automatic approvals waiting for a person, oldest first."""
-    actor.require_platform_role(*REVIEWERS)
+    actor.require_capability(Cap.VERIFICATION_READ)
     rows = (await session.scalars(select(VerificationCase).where(VerificationCase.second_look == "SAMPLED")
                                   .order_by(VerificationCase.verified_at).limit(200))).all()
     return [await _out(session, c, False) for c in rows]
@@ -537,7 +536,7 @@ async def second_looks(session: AsyncSession, actor: Actor) -> list[CaseOut]:
 
 async def decide_second_look(session: AsyncSession, actor: Actor, case_id: uuid.UUID, body: SecondLookIn) -> CaseOut:
     """Confirm the partner's approval, or overturn it: the check is revoked with a reason (the person can appeal)."""
-    actor.require_platform_role(*REVIEWERS)
+    actor.require_capability(Cap.VERIFICATION_DECIDE)
     actor.require_step_up()
     case = await _case(session, case_id, lock=True)
     if case.second_look != "SAMPLED":
@@ -571,7 +570,7 @@ def _fail(session: AsyncSession, case: VerificationCase, *, reviewer_id: uuid.UU
 
 async def decide(session: AsyncSession, actor: Actor, case_id: uuid.UUID, body: DecisionIn) -> CaseOut:
     """Human review. Needs COMPLIANCE_OFFICER + fresh step-up; nobody reviews their own case."""
-    actor.require_platform_role(*REVIEWERS)
+    actor.require_capability(Cap.VERIFICATION_DECIDE)
     actor.require_step_up()
     case = await _case(session, case_id, lock=True)
     if case.status not in OPEN_STATES:
@@ -622,7 +621,7 @@ async def _cancel_expiry_timers(session: AsyncSession, case: VerificationCase) -
 
 
 async def revoke(session: AsyncSession, actor: Actor, case_id: uuid.UUID, body: RevokeIn) -> CaseOut:
-    actor.require_platform_role(*REVIEWERS)
+    actor.require_capability(Cap.VERIFICATION_DECIDE)
     actor.require_step_up()
     case = await _case(session, case_id, lock=True)
     CASE_STATES.assert_can(case.status, "REVOKED")
@@ -690,7 +689,7 @@ async def subject_cases(session: AsyncSession, actor: Actor, subject_type: str, 
 
 
 async def review_queue(session: AsyncSession, actor: Actor, cursor: str | None, limit: int | None, status: str | None) -> dict:
-    actor.require_platform_role(*REVIEWERS)
+    actor.require_capability(Cap.VERIFICATION_READ)
     # Default: checks waiting for a decision. "VERIFIED": decided checks, so a mistaken verification can be revoked.
     states = (status,) if status in (*OPEN_STATES, "VERIFIED", "FAILED", "EXPIRED", "REVOKED") else OPEN_STATES
     stmt = select(VerificationCase)
@@ -760,7 +759,7 @@ async def file_appeal(session: AsyncSession, actor: Actor, case_id: uuid.UUID, b
 
 async def appeal_queue(session: AsyncSession, actor: Actor, status: str | None, cursor: str | None = None,
                        limit: int | None = None) -> dict:
-    actor.require_platform_role(*REVIEWERS)
+    actor.require_capability(Cap.VERIFICATION_READ)
     stmt, lim = paginate(select(Appeal, VerificationCase).join(VerificationCase, VerificationCase.id == Appeal.case_id)
                          .where(Appeal.status == (status or "OPEN")), Appeal, cursor, limit, oldest_first=True)
     fetched = (await session.execute(stmt)).all()
@@ -779,7 +778,7 @@ async def appeal_queue(session: AsyncSession, actor: Actor, status: str | None, 
 
 
 async def decide_appeal(session: AsyncSession, actor: Actor, appeal_id: uuid.UUID, body: AppealDecisionIn) -> AppealOut:
-    actor.require_platform_role(*REVIEWERS)
+    actor.require_capability(Cap.VERIFICATION_DECIDE)
     actor.require_step_up()
     a = await session.get(Appeal, appeal_id, with_for_update=True)
     if a is None:

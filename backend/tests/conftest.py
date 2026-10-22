@@ -253,12 +253,14 @@ def make_user(client, sf):
         assert r.status_code == 201, r.text
         user = User(client, r.json(), email, password)
         if platform_roles:
-            # Bootstrap operator roles directly (the API requires an existing admin).
+            # Bootstrap operator roles directly (the API requires an existing admin). Staff work from a staff sign-in
+            # (admin audience): the sign-up session becomes one, as if they had signed in on the staff page.
             async with sf() as s, s.begin():
                 await s.execute(
                     text("UPDATE identity.identities SET platform_roles = :r WHERE id = :i"),
                     {"r": list(platform_roles), "i": user.id},
                 )
+                await s.execute(text("UPDATE identity.sessions SET audience = 'ADMIN' WHERE identity_id = :i"), {"i": user.id})
             await user.refresh()
         return user
 

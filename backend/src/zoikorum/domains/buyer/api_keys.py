@@ -21,7 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.domains.buyer.models import ApiKey, OrgMember, Organization
 from zoikorum.shared import clock
-from zoikorum.shared.auth import Actor, AuthStrength, OrgRole, PlatformRole
+from zoikorum.shared.auth import Actor, AuthStrength, OrgRole
+from zoikorum.shared.capabilities import Cap
 from zoikorum.shared.errors import Conflict, Forbidden, NotFound, Unauthenticated
 from zoikorum.shared.events import record_audit
 
@@ -85,7 +86,7 @@ async def revoke_key(session: AsyncSession, actor: Actor, org_id: uuid.UUID, key
 
 async def set_tier(session: AsyncSession, actor: Actor, key_id: uuid.UUID, tier: str) -> dict:
     """Staff raise or lower a key's request budget (the client rate tier agreed with the organisation)."""
-    actor.require_platform_role(PlatformRole.PLATFORM_ADMIN)
+    actor.require_capability(Cap.API_KEYS_MANAGE)
     actor.require_step_up()
     k = await session.get(ApiKey, key_id, with_for_update=True)
     if k is None:

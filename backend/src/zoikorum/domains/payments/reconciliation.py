@@ -12,27 +12,36 @@ Checks (ledger account -> payments record):
   chargebacks CHARGEBACK_REVERSAL credits   = chargebacks received
 Any difference makes the batch MISMATCH, a P0 financial incident (RECONCILIATION_MISMATCH + audit).
 The scheduled run happens at 01:00 UTC for the previous day; Financial Ops can re-run any day.
+
+Suspense (PAY-02): every difference becomes a break (one per day, check and currency; a re-run updates it rather than
+adding another). A break moves OPEN -> EVIDENCE_GATHERING -> REVIEWED -> CLOSED; closing needs a fresh step-up and a
+different person from the reviewer (maker-checker). A day reports CLEAN only when none of its breaks is unresolved:
+runStatus is CLEAN, BREAKS_OPEN or BREAKS_RESOLVED.
 """
 
 from __future__ import annotations
 
+import uuid
 from datetime import date, datetime, time, timedelta, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.domains.escrow import facade as escrow_facade
-from zoikorum.domains.payments.models import PaymentIntent, Payout, ReconciliationBatch, Refund
+from zoikorum.domains.identity import facade as identity_facade
+from zoikorum.domains.payments.models import PaymentIntent, Payout, ReconciliationBatch, ReconciliationBreak, Refund
 from zoikorum.domains.payments.providers import get_provider
-from zoikorum.domains.payments.schemas import ReconciliationOut
+from zoikorum.domains.payments.schemas import BreakAdvanceIn, ReconciliationBreakOut, ReconciliationOut
 from zoikorum.shared import clock
-from zoikorum.shared.auth import Actor, PlatformRole
+from zoikorum.shared.auth import Actor
+from zoikorum.shared.capabilities import Cap
+from zoikorum.shared.errors import Conflict, NotFound
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_audit, record_event
 from zoikorum.shared.relay import schedule_timer
 
 TIMER = "payments.daily_reconciliation"
-VIEWERS = (PlatformRole.FINANCIAL_OPS, PlatformRole.PLATFORM_ADMIN)
+BREAK_STEPS = ("OPEN", "EVIDENCE_GATHERING", "REVIEWED", "CLOSED")
 
 
 def _window(day: date) -> tuple[datetime, datetime]:
@@ -92,6 +101,7 @@ async def reconcile(session: AsyncSession, day: date, run_by: str = "SCHEDULE") 
     else:
         batch.status, batch.checks, batch.mismatches, batch.run_by = status, checks, mismatches, run_by
     await session.flush()
+    await _sync_breaks(session, batch, checks, run_by)
     payload = {"batchId": batch.id, "day": day.isoformat(), "status": status, "mismatches": mismatches}
     record_event(session, E.RECONCILIATION_MISMATCH if mismatches else E.RECONCILIATION_COMPLETED,
                  aggregate_type="ReconciliationBatch", aggregate_id=batch.id, payload=payload)
@@ -101,21 +111,131 @@ async def reconcile(session: AsyncSession, day: date, run_by: str = "SCHEDULE") 
     return batch
 
 
-def _out(b: ReconciliationBatch) -> ReconciliationOut:
+async def _sync_breaks(session: AsyncSession, batch: ReconciliationBatch, checks: list[dict], run_by: str) -> None:
+    """One break per day + check + currency that differs. A re-run updates an existing break (never a duplicate); a
+    closed break whose difference changed reopens, because what was explained is no longer what the books show."""
+    existing = {(b.kind, b.currency): b for b in (await session.scalars(
+        select(ReconciliationBreak).where(ReconciliationBreak.day == batch.day).with_for_update())).all()}
+    now = clock.now().isoformat()
+    for c in checks:
+        if c["ok"]:
+            continue
+        refs = {"batchId": str(batch.id), "ledger": c["ledger"], "payments": c["payments"], "provider": c["provider"]}
+        b = existing.get((c["name"], c["currency"]))
+        if b is None:
+            b = ReconciliationBreak(batch_id=batch.id, day=batch.day, kind=c["name"], currency=c["currency"],
+                                    amount_minor=c["difference"], references=refs, status="OPEN",
+                                    history=[{"at": now, "by": run_by, "fromStatus": None, "toStatus": "OPEN",
+                                              "note": "Found by the reconciliation run"}])
+            session.add(b)
+            await session.flush()
+            record_audit(session, "payments.reconciliation_break.opened", object_type="ReconciliationBreak", object_id=b.id,
+                         details={"day": batch.day.isoformat(), "kind": b.kind, "currency": b.currency,
+                                  "amountMinor": b.amount_minor})
+            continue
+        same = {k: v for k, v in b.references.items() if k != "batchId"} == {k: v for k, v in refs.items() if k != "batchId"}
+        if b.amount_minor == c["difference"] and same:
+            continue
+        entry = {"at": now, "by": run_by, "fromStatus": b.status, "toStatus": b.status,
+                 "note": f"Re-run: difference {b.amount_minor} -> {c['difference']}"}
+        if b.status == "CLOSED":
+            entry["toStatus"], b.status = "OPEN", "OPEN"
+            b.reviewed_by = b.reviewed_at = b.closed_by = b.closed_at = None
+        b.batch_id, b.amount_minor, b.references, b.history = batch.id, c["difference"], refs, [*b.history, entry]
+        record_audit(session, "payments.reconciliation_break.updated", object_type="ReconciliationBreak", object_id=b.id,
+                     details={"day": batch.day.isoformat(), "kind": b.kind, "currency": b.currency,
+                              "amountMinor": b.amount_minor, "status": b.status})
+
+
+async def _break_counts(session: AsyncSession, days: list[date]) -> dict[date, tuple[int, int]]:
+    """day -> (breaks, unresolved breaks)."""
+    if not days:
+        return {}
+    rows = (await session.execute(select(ReconciliationBreak.day, func.count(),
+                                         func.count().filter(ReconciliationBreak.status != "CLOSED"))
+                                  .where(ReconciliationBreak.day.in_(days)).group_by(ReconciliationBreak.day))).all()
+    return {d: (int(total), int(open_)) for d, total, open_ in rows}
+
+
+def run_status(batch_status: str, breaks: int, open_breaks: int) -> str:
+    """Never CLEAN while a break for the day is unresolved (or, defensively, while the run mismatched with no break)."""
+    if open_breaks or (batch_status == "MISMATCH" and not breaks):
+        return "BREAKS_OPEN"
+    return "BREAKS_RESOLVED" if breaks else "CLEAN"
+
+
+def _out(b: ReconciliationBatch, counts: tuple[int, int] = (0, 0)) -> ReconciliationOut:
+    total, open_ = counts
     return ReconciliationOut(id=b.id, day=b.day, status=b.status, mismatches=b.mismatches, checks=b.checks, runBy=b.run_by,
-                             updatedAt=b.updated_at or b.created_at)
+                             updatedAt=b.updated_at or b.created_at, runStatus=run_status(b.status, total, open_),
+                             breaks=total, openBreaks=open_)
 
 
 async def list_batches(session: AsyncSession, actor: Actor) -> list[ReconciliationOut]:
-    actor.require_platform_role(*VIEWERS)
+    actor.require_capability(Cap.RECON_READ)
     rows = (await session.scalars(select(ReconciliationBatch).order_by(ReconciliationBatch.day.desc()).limit(90))).all()
-    return [_out(b) for b in rows]
+    counts = await _break_counts(session, [b.day for b in rows])
+    return [_out(b, counts.get(b.day, (0, 0))) for b in rows]
 
 
 async def run(session: AsyncSession, actor: Actor, day: date) -> ReconciliationOut:
-    actor.require_platform_role(*VIEWERS)
+    actor.require_capability(Cap.RECON_OPERATE)
     batch = await reconcile(session, day, run_by=str(actor.identity_id))
-    return _out(batch)
+    return _out(batch, (await _break_counts(session, [day])).get(day, (0, 0)))
+
+
+# ---- Suspense: reconciliation breaks ----------------------------------------------------------------------------
+
+async def _break_outs(session: AsyncSession, rows: list[ReconciliationBreak]) -> list[ReconciliationBreakOut]:
+    people = await identity_facade.get_identities(session, list({b.owner_id for b in rows if b.owner_id}))
+    return [ReconciliationBreakOut(
+        id=b.id, batchId=b.batch_id, day=b.day, kind=b.kind, currency=b.currency, amountMinor=b.amount_minor,
+        references=b.references, status=b.status, ownerId=b.owner_id,
+        owner=people[b.owner_id].display_name if b.owner_id in people else None, resolutionNote=b.resolution_note,
+        reviewedBy=b.reviewed_by, reviewedAt=b.reviewed_at, closedBy=b.closed_by, closedAt=b.closed_at, history=b.history,
+        createdAt=b.created_at, updatedAt=b.updated_at or b.created_at) for b in rows]
+
+
+async def list_breaks(session: AsyncSession, actor: Actor, status: str | None = None) -> list[ReconciliationBreakOut]:
+    actor.require_capability(Cap.RECON_READ)
+    stmt = select(ReconciliationBreak).order_by(ReconciliationBreak.day.desc(), ReconciliationBreak.kind,
+                                                ReconciliationBreak.currency).limit(500)
+    if status:
+        stmt = stmt.where(ReconciliationBreak.status == status)
+    return await _break_outs(session, list((await session.scalars(stmt)).all()))
+
+
+async def advance_break(session: AsyncSession, actor: Actor, break_id: uuid.UUID, body: BreakAdvanceIn) -> ReconciliationBreakOut:
+    """Move a break one step on. The first person to move it owns it; closing needs a fresh step-up, a resolution note,
+    and someone other than the person who marked it REVIEWED (maker-checker). Audited."""
+    actor.require_capability(Cap.RECON_OPERATE)
+    if body.status == "CLOSED":
+        actor.require_step_up()
+    b = await session.get(ReconciliationBreak, break_id, with_for_update=True)
+    if b is None:
+        raise NotFound("Reconciliation break not found")
+    if b.status == "CLOSED":
+        raise Conflict("This break is closed", code="BREAK_CLOSED")
+    expected = BREAK_STEPS[BREAK_STEPS.index(b.status) + 1]
+    if body.status != expected:
+        raise Conflict(f"A break moves {b.status.lower()} -> {expected.lower()}", code="INVALID_STEP")
+    if body.status == "CLOSED" and b.reviewed_by == actor.identity_id:
+        raise Conflict("The person who reviewed this break cannot also close it", code="MAKER_CHECKER_REQUIRED")
+    now, note, previous = clock.now(), body.note.strip(), b.status
+    if b.owner_id is None:
+        b.owner_id = actor.identity_id
+    if body.status == "REVIEWED":
+        b.reviewed_by, b.reviewed_at = actor.identity_id, now
+    if body.status == "CLOSED":
+        b.closed_by, b.closed_at, b.resolution_note = actor.identity_id, now, note
+    b.status = body.status
+    b.history = [*b.history, {"at": now.isoformat(), "by": str(actor.identity_id), "fromStatus": previous,
+                              "toStatus": body.status, "note": note}]
+    record_audit(session, "payments.reconciliation_break.advanced", object_type="ReconciliationBreak", object_id=b.id,
+                 details={"day": b.day.isoformat(), "kind": b.kind, "currency": b.currency, "from": previous,
+                          "to": body.status, "note": note})
+    await session.flush()
+    return (await _break_outs(session, [b]))[0]
 
 
 def next_run(after: datetime) -> datetime:
@@ -142,6 +262,9 @@ async def health(session: AsyncSession) -> list[tuple[str, str, float]]:
     latest = await session.scalar(select(ReconciliationBatch).order_by(ReconciliationBatch.day.desc()).limit(1))
     if latest is None:
         return []
-    return [("zk_reconciliation_latest_mismatches", "Mismatches in the latest reconciled day (must be 0)", latest.mismatches),
+    unresolved = await session.scalar(select(func.count()).select_from(ReconciliationBreak)
+                                      .where(ReconciliationBreak.status != "CLOSED")) or 0
+    return [("zk_reconciliation_open_breaks", "Reconciliation breaks not yet closed, any day (must reach 0)", unresolved),
+            ("zk_reconciliation_latest_mismatches", "Mismatches in the latest reconciled day (must be 0)", latest.mismatches),
             ("zk_reconciliation_latest_age_days", "Days since the latest reconciled day (2 or more: the daily run is not "
              "happening)", (clock.now().date() - latest.day).days)]

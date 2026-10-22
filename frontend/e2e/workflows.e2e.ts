@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 import {
-  buyerWithOrganisation, call, credentialInReview, day, engagementAwaitingAcceptance, eventually, proposalRequest, signIn, staffMember,
-  verifiedProfessional,
+  approvePending, buyerWithOrganisation, call, credentialInReview, day, engagementAwaitingAcceptance, eventually, proposalRequest, signIn,
+  staffMember, verifiedProfessional,
 } from './api'
 
 test('a customer describes what they need and finds a matching professional', async ({ page }) => {
@@ -75,7 +75,7 @@ test('a compliance officer approves a credential in the review queue', async ({ 
   const { account: pro, pro: profile, caseId } = await credentialInReview('Venky Licensed')
 
   await signIn(page, officer.email, { staff: true })
-  await page.goto('/app/ops/verification')
+  await page.goto('/platform-admin/verification-center')
   await page.getByRole('row').filter({ hasText: 'Venky Licensed' }).getByRole('button', { name: 'Review' }).click()
   await expect(page.getByRole('heading', { name: 'CPA (US)' })).toBeVisible()
   await expect(page.getByText('cpa-licence.pdf')).toBeVisible()
@@ -116,6 +116,7 @@ test('dialogs work from the keyboard: focus moves in, stays in, Escape closes, f
 
 test('an administrator pauses sign-ups during an incident and switches them back on', async ({ page }) => {
   const admin = await staffMember('Ada Operations', ['PLATFORM_ADMIN'])
+  const checker = await staffMember('Cy Checker', ['PLATFORM_ADMIN'])  // maker-checker: a second admin approves each change
   await signIn(page, admin.email, { staff: true })
   await page.getByRole('link', { name: 'Feature Controls' }).click()
   await expect(page.getByRole('heading', { name: 'Feature Controls', level: 1 })).toBeVisible()
@@ -123,7 +124,11 @@ test('an administrator pauses sign-ups during an incident and switches them back
   const row = page.getByRole('row').filter({ hasText: 'New accounts' })
   await row.getByRole('button', { name: 'Pause', exact: true }).click()
   await page.getByLabel('Reason (recorded in the audit trail)').fill('Fraud wave of fake accounts')
-  await page.getByRole('button', { name: 'Pause now' }).click()
+  await page.getByRole('button', { name: 'Request pause' }).click()
+  await expect(page.getByText(/Request submitted — awaiting approval by another Platform Admin/)).toBeVisible()
+  await expect(row.getByText('On', { exact: true })).toBeVisible()  // nothing changes before approval
+  await approvePending(checker, 'Pause: New accounts')
+  await page.reload()
   await expect(row.getByText('Paused', { exact: true })).toBeVisible()
   await expect(row.getByText(/Fraud wave of fake accounts/)).toBeVisible()
   const refused = await admin.api.post('/v1/auth/register', { data: {
@@ -133,7 +138,10 @@ test('an administrator pauses sign-ups during an incident and switches them back
 
   await row.getByRole('button', { name: 'Switch back on' }).click()
   await page.getByLabel('Reason (recorded in the audit trail)').fill('Fraud wave contained')
-  await page.getByRole('button', { name: 'Switch on', exact: true }).click()
+  await page.getByRole('button', { name: 'Request switch on', exact: true }).click()
+  await expect(page.getByText(/Request submitted — awaiting approval/)).toBeVisible()
+  await approvePending(checker, 'Switch back on: New accounts')
+  await page.reload()
   await expect(row.getByText('On', { exact: true })).toBeVisible()
   await page.getByRole('link', { name: 'Service Health & Workers' }).click()
   await expect(page.getByText('Events waiting').first()).toBeVisible()

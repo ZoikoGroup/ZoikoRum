@@ -2,8 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { duplicatesApi, type DuplicateCase } from '../../api/duplicates'
 import {
   AdminHeader, AdminKpi, Callout, CountTabs, DetailPanel, Facts, FilterBar, KpiStrip, ListDetail,
-  Pill, TableFoot, label, shortDate, useSelection, type PillTone,
-} from '../../components/admin'
+  Pill, TableFoot, label, shortDate, useSelection, type PillTone,pickRow } from '../../components/admin'
+import { CaseOwner, OwnerCell, useAssignments } from '../../components/CaseOwner'
 import { ErrorAlert, useStepUp } from '../../components/ui'
 
 type Tab = 'active' | DuplicateCase['status']
@@ -25,6 +25,7 @@ export default function DuplicateIdentity() {
   const [q, setQ] = useState('')
   const { run, modal } = useStepUp(setError)
   const { selected, select } = useSelection(rows)
+  const owners = useAssignments(['DUPLICATE'])
   const load = useCallback(() => duplicatesApi.queue().then(setRows).catch(setError), [])
   useEffect(() => { load() }, [load])
 
@@ -56,16 +57,17 @@ export default function DuplicateIdentity() {
       <FilterBar search={q} onSearch={setQ} placeholder="Search case ID or account…" />
       <div className="adm-table-wrap">
         <table className="data">
-          <thead><tr><th>Case</th><th>Account pair</th><th>Signal</th><th>Their answer</th><th>State</th></tr></thead>
+          <thead><tr><th scope="col">Case</th><th scope="col">Account pair</th><th scope="col">Signal</th><th scope="col">Their answer</th><th scope="col">State</th><th scope="col">Owner</th></tr></thead>
           <tbody>
-            {shown.length === 0 && <tr><td colSpan={5} className="empty-row">{rows ? 'Nothing to review.' : 'Loading…'}</td></tr>}
+            {shown.length === 0 && <tr><td colSpan={6} className="empty-row">{rows ? 'Nothing to review.' : 'Loading…'}</td></tr>}
             {shown.map((d) => (
-              <tr key={d.id} className={`pick ${selected?.id === d.id ? 'selected' : ''}`} onClick={() => { select(d); setNote('') }}>
+              <tr {...pickRow} key={d.id} className={`pick ${selected?.id === d.id ? 'selected' : ''}`} onClick={() => { select(d); setNote('') }}>
                 <td><div className="cell-id">{d.id.slice(0, 8)}</div><div className="cell-sub">Raised {shortDate(d.createdAt)}</div></td>
                 <td><div className="cell-main">{d.accountName ?? '—'}</div><div className="cell-sub">↔ {d.otherAccountName ?? '—'}</div></td>
                 <td>{signalText(d.signal)}</td>
                 <td className="small">{answerText(d.userAnswer)}</td>
                 <td><StatePill d={d} /></td>
+                <td><OwnerCell assignment={owners.get('DUPLICATE', d.id)} /></td>
               </tr>))}
           </tbody>
         </table>
@@ -98,6 +100,7 @@ export default function DuplicateIdentity() {
           {account('Account B', d.otherAccountName, d.otherAccount)}
         </div>
       </div>
+      <CaseOwner key={d.id} kind="DUPLICATE" caseId={d.id} assignment={owners.get('DUPLICATE', d.id)} onChange={owners.put} />
       <Facts title="Signal" rows={[
         ['Correlation signal', signalText(d.signal)],
         ['Their answer', answerText(d.userAnswer)],

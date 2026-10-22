@@ -5,6 +5,7 @@ import { authApi, type Passkey } from '../api/auth'
 import { createPasskey, passkeyCancelled, passkeysSupported } from '../lib/passkeys'
 import { useAuth } from '../auth/AuthContext'
 import { ErrorAlert, Field, useStepUp } from '../components/ui'
+import { dashboardPath } from '../staffRoutes'
 
 /** QR code for the authenticator app, drawn in the browser: the secret never leaves this page. */
 function SetupQr({ uri }: { uri: string }) {
@@ -84,7 +85,7 @@ export default function Security() {
               {codes.map((c) => <li key={c}>{c}</li>)}</ul>
             <div className="row">
               <button type="button" className="btn btn-secondary" onClick={() => navigator.clipboard?.writeText(codes.join('\n')).catch(() => {})}>Copy</button>
-              <button type="button" className="btn btn-primary" onClick={() => { setCodes(null); if (required) navigate(`/app/${user.defaultDashboard}`, { replace: true }) }}>
+              <button type="button" className="btn btn-primary" onClick={() => { setCodes(null); if (required) navigate(dashboardPath(user), { replace: true }) }}>
                 I have saved them</button>
             </div>
           </div>

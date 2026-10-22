@@ -1,6 +1,9 @@
 """Incident register (Regulator assurance s.11; RUNBOOKS.md "Write it down").
 
-Any staff member opens an incident; its owner moves it on. Severity SEV1/SEV2 incidents need a root cause, every
+Any staff member opens an incident; its owner (the incident commander) moves it on:
+UNACKNOWLEDGED -> INVESTIGATING -> MITIGATING -> MONITORING -> RECOVERED -> CLOSED.
+Mitigation is not verified recovery: RECOVERED needs a recovery verification note from a staff member who is neither
+the incident owner nor the person who set MITIGATING. Severity SEV1/SEV2 incidents need a root cause, every
 remediation task done and a written post-incident review before they close. Every change is audited and timestamped;
 nothing is deleted.
 """
@@ -17,12 +20,14 @@ from zoikorum.domains.admin.models import Incident
 from zoikorum.domains.admin.service import staff
 from zoikorum.domains.identity import facade as identity_facade
 from zoikorum.shared import clock
-from zoikorum.shared.auth import PlatformRole
+from zoikorum.shared.capabilities import Cap
 from zoikorum.shared.errors import Conflict, NotFound, ValidationFailed
 from zoikorum.shared.events import record_audit
 
-LEADS = (PlatformRole.PLATFORM_ADMIN, PlatformRole.RISK_LEAD, PlatformRole.LEGAL, PlatformRole.EXECUTIVE)
-NEXT = {"OPEN": "CONTAINED", "CONTAINED": "RESOLVED", "RESOLVED": "CLOSED"}
+STAGES = ("UNACKNOWLEDGED", "INVESTIGATING", "MITIGATING", "MONITORING", "RECOVERED", "CLOSED")
+NEXT = dict(zip(STAGES, STAGES[1:]))
+STAMP = {"INVESTIGATING": "acknowledged_at", "MITIGATING": "contained_at", "MONITORING": "monitoring_at",
+         "RECOVERED": "resolved_at", "CLOSED": "closed_at"}
 
 
 class IncidentIn(BaseModel):
@@ -34,7 +39,8 @@ class IncidentIn(BaseModel):
 
 class IncidentUpdateIn(BaseModel):
     note: str | None = Field(default=None, max_length=2000)  # adds to the timeline
-    advanceTo: Literal["CONTAINED", "RESOLVED", "CLOSED"] | None = None
+    advanceTo: Literal["INVESTIGATING", "MITIGATING", "MONITORING", "RECOVERED", "CLOSED"] | None = None
+    recoveryNote: str | None = Field(default=None, max_length=2000)  # required to reach RECOVERED: how recovery was verified
     severity: Literal["SEV1", "SEV2", "SEV3", "SEV4"] | None = None
     rootCause: str | None = Field(default=None, max_length=4000)
     addRemediation: list[str] = Field(default_factory=list, max_length=20)
@@ -44,19 +50,27 @@ class IncidentUpdateIn(BaseModel):
 
 
 async def _out(session, i: Incident) -> dict:
-    owner = (await identity_facade.get_identities(session, [i.owner_id])).get(i.owner_id)
+    people = await identity_facade.get_identities(session, [p for p in (i.owner_id, i.mitigated_by, i.recovery_verified_by) if p])
+
+    def name(pid):
+        return people[pid].display_name if pid in people else None
     return {"id": str(i.id), "reference": i.reference, "title": i.title, "kind": i.kind, "severity": i.severity,
-            "status": i.status, "summary": i.summary, "detectedAt": i.detected_at, "containedAt": i.contained_at,
-            "resolvedAt": i.resolved_at, "closedAt": i.closed_at, "owner": owner.display_name if owner else "—",
+            "status": i.status, "summary": i.summary, "detectedAt": i.detected_at, "acknowledgedAt": i.acknowledged_at,
+            "mitigatingAt": i.contained_at, "monitoringAt": i.monitoring_at, "recoveredAt": i.resolved_at,
+            "containedAt": i.contained_at, "resolvedAt": i.resolved_at, "closedAt": i.closed_at,
+            "owner": name(i.owner_id) or "—", "ownerId": str(i.owner_id),
+            "mitigatedBy": name(i.mitigated_by), "mitigatedById": str(i.mitigated_by) if i.mitigated_by else None,
+            "recoveryNote": i.recovery_note, "recoveryVerifiedBy": name(i.recovery_verified_by),
             "timeline": i.timeline, "notifications": i.notifications, "rootCause": i.root_cause,
             "remediation": i.remediation, "review": i.review, "createdAt": i.created_at, "updatedAt": i.updated_at}
 
 
 async def open_incident(session, actor, body: IncidentIn) -> dict:
-    await staff(session, actor, *PlatformRole.ALL)
+    await staff(session, actor, Cap.INCIDENTS_OPERATE)
     now = clock.now()
     i = Incident(reference="ZK-INC-" + uuid.uuid4().hex[:6].upper(), title=body.title.strip(), kind=body.kind,
-                 severity=body.severity, status="OPEN", summary=body.summary.strip(), detected_at=now, owner_id=actor.identity_id,
+                 severity=body.severity, status="UNACKNOWLEDGED", summary=body.summary.strip(), detected_at=now,
+                 owner_id=actor.identity_id,
                  timeline=[{"at": now.isoformat(), "by": str(actor.identity_id), "note": "Opened: " + body.summary.strip()[:500]}],
                  notifications=[], remediation=[])
     session.add(i)
@@ -67,7 +81,7 @@ async def open_incident(session, actor, body: IncidentIn) -> dict:
 
 
 async def list_incidents(session, actor, status: str | None) -> list[dict]:
-    await staff(session, actor, *PlatformRole.ALL)
+    await staff(session, actor, Cap.INCIDENTS_READ)
     stmt = select(Incident).order_by(Incident.detected_at.desc()).limit(200)
     if status:
         stmt = stmt.where(Incident.status == status)
@@ -75,15 +89,26 @@ async def list_incidents(session, actor, status: str | None) -> list[dict]:
 
 
 async def update_incident(session, actor, incident_id: uuid.UUID, body: IncidentUpdateIn) -> dict:
-    await staff(session, actor, *PlatformRole.ALL)
+    await staff(session, actor, Cap.INCIDENTS_OPERATE)
     i = await session.get(Incident, incident_id, with_for_update=True)
     if i is None:
         raise NotFound("Incident not found")
     if i.status == "CLOSED":
         raise Conflict("This incident is closed", code="INCIDENT_CLOSED")
-    lead = actor.has_platform_role(*LEADS)
-    if i.owner_id != actor.identity_id and not lead and (body.advanceTo or body.severity or body.review):
+    lead = actor.has_capability(Cap.INCIDENTS_LEAD)
+    owner = i.owner_id == actor.identity_id
+    # Recovery is verified independently: any staff member other than the owner and the mitigator may record it.
+    verifying = body.advanceTo == "RECOVERED"
+    if not owner and not lead and ((body.advanceTo and not verifying) or body.severity or body.review):
         raise Conflict("Only the incident owner or an incident lead can change its state", code="NOT_INCIDENT_OWNER")
+    if body.advanceTo and NEXT.get(i.status) != body.advanceTo:
+        raise Conflict(f"An incident moves {i.status.lower()} -> {NEXT.get(i.status, '?').lower()}", code="INVALID_STEP")
+    if verifying:
+        if owner or i.mitigated_by == actor.identity_id:
+            raise Conflict("Recovery must be verified by someone other than the incident owner and the person who set "
+                           "mitigating", code="INDEPENDENT_VERIFICATION_REQUIRED")
+        if not (body.recoveryNote or "").strip() or len(body.recoveryNote.strip()) < 10:
+            raise ValidationFailed("Record how recovery was verified (at least 10 characters)", code="RECOVERY_NOTE_REQUIRED")
     now, by = clock.now(), str(actor.identity_id)
     entries = list(i.timeline)
     if body.note:
@@ -105,15 +130,18 @@ async def update_incident(session, actor, incident_id: uuid.UUID, body: Incident
     if body.review:
         i.review = body.review.strip()
     if body.advanceTo:
-        if NEXT.get(i.status) != body.advanceTo:
-            raise Conflict(f"An incident moves {i.status.lower()} -> {NEXT.get(i.status, '?').lower()}", code="INVALID_STEP")
         if body.advanceTo == "CLOSED" and i.severity in ("SEV1", "SEV2"):
             missing = [m for m, ok in (("a root cause", i.root_cause), ("a post-incident review", i.review),
                                        ("every remediation task done", all(t["done"] for t in tasks))) if not ok]
             if missing:
                 raise ValidationFailed("Before closing a SEV1/SEV2 incident, record " + ", ".join(missing), code="REVIEW_REQUIRED")
+        if body.advanceTo == "MITIGATING":
+            i.mitigated_by = actor.identity_id
+        if verifying:
+            i.recovery_note, i.recovery_verified_by = body.recoveryNote.strip(), actor.identity_id
+            entries.append({"at": now.isoformat(), "by": by, "note": "Recovery verified: " + i.recovery_note[:500]})
         i.status = body.advanceTo
-        setattr(i, {"CONTAINED": "contained_at", "RESOLVED": "resolved_at", "CLOSED": "closed_at"}[body.advanceTo], now)
+        setattr(i, STAMP[body.advanceTo], now)
         entries.append({"at": now.isoformat(), "by": by, "note": f"Status: {body.advanceTo.lower()}"})
     i.timeline = entries
     record_audit(session, "admin.incident.updated", object_type="Incident", object_id=i.id,

@@ -3,9 +3,10 @@ from __future__ import annotations
 from fastapi import Response, APIRouter
 from pydantic import BaseModel, Field
 
-from zoikorum.domains.admin import service, switches
+from zoikorum.domains.admin import approvals, service, switches
 from zoikorum.domains.admin.incidents import IncidentIn, IncidentUpdateIn
 from zoikorum.shared.auth import OptionalActor, CurrentActor
+from zoikorum.shared.redaction import redact
 from zoikorum.shared import metrics
 from zoikorum.shared.db import AnalyticsSession, DbSession
 import uuid
@@ -15,15 +16,16 @@ from sqlalchemy import select
 from fastapi import Query
 from zoikorum.domains.admin.models import EnforcementCase
 from zoikorum.domains.admin.schemas import (
-    ActionIn, AppealDecisionIn, AppealIn, AssessmentIn, CaseIn, CloseCaseIn, OverrideIn, ReasonIn, RemediationDoneIn, ReportIn,
+    ActionIn, AppealDecisionIn, AppealIn, ApprovalDecisionIn, ApprovalRequestIn, ApprovalRequestOut, ApprovalSummaryOut,
+    AssessmentIn, CaseIn, CloseCaseIn, OverrideIn, ReasonIn, RemediationDoneIn, ReportIn,
 )
-from zoikorum.shared.auth import PlatformRole
+from zoikorum.shared.capabilities import ALL_CAPABILITIES, Cap, actor_capabilities, capabilities_for, destinations_for
 from zoikorum.shared.idempotency import IdempotencyKey
 from zoikorum.shared.platform_models import ConsumerFailure
 from zoikorum.shared.relay import replay_dead_letter
 from zoikorum.shared.db import session_factory
 from zoikorum.shared.events import record_audit
-from zoikorum.shared.errors import NotFound, Conflict
+from zoikorum.shared.errors import Conflict, Forbidden, NotFound
 
 router = APIRouter(tags=["admin"])
 
@@ -91,24 +93,35 @@ async def decide_appeal(case_id: uuid.UUID, body: AppealDecisionIn, actor: Curre
 
 @router.get("/v1/admin/dead-letters")
 async def dead_letters(actor: CurrentActor, session: DbSession, limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0)):
-    await service.staff(session, actor, PlatformRole.PLATFORM_ADMIN, PlatformRole.FINANCIAL_OPS)
+    await service.staff(session, actor, Cap.DLQ_READ)
     rows = (await session.scalars(select(ConsumerFailure).where(ConsumerFailure.status == "DEAD").order_by(ConsumerFailure.created_at.desc()).limit(limit).offset(offset))).all()
-    return [{"id": r.id, "eventType": r.event_type, "consumer": r.consumer, "attempts": r.attempts, "financial": r.financial, "lastError": r.last_error} for r in rows]
+    return [{"id": r.id, "eventType": r.event_type, "consumer": r.consumer, "attempts": r.attempts, "financial": r.financial, "lastError": redact(r.last_error)} for r in rows]
 
 
-@router.post("/v1/admin/dead-letters/{failure_id}/replay")
-async def replay(failure_id: uuid.UUID, actor: CurrentActor, session: DbSession):
-    await service.staff(session, actor, PlatformRole.PLATFORM_ADMIN, PlatformRole.FINANCIAL_OPS)
+class ReplayIn(BaseModel):
+    justification: str | None = Field(default=None, min_length=10, max_length=2000)  # money events: for the approver
+
+
+@router.post("/v1/admin/dead-letters/{failure_id}/replay",
+             responses={202: {"model": ApprovalRequestOut, "description": "A money event: replay requested. It is replayed only "
+                              "when another member of Financial Operations approves the approval request returned."}})
+async def replay(failure_id: uuid.UUID, actor: CurrentActor, session: DbSession, response: Response, body: ReplayIn | None = None):
+    """Replay a dead-lettered delivery. Other events are replayed at once ({"replayed": bool}). A money event (escrow,
+    payments) is never replayed by one person: this answers 202 with a maker-checker approval request
+    (DEAD_LETTER_REPLAY_FINANCIAL) and the replay happens when a second Financial Operations member approves it."""
+    await service.staff(session, actor, Cap.DLQ_REPLAY)
     actor.require_step_up()
     row = await session.get(ConsumerFailure, failure_id)
     if not row:
         raise NotFound("Delivery failure not found")
-    financial_ops = PlatformRole.FINANCIAL_OPS in await service.identity_facade.live_platform_roles(session, actor.identity_id)
-    if row.financial and not financial_ops:
-        from zoikorum.shared.errors import Forbidden
-        raise Forbidden("Financial replay requires Financial Operations authority")
     if row.status != "DEAD":
         raise Conflict("Only dead-lettered deliveries can be replayed")
+    if row.financial:
+        response.status_code = 202
+        return await approvals.request(session, actor, "DEAD_LETTER_REPLAY_FINANCIAL", {"failureId": str(failure_id)},
+                                       (body.justification if body else None) or "")
+    live = await service.identity_facade.live_platform_roles(session, actor.identity_id)
+    financial_ops = Cap.DLQ_REPLAY_FINANCIAL in capabilities_for(live)
     ok = await replay_dead_letter(session_factory(), failure_id, authorised_by=str(actor.identity_id), financial_ops=financial_ops)
     record_audit(session, "admin.dead_letter.replayed", object_type="ConsumerFailure", object_id=failure_id, details={"succeeded": ok})
     return {"replayed": ok}
@@ -122,22 +135,91 @@ class SwitchIn(BaseModel):
 @router.get("/v1/admin/switches")
 async def list_switches(actor: CurrentActor, session: DbSession) -> list[dict]:
     """Staff: the operational switches and who last changed each one."""
-    await service.staff(session, actor, PlatformRole.PLATFORM_ADMIN, PlatformRole.FINANCIAL_OPS)
+    await service.staff(session, actor, Cap.SWITCHES_READ)
     return await switches.list_switches(session)
 
 
-@router.put("/v1/admin/switches/{key}")
+@router.put("/v1/admin/switches/{key}", status_code=202, response_model=ApprovalRequestOut)
 async def set_switch(key: str, body: SwitchIn, actor: CurrentActor, session: DbSession) -> dict:
-    """Pause or resume one kind of action at once (step-up, reason, audited). Money switches: Platform Admin or
-    Financial Operations; the others: Platform Admin."""
-    return await switches.set_switch(session, actor, key, body.paused, body.reason)
+    """Ask to pause or resume one kind of action (step-up, reason). 202: a maker-checker approval request
+    (SWITCH_CHANGE, status REQUESTED); the switch changes only when a second person with the same authority approves it
+    (POST /v1/admin/approval-requests/{id}/decision). Money switches: Platform Admin or Financial Operations; the
+    others: Platform Admin."""
+    return await approvals.request(session, actor, "SWITCH_CHANGE", {"key": key, "paused": body.paused}, body.reason)
+
+
+# ---- Maker-checker approvals for privileged staff actions (admin/approvals.py) -----------------------------------------
+
+@router.post("/v1/admin/approval-requests", status_code=201, response_model=ApprovalRequestOut)
+async def create_approval_request(body: ApprovalRequestIn, actor: CurrentActor, session: DbSession) -> dict:
+    """Ask for a privileged action (step-up). Nothing changes until a different staff member with the required role
+    approves it. The older direct endpoints (staff roles, switches, financial exceptions, money replays, audit exports)
+    create the same requests."""
+    return await approvals.request(session, actor, body.kind, body.payload, body.justification)
+
+
+@router.get("/v1/admin/approval-requests", response_model=list[ApprovalRequestOut])
+async def list_approval_requests(actor: CurrentActor, session: DbSession, status_: str | None = Query(default=None, alias="status"),
+                                 kind: str | None = None, mine: bool = False, awaitingMe: bool = False,
+                                 limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0)) -> list[dict]:
+    """Staff: approval requests, newest first. ``mine``: ones I asked for; ``awaitingMe``: ones I can decide now."""
+    return await approvals.list_requests(session, actor, status_, kind, mine, awaitingMe, limit, offset)
+
+
+@router.get("/v1/admin/approval-requests/summary", response_model=ApprovalSummaryOut)
+async def approval_summary(actor: CurrentActor, session: DbSession) -> dict:
+    return await approvals.summary(session, actor)
+
+
+@router.get("/v1/admin/approval-requests/{request_id}", response_model=ApprovalRequestOut)
+async def get_approval_request(request_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> dict:
+    return await approvals.get(session, actor, request_id)
+
+
+@router.post("/v1/admin/approval-requests/{request_id}/decision", response_model=ApprovalRequestOut)
+async def decide_approval_request(request_id: uuid.UUID, body: ApprovalDecisionIn, actor: CurrentActor, session: DbSession) -> dict:
+    """Approve (the action is carried out now: APPLIED, or FAILED with applyError) or reject (with a note). Step-up; never
+    the requester, nor the person a role change is about."""
+    return await approvals.decide(session, actor, request_id, body.approve, body.note)
+
+
+@router.post("/v1/admin/approval-requests/{request_id}/cancel", response_model=ApprovalRequestOut)
+async def cancel_approval_request(request_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> dict:
+    """The requester withdraws a request that is still waiting."""
+    return await approvals.cancel(session, actor, request_id)
 
 
 @router.get("/v1/admin/worker")
 async def worker(actor: CurrentActor, session: DbSession) -> dict:
     """Staff: how far behind the background worker is (the same numbers as GET /metrics)."""
-    await service.staff(session, actor, PlatformRole.PLATFORM_ADMIN, PlatformRole.FINANCIAL_OPS)
+    await service.staff(session, actor, Cap.HEALTH_READ)
     return await metrics.worker_backlog(session)
+
+
+class DestinationOut(BaseModel):
+    id: str  # registry id (D01-D24), or APPROVALS / AI_GOVERNANCE
+    slug: str
+    route: str  # /platform-admin/<slug>
+    title: str
+    group: str
+
+
+class MyCapabilitiesOut(BaseModel):
+    capabilities: list[str]
+    destinations: list[DestinationOut]  # registry order, only those whose read capability is held
+
+
+@router.get("/v1/admin/me/capabilities", response_model=MyCapabilitiesOut)
+async def my_capabilities(actor: CurrentActor) -> dict:
+    """Staff: what this staff sign-in may see and do now (live roles), and the console pages it opens, in sidebar order.
+    The web app draws the navigation and guards its routes from this; every API still checks for itself."""
+    if not actor.admin_session:
+        raise Forbidden("Staff tools need a staff sign-in. Sign in on the staff sign-in page.", code="ADMIN_SESSION_REQUIRED")
+    actor.require_capability(*ALL_CAPABILITIES)  # staff only, with MFA
+    caps = actor_capabilities(actor)
+    return {"capabilities": sorted(caps),
+            "destinations": [{"id": d.id, "slug": d.slug, "route": d.route, "title": d.title, "group": d.group}
+                             for d in destinations_for(caps)]}
 
 
 @router.get("/v1/admin/overview")
@@ -166,7 +248,7 @@ async def my_reports(actor: CurrentActor, session: DbSession):
 @router.get("/v1/admin/enforcement-cases/{case_id}/reports")
 async def case_reports(case_id: uuid.UUID, actor: CurrentActor, session: DbSession):
     from zoikorum.domains.admin import reports
-    await service.staff(session, actor, PlatformRole.TS_ANALYST, PlatformRole.RISK_LEAD, PlatformRole.LEGAL)
+    await service.staff(session, actor, Cap.SAFETY_REPORTS_READ)
     return await reports.for_case(session, actor, case_id)
 
 
@@ -247,7 +329,7 @@ async def my_flags(actor: OptionalActor, session: DbSession) -> dict:
 async def list_flags(actor: CurrentActor, session: DbSession) -> list[dict]:
     from zoikorum.domains.admin import flags
 
-    await service.staff(session, actor, PlatformRole.PLATFORM_ADMIN)
+    await service.staff(session, actor, Cap.FLAGS_MANAGE)
     return await flags.list_flags(session)
 
 
@@ -256,7 +338,7 @@ async def flag_fairness(key: str, actor: CurrentActor, session: DbSession) -> di
     """Ranking experiments: each group's share of top-10 search places with and without the change."""
     from zoikorum.domains.admin import flags
 
-    await service.staff(session, actor, PlatformRole.PLATFORM_ADMIN)
+    await service.staff(session, actor, Cap.FLAGS_MANAGE)
     return await flags.fairness(session, key)
 
 
@@ -338,3 +420,12 @@ async def admin_config(actor: CurrentActor):
     """Platform Admin: the business rules in force (fees, windows, limits, service levels, providers). Secrets,
     credentials and connection strings are never included."""
     return service.admin_config(actor)
+
+
+# Staff console federated search (admin/search.py), mounted by main.py as this domain's admin_router.
+from zoikorum.domains.admin.search import router as admin_router  # noqa: E402,F401
+
+# Case owners and escalations across the staff console (admin/assignments.py).
+from zoikorum.domains.admin.assignments import router as _assignments_router  # noqa: E402
+
+router.include_router(_assignments_router)

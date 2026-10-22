@@ -35,8 +35,9 @@ export async function signUp(name: string, accountType: 'BUYER' | 'PROFESSIONAL'
   return { email, name, token: body.tokens.accessToken, confirmToken: body.emailConfirmationToken, api }
 }
 
-async function refresh(a: Account) {
-  const r = await a.api.post('/v1/auth/login', { data: { email: a.email, password: PASSWORD } })
+/** Signs in again for a fresh token. Staff sign in on the staff page (portal 'staff'): only those sessions carry staff roles. */
+async function refresh(a: Account, portal?: 'staff') {
+  const r = await a.api.post('/v1/auth/login', { data: { email: a.email, password: PASSWORD, portal } })
   a.token = (await r.json()).tokens.accessToken
 }
 
@@ -167,8 +168,20 @@ export async function staffMember(name: string, roles: string[]): Promise<Accoun
     stdio: ['ignore', 'ignore', 'pipe'],
   })
   const a: Account = { email, name, token: '', confirmToken: null, api: await request.newContext({ baseURL: API_URL }) }
-  await refresh(a)
+  await refresh(a, 'staff')
   return a
+}
+
+/** Maker-checker: `checker` (another staff member with the required role) approves the waiting request whose summary
+    contains `summary`; returns the decided request (status APPLIED once carried out). */
+export async function approvePending(checker: Account, summary: string) {
+  const waiting = await eventually(async () => {
+    const list = await call(checker, 'GET', '/v1/admin/approval-requests?awaitingMe=true')
+    return list.find((r: { summary: string }) => r.summary.includes(summary))
+  }, `the approval request "${summary}"`)
+  const done = await call(checker, 'POST', `/v1/admin/approval-requests/${waiting.id}/decision`, { approve: true, note: 'Checked' })
+  expect(done.status).toBe('APPLIED')
+  return done
 }
 
 /** Signs in through the login page. */
@@ -178,5 +191,5 @@ export async function signIn(page: Page, email: string, { staff = false } = {}) 
   await page.getByLabel('Work email').fill(email)
   await page.getByLabel('Password', { exact: true }).fill(PASSWORD)
   await page.getByRole('button', { name: 'Sign in', exact: true }).click()
-  await expect(page).toHaveURL(/\/app\//)
+  await expect(page).toHaveURL(staff ? /\/(platform-admin|app)\// : /\/app\//)  // staff land in the console
 }

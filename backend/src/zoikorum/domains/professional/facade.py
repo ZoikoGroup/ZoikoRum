@@ -175,3 +175,20 @@ async def published_rates(session: AsyncSession, specializations: list[str], cur
     for minor, unit in rows:
         out.setdefault(unit or "PROJECT", []).append(int(minor))
     return out
+
+
+# ---- Staff console search (admin/search.py) --------------------------------------------------------------------------
+
+async def staff_search_professionals(session: AsyncSession, term: str, exact_id: uuid.UUID | None, limit: int) -> list[dict]:
+    """Professional profiles whose public name or headline contains ``term`` (or whose id is ``exact_id``), names A-Z:
+    [{"id", "identityId", "displayName", "headline", "status"}]. The legal name is never searched or returned."""
+    from sqlalchemy import func, or_
+
+    like = "%" + term.strip().lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    match = [func.lower(Professional.display_name).like(like, escape="\\"),
+             func.lower(func.coalesce(Professional.headline, "")).like(like, escape="\\")]
+    if exact_id:
+        match.append(Professional.id == exact_id)
+    rows = (await session.scalars(select(Professional).where(or_(*match)).order_by(Professional.display_name, Professional.id).limit(limit))).all()
+    return [{"id": p.id, "identityId": p.identity_id, "displayName": p.display_name, "headline": p.headline, "status": p.status}
+            for p in rows]

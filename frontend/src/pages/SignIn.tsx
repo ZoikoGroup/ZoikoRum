@@ -7,6 +7,7 @@ import { AuthLayout, ErrorAlert, Field, PasswordInput } from '../components/ui'
 import { passkeyCancelled, passkeysSupported, signWithPasskey } from '../lib/passkeys'
 import { PORTAL, signInHref } from '../portal'
 import { SsoSignInOptions } from '../components/SingleSignOn'
+import { dashboardPath } from '../staffRoutes'
 
 /** Two sign-in pages: /login for customers, professionals, firms and enterprise teams, and /staff/login for Zoikorum
     staff. The server holds each account to its own page; the backend says which dashboard to open. */
@@ -16,7 +17,7 @@ export default function SignIn({ staff = false }: { staff?: boolean }) {
   const location = useLocation()
   const [params] = useSearchParams()
   const from = params.get('next') || (location.state as { from?: string } | null)?.from
-  const safeNext = from && /^\/(app|invite)(\/|\?|$)/.test(from) ? from : null
+  const safeNext = from && /^\/(app|invite|platform-admin)(\/|\?|$)/.test(from) ? from : null
 
   const [email, setEmail] = useState((location.state as { email?: string } | null)?.email ?? params.get('email') ?? '')
   const [password, setPassword] = useState('')
@@ -41,7 +42,7 @@ export default function SignIn({ staff = false }: { staff?: boolean }) {
       const credential = await signWithPasskey(await authApi.passkeyLoginOptions())
       const result = await authApi.passkeyLogin(credential, staff ? 'staff' : 'customer')
       accept(result)
-      navigate(result.user.mfaRequired ? '/app/security' : safeNext ?? `/app/${result.user.defaultDashboard}`, { replace: true })
+      navigate(result.user.mfaRequired ? '/app/security' : safeNext ?? dashboardPath(result.user), { replace: true })
     } catch (err) {
       if (!passkeyCancelled(err)) setError(err)
     } finally {
@@ -57,7 +58,7 @@ export default function SignIn({ staff = false }: { staff?: boolean }) {
       const result = await authApi.login(email, password, needsCode && !useRecovery ? code : undefined,
         needsCode && useRecovery ? code.trim().toLowerCase() : undefined, staff ? 'staff' : 'customer')
       accept(result)
-      navigate(result.user.mfaRequired ? '/app/security' : safeNext ?? `/app/${result.user.defaultDashboard}`, { replace: true })
+      navigate(result.user.mfaRequired ? '/app/security' : safeNext ?? dashboardPath(result.user), { replace: true })
     } catch (err) {
       if (err instanceof ApiError && err.code === 'MFA_REQUIRED') {
         setNeedsCode(true) // password was right; ask for the authenticator code

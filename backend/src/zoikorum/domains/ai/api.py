@@ -11,7 +11,8 @@ from zoikorum.domains.professional import facade as professional
 from zoikorum.domains.buyer import facade as buyer
 from zoikorum.domains.contract import facade as contract
 from zoikorum.domains.dispute import facade as dispute
-from zoikorum.shared.auth import CurrentActor, PlatformRole
+from zoikorum.shared.auth import CurrentActor
+from zoikorum.shared.capabilities import Cap
 from zoikorum.shared.db import DbSession
 from zoikorum.shared.http import enforce_budget, page_of, paginate
 from zoikorum.shared.errors import NotFound, Conflict
@@ -74,7 +75,7 @@ async def contract_summary(body: ContractIn, actor: CurrentActor, session: DbSes
 @router.post("/dispute-summary")
 async def dispute_summary(body: DisputeIn, actor: CurrentActor, session: DbSession):
     await enforce_budget("ai", str(actor.identity_id), 20, 20, "Too many AI requests. Please wait a minute.")
-    actor.require_platform_role(PlatformRole.MEDIATOR)
+    actor.require_capability(Cap.DISPUTES_MEDIATE)
     facts = await dispute.assistance_evidence(session, body.disputeId, actor.identity_id)
     if not facts:
         raise NotFound("Assigned dispute not found")
@@ -85,7 +86,7 @@ async def dispute_summary(body: DisputeIn, actor: CurrentActor, session: DbSessi
 
 @router.get("/prompts")
 async def prompts(actor: CurrentActor, session: DbSession):
-    actor.require_platform_role(PlatformRole.AI_SAFETY_REVIEWER)
+    actor.require_capability(Cap.AI_READ)
     return [service.prompt_out(p) for p in (await session.scalars(select(PromptVersion).order_by(PromptVersion.prompt_key, PromptVersion.version.desc()))).all()]
 
 
@@ -93,7 +94,7 @@ async def prompts(actor: CurrentActor, session: DbSession):
 async def built_in_prompts(actor: CurrentActor):
     """The prompts that ship with the platform (search, verification, marketplace): changed only through code review
     with their golden tests, and switched off with ZK_AI_DISABLED_PROMPTS."""
-    actor.require_platform_role(PlatformRole.AI_SAFETY_REVIEWER)
+    actor.require_capability(Cap.AI_READ)
     s = get_settings()
     return [{"promptKey": p.key, "version": p.version, "purpose": p.purpose, "owner": p.owner, "targetModel": s.ai_model,
              "goldenTests": p.golden_tests, "fallback": p.fallback,
@@ -113,7 +114,7 @@ async def approve_prompt(prompt_id: uuid.UUID, actor: CurrentActor, session: DbS
 
 @router.post("/prompts/{prompt_id}/retire")
 async def retire_prompt(prompt_id: uuid.UUID, actor: CurrentActor, session: DbSession):
-    actor.require_platform_role(PlatformRole.AI_SAFETY_REVIEWER); actor.require_step_up()
+    actor.require_capability(Cap.AI_PROMPTS_MANAGE); actor.require_step_up()
     p = await session.get(PromptVersion, prompt_id, with_for_update=True)
     if not p:
         raise NotFound("Prompt not found")
@@ -125,7 +126,7 @@ async def retire_prompt(prompt_id: uuid.UUID, actor: CurrentActor, session: DbSe
 @router.get("/inferences")
 async def inferences(actor: CurrentActor, session: DbSession, cursor: str | None = None, limit: int | None = Query(default=None, ge=1, le=100)):
     """Newest first, one page at a time (follow nextCursor)."""
-    actor.require_platform_role(PlatformRole.AI_SAFETY_REVIEWER)
+    actor.require_capability(Cap.AI_READ)
     stmt, lim = paginate(select(InferenceLog), InferenceLog, cursor, limit)
     # Outputs remain within the subject's access scope; governance sees metadata only.
     return page_of((await session.scalars(stmt)).all(), lim, lambda r: {

@@ -3,7 +3,7 @@ import { api } from '../../api/client'
 import { paymentsApi } from '../../api/escrow'
 import { formatMoney } from '../../api/orgs'
 import { adminApi, type AdminOverview } from '../../api/saved'
-import { useAuth } from '../../auth/AuthContext'
+import { useCapabilities } from '../../auth/capabilities'
 import {
   AdminHeader, AdminKpi, Callout, CountTabs, Donut, HBars, KpiStrip, MetricList, Panel, PanelRow, TrendChart, CHART_COLORS,
 } from '../../components/admin'
@@ -39,10 +39,6 @@ export interface Kpis {
 }
 export interface WorkerBacklog { unpublishedEvents: number; oldestUnpublishedSeconds: number; overdueTimers: number; oldestOverdueTimerSeconds: number
   retryingDeliveries: number; deadLetters: number; deadFinancialLetters: number }
-
-/** Roles the backend lets read /v1/admin/kpis, and /v1/admin/worker + the payments worklist. */
-export const KPI_ROLES = ['PLATFORM_ADMIN', 'TS_ANALYST', 'FINANCIAL_OPS', 'RISK_LEAD', 'LEGAL', 'COMPLIANCE_OFFICER']
-export const MONEY_ROLES = ['PLATFORM_ADMIN', 'FINANCIAL_OPS']
 
 /** Dates are whole UTC days, matching how the server buckets the daily series. */
 export const utcToday = () => new Date().toISOString().slice(0, 10)
@@ -101,11 +97,10 @@ type Trend = 'engagements' | 'search' | 'disputes'
 const TIER_COLORS: Record<string, string> = { A: '#12b76a', B: '#2f80ed', C: '#9b8afb' }
 
 export default function Analytics() {
-  const { user } = useAuth()
-  const roles = user?.platformRoles ?? []
-  const isPlatformAdmin = roles.includes('PLATFORM_ADMIN')
-  const canKpis = roles.some((r) => KPI_ROLES.includes(r))
-  const canMoney = roles.some((r) => MONEY_ROLES.includes(r))
+  const { has } = useCapabilities()
+  const isPlatformAdmin = has('analytics.rebuild')
+  const canKpis = has('analytics.kpis.read')
+  const canMoney = has('health.read')
   const [data, setData] = useState<MarketplaceHealth | null>(null)
   const [kpis, setKpis] = useState<Kpis | null>(null)
   const [kpiError, setKpiError] = useState<unknown>(null)
@@ -288,16 +283,16 @@ export default function Analytics() {
             )}
             <Panel title="Trust, risk & quality" meta="Actionable indicators">
               <MetricList rows={[
-                ...(overview ? [{ label: 'Overdue verification decisions', value: overview.verification.overdue, tone: overview.verification.overdue ? 'red' as const : undefined, to: '/app/ops/verification' },
+                ...(overview ? [{ label: 'Overdue verification decisions', value: overview.verification.overdue, tone: overview.verification.overdue ? 'red' as const : undefined, to: '/platform-admin/verification-center' },
                   { label: 'Open verification checks', value: overview.verification.open }] : []),
                 ...(kpis ? [
-                  { label: 'Open dispute cases', value: kpis.disputes.openNow, to: '/app/ops/disputes' },
-                  { label: 'Safety cases undecided', value: kpis.enforcement.openNow, tone: kpis.enforcement.openNow ? 'amber' as const : undefined, to: '/app/ops/safety' },
+                  { label: 'Open dispute cases', value: kpis.disputes.openNow, to: '/platform-admin/dispute-resolution' },
+                  { label: 'Safety cases undecided', value: kpis.enforcement.openNow, tone: kpis.enforcement.openNow ? 'amber' as const : undefined, to: '/platform-admin/trust-safety' },
                   { label: 'Median hours to first safety decision', value: kpis.enforcement.medianHoursToFirstDecision ?? '—' },
-                  { label: 'Incidents open now', value: kpis.enforcement.incidentsOpenNow, to: '/app/ops/incidents' },
+                  { label: 'Incidents open now', value: kpis.enforcement.incidentsOpenNow, to: '/platform-admin/incident-command' },
                   { label: 'Serious incidents (SEV1–2) in period', value: kpis.board.seriousIncidents, tone: kpis.board.seriousIncidents ? 'red' as const : undefined },
                 ] : []),
-                ...(worker ? [{ label: 'Failed event deliveries', value: worker.deadLetters, tone: worker.deadLetters ? 'red' as const : 'green' as const, to: '/app/ops/dead-letters' }] : []),
+                ...(worker ? [{ label: 'Failed event deliveries', value: worker.deadLetters, tone: worker.deadLetters ? 'red' as const : 'green' as const, to: '/platform-admin/failed-event-deliveries' }] : []),
               ]} />
               <p className="adm-foot-note">Risk indicators prompt human review; analytics never restrict accounts or release funds.</p>
             </Panel>

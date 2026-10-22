@@ -159,3 +159,28 @@ class ReconciliationBatch(Base, UUIDPk, Timestamps):
     checks: Mapped[list] = mapped_column(JSONB, nullable=False)  # [{name, currency, ledger, payments, provider, difference, ok}]
     mismatches: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     run_by: Mapped[str] = mapped_column(String(60), nullable=False, default="SCHEDULE")
+
+
+class ReconciliationBreak(Base, UUIDPk, Timestamps):
+    """Suspense item (PAY-02): one unmatched difference a reconciliation run found, per day, check and currency.
+    OPEN -> EVIDENCE_GATHERING -> REVIEWED -> CLOSED; a day is reported clean only while none of its breaks is unresolved.
+    Re-running a day updates its breaks instead of adding new ones (one row per day + kind + currency)."""
+
+    __tablename__ = "reconciliation_breaks"
+    __table_args__ = (UniqueConstraint("day", "kind", "currency", name="uq_reconciliation_break_day_kind_currency"),
+                      {"schema": SCHEMA})
+
+    batch_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    day: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)  # charges | payouts | refunds | chargebacks
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    amount_minor: Mapped[int] = mapped_column(BigInteger, nullable=False)  # the unmatched difference
+    references: Mapped[dict] = mapped_column(JSONB, nullable=False)  # {batchId, ledger, payments, provider}
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="OPEN")
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    resolution_note: Mapped[str | None] = mapped_column(String(2000))
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    closed_by: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    history: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)  # [{at, by, from, to, note}]

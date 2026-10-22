@@ -8,6 +8,7 @@ from zoikorum.domains.identity import facade as identity_facade
 from zoikorum.domains.professional import facade as professional_facade
 from zoikorum.domains.verification import facade as verification_facade
 from zoikorum.shared.auth import Actor, PlatformRole
+from zoikorum.shared.capabilities import Cap, capabilities_for
 
 import uuid
 from datetime import timedelta
@@ -36,10 +37,11 @@ async def is_subject(session, actor, case):
     return "ORG_ADMIN" in await buyer_facade.get_member_roles(session, case.subject_id, actor.identity_id)
 
 
-async def staff(session, actor, *roles):
-    actor.require_platform_role(*roles)
+async def staff(session, actor, *caps):
+    """The actor holds one of ``caps`` (shared/capabilities.py), re-checked against the roles in force right now."""
+    actor.require_capability(*caps)
     live = await identity_facade.live_platform_roles(session, actor.identity_id)
-    if not set(roles).intersection(live):
+    if not capabilities_for(live).intersection(caps):
         raise Forbidden("Your staff authority has changed")
 
 
@@ -83,7 +85,7 @@ def event(session, kind, c, **extra):
 
 
 async def open_case(session, actor, body):
-    await staff(session, actor, PlatformRole.TS_ANALYST)
+    await staff(session, actor, Cap.SAFETY_OPEN)
     lookup = {"IDENTITY": identity_facade.get_identity, "PROFESSIONAL": professional_facade.get_professional,
               "ORGANIZATION": buyer_facade.get_organization}
     if not await lookup[body.subjectType](session, body.subjectId):
@@ -98,7 +100,7 @@ async def open_case(session, actor, body):
 async def close_case(session, actor, case_id, reason):
     """Reviewed and no action is needed (Level 0: no breach, or an education message is enough). Recorded with the
     reason; reporters are told it was reviewed. A case with a proposed or applied action is reversed instead."""
-    await staff(session, actor, PlatformRole.TS_ANALYST, PlatformRole.RISK_LEAD)
+    await staff(session, actor, Cap.SAFETY_ACT)
     c = await case_get(session, case_id, True)
     if c.status not in ("TRIAGE", "ASSESSED"):
         raise Conflict("Only a case without a proposed or applied action can be closed this way", code="CASE_NOT_OPEN")
@@ -112,7 +114,7 @@ async def close_case(session, actor, case_id, reason):
 
 
 async def assess(session, actor, case_id, body):
-    await staff(session, actor, PlatformRole.RISK_LEAD)
+    await staff(session, actor, Cap.SAFETY_ASSESS)
     c = await case_get(session, case_id, True)
     if c.status not in ("TRIAGE", "ASSESSED"):
         raise Conflict("An issued or proposed action cannot be reassessed")
@@ -125,7 +127,7 @@ async def assess(session, actor, case_id, body):
 
 
 async def propose_action(session, actor, case_id, body):
-    await staff(session, actor, PlatformRole.TS_ANALYST, PlatformRole.RISK_LEAD)
+    await staff(session, actor, Cap.SAFETY_ACT)
     actor.require_step_up()
     c = await case_get(session, case_id, True)
     if c.status != "ASSESSED" or ACTION_LEVEL[body.action] != c.level:
@@ -151,7 +153,7 @@ async def propose_action(session, actor, case_id, body):
 async def approve_action(session, actor, case_id):
     c = await case_get(session, case_id, True)
     roles = (PlatformRole.EXECUTIVE, PlatformRole.LEGAL) if c.level == 4 else (PlatformRole.RISK_LEAD, PlatformRole.LEGAL)
-    await staff(session, actor, *roles); actor.require_step_up()
+    await staff(session, actor, Cap.SAFETY_APPROVE_SEVERE if c.level == 4 else Cap.SAFETY_APPROVE); actor.require_step_up()
     if c.status != "AWAITING_APPROVAL":
         raise Conflict("There is no action awaiting approval")
     if c.proposed_by == actor.identity_id or await is_subject(session, actor, c):
@@ -178,7 +180,7 @@ async def approve_action(session, actor, case_id):
 
 
 async def reverse_case(session, actor, case_id, reason):
-    await staff(session, actor, PlatformRole.RISK_LEAD, PlatformRole.LEGAL)
+    await staff(session, actor, Cap.SAFETY_REVERSE)
     actor.require_step_up()
     c = await case_get(session, case_id, True)
     if await is_subject(session, actor, c):
@@ -222,7 +224,7 @@ async def file_appeal(session, actor, case_id, reason, evidence=None):
 
 
 async def decide_appeal(session, actor, case_id, body):
-    await staff(session, actor, PlatformRole.LEGAL); actor.require_step_up()
+    await staff(session, actor, Cap.SAFETY_APPEALS_DECIDE); actor.require_step_up()
     c = await case_get(session, case_id, True)
     involved = {str(c.opened_by), str(c.proposed_by), *(v["identityId"] for v in c.approvals)}
     if str(actor.identity_id) in involved or await is_subject(session, actor, c):
@@ -252,8 +254,8 @@ async def triage_signal(session, event_envelope):
 
 
 async def overview(session: AsyncSession, actor: Actor) -> dict:
-    """Read-only platform counts for any staff member (MFA enforced by require_platform_role)."""
-    actor.require_platform_role(*PlatformRole.ALL)
+    """Read-only platform counts for any staff member (MFA enforced by require_capability)."""
+    actor.require_capability(Cap.DASHBOARD_READ)
     accounts = await identity_facade.count_accounts(session)
     profiles = await professional_facade.count_profiles(session)
     checks = await verification_facade.open_case_counts(session)
@@ -285,7 +287,7 @@ async def remediation_done(session, actor, case_id, index: int, note: str):
 
 async def remediation_confirm(session, actor, case_id, index: int):
     """Staff confirm a completed task. When all are confirmed, the restriction may end early (reverse with a reason)."""
-    await staff(session, actor, PlatformRole.TS_ANALYST, PlatformRole.RISK_LEAD)
+    await staff(session, actor, Cap.SAFETY_ACT)
     c = await case_get(session, case_id, True)
     if await is_subject(session, actor, c):
         raise Forbidden("You cannot confirm your own remediation")
@@ -303,7 +305,7 @@ async def remediation_confirm(session, actor, case_id, index: int):
 async def executive_override(session, actor, case_id, reason: str):
     """Final authority (Governance playbook): an Executive ends an active action. Justified, step-up, audited, and never
     by someone involved in the case."""
-    await staff(session, actor, PlatformRole.EXECUTIVE)
+    await staff(session, actor, Cap.SAFETY_OVERRIDE)
     actor.require_step_up()
     c = await case_get(session, case_id, True)
     involved = {str(c.opened_by), str(c.proposed_by), *(v["identityId"] for v in c.approvals)}
@@ -320,7 +322,7 @@ async def queue(session, actor, status: str | None, level: int | None, overdue: 
     """Staff queue: filters, and cases past their triage target first."""
     from sqlalchemy import case as sql_case
 
-    await staff(session, actor, *PlatformRole.ALL)
+    await staff(session, actor, Cap.SAFETY_READ)
     stmt = select(EnforcementCase)
     if status:
         stmt = stmt.where(EnforcementCase.status == status)
@@ -338,8 +340,8 @@ async def queue(session, actor, status: str | None, level: int | None, overdue: 
 
 # ---- Staff admin console: platform configuration (read-only) --------------------------------------------------------
 
-# An explicit allowlist: only business rules and switch positions are shown, never a secret, key, token, password,
-# connection string or address that may carry credentials. A setting added to config.py stays hidden until listed here.
+# An explicit allowlist: only business rules are shown, never a secret, key, token, password, connection string,
+# address or which providers and infrastructure the platform runs on. A setting added to config.py stays hidden until listed here.
 CONFIG_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     ("Fees and payments", (
         ("platform_fee_bps", "Platform fee in basis points (1000 = 10%), fixed on each contract when it activates"),
@@ -347,7 +349,6 @@ CONFIG_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         ("fx_margin_bps", "Safety margin (basis points) added when a spend limit in another currency is converted"),
         ("fx_rates", "Units of each currency per 1 USD, set by Finance, for spend limits in another currency"),
         ("tax_rules", "Invoice tax by the buyer's country (label, rate, basis)"),
-        ("payment_provider", "Payment provider in use"),
         ("payment_operating_countries", "Countries where funds may be taken and paid out"),
         ("payment_flow_approved", "The configured funds flow has partner and business approval"),
         ("funding_reminder_days", "Days before an unfunded milestone or retainer cycle is due that the buyer is reminded"),
@@ -367,7 +368,6 @@ CONFIG_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         ("dispute_retention_years", "Minimum years closed dispute records are kept"),
     )),
     ("Trust, verification and enforcement", (
-        ("verification_provider", "Identity verification provider in use"),
         ("verification_second_look_pct", "Share (%) of automatically approved checks a compliance officer looks at again"),
         ("verification_appeal_days", "Days to appeal a failed or revoked verification"),
         ("enforcement_triage_hours", "Target hours for a new safety case to be looked at"),
@@ -382,19 +382,8 @@ CONFIG_GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
         ("idempotency_retention_days", "Days replayed-request records are kept"),
         ("event_retention_days", "Days handled events are kept"),
     )),
-    ("Operations", (
-        ("ai_provider", "AI assistance provider"),
-        ("ai_model", "AI model used for assistance"),
-        ("ai_disabled_prompts", "Built-in AI prompts switched off (their features use non-AI rules)"),
-        ("email_provider", "Email delivery"),
-        ("storage_provider", "File storage"),
-        ("malware_scanner", "Upload malware scanning"),
-        ("event_bus", "Event bus"),
-        ("rate_limit_enabled", "Request rate limits are on"),
-        ("provider_breaker_failures", "Consecutive provider errors before calls to it pause"),
-        ("provider_breaker_reset_seconds", "Seconds a paused provider waits before a trial call"),
-        ("log_level", "Log level"),
-        ("tracing_sample_ratio", "Share of new traces kept"),
+    ("Staff controls", (
+        ("approval_expiry_hours", "Hours a privileged-action approval request stays open before it expires"),
     )),
 )
 
@@ -412,7 +401,7 @@ def _config_value(value) -> str:
 def admin_config(actor: Actor) -> dict:
     """Platform Admin: the environment, the release and the business rules in force. Changing them is a deployment
     (environment variables), never done here."""
-    actor.require_platform_role(PlatformRole.PLATFORM_ADMIN)
+    actor.require_capability(Cap.CONFIGURATION_READ)
     s = get_settings()
     return {"environment": s.env, "version": s.release or None,
             "groups": [{"domain": domain, "settings": [{"key": f"ZK_{name.upper()}", "value": _config_value(getattr(s, name)),

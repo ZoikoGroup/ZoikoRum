@@ -157,3 +157,32 @@
   .adm-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .adm-hbars li { grid-template-columns: 90px 1fr auto; }
 }
+
+/* ---- Accessibility (WCAG 2.2 AA: NAV-05 / UX-02) ---------------------------------------------------------------- */
+/* Skip link: hidden until focused, then the first thing on the page. */
+.skip-link { position: absolute; left: 12px; top: -48px; z-index: 100; padding: 10px 16px; border-radius: 8px;
+  background: var(--zk-navy); color: #fff; font-weight: 600; text-decoration: none; }
+.skip-link:focus, .skip-link:focus-visible { top: 12px; outline: 3px solid #5ee0a8; outline-offset: 2px; }
+.shell .main:focus { outline: none; }
+/* Visible focus on the dark sidebar (the default soft ring is too faint on navy). */
+.side a:focus-visible, .side button:focus-visible, .side summary:focus-visible { outline: 2px solid #5ee0a8; outline-offset: 2px;
+  box-shadow: none; border-radius: 8px; }
+/* The closed mobile drawer is off-screen: hide it from keyboard and screen readers too (after the slide-out). */
+@media (max-width: 900px) {
+  .side { visibility: hidden; transition: transform 0.2s, visibility 0s linear 0.2s; }
+  .side.open { visibility: visible; transition: transform 0.2s; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .side, .side.open, .side-section > summary::after { transition: none; }
+}
+
+/* Staff console search (GlobalSearch, staff mode) */
+.staff-search-pop[hidden] { display: none; }
+.staff-search-pop ul[role='listbox'] { margin: 0; }
+.staff-search-pop ul[role='group'] { list-style: none; margin: 0 0 6px; padding: 0; }
+.staff-search-group { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; color: var(--zk-muted);
+  padding: 8px 8px 4px; }
+.staff-search-pop .search-hit { cursor: pointer; }
+.staff-search-pop .search-hit.active { background: var(--zk-bg); box-shadow: inset 3px 0 0 var(--zk-green); }
+.staff-search-msg { margin: 8px; }
+.staff-search-msg.error { color: #b42318; }

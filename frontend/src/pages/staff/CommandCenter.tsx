@@ -7,6 +7,7 @@ import { paymentsApi, type OpsItem } from '../../api/escrow'
 import { formatMoney } from '../../api/orgs'
 import { adminApi, type AdminOverview } from '../../api/saved'
 import { useAuth } from '../../auth/AuthContext'
+import { useCapabilities } from '../../auth/capabilities'
 import { ago, describe } from '../../components/activity'
 import {
   AdminHeader, AdminKpi, Callout, CountTabs, Donut, KpiStrip, Panel, PanelRow, Pill, TrendChart, label, shortDateTime,
@@ -14,14 +15,13 @@ import {
 import { Icon } from '../../components/dashboard'
 import { ErrorAlert, Loading } from '../../components/ui'
 import { downloadFile } from '../../lib/exports'
-import { fillDaily, KPI_ROLES, MONEY_ROLES, type Kpis, type MarketplaceHealth, type WorkerBacklog } from './Analytics'
+import { fillDaily, type Kpis, type MarketplaceHealth, type WorkerBacklog } from './Analytics'
 import { PriorityPill, STREAM_LABEL, useWorkItems, type Workstream } from './WorkQueue'
 
 /* Command Center: the staff home. Platform counts, the period's activity, risk and money figures, the latest audit-ledger
    activity, the top of the person's work queue and system health. Every figure is live and role-scoped: cards whose
    source the person's roles cannot read are left out. */
 
-const LEDGER_ROLES = ['COMPLIANCE_OFFICER', 'LEGAL', 'PLATFORM_ADMIN']
 const TIER_COLORS: Record<string, string> = { A: '#12b76a', B: '#2f80ed', C: '#9b8afb' }
 const PERIODS: [string, string][] = [['7', 'Last 7 days'], ['30', 'Last 30 days'], ['90', 'Last 90 days']]
 const DAY = 86_400_000
@@ -51,11 +51,13 @@ type HealthRow = { label: string; ok: boolean; note: string }
 export default function CommandCenter() {
   const { user } = useAuth()
   const roles = useMemo(() => user?.platformRoles ?? [], [user])
-  const canKpis = roles.some((r) => KPI_ROLES.includes(r))
-  const canMoney = roles.some((r) => MONEY_ROLES.includes(r))
-  const canLedger = roles.some((r) => LEDGER_ROLES.includes(r))
-  const isAdmin = roles.includes('PLATFORM_ADMIN')
-  const isOfficer = roles.includes('COMPLIANCE_OFFICER')
+  const { caps, has } = useCapabilities()  // what this staff sign-in may read: panels it cannot are left out
+  const held = useMemo(() => [...caps].sort(), [caps])
+  const canKpis = has('analytics.kpis.read')
+  const canMoney = has('finexceptions.read', 'health.read')
+  const canLedger = has('audit.records.read')
+  const isAdmin = has('iam.read')
+  const isOfficer = has('verification.read')
 
   const [days, setDays] = useState('30')
   const [tick, setTick] = useState(0)
@@ -72,7 +74,7 @@ export default function CommandCenter() {
   const [currency, setCurrency] = useState('')
   const [span, setSpan] = useState<{ since: string; until: string } | null>(null)
   const [queueTab, setQueueTab] = useState<'all' | Workstream>('all')
-  const work = useWorkItems(roles)
+  const work = useWorkItems(held)
   const reloadWork = work.reload
 
   const n = Number(days)
@@ -149,8 +151,8 @@ export default function CommandCenter() {
           <select className="adm-filter" aria-label="Period" value={days} onChange={(e) => setDays(e.target.value)}>
             {PERIODS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
-          {isOfficer && <Link className="btn btn-secondary" to="/app/ops/verification">Review queue</Link>}
-          {isAdmin && <Link className="btn btn-secondary" to="/app/ops/staff">Staff &amp; roles</Link>}
+          {isOfficer && <Link className="btn btn-secondary" to="/platform-admin/verification-center">Review queue</Link>}
+          {isAdmin && <Link className="btn btn-secondary" to="/platform-admin/staff-access-control">Staff &amp; roles</Link>}
           <button type="button" className="btn btn-primary" onClick={refresh}><Icon name="refresh" /> Refresh</button>
           <button type="button" className="btn btn-secondary" onClick={exportJson}><Icon name="download" /> Export</button>
         </>} />
@@ -159,7 +161,7 @@ export default function CommandCenter() {
       <KpiStrip>
         <AdminKpi icon="team" tone="green" label="Total accounts" value={o?.accounts.total.toLocaleString() ?? '—'}
           sub={o ? `${o.accounts.buyers} buyers · ${o.accounts.enterprise} enterprise · ${o.accounts.firmAdmins} firm admins` : ' '}
-          to={roles.some((r) => r === 'PLATFORM_ADMIN' || r === 'TS_ANALYST') ? '/app/ops/users' : undefined} />
+          to={has('accounts.read') ? '/platform-admin/accounts-organizations' : undefined} />
         <AdminKpi icon="user" tone="violet" label="Verified professionals" value={k ? k.board.verifiedSupply.toLocaleString() : health ? ((health.trustTierDistribution.A ?? 0) + (health.trustTierDistribution.B ?? 0)).toLocaleString() : '—'}
           sub={o ? `Tier A + B · ${o.professionalProfiles.published} of ${o.professionalProfiles.total} profiles published` : 'Tier A + B'} />
         {k ? <>
@@ -174,11 +176,11 @@ export default function CommandCenter() {
           <AdminKpi icon="contract" tone="teal" label="Engagements started" value={health?.activations.toLocaleString() ?? '—'} sub={periodLabel} />
         </>}
         <AdminKpi icon="shield" tone={o?.verification.overdue ? 'red' : 'amber'} label="Open verifications" value={o?.verification.open ?? '—'}
-          sub={o ? (o.verification.overdue ? `${o.verification.overdue} past service level` : 'None overdue') : ' '} to={isOfficer ? '/app/ops/verification' : undefined} />
+          sub={o ? (o.verification.overdue ? `${o.verification.overdue} past service level` : 'None overdue') : ' '} to={isOfficer ? '/platform-admin/verification-center' : undefined} />
       </KpiStrip>
 
       <PanelRow cols={2}>
-        <Panel title="Engagement activity" meta={periodLabel} action={<Link className="small" to="/app/ops/analytics">Analytics</Link>}>
+        <Panel title="Engagement activity" meta={periodLabel} action={<Link className="small" to="/platform-admin/analytics-insights">Analytics</Link>}>
           {!series ? <Loading lines={3} /> : <TrendChart kind="bar" labels={series.labels} series={[
             { label: 'Proposals submitted', values: series.days.map((d) => d.proposalsSubmitted) },
             { label: 'Engagements started', values: series.days.map((d) => d.activations) },
@@ -198,9 +200,9 @@ export default function CommandCenter() {
         <PanelRow cols={2}>
           <Panel title="Risk & compliance overview" meta={k ? 'Open now' : undefined}>
             <div className="adm-mini-stats">
-              {k && <MiniStat icon="shield" tone="red" label="Safety cases undecided" value={k.enforcement.openNow} sub={`${k.enforcement.casesOpened} opened · ${periodLabel.toLowerCase()}`} to="/app/ops/safety" />}
+              {k && <MiniStat icon="shield" tone="red" label="Safety cases undecided" value={k.enforcement.openNow} sub={`${k.enforcement.casesOpened} opened · ${periodLabel.toLowerCase()}`} to="/platform-admin/trust-safety" />}
               {o && <MiniStat icon="clock" tone="amber" label="Verifications due for review" value={o.verification.open} sub={o.verification.overdue ? `${o.verification.overdue} overdue` : 'None overdue'} />}
-              {k && <MiniStat icon="alert" tone="red" label="Platform incidents" value={k.enforcement.incidentsOpenNow} sub={`${k.board.seriousIncidents} SEV1–2 in period`} to="/app/ops/incidents" />}
+              {k && <MiniStat icon="alert" tone="red" label="Platform incidents" value={k.enforcement.incidentsOpenNow} sub={`${k.board.seriousIncidents} SEV1–2 in period`} to="/platform-admin/incident-command" />}
               {k && <MiniStat icon="scale" tone="violet" label="Open disputes" value={k.disputes.openNow} sub={`${k.disputes.opened} opened in period`} />}
             </div>
           </Panel>
@@ -214,8 +216,8 @@ export default function CommandCenter() {
                   <MiniStat icon="arrow" tone="blue" label="Released" value={formatMoney({ amountMinor: pay.releasedMinor, currency: pay.currency })}
                     sub={delta(pay.releasedMinor, prevPay?.releasedMinor ?? (prev ? 0 : undefined), n) ?? periodLabel} />
                   <MiniStat icon="scale" tone="amber" label="Frozen in disputes" value={formatMoney({ amountMinor: pay.frozenNowMinor, currency: pay.currency })} sub="Now" />
-                  {openOps && <MiniStat icon="alert" tone="amber" label="Payment issues" value={openOps.length} sub="Open in the worklist" to="/app/ops/money" />}
-                  {chargebacks != null && <MiniStat icon="alert" tone="red" label="Chargeback losses" value={chargebacks} sub="Open" to="/app/ops/money" />}
+                  {openOps && <MiniStat icon="alert" tone="amber" label="Payment issues" value={openOps.length} sub="Open in the worklist" to="/platform-admin/financial-exceptions" />}
+                  {chargebacks != null && <MiniStat icon="alert" tone="red" label="Chargeback losses" value={chargebacks} sub="Open" to="/platform-admin/financial-exceptions" />}
                 </div>
               )}
             </Panel>
@@ -225,10 +227,10 @@ export default function CommandCenter() {
 
       <PanelRow>
         {canLedger && (
-          <Panel title="Recent activity" action={<Link className="small" to="/app/ops/audit">View all</Link>}>
+          <Panel title="Recent activity" action={<Link className="small" to="/platform-admin/audit-evidence">View all</Link>}>
             {activity === null ? <Loading lines={3} /> : rows.length === 0 ? <p className="muted small">No activity yet.</p> : (
               <table className="data">
-                <thead><tr><th>Time</th><th>Event</th><th>Area</th></tr></thead>
+                <thead><tr><th scope="col">Time</th><th scope="col">Event</th><th scope="col">Area</th></tr></thead>
                 <tbody>{rows.map(({ r, text }) => (
                   <tr key={r.id}><td className="muted small" title={shortDateTime(r.occurredAt)}>{ago(r.occurredAt)}</td><td>{text}</td><td className="muted small">{label(r.objectType)}</td></tr>))}</tbody>
               </table>
@@ -236,13 +238,13 @@ export default function CommandCenter() {
             <p className="adm-foot-note">From the tamper-evident audit ledger.</p>
           </Panel>
         )}
-        <Panel title="My work queue" action={<Link className="small" to="/app/ops/queue">View all</Link>}>
+        <Panel title="My work queue" action={<Link className="small" to="/platform-admin/my-work-queue">View all</Link>}>
           {work.items === null ? <Loading lines={3} /> : <>
             {queueStreams.length > 1 && <CountTabs value={queueTab} onChange={setQueueTab} tabs={[{ key: 'all' as const, label: 'All', count: items.length },
               ...queueStreams.slice(0, 3).map((s) => ({ key: s, label: STREAM_LABEL[s], count: items.filter((i) => i.stream === s).length }))]} />}
             {queueShown.length === 0 ? <p className="muted small">Nothing waiting in your queues.</p> : (
               <table className="data">
-                <thead><tr><th>Priority</th><th>Item</th><th>Age</th></tr></thead>
+                <thead><tr><th scope="col">Priority</th><th scope="col">Item</th><th scope="col">Age</th></tr></thead>
                 <tbody>{queueShown.map((i) => (
                   <tr key={i.id}><td><PriorityPill p={i.priority} /></td>
                     <td><Link to={i.to} className="cell-main">{i.subject}</Link><div className="cell-sub">{STREAM_LABEL[i.stream]} · {i.ref}</div></td>

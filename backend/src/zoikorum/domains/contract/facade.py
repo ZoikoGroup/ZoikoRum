@@ -248,3 +248,18 @@ async def titles(session: AsyncSession, contract_ids: list[uuid.UUID]) -> dict[u
     if not contract_ids:
         return {}
     return dict((await session.execute(select(Contract.id, Contract.title).where(Contract.id.in_(contract_ids)))).all())
+
+
+# ---- Staff console search (admin/search.py) --------------------------------------------------------------------------
+
+async def staff_search_contracts(session: AsyncSession, term: str, exact_id: uuid.UUID | None, limit: int) -> list[dict]:
+    """Contracts whose title or reference contains ``term`` (or whose id is ``exact_id``), newest first:
+    [{"id", "title", "reference", "status"}]."""
+    from sqlalchemy import func, or_
+
+    like = "%" + term.strip().lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    match = [func.lower(Contract.title).like(like, escape="\\"), func.lower(Contract.reference).like(like, escape="\\")]
+    if exact_id:
+        match.append(Contract.id == exact_id)
+    rows = (await session.scalars(select(Contract).where(or_(*match)).order_by(Contract.created_at.desc(), Contract.id).limit(limit))).all()
+    return [{"id": c.id, "title": c.title, "reference": c.reference, "status": c.status} for c in rows]

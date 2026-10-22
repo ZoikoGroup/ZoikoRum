@@ -21,6 +21,7 @@ def mint_access_token(
     session_id: uuid.UUID,
     auth_strength: str,
     auth_time: datetime,
+    audience: str = "APP",
 ) -> tuple[str, int]:
     s = get_settings()
     now = clock.now()
@@ -40,7 +41,9 @@ def mint_access_token(
         "typ": "access",
         "sid": str(session_id),
         "email": identity.email,
-        "roles": sorted(identity.platform_roles or []) if identity.status == "ACTIVE" else [],
+        # Staff roles travel only in tokens from the staff sign-in (admin audience); customer sessions never carry them.
+        "roles": identity.live_platform_roles(now) if audience == "ADMIN" else [],
+        "adm": audience == "ADMIN",
         "personas": sorted(identity.personas or []),
         "orgs": orgs,
         "firms": firms,

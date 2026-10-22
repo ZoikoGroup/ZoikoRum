@@ -37,3 +37,19 @@ async def intent_refs(session: AsyncSession, funding_ids: list[uuid.UUID]) -> di
     rows = (await session.execute(select(PaymentIntent.funding_id, PaymentIntent.provider, PaymentIntent.provider_ref)
                                   .where(PaymentIntent.funding_id.in_(funding_ids)))).all()
     return {fid: (provider, ref) for fid, provider, ref in rows}
+
+
+# ---- Financial exceptions closed by hand, through maker-checker approval (admin/approvals.py) -------------------------
+
+async def check_ops_resolution(session: AsyncSession, kind: str, item_id: uuid.UUID) -> None:
+    """Refuses a resolution for an unknown kind of item or one already resolved."""
+    from zoikorum.domains.payments.operations import check_resolution
+    await check_resolution(session, kind, item_id)
+
+
+async def apply_ops_resolution(session: AsyncSession, kind: str, item_id: uuid.UUID, outcome: str, note: str,
+                               requested_by: uuid.UUID, approved_by: uuid.UUID) -> None:
+    """Records the approved outcome (RECOVERED | WRITTEN_OFF | SETTLED_OUTSIDE) of a failed payout, failed refund or
+    chargeback loss."""
+    from zoikorum.domains.payments.operations import apply_resolution
+    await apply_resolution(session, kind, item_id, outcome, note, requested_by, approved_by)

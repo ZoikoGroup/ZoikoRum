@@ -3,8 +3,7 @@ import { Link } from 'react-router-dom'
 import { adminConsoleApi, type AdminProfessional, type AdminProfessionalSummary } from '../../api/adminConsole'
 import {
   AdminHeader, AdminKpi, Callout, Checklist, CountTabs, DetailPanel, Facts, FilterBar, FilterSelect, Initials, KpiStrip, ListDetail,
-  Pill, StatusPill, TableFoot, label, shortDate, toneFor, useSelection, type CheckState,
-} from '../../components/admin'
+  Pill, StatusPill, TableFoot, label, shortDate, toneFor, useSelection, type CheckState, pickRow, useSelectedParam } from '../../components/admin'
 import { ErrorAlert } from '../../components/ui'
 
 type Tab = '' | 'PUBLISHED' | 'IN_REVIEW' | 'DRAFT' | 'RESTRICTED'
@@ -28,7 +27,8 @@ export default function ProfessionalDirectory() {
   const [next, setNext] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<unknown>(null)
-  const { selected, select } = useSelection(rows)
+  const { selected, select, selectId } = useSelection(rows)
+  useSelectedParam(selectId)
 
   useEffect(() => { adminConsoleApi.professionalSummary().then(setSummary).catch(() => setSummary(null)) }, [])
   // Search after a short pause in typing, not on every key.
@@ -77,11 +77,11 @@ export default function ProfessionalDirectory() {
       {s && <div className="adm-note">Profiles by trust tier: A {s.tiers.A} · B {s.tiers.B} · C {s.tiers.C} = {s.tiers.A + s.tiers.B + s.tiers.C}</div>}
       <div className="adm-table-wrap">
         <table className="data">
-          <thead><tr><th>Professional</th><th>Specialization</th><th>Jurisdiction</th><th>Verification</th><th>Trust tier</th><th>Publication</th><th>Eng.</th></tr></thead>
+          <thead><tr><th scope="col">Professional</th><th scope="col">Specialization</th><th scope="col">Jurisdiction</th><th scope="col">Verification</th><th scope="col">Trust tier</th><th scope="col">Publication</th><th scope="col">Eng.</th></tr></thead>
           <tbody>
             {shown.length === 0 && <tr><td colSpan={7} className="empty-row">{loading ? 'Loading…' : 'No profiles match.'}</td></tr>}
             {shown.map((p) => (
-              <tr key={p.id} className={`pick ${selected?.id === p.id ? 'selected' : ''}`} onClick={() => select(p)}>
+              <tr {...pickRow} key={p.id} className={`pick ${selected?.id === p.id ? 'selected' : ''}`} onClick={() => select(p)}>
                 <td><div className="name-cell"><Initials name={p.displayName} /><div><div className="cell-main">{p.displayName}</div>
                   <div className="cell-sub">{p.headline ?? ''}</div></div></div></td>
                 <td><div className="cell-main" style={{ fontWeight: 500 }}>{p.specialization ?? '—'}</div><div className="cell-sub">{p.category ?? ''}</div></td>

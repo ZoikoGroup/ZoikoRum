@@ -1,5 +1,5 @@
-import { useState, type ReactNode } from 'react'
-import { Link } from 'react-router-dom'
+import { useEffect, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { Icon, type IconName, type Tone } from './dashboard'
 
 /* Staff console building blocks (admin designs D01–D24): page header, KPI strip, panels, count tabs, filter bar,
@@ -104,6 +104,14 @@ export const label = (s: string | null | undefined) => (s ?? '').toLowerCase().r
 
 export function StatusPill({ status }: { status: string | null | undefined }) {
   return <Pill tone={toneFor(status)}>{label(status) || '—'}</Pill>
+}
+
+/** Spread on a clickable table row so it can also be selected from the keyboard (Enter or Space). */
+export const pickRow = {
+  tabIndex: 0,
+  onKeyDown: (e: KeyboardEvent<HTMLTableRowElement>) => {
+    if (e.target === e.currentTarget && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); e.currentTarget.click() }
+  },
 }
 
 /** List + right-hand detail layout. */
@@ -293,7 +301,14 @@ export function StackBar({ segments }: { segments: { label: string; value: numbe
 export function useSelection<T extends { id: string }>(rows: T[] | null) {
   const [id, setId] = useState<string | null>(null)
   const selected = rows?.find((r) => r.id === id) ?? null
-  return { selected, select: (r: T | null) => setId(r?.id ?? null), selectedId: id }
+  return { selected, select: (r: T | null) => setId(r?.id ?? null), selectedId: id, selectId: setId }
+}
+
+/** Open the record named in ?selected= (staff search results link here), also when already on the page. */
+export function useSelectedParam(apply: (id: string) => void) {
+  const [params] = useSearchParams()
+  const id = params.get('selected')
+  useEffect(() => { if (id) apply(id) }, [id])  // eslint-disable-line react-hooks/exhaustive-deps
 }
 
 /** Short date and relative-age helpers used across the console. */

@@ -2,11 +2,11 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '../../api/client'
 import { reportApi, type UserReport } from '../../api/reports'
-import { useAuth } from '../../auth/AuthContext'
+import { useCapabilities } from '../../auth/capabilities'
 import {
   AdminHeader, AdminKpi, Callout, Checklist, CountTabs, DetailPanel, Facts, FilterBar, FilterSelect, HBars, KpiStrip, ListDetail,
-  MetricList, Panel, PanelRow, Pill, StatusPill, TableFoot, dueText, label, shortDate, shortDateTime, type PillTone,
-} from '../../components/admin'
+  MetricList, Panel, PanelRow, Pill, StatusPill, TableFoot, dueText, label, shortDate, shortDateTime, type PillTone, pickRow, useSelectedParam } from '../../components/admin'
+import { CaseOwner, OwnerCell, useAssignments } from '../../components/CaseOwner'
 import { Icon } from '../../components/dashboard'
 import { RiskScores } from '../../components/RiskScores'
 import { ErrorAlert, useStepUp } from '../../components/ui'
@@ -64,18 +64,19 @@ function age(iso: string) {
 }
 
 export default function TrustSafety() {
-  const { user } = useAuth()
-  const can = (...roles: string[]) => roles.some((role) => user?.platformRoles.some((held) => held === role))
+  const { has: can } = useCapabilities()  // staff capabilities: risk scores, opening and deciding cases
   const [params] = useSearchParams()  // the Users page links here with ?subjectType=IDENTITY&subjectId=<id>
   const [rows, setRows] = useState<Case[] | null>(null)
   const [truncated, setTruncated] = useState(false)
   const [tab, setTab] = useState<Tab>('all')
+  const owners = useAssignments(['ENFORCEMENT_CASE'])
   const [q, setQ] = useState('')
   const [level, setLevel] = useState('')
   const [source, setSource] = useState('')
   const [overdueOnly, setOverdueOnly] = useState('')
   const [page, setPage] = useState(1)
   const [selId, setSelId] = useState<string | null>(null)
+  useSelectedParam(setSelId)
   const [showOpen, setShowOpen] = useState(!!params.get('subjectId'))
   const [showRisk, setShowRisk] = useState(false)
   const [error, setError] = useState<unknown>(null)
@@ -146,11 +147,11 @@ export default function TrustSafety() {
       <AdminHeader crumb="Trust, risk & compliance / Human-governed enforcement" title="Trust & Safety"
         subtitle="Investigate signals, document proportional decisions, and protect independent appeal rights."
         actions={<>
-          {can('TS_ANALYST', 'RISK_LEAD', 'PLATFORM_ADMIN') && <button type="button" className="btn btn-secondary" onClick={() => setShowRisk((v) => !v)}>
+          {can('safety.risk.read') && <button type="button" className="btn btn-secondary" onClick={() => setShowRisk((v) => !v)}>
             <Icon name="chart" /> {showRisk ? 'Hide risk scores' : 'Risk scores'}</button>}
           <button type="button" className="btn btn-secondary" onClick={() => { setNotice(null); reload().catch(setError) }} disabled={busy}>
             <Icon name="refresh" /> Refresh cases</button>
-          {can('TS_ANALYST') && <button type="button" className="btn btn-primary" onClick={() => setShowOpen((v) => !v)}>
+          {can('safety.open') && <button type="button" className="btn btn-primary" onClick={() => setShowOpen((v) => !v)}>
             <Icon name="plus" /> Open a case</button>}
         </>}
         meta={truncated ? <span>Showing the first {PAGE * MAX_PAGES} cases</span> : undefined} />
@@ -158,8 +159,8 @@ export default function TrustSafety() {
       {modal}
       {notice && <div className="alert alert-success" role="status">{notice}</div>}
 
-      {showRisk && can('TS_ANALYST', 'RISK_LEAD', 'PLATFORM_ADMIN') && <div style={{ marginBottom: 16 }}><RiskScores /></div>}
-      {showOpen && can('TS_ANALYST') && <OpenCaseForm busy={busy} subjectType={params.get('subjectType')} subjectId={params.get('subjectId')}
+      {showRisk && can('safety.risk.read') && <div style={{ marginBottom: 16 }}><RiskScores /></div>}
+      {showOpen && can('safety.open') && <OpenCaseForm busy={busy} subjectType={params.get('subjectType')} subjectId={params.get('subjectId')}
         onSubmit={(body) => act('/v1/admin/enforcement-cases', body, 'Safety case opened.')} onCancel={() => setShowOpen(false)} />}
 
       <KpiStrip>
@@ -201,17 +202,18 @@ export default function TrustSafety() {
           <div className="adm-note">Case metadata only · evidence and reporters open in the case panel</div>
           <div className="adm-table-wrap">
             <table className="data">
-              <thead><tr><th>Case / age</th><th>Summary & subject</th><th>Source</th><th>Stage</th><th>Level</th><th>Next step</th></tr></thead>
+              <thead><tr><th scope="col">Case / age</th><th scope="col">Summary & subject</th><th scope="col">Source</th><th scope="col">Stage</th><th scope="col">Level</th><th scope="col">Owner</th><th scope="col">Next step</th></tr></thead>
               <tbody>
-                {!rows && <tr><td colSpan={6} className="empty-row"><span role="status">Loading cases…</span></td></tr>}
-                {rows && filtered.length === 0 && <tr><td colSpan={6} className="empty-row">No safety cases in this view.</td></tr>}
+                {!rows && <tr><td colSpan={7} className="empty-row"><span role="status">Loading cases…</span></td></tr>}
+                {rows && filtered.length === 0 && <tr><td colSpan={7} className="empty-row">No safety cases in this view.</td></tr>}
                 {shown.map((c) => (
-                  <tr key={c.id} className={`pick ${selId === c.id ? 'selected' : ''}`} onClick={() => setSelId(c.id)}>
+                  <tr {...pickRow} key={c.id} className={`pick ${selId === c.id ? 'selected' : ''}`} onClick={() => setSelId(c.id)}>
                     <td><div className="cell-id">{c.id.slice(0, 8)}</div><div className="cell-sub">Age {age(c.createdAt)}</div></td>
                     <td><div className="cell-main clamp">{c.summary}</div><div className="cell-sub">{label(c.subjectType)} · <code>{c.subjectId.slice(0, 8)}</code></div></td>
                     <td>{label(c.signalSource)}</td>
                     <td><Pill tone={STATUS_TONE[c.status] ?? 'grey'}>{label(c.status)}</Pill></td>
                     <td><Pill tone={LEVEL_TONE[c.level] ?? 'grey'}>Level {c.level}</Pill></td>
+                    <td><OwnerCell assignment={owners.get('ENFORCEMENT_CASE', c.id)} /></td>
                     <td className="small">{nextStep(c)}</td>
                   </tr>))}
               </tbody>
@@ -219,7 +221,8 @@ export default function TrustSafety() {
           </div>
           <TableFoot shown={shown.length} total={filtered.length} noun="cases" page={page} pages={pages} onPage={setPage} />
         </div>
-      } detail={selected && <CaseDetail key={selected.id} c={selected} can={can} busy={busy} act={act} onClose={() => setSelId(null)} />} />
+      } detail={selected && <CaseDetail key={selected.id} c={selected} can={can} busy={busy} act={act} onClose={() => setSelId(null)}
+        owner={<CaseOwner key={selected.id} kind="ENFORCEMENT_CASE" caseId={selected.id} assignment={owners.get('ENFORCEMENT_CASE', selected.id)} onChange={owners.put} />} />} />
     </>
   )
 }
@@ -281,8 +284,8 @@ function OpenCaseForm({ busy, subjectType, subjectId, onSubmit, onCancel }: {
   )
 }
 
-function CaseDetail({ c, can, busy, act, onClose }: {
-  c: Case; can: (...roles: string[]) => boolean; busy: boolean; onClose: () => void
+function CaseDetail({ c, owner, can, busy, act, onClose }: {
+  c: Case; owner?: ReactNode; can: (...roles: string[]) => boolean; busy: boolean; onClose: () => void
   act: (path: string, body: unknown, done: string) => Promise<void>
 }) {
   const [tab, setTab] = useState('Overview')
@@ -311,13 +314,14 @@ function CaseDetail({ c, can, busy, act, onClose }: {
           ['Applied', shortDateTime(c.appliedAt)],
           ['Appeal deadline', shortDateTime(c.appealDeadline)],
         ]} />
+        {owner}
         <Checklist title="Due-process notice" items={NOTICE_FIELDS.map((k) => ({ label: fieldLabel(k), state: c.notice?.[k] ? 'done' : 'pending' }))} />
         {noticeDone === 0 && <p className="adm-foot-note">The notice is written when an action is proposed.</p>}
         {c.remediation.length > 0 && <div>
           <h3 style={{ fontSize: 13.5, margin: '0 0 6px' }}>Remediation</h3>
           <ul className="why">{c.remediation.map((t, i) => <li key={i}>{t.task}{' '}
             {t.confirmedBy ? <Pill tone="green">Confirmed</Pill> : t.done ? <Pill tone="blue">Done{t.note ? `: ${t.note}` : ''}</Pill> : <Pill tone="amber">To do</Pill>}
-            {can('TS_ANALYST', 'RISK_LEAD') && t.done && !t.confirmedBy && <button type="button" className="link-button small" style={{ marginLeft: 6 }}
+            {can('safety.act') && t.done && !t.confirmedBy && <button type="button" className="link-button small" style={{ marginLeft: 6 }}
               onClick={() => act(`${base}/remediation/${i}/confirm`, undefined, 'Remediation confirmed.')}>Confirm</button>}</li>)}</ul>
         </div>}
       </>}
@@ -341,7 +345,7 @@ function CaseDetail({ c, can, busy, act, onClose }: {
         <Facts rows={[['Appeal status', <StatusPill key="s" status={c.appeal.status} />]]} />
         <p className="small" style={{ margin: 0 }}>{c.appeal.reason}</p>
         {c.appeal.decisionReason && <p className="small muted" style={{ margin: 0 }}>Decision reason: {c.appeal.decisionReason}</p>}
-        {can('LEGAL') && c.appeal.status === 'PENDING' ? (
+        {can('safety.appeals.decide') && c.appeal.status === 'PENDING' ? (
           <form onSubmit={(e) => {
             e.preventDefault()
             const d = new FormData(e.currentTarget)
@@ -366,7 +370,7 @@ function DecisionSteps({ c, can, busy, act }: { c: Case; can: (...roles: string[
   act: (path: string, body: unknown, done: string) => Promise<void> }) {
   const base = `/v1/admin/enforcement-cases/${c.id}`
   const steps: ReactNode[] = []
-  if (can('RISK_LEAD') && ['TRIAGE', 'ASSESSED'].includes(c.status)) steps.push(
+  if (can('safety.assess') && ['TRIAGE', 'ASSESSED'].includes(c.status)) steps.push(
     <form key="assess" onSubmit={(e) => {
       e.preventDefault()
       const d = new FormData(e.currentTarget)
@@ -379,7 +383,7 @@ function DecisionSteps({ c, can, busy, act }: { c: Case; can: (...roles: string[
         <input id="operations-reasonCode" className="input" name="reasonCode" required minLength={3} placeholder="Reason code" defaultValue={c.reasonCode ?? ''} /></div>
       <button className="btn btn-secondary btn-sm" disabled={busy}>Record Assessment</button>
     </form>)
-  if (can('TS_ANALYST', 'RISK_LEAD') && c.status === 'ASSESSED' && c.level > 0) steps.push(
+  if (can('safety.act') && c.status === 'ASSESSED' && c.level > 0) steps.push(
     <form key="propose" onSubmit={(e) => {
       e.preventDefault()
       const d = new FormData(e.currentTarget)
@@ -402,17 +406,17 @@ function DecisionSteps({ c, can, busy, act }: { c: Case; can: (...roles: string[
         <textarea id={`remediation-${c.id}`} className="input" name="remediation" rows={2} /></div>}
       <button className="btn btn-primary btn-sm" disabled={busy}>Propose Action with Notice</button>
     </form>)
-  if ((c.level === 4 ? can('EXECUTIVE', 'LEGAL') : can('RISK_LEAD', 'LEGAL')) && c.status === 'AWAITING_APPROVAL') steps.push(
+  if ((c.level === 4 ? can('safety.approve_severe') : can('safety.approve')) && c.status === 'AWAITING_APPROVAL') steps.push(
     <div key="approve">
       <Callout tone="blue" title="Independent approval">Proposed: {label(c.action)}. Approving applies it and sends the notice.</Callout>
       <button type="button" className="btn btn-primary" style={{ marginTop: 8 }} disabled={busy}
         onClick={() => act(`${base}/approve-action`, undefined, 'Enforcement approved.')}>Approve Enforcement as Independent Reviewer</button>
     </div>)
-  if (can('TS_ANALYST', 'RISK_LEAD') && ['TRIAGE', 'ASSESSED'].includes(c.status)) steps.push(
+  if (can('safety.act') && ['TRIAGE', 'ASSESSED'].includes(c.status)) steps.push(
     <ReasonForm key="close" id={`close-${c.id}`} label="Close: no action needed" busy={busy} submit={(reason) => act(`${base}/close`, { reason }, 'Case closed with no action.')} />)
-  if (can('RISK_LEAD', 'LEGAL') && c.status === 'ACTIVE') steps.push(
+  if (can('safety.reverse') && c.status === 'ACTIVE') steps.push(
     <ReasonForm key="reverse" id={`reverse-${c.id}`} label="Reverse Action" busy={busy} submit={(reason) => act(`${base}/reverse`, { reason }, 'Action reversed.')} />)
-  if (can('EXECUTIVE') && c.status === 'ACTIVE') steps.push(
+  if (can('safety.override') && c.status === 'ACTIVE') steps.push(
     <ReasonForm key="override" id={`override-${c.id}`} label="Executive override: end this action" busy={busy}
       submit={(reason) => act(`${base}/executive-override`, { reason }, 'Action ended by executive override.')} />)
   if (steps.length === 0) return <p className="muted small">No workflow step is open to your role at this stage ({label(c.status)}).</p>

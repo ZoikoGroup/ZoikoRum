@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import type { AuthResult } from '../api/auth'
 import { useAuth } from '../auth/AuthContext'
 import { AuthLayout, ErrorAlert, useStepUp } from './ui'
+import { dashboardPath } from '../staffRoutes'
 
 /* Single sign-on: an organisation's own identity provider (OpenID Connect: Okta, Entra ID, Google Workspace...), and
    Google or Microsoft sign-in where the platform offers them. */
@@ -44,7 +45,7 @@ export function SsoCallbackPage() {
     if (sent.current || !code || !state) return
     sent.current = true
     api<AuthResult>('/v1/auth/sso/callback', { method: 'POST', body: { code, state }, auth: false })
-      .then((r) => { accept(r); navigate(r.user.mfaRequired ? '/app/security' : `/app/${r.user.defaultDashboard}`, { replace: true }) })
+      .then((r) => { accept(r); navigate(r.user.mfaRequired ? '/app/security' : dashboardPath(r.user), { replace: true }) })
       .catch(setError)
   }, [code, state, accept, navigate])
   return (

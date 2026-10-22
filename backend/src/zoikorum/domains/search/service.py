@@ -31,7 +31,8 @@ from zoikorum.domains.search.schemas import (FacetValue, FirmRef, IntentFilters,
                                             SearchParams, SpecRef)
 from zoikorum.domains.trust import facade as trust_facade
 from zoikorum.domains.verification import facade as verification_facade
-from zoikorum.shared.auth import Actor, PlatformRole
+from zoikorum.shared.auth import Actor
+from zoikorum.shared.capabilities import Cap
 from zoikorum.shared.errors import Forbidden, ValidationFailed
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_event
@@ -130,7 +131,7 @@ async def rebuild(session: AsyncSession, professional_id: uuid.UUID, occurred_at
 
 
 async def reindex(session: AsyncSession, actor: Actor) -> dict:
-    actor.require_platform_role(PlatformRole.PLATFORM_ADMIN)
+    actor.require_capability(Cap.SEARCH_REINDEX)
     return {"reindexed": await reindex_all(session)}
 
 

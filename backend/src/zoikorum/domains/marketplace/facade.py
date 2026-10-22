@@ -127,3 +127,10 @@ async def all_specializations(session: AsyncSession) -> list[dict]:
     rows = (await session.execute(select(TaxonomyNode.slug, TaxonomyNode.name).where(
         TaxonomyNode.level == "SPECIALIZATION", TaxonomyNode.status == "ACTIVE"))).all()
     return [{"slug": s, "name": n} for s, n in rows]
+
+
+async def suggestion_exists(session: AsyncSession, suggestion_id: uuid.UUID) -> bool:
+    """A specialization suggestion with this id (staff case ownership checks the case is real)."""
+    from zoikorum.domains.marketplace.models import SpecializationSuggestion
+
+    return await session.get(SpecializationSuggestion, suggestion_id) is not None

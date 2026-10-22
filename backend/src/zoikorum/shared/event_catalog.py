@@ -39,6 +39,7 @@ class E:
     IDENTITY_SOFT_DELETED = _t("identity", "identity", "soft_deleted")
     PLATFORM_ROLE_GRANTED = _t("identity", "identity", "platform_role_granted")
     PLATFORM_ROLE_REVOKED = _t("identity", "identity", "platform_role_revoked")
+    PLATFORM_ROLE_EXPIRED = _t("identity", "identity", "platform_role_expired")  # a time-limited (just-in-time) grant ended
     PERSONA_ADDED = _t("identity", "identity", "persona_added")
     PASSWORD_RESET_REQUESTED = _t("identity", "identity", "password_reset_requested")
     PASSWORD_CHANGED = _t("identity", "identity", "password_changed")
@@ -293,6 +294,14 @@ class E:
     ENFORCEMENT_APPEAL_DECIDED = _t("admin", "enforcement_case", "appeal_decided")
     ENFORCEMENT_REMEDIATION_COMPLETED = _t("admin", "enforcement_case", "remediation_completed")
     OPERATOR_ACTION_LOGGED = _t("admin", "operator", "action_logged")
+    # Maker-checker for privileged staff actions (admin/approvals.py): REQUESTED -> APPLIED | FAILED | REJECTED | EXPIRED | CANCELLED
+    STAFF_APPROVAL_REQUESTED = _t("admin", "approval_request", "requested")
+    STAFF_APPROVAL_REJECTED = _t("admin", "approval_request", "rejected")
+    STAFF_APPROVAL_APPLIED = _t("admin", "approval_request", "applied")  # approved by a second person and carried out
+    STAFF_APPROVAL_FAILED = _t("admin", "approval_request", "failed")  # approved, but the action could not be carried out
+    STAFF_APPROVAL_EXPIRED = _t("admin", "approval_request", "expired")
+    STAFF_APPROVAL_CANCELLED = _t("admin", "approval_request", "cancelled")
+    CASE_ASSIGNED = _t("admin", "case", "assigned")  # a staff case has a new owner: the owner is told
 
 
 ALL_EVENTS: frozenset[str] = frozenset(v for k, v in vars(E).items() if k.isupper())
