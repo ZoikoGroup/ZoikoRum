@@ -78,6 +78,11 @@ async def on_funding_reversed(session: AsyncSession, event: EventEnvelope) -> No
     await service.funding_reversed(session, event.payload)
 
 
+@subscribe(E.ESCROW_FUNDING_EXPIRED, consumer="contract.funding_expired")
+async def on_funding_expired(session: AsyncSession, event: EventEnvelope) -> None:
+    await service.funding_expired(session, event.payload)
+
+
 @subscribe(E.DISPUTE_INITIATED, consumer="contract.dispute_pause")
 async def on_dispute_initiated(session: AsyncSession, event: EventEnvelope) -> None:
     await service.dispute_initiated(session, event.payload)

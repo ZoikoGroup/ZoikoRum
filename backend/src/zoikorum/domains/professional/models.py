@@ -60,6 +60,8 @@ class Professional(Base, UUIDPk, Timestamps, Versioned):
     licensed_jurisdictions: Mapped[list[str]] = mapped_column(ARRAY(String(2)), nullable=False, default=list)
     cross_border_acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     regulated_data_attested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # "can handle regulated data"
+    # Where on-site work is offered (cities or regions, free text), asked when delivery includes ON-SITE or HYBRID.
+    onsite_regions: Mapped[list[str]] = mapped_column(ARRAY(String(100)), nullable=False, default=list, server_default="{}")
     # Enterprise readiness designation: NONE | PENDING | READY | REJECTED (professional/enterprise.py)
     enterprise_status: Mapped[str] = mapped_column(String(20), nullable=False, default="NONE", server_default="NONE")
     enterprise_attestation: Mapped[dict | None] = mapped_column(JSONB)

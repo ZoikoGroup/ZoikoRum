@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { orgApi, type Organization, type BusinessUnit } from '../api/orgs'
-import { ApiError } from '../api/client'
+import { formatMoney, orgApi, type Organization, type BusinessUnit } from '../api/orgs'
+import { api, ApiError } from '../api/client'
 import { openStoredFile, toUpload } from '../api/files'
 import { policyApi, type Approval, type ExceptionRequest, type PolicyProfile, type PolicyRule } from '../api/policy'
 import { ErrorAlert, Field, useStepUp } from '../components/ui'
 import { EmptyTable, PortalHeader, StatCard, Tabs } from '../components/portal'
 import { Icon } from '../components/dashboard'
 import AutomaticDisputeControls, { DisputeSettlementControls } from '../components/AutomaticDisputeControls'
-import { PolicyChecksPanel, PolicyDashboardView, PolicySettingsForm, RuleBuilder } from '../components/PolicyBuilder'
+import { ContractVariantsEditor, PaymentAndExceptionControls, PolicyChecksPanel, PolicyDashboardView, PolicySettingsForm, RuleBuilder } from '../components/PolicyBuilder'
+import { DefinePolicyPrompt } from './EnterprisePages'
+import { saveBlob } from '../lib/exports'
 
 type PolicyTab = 'profiles' | 'approvals' | 'exceptions' | 'dashboard'
 
@@ -252,6 +254,8 @@ export default function PoliciesPage() {
         </div>
       </div>
 
+      {org && <DefinePolicyPrompt org={org} onChanged={() => { reload().catch(setError) }} />}
+
       <Tabs<PolicyTab>
         tabs={[
           { key: 'profiles', label: 'Policy Profiles', count: profiles.length },
@@ -264,6 +268,7 @@ export default function PoliciesPage() {
       />
 
       {tab === 'dashboard' && orgId && <PolicyDashboardView orgId={orgId} />}
+      {tab === 'dashboard' && orgId && <PolicyProfileBreakdown orgId={orgId} />}
 
       {tab === 'profiles' && profiles.length === 0 && admin && (
         <section className="card panel" style={{ marginBottom: 16 }}>
@@ -498,6 +503,8 @@ export default function PoliciesPage() {
                 </div>
 
                 <PolicySettingsForm settings={settings} onChange={setSettings} disabled={!admin || !selected.draftVersionId} />
+                <PaymentAndExceptionControls settings={settings} onChange={setSettings} disabled={!admin || !selected.draftVersionId} />
+                <ContractVariantsEditor settings={settings} onChange={setSettings} disabled={!admin || !selected.draftVersionId} />
                 <details style={{ margin: '8px 0' }}><summary className="small">Advanced: settings as JSON</summary>
                 <Field label="Profile Settings (JSON)" id="policy-settings">
                   <textarea
@@ -980,6 +987,150 @@ export default function PoliciesPage() {
             </form>
           </aside>
         </div>
+      )}
+    </>
+  )
+}
+
+/* Per-policy breakdown (Enterprise policy profiles: dashboard and KPIs): what each profile governed, how often it
+   intervened, exceptions, approvals and the step that holds approvals up. Money stays per currency, never added up. */
+
+type CurrencyAmount = { currency: string; amountMinor: number }
+interface ProfileStep { step: number; role: string; completed: number; medianHoursWait: number | null; pending: number; oldestPendingHours: number | null; expired: number }
+interface ProfileInsight {
+  profileId: string; name: string; riskLevel: string; status: string; activeVersion: number | null; evaluations: number
+  decisions: Record<string, number>; interventionRatePct: number | null; engagements: number
+  spendExposure: CurrencyAmount[]; spendHeldBack: CurrencyAmount[]
+  exceptions: { requested: number; granted: number; denied: number; pending: number }
+  approvals: { requested: number; pending: number; granted: number; denied: number; expired: number }
+  approvalSteps: ProfileStep[]; bottleneck: { step: number; role: string; medianHoursWait: number | null; pending: number } | null
+}
+type SortKey = 'name' | 'evaluations' | 'engagements' | 'interventionRatePct' | 'approvals' | 'exceptions' | 'bottleneck'
+const SORT_VALUE: Record<SortKey, (p: ProfileInsight) => number | string> = {
+  name: (p) => p.name.toLowerCase(), evaluations: (p) => p.evaluations, engagements: (p) => p.engagements,
+  interventionRatePct: (p) => p.interventionRatePct ?? -1, approvals: (p) => p.approvals.pending, exceptions: (p) => p.exceptions.requested,
+  bottleneck: (p) => p.bottleneck?.medianHoursWait ?? -1,
+}
+const roleName = (r: string) => r.toLowerCase().replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase())
+const hours = (h: number | null | undefined) => (h == null ? '—' : h < 48 ? `${h} h` : `${(h / 24).toFixed(1)} days`)
+const amounts = (list: CurrencyAmount[]) => (list.length ? list.map((m) => formatMoney(m)).join(' + ') : '—')
+
+function PolicyProfileBreakdown({ orgId }: { orgId: string }) {
+  const [days, setDays] = useState(30)
+  const [rows, setRows] = useState<ProfileInsight[] | null>(null)
+  const [error, setError] = useState<unknown>(null)
+  const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: 'evaluations', desc: true })
+  const [open, setOpen] = useState<string | null>(null)
+  const [exporting, setExporting] = useState(false)
+
+  useEffect(() => {
+    let live = true
+    api<{ profiles: ProfileInsight[] }>('/v1/policy/dashboard/profiles', { query: { orgId, days: String(days) } })
+      .then((r) => { if (live) { setRows(r.profiles); setError(null) } }).catch((e) => { if (live) setError(e) })
+    return () => { live = false }
+  }, [orgId, days])
+
+  async function exportCsv() {
+    setExporting(true)
+    try {
+      const blob = await api<Blob>('/v1/policy/dashboard/profiles.csv', { query: { orgId, days: String(days) }, blob: true })
+      saveBlob(`zoikorum-policy-profiles-${days}d.csv`, blob)
+    } catch (e) {
+      setError(e)
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const sorted = [...(rows ?? [])].sort((a, b) => {
+    const x = SORT_VALUE[sort.key](a), y = SORT_VALUE[sort.key](b)
+    const order = x < y ? -1 : x > y ? 1 : 0
+    return sort.desc ? -order : order
+  })
+  const header = (key: SortKey, text: string) => (
+    <th scope="col" aria-sort={sort.key === key ? (sort.desc ? 'descending' : 'ascending') : 'none'}>
+      <button type="button" className="link-button" onClick={() => setSort((s) => ({ key, desc: s.key === key ? !s.desc : key !== 'name' }))}>
+        {text}{sort.key === key ? (sort.desc ? ' ↓' : ' ↑') : ''}
+      </button>
+    </th>
+  )
+
+  return (
+    <section className="card panel" style={{ marginTop: 16 }}>
+      <div className="panel-head"><h2>By policy profile</h2>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <select className="input" aria-label="Period for the profile breakdown" style={{ maxWidth: 160 }} value={days} onChange={(e) => setDays(Number(e.target.value))}>
+            {[7, 30, 90, 365].map((n) => <option key={n} value={n}>Last {n} days</option>)}</select>
+          <button type="button" className="btn btn-secondary" onClick={() => { exportCsv().catch(setError) }} disabled={exporting || !rows?.length}>
+            <Icon name="download" /> Export CSV</button>
+        </div>
+      </div>
+      <ErrorAlert error={error} />
+      {!rows ? <div className="skeleton" style={{ height: 100 }} aria-busy="true" /> : rows.length === 0 ? <p className="muted small">No policy profiles yet.</p> : (
+        <div className="compare-scroll">
+          <table className="data">
+            <thead><tr>
+              {header('name', 'Profile')}<th scope="col">Status</th>{header('evaluations', 'Evaluations')}{header('engagements', 'Engagements')}
+              {header('interventionRatePct', 'Intervened')}{header('approvals', 'Approvals pending')}{header('exceptions', 'Exceptions')}
+              <th scope="col">Spend exposure</th>{header('bottleneck', 'Slowest approval step')}
+            </tr></thead>
+            <tbody>{sorted.map((p) => (
+              <ProfileRows key={p.profileId} p={p} open={open === p.profileId} onToggle={() => setOpen(open === p.profileId ? null : p.profileId)} />
+            ))}</tbody>
+          </table>
+        </div>
+      )}
+      <p className="muted small" style={{ marginTop: 8 }}>Spend exposure is the value of engagements accepted under each profile, per currency and never converted.
+        Select a profile for its decisions, exceptions and approval steps.</p>
+    </section>
+  )
+}
+
+function ProfileRows({ p, open, onToggle }: { p: ProfileInsight; open: boolean; onToggle: () => void }) {
+  return (
+    <>
+      <tr>
+        <td><button type="button" className="link-button" aria-expanded={open} onClick={onToggle}>{open ? '▾' : '▸'} {p.name}</button>
+          <div className="muted small">{roleName(p.riskLevel)} risk{p.activeVersion ? ` · v${p.activeVersion}` : ''}</div></td>
+        <td>{roleName(p.status)}</td>
+        <td>{p.evaluations.toLocaleString()}</td>
+        <td>{p.engagements.toLocaleString()}</td>
+        <td>{p.interventionRatePct == null ? '—' : `${p.interventionRatePct}%`}</td>
+        <td>{p.approvals.pending} <span className="muted small">of {p.approvals.requested}</span></td>
+        <td>{p.exceptions.requested} <span className="muted small">({p.exceptions.granted} granted)</span></td>
+        <td>{amounts(p.spendExposure)}</td>
+        <td>{p.bottleneck ? <>Step {p.bottleneck.step} · {roleName(p.bottleneck.role)}<div className="muted small">median {hours(p.bottleneck.medianHoursWait)}</div></> : '—'}</td>
+      </tr>
+      {open && (
+        <tr>
+          <td colSpan={9}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, padding: '8px 0' }}>
+              <div>
+                <h3 className="small">Decisions</h3>
+                {Object.keys(p.decisions).length === 0 ? <p className="muted small">No evaluations in this period.</p> : (
+                  <ul className="small">{Object.entries(p.decisions).map(([k, v]) => <li key={k}>{roleName(k)}: {v}</li>)}</ul>)}
+              </div>
+              <div>
+                <h3 className="small">Money</h3>
+                <p className="small">Exposure: {amounts(p.spendExposure)}</p>
+                <p className="small">Held back by blocks: {amounts(p.spendHeldBack)}</p>
+              </div>
+              <div>
+                <h3 className="small">Exceptions &amp; approvals</h3>
+                <p className="small">Exceptions: {p.exceptions.requested} requested · {p.exceptions.granted} granted · {p.exceptions.denied} denied · {p.exceptions.pending} pending</p>
+                <p className="small">Approvals: {p.approvals.requested} requested · {p.approvals.granted} granted · {p.approvals.denied} denied · {p.approvals.expired} expired</p>
+              </div>
+            </div>
+            {p.approvalSteps.length > 0 && (
+              <table className="data">
+                <thead><tr><th scope="col">Step</th><th scope="col">Approver role</th><th scope="col">Completed</th><th scope="col">Median wait</th><th scope="col">Waiting now</th><th scope="col">Oldest waiting</th><th scope="col">Expired</th></tr></thead>
+                <tbody>{p.approvalSteps.map((s) => (
+                  <tr key={`${s.step}-${s.role}`}><td>{s.step}</td><td>{roleName(s.role)}</td><td>{s.completed}</td><td>{hours(s.medianHoursWait)}</td>
+                    <td>{s.pending}</td><td>{hours(s.oldestPendingHours)}</td><td>{s.expired}</td></tr>))}</tbody>
+              </table>
+            )}
+          </td>
+        </tr>
       )}
     </>
   )

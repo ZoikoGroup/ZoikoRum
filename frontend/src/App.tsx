@@ -116,6 +116,7 @@ export default function App() {
           <Route path="/invite" element={<InviteLanding />} />
           <Route path="/professionals" element={<BrowseProfessionals />} />
           <Route path="/categories/:slug" element={<CategoryPage />} />
+          <Route path="/finance-accounting" element={<Navigate to="/categories/finance-and-accounting" replace />} />
           <Route path="/professionals/:id" element={<PublicProfilePage />} />
           <Route path="/firms/:id" element={<PublicFirmPage />} />
 

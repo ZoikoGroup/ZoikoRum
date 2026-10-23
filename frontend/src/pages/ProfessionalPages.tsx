@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import { firmApi, formatMoney, type Firm } from '../api/orgs'
@@ -10,7 +10,7 @@ import {
 import { CONTRACT_STATUS, contractApi, type Contract } from '../api/contracts'
 import { paymentsApi, type Earnings } from '../api/escrow'
 import { budgetText, DECLINE_REASONS, proposalApi, requestStatus, type DeclineReason, type ProposalRequest } from '../api/proposals'
-import { DIMENSION_VALUE, DIMENSIONS, trustApi, verificationApi, type Trust, type VerificationCase } from '../api/verification'
+import { DIMENSION_VALUE, DIMENSIONS, trustApi, verificationApi, type EvidenceType, type Trust, type VerificationCase } from '../api/verification'
 import { useAuth } from '../auth/AuthContext'
 import { ActionList, Avatar, DataFreshness, greeting, Icon, Kpi, type Action } from '../components/dashboard'
 import { dashboardApi, moneyOf, type DashboardSummary } from '../api/dashboards'
@@ -23,7 +23,9 @@ import { HoursSlider } from '../components/HoursSlider'
 import { CantFindSpecialization } from '../components/CantFindSpecialization'
 import { DraftSaved, ResumeDraft } from '../components/ResumeDraft'
 import { clearDraft, readDraft, useAutosave } from '../lib/autosave'
-import { ErrorAlert, Field, Loading } from '../components/ui'
+import { ErrorAlert, Field, Loading, useDialog } from '../components/ui'
+import { toUpload } from '../api/files'
+import { CHECK_INFO, cropRect, nextTier, readability, specDescription } from '../lib/onboarding'
 import { AccountAlerts } from './Dashboards'
 import { ResendConfirmation } from '../components/ResendConfirmation'
 import { formatCurrencies } from '../lib/money'
@@ -81,9 +83,39 @@ function Choices<T extends string>({ name, options, value, onChange, label = (o)
 
 // ---- Create ------------------------------------------------------------------
 
+const TRACKS = [
+  { key: 'independent', title: 'Independent professional', points: ['You contract with buyers in your own name', 'Payments are released to your own payout account', 'You set your own services, prices and availability'] },
+  { key: 'firm', title: 'Member of a firm', points: ['Buyers see the firm on your profile', 'Firm verification adds to your own checks', 'Needs an invitation from the firm first'] },
+] as const
+
+/** "Learn the difference" between practising independently and under a firm. */
+function TrackDifference({ onClose }: { onClose: () => void }) {
+  const dialog = useDialog(onClose)
+  return (
+    <div ref={dialog} className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="track-title" onClick={onClose}>
+      <div className="card modal modal-wide" onClick={(e) => e.stopPropagation()}>
+        <div className="panel-head"><h2 id="track-title">Independent or with a firm?</h2><button className="icon-btn" aria-label="Close" onClick={onClose}>×</button></div>
+        <table className="data small">
+          <thead><tr><th /><th>Independent</th><th>With a firm</th></tr></thead>
+          <tbody>
+            <tr><td>Who signs the contract</td><td>You</td><td>You, shown as practising with the firm</td></tr>
+            <tr><td>Verification</td><td>Your own checks decide your Trust Tier</td><td>Your own checks, plus the firm's registration and insurance</td></tr>
+            <tr><td>Payments</td><td>To your payout account</td><td>To your payout account; the firm sees its members' engagements</td></tr>
+            <tr><td>How to start</td><td>Right away</td><td>Accept the firm's invitation first</td></tr>
+          </tbody>
+        </table>
+        <p className="muted small">You can change this later from your profile: joining a firm links your profile, leaving it unlinks it.</p>
+        <button className="btn btn-primary" onClick={onClose}>Got it</button>
+      </div>
+    </div>
+  )
+}
+
 function CreateProfile({ onCreated }: { onCreated: (p: Profile) => void }) {
   const [firms, setFirms] = useState<Firm[]>([])
   const [firmId, setFirmId] = useState('')
+  const [track, setTrack] = useState<'independent' | 'firm'>('independent')
+  const [explain, setExplain] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
   useEffect(() => { firmApi.mine().then(setFirms).catch(() => {}) }, [])
@@ -108,10 +140,24 @@ function CreateProfile({ onCreated }: { onCreated: (p: Profile) => void }) {
         basics are in place. Verification comes next and unlocks proposals and contracts.
       </p>
       <ErrorAlert error={error} />
-      {firms.length > 0 && (
+      <div className="track-cards" role="radiogroup" aria-label="How you practise">
+        {TRACKS.map((t) => {
+          const unavailable = t.key === 'firm' && firms.length === 0
+          return (
+            <button key={t.key} type="button" role="radio" className="track-card" aria-checked={track === t.key} disabled={unavailable}
+              onClick={() => { setTrack(t.key); setFirmId(t.key === 'firm' ? firms[0]?.id ?? '' : '') }}>
+              <strong>{t.title}</strong>
+              <ul>{t.points.map((pt) => <li key={pt}>{pt}</li>)}</ul>
+              {unavailable && <span className="muted small">No firm invitation yet</span>}
+            </button>
+          )
+        })}
+      </div>
+      <button type="button" className="link-btn small" style={{ padding: 0, marginBottom: 12 }} onClick={() => setExplain(true)}>Learn the difference</button>
+      {explain && <TrackDifference onClose={() => setExplain(false)} />}
+      {track === 'firm' && firms.length > 0 && (
         <Field label="Practise as" id="pro-firm" hint="Firm members can offer services under their firm.">
           <select id="pro-firm" className="input" value={firmId} onChange={(e) => setFirmId(e.target.value)}>
-            <option value="">An independent professional</option>
             {firms.map((f) => <option key={f.id} value={f.id}>A member of {f.tradingName || f.legalName}</option>)}
           </select>
         </Field>
@@ -128,7 +174,7 @@ const FIX_AT: Record<string, string> = {
   email: '/app/account', basics: '/app/professional/profile?step=basics', photo: '/app/professional/profile?step=basics', bio: '/app/professional/profile?step=basics', copy: '/app/professional/profile?step=basics',
   specializations: '/app/professional/profile?step=specializations', engagement: '/app/professional/profile?step=engagement',
   pricing: '/app/professional/profile?step=engagement', jurisdictions: '/app/professional/profile?step=jurisdictions',
-  availability: '/app/professional/profile?step=availability', credentials: '/app/professional/profile?step=credentials',
+  availability: '/app/professional/profile?step=engagement', credentials: '/app/professional/profile?step=credentials',
   offering: '/app/professional/offerings',
 }
 
@@ -267,7 +313,7 @@ export function ProfessionalDashboard() {
         {profile && (
           <div className="row">
             <Link className="btn btn-secondary" to={`/professionals/${profile.id}`}><Icon name="user" /> View public profile</Link>
-            <Link className="btn btn-primary" to="/app/professional/offerings">+ New offering</Link>
+            <Link className="btn btn-primary" to="/app/professional/offerings?new=1">+ New offering</Link>
           </div>
         )}
       </div>
@@ -316,7 +362,7 @@ export function ProfessionalDashboard() {
                         <div className="price">{priceText(o)}{o.typicalDuration && <span className="muted small"> · {o.typicalDuration}</span>}</div>
                         <div className="muted small">Availability: {LABEL[profile.availability] ?? profile.availability}</div>
                         <div className="row" style={{ marginTop: 'auto' }}>
-                          <Link className="btn btn-secondary btn-sm" to="/app/professional/offerings">View / Edit</Link>
+                          <Link className="btn btn-secondary btn-sm" to={`/app/professional/offerings?edit=${o.id}`}>View / Edit</Link>
                           {o.status === 'ACTIVE'
                             ? <button className="btn btn-ghost btn-sm" onClick={() => run(() => proApi.pauseOffering(o.id))}>Pause</button>
                             : <button className="btn btn-ghost btn-sm" onClick={() => run(() => proApi.activateOffering(o.id))}>Activate</button>}
@@ -422,8 +468,7 @@ export function ProfessionalDashboard() {
 const STEPS = [
   { key: 'basics', label: 'Basics', why: 'Buyers decide in seconds from your name, role title and photo. Your legal name stays private and is only matched against your ID.' },
   { key: 'specializations', label: 'Services', why: 'Search and buyer policies work from these. Some need a validated credential or Tier A before you can take the work.' },
-  { key: 'engagement', label: 'Pricing & engagement', why: 'Buyers filter by engagement type, delivery and price. Rates are a guide only; the price is agreed in each proposal.' },
-  { key: 'availability', label: 'Availability', why: 'Requests only reach you when you can take them. At your limit, buyers see “At capacity” instead of waiting on you.' },
+  { key: 'engagement', label: 'Pricing & availability', why: 'Buyers filter by engagement type, delivery, price and availability. Rates are a guide only; the price is agreed in each proposal. At your limit, buyers see “At capacity” instead of waiting on you.' },
   { key: 'verification', label: 'Verification', why: 'Verified identity (Tier B) is needed to send proposals; full verification (Tier A) for regulated work and many enterprise buyers.' },
   { key: 'credentials', label: 'Credentials', why: 'Credentials are checked with the issuing body before they show as validated. Buyers and their policies rely on them.' },
   { key: 'jurisdictions', label: 'Jurisdictions', why: 'Engagements can only be agreed where you serve clients and, for regulated work, where you are licensed.' },
@@ -472,28 +517,76 @@ function StepActions({ busy, label = 'Save and continue' }: { busy: boolean; lab
   return <button className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : label}</button>
 }
 
-/** Profile photo (Onboarding s.7, required to publish): JPEG, PNG or WebP under 2 MB. */
+const CROP_PREVIEW = 200
+const CROP_OUTPUT = 512
+
+/** Profile photo (Onboarding s.7, required to publish): pick a JPEG, PNG or WebP, crop it square, then upload a
+    512 px JPEG (always under the 2 MB limit). Cropping happens in the browser with a canvas. */
 function PhotoUploader({ profile, onSaved }: { profile: Profile; onSaved: (p: Profile) => void }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
-  async function upload(file: File | undefined) {
+  const [img, setImg] = useState<HTMLImageElement | null>(null)
+  const [crop, setCrop] = useState({ zoom: 1, x: 50, y: 50 })
+  const preview = useRef<HTMLCanvasElement>(null)
+
+  function draw(canvas: HTMLCanvasElement | null, size: number) {
+    const ctx = canvas?.getContext('2d')
+    if (!canvas || !ctx || !img) return
+    canvas.width = size
+    canvas.height = size
+    const r = cropRect(img.naturalWidth, img.naturalHeight, crop.zoom, crop.x, crop.y)
+    ctx.drawImage(img, r.sx, r.sy, r.side, r.side, 0, 0, size, size)
+  }
+  useEffect(() => { draw(preview.current, CROP_PREVIEW) })
+
+  function pick(file: File | undefined) {
     if (!file) return
     setError(null)
-    if (file.size > 2 * 1024 * 1024) { setError(new Error('Use a photo under 2 MB.')); return }
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) { setError(new Error('Use a JPEG, PNG or WebP photo.')); return }
+    if (file.size > 10 * 1024 * 1024) { setError(new Error('Use a photo under 10 MB.')); return }
+    const url = URL.createObjectURL(file)
+    const image = new Image()
+    image.onload = () => { setImg(image); setCrop({ zoom: 1, x: 50, y: 50 }) }
+    image.onerror = () => { URL.revokeObjectURL(url); setError(new Error('The photo could not be read.')) }
+    image.src = url
+  }
+
+  async function upload() {
     setBusy(true)
+    setError(null)
     try {
-      const base64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '')
-        reader.onerror = () => reject(new Error('The photo could not be read.'))
-        reader.readAsDataURL(file)
-      })
-      onSaved(await proApi.setPhoto(file.type, base64))
+      const out = document.createElement('canvas')
+      draw(out, CROP_OUTPUT)
+      const base64 = out.toDataURL('image/jpeg', 0.9).split(',')[1] ?? ''
+      if (!base64) throw new Error('The photo could not be prepared.')
+      onSaved(await proApi.setPhoto('image/jpeg', base64))
+      if (img) URL.revokeObjectURL(img.src)
+      setImg(null)
     } catch (err) {
       setError(err)
     } finally {
       setBusy(false)
     }
+  }
+  if (img) {
+    return (
+      <div className="crop-box" aria-label="Crop your photo">
+        <canvas ref={preview} width={CROP_PREVIEW} height={CROP_PREVIEW} role="img" aria-label="Cropped photo preview" />
+        <div style={{ minWidth: 200, flex: 1 }}>
+          <label className="small" htmlFor="crop-zoom">Zoom</label>
+          <input id="crop-zoom" type="range" min={1} max={3} step={0.05} value={crop.zoom} onChange={(e) => setCrop({ ...crop, zoom: Number(e.target.value) })} style={{ width: '100%' }} />
+          <label className="small" htmlFor="crop-x">Left – right</label>
+          <input id="crop-x" type="range" min={0} max={100} value={crop.x} onChange={(e) => setCrop({ ...crop, x: Number(e.target.value) })} style={{ width: '100%' }} />
+          <label className="small" htmlFor="crop-y">Top – bottom</label>
+          <input id="crop-y" type="range" min={0} max={100} value={crop.y} onChange={(e) => setCrop({ ...crop, y: Number(e.target.value) })} style={{ width: '100%' }} />
+          <div className="row" style={{ marginTop: 8 }}>
+            <button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={upload}>{busy ? 'Uploading…' : 'Use this photo'}</button>
+            <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => { URL.revokeObjectURL(img.src); setImg(null) }}>Cancel</button>
+          </div>
+          <ErrorAlert error={error} />
+        </div>
+      </div>
+    )
   }
   return (
     <div className="photo-row">
@@ -502,13 +595,13 @@ function PhotoUploader({ profile, onSaved }: { profile: Profile; onSaved: (p: Pr
         <label className="btn btn-secondary btn-sm" style={{ cursor: busy ? 'wait' : 'pointer' }}>
           {busy ? 'Uploading…' : profile.photoUrl ? 'Change photo' : 'Upload photo *'}
           <input type="file" accept="image/jpeg,image/png,image/webp" hidden disabled={busy}
-            onChange={(e) => upload(e.target.files?.[0])} />
+            onChange={(e) => { pick(e.target.files?.[0]); e.target.value = '' }} />
         </label>
         {profile.photoUrl && (
           <button type="button" className="btn btn-ghost btn-sm" disabled={busy}
             onClick={async () => { try { onSaved(await proApi.removePhoto()) } catch (err) { setError(err) } }}>Remove</button>
         )}
-        <p className="muted small" style={{ margin: '6px 0 0' }}>A clear, professional head-and-shoulders photo. JPEG, PNG or WebP, under 2 MB.</p>
+        <p className="muted small" style={{ margin: '6px 0 0' }}>A clear, professional head-and-shoulders photo. JPEG, PNG or WebP; you can crop it before it is saved.</p>
         <ErrorAlert error={error} />
       </div>
     </div>
@@ -602,7 +695,8 @@ function BasicsStep({ profile, onSaved, next }: StepProps) {
       </Field>
       <Field label="Bio (optional)" id="b-bio" hint={`What you do and for whom, in plain words: 150–250 words reads best, 300 at most ` +
         `(${f.bio.trim() ? f.bio.trim().split(/\s+/).length : 0} words). Avoid superlatives and guarantees such as “best”, “top-rated” or “#1”.`}>
-        <textarea id="b-bio" className="input" rows={6} maxLength={3000} value={f.bio} onChange={set('bio')} />
+        <textarea id="b-bio" className="input" rows={6} maxLength={3000} value={f.bio} onChange={set('bio')} aria-describedby="b-bio-read" />
+        <BioReadability text={f.bio} />
       </Field>
       <div className="row">
         <Field label="Years of experience *" id="b-exp">
@@ -707,8 +801,11 @@ function SpecializationsStep({ profile, onSaved, next }: StepProps) {
           ))}
         </select>
       </Field>
+      {primary && byName[primary] && <SpecPreview spec={byName[primary]} group={byName[primary].group.name} category={byName[primary].category.name} />}
       {(profile.pendingSpecializations ?? []).length > 0 && <p className="small">Under review: {(profile.pendingSpecializations ?? []).map((n) => <span key={n} className="badge warn" style={{ marginRight: 4 }}>{n}</span>)}</p>}
       <h3>Other specializations <span className="muted small">({secondary.filter((s) => s !== primary).length}/5)</span></h3>
+      {(() => { const last = secondary.filter((s) => s !== primary).slice(-1)[0]; const s = last && byName[last]
+        return s ? <SpecPreview spec={s} group={s.group.name} category={s.category.name} label="Last added" /> : null })()}
       {secondary.filter((s) => s !== primary).length > 0 && <div className="chips" style={{ marginBottom: 8 }}>{secondary.filter((s) => s !== primary).map((slug) => (
         <button type="button" key={slug} className="pill on" onClick={() => setSecondary(secondary.filter((x) => x !== slug))}>{byName[slug]?.name ?? slug} ×</button>))}</div>}
       {shown.length === 0 && <p className="muted small">Nothing matches “{query}”.</p>}
@@ -730,6 +827,7 @@ function SpecializationsStep({ profile, onSaved, next }: StepProps) {
   )
 }
 
+/** Pricing & availability (one step): how you engage, deliver and price, where you work on-site, and when you can start. */
 function EngagementStep({ profile, onSaved, next }: StepProps) {
   const [types, setTypes] = useState(profile.engagementTypes)
   const [modes, setModes] = useState(profile.deliveryModes)
@@ -737,19 +835,30 @@ function EngagementStep({ profile, onSaved, next }: StepProps) {
   const [rate, setRate] = useState(toMajor(profile.indicativeRate))
   const [currency, setCurrency] = useState(profile.indicativeRate?.currency ?? 'USD')
   const [unit, setUnit] = useState(profile.rateUnit ?? 'HOUR')
+  const [regions, setRegions] = useState((profile.onsiteRegions ?? []).join(', '))
+  const [availability, setAvailability] = useState<Availability>(profile.availability)
+  const [max, setMax] = useState(profile.maxConcurrentEngagements?.toString() ?? '')
+  const [paused, setPaused] = useState(profile.temporarilyUnavailable)
+  const [hours, setHours] = useState<number | null>(profile.weeklyHours ?? null)
   const [error, setError] = useState<unknown>(null)
   const { busy, save } = useSave(setError)
-  const draft = useStepDraft('engagement', { types, modes, pricing, rate, currency, unit }, (v) => {
+  const draft = useStepDraft('engagement', { types, modes, pricing, rate, currency, unit, regions, availability, max, paused, hours }, (v) => {
     setTypes(v.types); setModes(v.modes); setPricing(v.pricing); setRate(v.rate); setCurrency(v.currency); setUnit(v.unit)
+    setRegions(v.regions ?? ''); setAvailability(v.availability ?? profile.availability); setMax(v.max ?? ''); setPaused(!!v.paused); setHours(v.hours ?? null)
   })
+  const onSite = modes.includes('ONSITE') || modes.includes('HYBRID')
+  const regionList = regions.split(',').map((r) => r.trim()).filter(Boolean)
 
   function submit(e: FormEvent) {
     e.preventDefault()
+    if (onSite && regionList.length === 0) { setError(new Error('Add at least one city or region where you work on-site.')); return }
     save(async () => {
       const rateBody = rate.trim()
         ? { indicativeRate: { amountMinor: toMinor(rate), currency }, rateUnit: unit }
         : profile.indicativeRate ? { clearRate: true } : {}
-      onSaved(await proApi.update(profile.version, { engagementTypes: types, deliveryModes: modes, pricingModels: pricing, ...rateBody }))
+      await proApi.update(profile.version, { engagementTypes: types, deliveryModes: modes, pricingModels: pricing,
+        onsiteRegions: onSite ? regionList.slice(0, 20) : [], ...rateBody })
+      onSaved(await proApi.setAvailability({ availability, maxConcurrentEngagements: max ? Number(max) : null, temporarilyUnavailable: paused, weeklyHours: hours }))
       draft.clear()
       next()
     })
@@ -764,6 +873,11 @@ function EngagementStep({ profile, onSaved, next }: StepProps) {
       <Choices name="Engagement types" options={ENGAGEMENT_TYPES} value={types} onChange={setTypes} />
       <h3 style={{ marginTop: 20 }}>How you deliver</h3>
       <Choices name="Delivery modes" options={DELIVERY_MODES} value={modes} onChange={setModes} />
+      {onSite && <div style={{ marginTop: 12 }}>
+        <Field label="Where do you work on-site? *" id="e-regions" hint="Cities or regions, separated by commas, e.g. “London, Manchester, South East England”. Shown on your profile.">
+          <input id="e-regions" className="input" value={regions} onChange={(e) => setRegions(e.target.value)} placeholder="London, Manchester" />
+        </Field>
+      </div>}
       <h3 style={{ marginTop: 20 }}>How you price</h3>
       <Choices name="Pricing models" options={PRICING_MODELS} value={pricing} onChange={setPricing} />
       <h3 style={{ marginTop: 20 }}>Indicative rate (optional)</h3>
@@ -783,37 +897,7 @@ function EngagementStep({ profile, onSaved, next }: StepProps) {
           </select>
         </Field>
       </div>
-      <div style={{ height: 16 }} />
-      <StepActions busy={busy} />
-    </form>
-  )
-}
-
-function AvailabilityStep({ profile, onSaved, next }: StepProps) {
-  const [availability, setAvailability] = useState<Availability>(profile.availability)
-  const [max, setMax] = useState(profile.maxConcurrentEngagements?.toString() ?? '')
-  const [paused, setPaused] = useState(profile.temporarilyUnavailable)
-  const [hours, setHours] = useState<number | null>(profile.weeklyHours ?? null)
-  const [error, setError] = useState<unknown>(null)
-  const { busy, save } = useSave(setError)
-  const draft = useStepDraft('availability', { availability, max, paused, hours }, (v) => {
-    setAvailability(v.availability); setMax(v.max); setPaused(v.paused); setHours(v.hours)
-  })
-
-  function submit(e: FormEvent) {
-    e.preventDefault()
-    save(async () => {
-      onSaved(await proApi.setAvailability({ availability, maxConcurrentEngagements: max ? Number(max) : null, temporarilyUnavailable: paused, weeklyHours: hours }))
-      draft.clear()
-      next()
-    })
-  }
-
-  return (
-    <form id="step-form" onSubmit={submit}>
-      {draft.banner}
-      <ErrorAlert error={error} />
-      {draft.saved}
+      <h3 style={{ marginTop: 20 }}>Availability</h3>
       <div className="row">
         <Field label="When can you start new work?" id="a-when">
           <select id="a-when" className="input" value={availability} onChange={(e) => setAvailability(e.target.value as Availability)}>
@@ -906,11 +990,18 @@ function JurisdictionsStep({ profile, onSaved, next }: StepProps) {
 
 function CredentialsStep({ profile, next }: StepProps) {
   const [items, setItems] = useState<Credential[]>([])
+  const [cases, setCases] = useState<VerificationCase[]>([])
+  const [missingCertificate, setMissingCertificate] = useState(false)
+  const [upload, setUpload] = useState<{ id: string; alternative: boolean } | null>(null)
   const empty = { credentialType: 'CERTIFICATION', name: '', issuingBody: '', registrationNumber: '', jurisdiction: '', issuedOn: '', expiresOn: '', specialization: '' }
   const [f, setF] = useState(empty)
   const [error, setError] = useState<unknown>(null)
   const { busy, save } = useSave(setError)
-  const load = useCallback(() => proApi.credentials().then(setItems).catch(setError), [])
+  const load = useCallback(() => Promise.all([
+    proApi.credentials().then(setItems),
+    verificationApi.forSubject('PROFESSIONAL', profile.id).then(setCases).catch(() => {}),
+  ]).catch(setError), [profile.id])
+  const caseFor = (c: Credential) => cases.find((k) => k.credentialClaimId === c.id && k.verificationType === 'CREDENTIAL')
   useEffect(() => { load() }, [load])
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value })
 
@@ -918,9 +1009,12 @@ function CredentialsStep({ profile, next }: StepProps) {
     e.preventDefault()
     save(async () => {
       const body = Object.fromEntries(Object.entries(f).filter(([, v]) => v !== '')) as unknown as Parameters<typeof proApi.addCredential>[0]
-      await proApi.addCredential(body)
+      const added = await proApi.addCredential(body)
       setF(empty)
       await load()
+      // Evidence goes straight to the check that adding a credential starts; "can't find it" asks for other proof.
+      setUpload({ id: added.id, alternative: missingCertificate })
+      setMissingCertificate(false)
     })
   }
 
@@ -938,17 +1032,30 @@ function CredentialsStep({ profile, next }: StepProps) {
       </p>
       {items.length > 0 && (
         <table className="data" style={{ marginBottom: 24 }}>
-          <thead><tr><th>Credential</th><th>Issued by</th><th>Expires</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr></thead>
+          <thead><tr><th>Credential</th><th>Issued by</th><th>Expires</th><th>Status</th><th>Evidence</th><th><span className="sr-only">Actions</span></th></tr></thead>
           <tbody>
-            {items.map((c) => (
-              <tr key={c.id}>
+            {items.map((c) => {
+              const k = caseFor(c)
+              const open = !!k && k.isMine && ['PENDING', 'IN_REVIEW', 'NEEDS_INFO'].includes(k.status)
+              return (<Fragment key={c.id}>
+              <tr>
                 <td><strong>{c.name}</strong><div className="muted small">{LABEL[c.credentialType]}{c.jurisdiction && ` · ${c.jurisdiction}`}</div></td>
                 <td>{c.issuingBody}</td>
                 <td>{c.expiresOn ?? '—'}</td>
                 <td><span className={`badge ${c.status === 'VERIFIED' ? 'green' : ''}`}>{c.displayLabel}</span></td>
+                <td className="small">{!k ? <span className="muted">Check starting…</span>
+                  : k.evidence.length > 0 ? <span className="badge green">{k.evidence.length} file{k.evidence.length === 1 ? '' : 's'} sent</span>
+                  : open ? <button type="button" className="btn btn-secondary btn-sm" onClick={() => setUpload({ id: c.id, alternative: false })}>Upload evidence</button>
+                  : <span className="muted">—</span>}
+                  {open && <><br /><button type="button" className="link-btn small" style={{ padding: 0 }}
+                    onClick={() => setUpload({ id: c.id, alternative: true })}>Can't find your certificate?</button></>}</td>
                 <td style={{ textAlign: 'right' }}><button className="btn btn-danger btn-sm" disabled={busy} onClick={() => withdraw(c)}>Remove</button></td>
               </tr>
-            ))}
+              {upload?.id === c.id && k && open && <tr><td colSpan={6}>
+                <InlineEvidence c={k} alternative={upload.alternative} onDone={() => { setUpload(null); load() }} onCancel={() => setUpload(null)} />
+              </td></tr>}
+              </Fragment>)
+            })}
           </tbody>
         </table>
       )}
@@ -994,6 +1101,11 @@ function CredentialsStep({ profile, next }: StepProps) {
             </select>
           </Field>
         )}
+        <label className="checkbox small">
+          <input type="checkbox" checked={missingCertificate} onChange={(e) => setMissingCertificate(e.target.checked)} />
+          <span>I can't find my certificate: I'll upload other evidence instead (a letter or email from the issuing body, a registry
+            listing, a membership card or a transcript).</span>
+        </label>
         <div className="row">
           <button className="btn btn-secondary" disabled={busy}>{busy ? 'Adding…' : 'Add credential'}</button>
           <button type="button" className="btn btn-primary" onClick={next}>Continue</button>
@@ -1078,16 +1190,28 @@ function PublishStep({ profile, onSaved }: StepProps) {
 /** Verification checklist step (Onboarding s.10-11): what is verified, what each tier unlocks, where to start. */
 function VerificationStep({ profile, next }: StepProps) {
   const [trust, setTrust] = useState<Trust | null>(null)
+  const { user } = useAuth()
   useEffect(() => { trustApi.get(profile.id).then(setTrust).catch(() => {}) }, [profile.id])
+  const row = (key: string, label: string, status: ReactNode) => (
+    <li key={key}>
+      <span><strong>{label}</strong>{' '}
+        <button type="button" className="link-btn why-tip small muted" style={{ padding: 0 }} title={CHECK_INFO[key]?.why}
+          aria-label={`Why we check this: ${CHECK_INFO[key]?.why ?? ''}`}>ⓘ why</button>
+        {CHECK_INFO[key] && <><br /><span className="muted small">Usually takes: {CHECK_INFO[key].eta}</span></>}</span>
+      {status}
+    </li>
+  )
   return (
     <>
       <p className="muted small">Verification raises your Trust Tier. You can publish now as Tier C and verify at any time.</p>
       {trust && (
         <ul className="checklist">
           <li><span><strong>Your tier</strong></span><span className={`badge ${trust.tier === 'C' ? 'warn' : 'green'}`}>Tier {trust.tier} · {trust.tierLabel}</span></li>
+          {row('email', 'Email confirmed', user?.emailConfirmed ? <span className="badge green">Confirmed</span>
+            : <span className="row" style={{ gap: 6 }}><span className="badge warn">Not yet</span><ResendConfirmation /></span>)}
           {DIMENSIONS.map((d) => {
             const v = DIMENSION_VALUE[trust.dimensions[d.key]] ?? { label: 'Not verified', good: false }
-            return <li key={d.key}><span>{d.label}</span><span className={`badge ${v.good ? 'green' : ''}`}>{v.label}</span></li>
+            return row(d.key, d.label, <span className={`badge ${v.good ? 'green' : ''}`}>{v.label}</span>)
           })}
         </ul>
       )}
@@ -1100,7 +1224,7 @@ function VerificationStep({ profile, next }: StepProps) {
 }
 
 const STEP_VIEW: Record<StepKey, (p: StepProps) => ReactNode> = {
-  basics: BasicsStep, specializations: SpecializationsStep, engagement: EngagementStep, availability: AvailabilityStep,
+  basics: BasicsStep, specializations: SpecializationsStep, engagement: EngagementStep,
   verification: VerificationStep, credentials: CredentialsStep, jurisdictions: JurisdictionsStep, publish: PublishStep,
 }
 
@@ -1109,7 +1233,9 @@ export function ProfileSetupPage() {
   const { user } = useAuth()
   const [params, setParams] = useSearchParams()
   const [saved, setSaved] = useState(false)
-  const step = (STEPS.find((s) => s.key === params.get('step'))?.key ?? 'basics') as StepKey
+  // Old links to the separate availability step open the merged "Pricing & availability" step.
+  const asked = params.get('step') === 'availability' ? 'engagement' : params.get('step')
+  const step = (STEPS.find((s) => s.key === asked)?.key ?? 'basics') as StepKey
   const index = STEPS.findIndex((s) => s.key === step)
   const go = (key: StepKey) => { setParams({ step: key }); window.scrollTo(0, 0) }
   const navigate = useNavigate()
@@ -1133,7 +1259,16 @@ export function ProfileSetupPage() {
             {profile ? <><ProfileStatusBadge status={profile.status} /> · Step {index + 1} of {STEPS.length}</> : 'Set up how buyers see you.'}
           </p>
         </div>
+        <div className="onb-tools">
+          <Link className="small" to="/app/help?topic=profile-setup">Need help?</Link>
+          <label className="small">Language{' '}
+            <select className="input" aria-label="Language" value="en" onChange={() => {}} style={{ width: 'auto', display: 'inline-block' }}>
+              <option value="en">English</option>
+            </select></label>
+        </div>
       </div>
+      <p className="privacy-strip" role="note"><span aria-hidden>🔒</span><span>Your legal name, ID documents and registration numbers are never
+        shown to buyers. Only you and Zoikorum's compliance reviewers can open your documents, and every opening is recorded.</span></p>
       <ErrorAlert error={error} />
       {!profile ? <CreateProfile onCreated={setProfile} /> : (
         <>
@@ -1148,6 +1283,7 @@ export function ProfileSetupPage() {
           {!user?.emailConfirmed && step === 'publish' && (
             <div className="alert alert-warn">Confirm your email address before publishing: open the link we emailed you. <ResendConfirmation /></div>
           )}
+          <div className="onb-layout">
           <section className="card panel">
             <div className="panel-head"><h2>{STEPS[index].label}</h2>
               <button type="button" className="btn btn-ghost btn-sm" onClick={saveAndExit}>Save &amp; exit</button></div>
@@ -1160,9 +1296,98 @@ export function ProfileSetupPage() {
                 if (index < STEPS.length - 1) go(STEPS[index + 1].key)
               }} />
           </section>
+          <OnboardingChecklist profile={profile} />
+          </div>
         </>
       )}
     </>
+  )
+}
+
+/** Right-hand checklist and Trust Tier preview: what is done, what is left, and the tier it leads to. Collapses on
+    small screens (open by default on wide ones). */
+function OnboardingChecklist({ profile }: { profile: Profile }) {
+  const [readiness, setReadiness] = useState<Readiness | null>(null)
+  const [trust, setTrust] = useState<Trust | null>(null)
+  const [wide] = useState(() => typeof window === 'undefined' || !window.matchMedia || window.matchMedia('(min-width: 901px)').matches)
+  useEffect(() => {
+    proApi.readiness().then(setReadiness).catch(() => {})
+    trustApi.get(profile.id).then(setTrust).catch(() => {})
+  }, [profile.id, profile.version])
+  const done = readiness?.items.filter((i) => i.done).length ?? 0
+  const total = readiness?.items.length ?? 0
+  const upcoming = trust ? nextTier(trust.tier, trust.dimensions) : null
+  return (
+    <aside className="card panel onb-aside" aria-label="Your progress">
+      <details open={wide}>
+        <summary>Your progress {total > 0 && <span className="muted small">· {done} of {total} done</span>}</summary>
+        {total > 0 && <div className="bar" aria-hidden style={{ margin: '8px 0' }}><span style={{ width: `${Math.round((done / total) * 100)}%` }} /></div>}
+        {readiness && <ul className="checklist small">
+          {readiness.items.map((i) => <li key={i.key}>
+            <span>{i.done ? i.label : <Link to={FIX_AT[i.key] ?? '/app/professional/profile'}>{i.label}</Link>}</span>
+            <span className={`badge ${i.done ? 'green' : i.required ? 'warn' : ''}`}>{i.done ? '✓' : i.required ? 'Required' : 'Optional'}</span>
+          </li>)}
+        </ul>}
+        {trust && <div style={{ marginTop: 12 }}>
+          <p className="small" style={{ margin: 0 }}><strong>Trust Tier preview</strong></p>
+          <p className="small" style={{ margin: '4px 0' }}><span className={`badge ${trust.tier === 'C' ? 'warn' : 'green'}`}>Now: Tier {trust.tier}</span>
+            {upcoming && <> → <span className="badge">Next: Tier {upcoming.tier}</span></>}</p>
+          <p className="muted small" style={{ margin: 0 }}>{upcoming ? upcoming.needs : 'Fully verified: eligible for enterprise and regulated work.'}</p>
+          {readiness?.canPublish && profile.status !== 'PUBLISHED' && <p className="small" style={{ margin: '6px 0 0' }}>
+            Everything required is done: <Link to="/app/professional/profile?step=publish">publish your profile</Link>.</p>}
+        </div>}
+      </details>
+    </aside>
+  )
+}
+
+function BioReadability({ text }: { text: string }) {
+  const r = readability(text)
+  if (r.level === 'empty') return null
+  const tone = r.level === 'easy' ? 'ok-text' : r.level === 'ok' ? 'muted' : 'warn-text'
+  return <p id="b-bio-read" className={`readability ${tone}`} aria-live="polite">{r.message}</p>
+}
+
+/** What a specialization covers and the deliverables buyers usually expect from it. */
+function SpecPreview({ spec, group, category, label = 'Primary' }: {
+  spec: { name: string; requiresCredential: boolean; regulated: boolean; deliverableTemplates?: string[] }; group: string; category: string; label?: string
+}) {
+  const deliverables = spec.deliverableTemplates ?? []
+  return (
+    <div className="spec-preview small" aria-live="polite">
+      <strong>{label}: {spec.name}</strong>
+      <p style={{ margin: '4px 0 0' }}>{specDescription(spec, group, category)}</p>
+      {deliverables.length > 0 && <>Typical deliverables:<ul>{deliverables.slice(0, 4).map((d) => <li key={d}>{d}</li>)}</ul></>}
+    </div>
+  )
+}
+
+/** Evidence for a credential check, uploaded in place (same verification evidence API as the Verification page).
+    `alternative`: the certificate cannot be found, so other proof is sent and labelled as such for the reviewer. */
+function InlineEvidence({ c, alternative, onDone, onCancel }: { c: VerificationCase; alternative: boolean; onDone: () => void; onCancel: () => void }) {
+  const [files, setFiles] = useState<File[]>([])
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<unknown>(null)
+  const type: EvidenceType = alternative ? 'OTHER' : 'CERTIFICATE'
+  return (
+    <form className="evidence-form" onSubmit={async (e) => {
+      e.preventDefault(); setBusy(true); setError(null)
+      try {
+        await verificationApi.addEvidence(c.id, type, await Promise.all(files.map((f) => toUpload(f, ['pdf', 'jpg', 'jpeg', 'png']))))
+        onDone()
+      } catch (err) { setError(err) } finally { setBusy(false) }
+    }}>
+      <ErrorAlert error={error} />
+      <Field label={alternative ? 'Alternative evidence' : 'Certificate or licence'} id={`ev-${c.id}`}
+        hint={alternative ? 'A letter or email from the issuing body, a registry listing, a membership card or a transcript. A reviewer checks it with the issuer.'
+          : 'PDF, JPG or PNG, up to 5 files of 10 MB. Only you and the compliance reviewer can open them.'}>
+        <input id={`ev-${c.id}`} type="file" multiple accept=".pdf,.jpg,.jpeg,.png" onChange={(e) => setFiles([...(e.target.files ?? [])].slice(0, 5))} />
+      </Field>
+      <div className="row">
+        <button className="btn btn-secondary btn-sm" disabled={busy || files.length === 0}>{busy ? 'Sending…' : 'Send for review'}</button>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={onCancel}>Later</button>
+      </div>
+    </form>
   )
 }
 

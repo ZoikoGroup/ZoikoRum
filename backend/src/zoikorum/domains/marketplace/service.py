@@ -93,6 +93,8 @@ async def _bump_version(session: AsyncSession, actor: Actor, spec: TaxonomyNode,
     record_event(session, E.TAXONOMY_UPDATED, aggregate_type="Taxonomy", aggregate_id=cat.id,
                  payload={"categorySlug": cat.slug, "taxonomyVersion": cat.taxonomy_version, "change": change,
                           "specialization": spec.slug, "changedBy": actor.identity_id})
+    from zoikorum.shared import cache
+    await cache.invalidate(cache.TAXONOMY, cache.SEARCH_FACETS)  # this process at once; others on the event
     group = await session.get(TaxonomyNode, spec.parent_id)
     return SpecializationAdminOut(
         slug=spec.slug, name=spec.name, groupSlug=group.slug, categorySlug=spec.category_slug,

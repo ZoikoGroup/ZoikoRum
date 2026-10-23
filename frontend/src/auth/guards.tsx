@@ -11,7 +11,10 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   if (loading) return <div className="page-loading" aria-busy="true">Loading…</div>
   if (!user) {
     const staffArea = isStaffPath(location.pathname)
-    return <Navigate to={staffArea ? '/staff/login' : '/login'} replace state={{ from: location.pathname }} />
+    // Keep the whole destination (query and hash too, e.g. /app/requests/new?pro=...) so sign-in lands exactly there.
+    const from = location.pathname + location.search + location.hash
+    const next = safeNextPath(from)
+    return <Navigate to={`${staffArea ? '/staff/login' : '/login'}${next ? `?next=${encodeURIComponent(next)}` : ''}`} replace state={{ from }} />
   }
   if (user.status === 'SUSPENDED' && location.pathname !== '/app/safety') return <Navigate to="/app/safety" replace />
   if (user.status !== 'SUSPENDED' && user.mfaRequired && location.pathname !== '/app/security') {
@@ -32,10 +35,12 @@ export function RequireRole({ any, children }: { any: (Persona | PlatformRole)[]
   return <>{children}</>
 }
 
-/** Only same-site app/invite/platform-admin paths may be used as a post-login destination (no open redirects). */
+/** Only same-site relative paths into the app, invitations, staff console or public profiles may be used as a
+    post-login destination (no open redirects): never another origin ("//host", "https:", "/\host") or odd characters. */
 // eslint-disable-next-line react-refresh/only-export-components
 export function safeNextPath(next: string | null | undefined): string | null {
-  return next && /^\/(app|invite|platform-admin)(\/|\?|$)/.test(next) ? next : null
+  if (!next || next.length > 2000 || /[\\\s]/.test(next) || next.startsWith('//')) return null
+  return /^\/(app|invite|platform-admin|professionals|categories)(\/|\?|#|$)/.test(next) ? next : null
 }
 
 /** Pages like /login: bounce signed-in users to ?next (e.g. an invite link) or their dashboard. */

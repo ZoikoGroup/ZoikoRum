@@ -4,6 +4,11 @@
 ZK_STORAGE_PROVIDER=gcs) or Amazon S3 (``S3Storage``, =s3) behind the same ``BlobStorage`` interface, so domain code
 never changes. Both keep every version, never overwrite a stored file, and refuse deletes except for profile photos
 (not evidence: a professional can replace or remove theirs).
+
+The one other way a stored file goes is the reviewed retention workflow (shared/retention.py): ``purge_for_retention``
+removes a file (every version, or one exact version) whose retention period under ZK_RETENTION_RULES has ended. It is
+only called by that job, which skips anything under legal hold; object lock / bucket retention still refuse it while
+the storage's own retention runs.
 """
 
 from __future__ import annotations
@@ -66,6 +71,9 @@ class LocalDiskStorage:
 
     def delete(self, key: str) -> None:
         self._path(key).unlink(missing_ok=True)
+
+    def purge_for_retention(self, key: str, version_id: str | None = None) -> None:
+        self._path(safe_key(key)).unlink(missing_ok=True)
 
 
 class S3Storage:
@@ -144,6 +152,20 @@ class S3Storage:
         refuse_unless_erasable(self._key(key))
         try:
             self.client.delete_object(Bucket=self.settings.s3_bucket, Key=key)
+        except Exception as exc:
+            self._failure(exc)
+
+    def purge_for_retention(self, key, version_id=None):
+        """Retention workflow only: removes that version, or every version of the key (no delete marker left)."""
+        key = self._key(key)
+        try:
+            if version_id:
+                self.client.delete_object(Bucket=self.settings.s3_bucket, Key=key, VersionId=version_id)
+                return
+            listing = self.client.list_object_versions(Bucket=self.settings.s3_bucket, Prefix=key)
+            for v in [*listing.get("Versions", []), *listing.get("DeleteMarkers", [])]:
+                if v.get("Key") == key:
+                    self.client.delete_object(Bucket=self.settings.s3_bucket, Key=key, VersionId=v["VersionId"])
         except Exception as exc:
             self._failure(exc)
 
@@ -228,6 +250,21 @@ class GCSStorage:
         refuse_unless_erasable(safe_key(key))
         try:
             self.bucket.blob(key).delete()
+        except Exception as exc:
+            if self._status(exc) == 404:
+                return
+            self._failure(exc)
+
+    def purge_for_retention(self, key, version_id=None):
+        """Retention workflow only: removes that generation, or every generation of the key."""
+        key = safe_key(key)
+        try:
+            if version_id:
+                self.bucket.blob(key, generation=int(version_id)).delete()
+                return
+            for blob in self.client.list_blobs(self.bucket, prefix=key, versions=True):
+                if blob.name == key:
+                    blob.delete()
         except Exception as exc:
             if self._status(exc) == 404:
                 return

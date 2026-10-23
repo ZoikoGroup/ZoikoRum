@@ -104,6 +104,8 @@ class Cap:
     ANALYTICS_REBUILD = "analytics.rebuild"
     SEARCH_REINDEX = "search.reindex"
     AI_PROMPTS_MANAGE = "ai.prompts.manage"
+    SAFETY_REFERRAL = "safety.referral"  # record and read Level 4 law enforcement / regulator referrals
+    ETHICS_CONFLICTS_READ = "ethics.conflicts.read"  # the staff conflict-of-interest and recusal register
 
 
 PA, TS, CO, RISK, LEGAL = R.PLATFORM_ADMIN, R.TS_ANALYST, R.COMPLIANCE_OFFICER, R.RISK_LEAD, R.LEGAL
@@ -187,6 +189,8 @@ CAPABILITY_ROLES: dict[str, frozenset[str]] = {
     Cap.ANALYTICS_REBUILD: frozenset({PA}),
     Cap.SEARCH_REINDEX: frozenset({PA}),
     Cap.AI_PROMPTS_MANAGE: frozenset({AI}),
+    Cap.SAFETY_REFERRAL: frozenset({LEGAL}),
+    Cap.ETHICS_CONFLICTS_READ: frozenset({LEGAL, RISK, EXEC, PA}),
 }
 
 ALL_CAPABILITIES: frozenset[str] = frozenset(CAPABILITY_ROLES)

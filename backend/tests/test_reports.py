@@ -48,6 +48,12 @@ async def test_reports_feed_one_case_protect_the_reporter_and_close_the_loop(cli
     mine = (await client.get(f"{R}/mine", headers=buyer.h)).json()
     assert mine[0]["status"] == "CLOSED" and mine[0]["outcome"] == "NO_ACTION"
     assert "Your report was reviewed" in await titles(client, buyer)
+    # The subject hears it closed with no action: educational only, never who reported or the staff reason.
+    (told,) = [n for n in (await client.get("/v1/notifications", headers=pro_user.h)).json()["items"]
+               if n["title"] == "A safety review closed with no action"]
+    assert told["notice"]["whatChanged"].startswith("Nothing") and told["url"] == "/app/safety"
+    assert "third party" not in told["body"] and buyer.user["displayName"] not in told["body"]
+    assert "A safety review closed with no action" not in await titles(client, buyer)
 
 
 async def test_a_report_from_the_other_side_of_an_open_dispute_is_marked(client, make_user, drain):

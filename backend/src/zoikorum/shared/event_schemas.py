@@ -80,7 +80,7 @@ class DisputeResolved(_Payload):
     disputeId: uuid.UUID
     contractId: uuid.UUID
     outcome: str
-    decisionPath: Literal["DIRECT", "MEDIATION", "PLATFORM", "ARBITRATION"]
+    decisionPath: Literal["DIRECT", "MEDIATION", "PLATFORM", "ARBITRATION", "ENTERPRISE_ADMIN"]
     allocations: list[Allocation]
     currency: Currency = Field(min_length=3, max_length=3)
 

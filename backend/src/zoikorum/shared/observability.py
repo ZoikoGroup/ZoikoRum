@@ -6,7 +6,9 @@ as ``log.info("request", extra={"fields": {...}})``. ``ZK_SENTRY_DSN`` turns on 
 ``sentry-sdk`` package is installed (``pip install -e "backend[monitoring]"``); personal data is never sent.
 ``ZK_TRACING_ENDPOINT`` (an OpenTelemetry collector, e.g. ``http://otel-collector:4318/v1/traces``) turns on traces of
 API requests, database queries, partner calls and event consumers, with the ``tracing`` extra installed. Spans carry the
-correlation id; URLs are recorded without their query string (search text, signed links).
+correlation id; URLs are recorded without their query string (search text, signed links). Sampling is parent-based at
+``ZK_TRACING_SAMPLE_RATIO``, except that requests to the money and legal routes (``ZK_TRACING_ALWAYS_SAMPLE_PATHS``:
+payments, escrow, contracts, disputes) are always traced in full, even when an upstream caller chose not to sample.
 Nothing here logs configuration values or secrets.
 """
 
@@ -97,7 +99,42 @@ def init_error_reporting(dsn: str | None, env: str, release: str) -> bool:
 _tracing = False
 
 
-def init_tracing(endpoint: str | None, service: str, env: str, release: str, ratio: float) -> bool:
+def route_of(name: str | None, attributes) -> str:
+    """The request path a new span is for: url.path / http.target attributes, else the "METHOD /path" span name."""
+    attrs = attributes or {}
+    for key in ("url.path", "http.target", "http.route"):
+        value = attrs.get(key)
+        if value:
+            return str(value).split("?", 1)[0]
+    parts = (name or "").split(" ", 1)
+    return parts[1] if len(parts) == 2 and parts[1].startswith("/") else ""
+
+
+def always_sampled(path: str, prefixes) -> bool:
+    return any(path == p or path.startswith(p.rstrip("/") + "/") for p in prefixes or ())
+
+
+def make_sampler(ratio: float, always_paths):
+    """Parent-based ratio sampling with a per-route override: spans for ``always_paths`` are always recorded and
+    sampled. Needs opentelemetry-sdk (the tracing extra)."""
+    from opentelemetry.sdk.trace.sampling import Decision, ParentBasedTraceIdRatio, Sampler, SamplingResult
+
+    base = ParentBasedTraceIdRatio(ratio)
+    prefixes = tuple(always_paths or ())
+
+    class RouteOverrideSampler(Sampler):
+        def should_sample(self, parent_context, trace_id, name, kind=None, attributes=None, links=None, trace_state=None):
+            if prefixes and always_sampled(route_of(name, attributes), prefixes):
+                return SamplingResult(Decision.RECORD_AND_SAMPLE, attributes, None)
+            return base.should_sample(parent_context, trace_id, name, kind, attributes, links, trace_state)
+
+        def get_description(self) -> str:
+            return f"RouteOverride{{{','.join(prefixes)}}}+{base.get_description()}"
+
+    return RouteOverrideSampler()
+
+
+def init_tracing(endpoint: str | None, service: str, env: str, release: str, ratio: float, always_paths=()) -> bool:
     """Once per process. Parent-based sampling: a trace started upstream keeps its decision."""
     global _tracing
     if _tracing or not endpoint:
@@ -109,14 +146,13 @@ def init_tracing(endpoint: str | None, service: str, env: str, release: str, rat
         from opentelemetry.sdk.resources import Resource
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
-        from opentelemetry.sdk.trace.sampling import ParentBasedTraceIdRatio
     except ImportError:
         log.warning("Tracing is configured but its packages are not installed; install backend[tracing]")
         return False
     provider = TracerProvider(
         resource=Resource.create({"service.name": f"zoikorum-{service}", "service.version": release,
                                   "deployment.environment": env}),
-        sampler=ParentBasedTraceIdRatio(ratio))
+        sampler=make_sampler(ratio, always_paths))
     provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint)))
     trace.set_tracer_provider(provider)
     HTTPXClientInstrumentor().instrument()  # partner calls (Stripe, Veriff, Persona)
@@ -178,5 +214,5 @@ def setup(service: str) -> None:
     configure_logging(s.env, s.log_format, s.log_level)
     if init_error_reporting(s.sentry_dsn, s.env, f"{service}@{s.release}"):
         log.info("error reporting on", extra={"fields": {"service": service}})
-    if init_tracing(s.tracing_endpoint, service, s.env, s.release, s.tracing_sample_ratio):
+    if init_tracing(s.tracing_endpoint, service, s.env, s.release, s.tracing_sample_ratio, s.tracing_always_sample_paths):
         log.info("tracing on", extra={"fields": {"service": service}})

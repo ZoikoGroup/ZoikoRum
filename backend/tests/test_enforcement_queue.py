@@ -27,7 +27,7 @@ async def level2(client, team, subject_id, action="DISPUTE_ACCESS_RESTRICTION", 
         "subjectType": "IDENTITY", "subjectId": str(subject_id), "signalSource": "HUMAN_REVIEW",
         "summary": "Repeated bad-faith disputes on several engagements.", "evidenceRefs": ["dispute:ZK-DSP-1"]})
     cid = r.json()["id"]
-    await client.post(f"{ROOT}/{cid}/assess", headers=team["risk"].idem(), json={"level": 2, "reasonCode": "BAD_FAITH_DISPUTES"})
+    await client.post(f"{ROOT}/{cid}/assess", headers=team["risk"].idem(), json={"level": 2, "reasonCode": "BAD_FAITH_DISPUTES", "userImpact": "Opens disputes that freeze others' payments."})
     r = await client.post(f"{ROOT}/{cid}/propose-action", headers=team["analyst"].idem(),
                           json={"action": action, "notice": NOTICE, "durationDays": 30, "remediation": list(remediation)})
     assert r.status_code == 200, r.text

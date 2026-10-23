@@ -237,6 +237,61 @@ All simulated visitors come from one address, so the per-address limit answers m
 separately). To measure capacity, run it with `ZK_RATE_LIMIT_ENABLED=false` on staging for the duration, or from several
 machines. Record the result in the launch checklist.
 
+### Write path: the proposal flow
+
+`backend/scripts/proposal_load_test.py` exercises writes: a buyer sends a proposal request, a professional drafts and
+submits a proposal, the buyer reads and rejects it, and the request is cancelled (every iteration ends closed; nothing is
+accepted, signed or paid). It uses staging **test accounts** listed in a JSON file (buyers with their organisation id,
+professionals with their professional id; two-step sign-in off for them) and refuses any URL that does not look like
+staging - there is no production override.
+
+```
+python scripts/proposal_load_test.py --base-url https://staging-app.<domain> --accounts loadtest-accounts.json --workers 10 --duration 300 --p95-ms 1000
+```
+
+## Chaos experiments (staging)
+
+`backend/scripts/staging_chaos.sh` injects one fault at a time on the staging host and checks the platform degrades the
+way it should, then recovers. It only runs when the environment file says `ZK_ENV=staging` and with
+`--yes-this-is-staging`, and always removes the fault again (also on Ctrl-C).
+
+| Experiment | Fault | Expected |
+|---|---|---|
+| `kill-worker` | the worker container is killed | API stays ready; events and timers wait (EventsNotPublished alert after 2 minutes); everything is delivered once it is back |
+| `delay-db` | 300 ms (`--delay-ms`) network delay on the API container (database traffic included), via `tc netem` in a netshoot sidecar | slower answers, maybe latency alerts, no error storm; normal as soon as it ends |
+| `drop-redis` | Redis stopped | API stays ready: rate limits fall back per process, the read cache reads the database ("read cache unavailable" warnings) |
+
+```
+sudo ./backend/scripts/staging_chaos.sh drop-redis --seconds 120 --yes-this-is-staging
+```
+
+Run them with the load test going in another terminal to see the effect under traffic, one at a time, and write down
+what the alerts did. A run that does not end with RECOVERED is an incident to investigate before release.
+
+## Enterprise sign-in, token keys and data protection settings
+
+* **SAML 2.0 SSO**: an Organisation Admin uploads the identity provider's metadata (`PUT /v1/organizations/{id}/sso` with
+  `protocol: "SAML"`). The identity provider needs Zoikorum's metadata from `GET /v1/auth/saml/metadata`; it posts to
+  `<ZK_PUBLIC_API_URL or ZK_FRONTEND_URL>/v1/auth/saml/acs`. Responses must be signed (SHA-256 or stronger); encrypted
+  assertions are not supported.
+* **Session policy**: `PUT /v1/organizations/{id}/session-policy` sets the maximum session age, idle timeout, two-step
+  requirement and allowed sign-in methods for members; sessions follow it from their next refresh.
+* **RS256 tokens**: create a Cloud KMS asymmetric signing key (RSA_SIGN_PKCS1_2048_SHA256), give the VM account
+  `roles/cloudkms.signerVerifier` and `roles/cloudkms.publicKeyViewer` on it, set `ZK_JWT_KMS_KEY_NAME` to its key
+  version and `ZK_JWT_SIGNING=rs256`. Keep `ZK_JWT_ACCEPT_HS256=true` for at least one access-token lifetime (15 minutes)
+  after the switch, then set it to false. Public keys: `GET /.well-known/jwks.json`. Without KMS, `python -m zoikorum.cli
+  new-jwt-key` makes a key for `ZK_JWT_PRIVATE_KEYS`.
+* **Evidence retention**: `ZK_RETENTION_RULES` (days per evidence type and country), `python -m zoikorum.cli
+  retention-report` to see what is due, `ZK_RETENTION_PURGE_ENABLED=true` to let the daily job remove it. Files under
+  legal hold are never removed.
+* **Escrow ledger snapshots** run daily (03:30 UTC) with an integrity check; `python -m zoikorum.cli escrow-snapshots`
+  runs them by hand. A mismatch pages Financial Operations (RUNBOOKS.md).
+* **Edge and disaster recovery (Terraform)**: Cloud Armor (`cloud_armor_enabled`, start with `cloud_armor_preview = true`),
+  a replica of the files bucket in another region (`files_replica_location`), and an optional cross-region Cloud SQL read
+  replica (`db_cross_region_replica_region`, promoted by hand in a region outage).
+* **Signed images**: the Release workflow signs every image with cosign (keyless, GitHub OIDC); `deploy.sh` verifies the
+  signatures before pulling when cosign is installed on the VM (`ZK_COSIGN_REQUIRED=true` makes it mandatory).
+
 ## Health checks
 
 | Check | Path | Use |

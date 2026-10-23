@@ -1,7 +1,10 @@
 from __future__ import annotations
+import hashlib
+import re
 import uuid
 from collections import Counter, defaultdict
-from sqlalchemy import select, delete, func, literal_column, text
+from statistics import median
+from sqlalchemy import Integer, cast, select, delete, func, literal_column, text
 from sqlalchemy.dialects.postgresql import insert
 from zoikorum.domains.analytics.models import EventFact
 from zoikorum.domains.audit import facade as audit
@@ -106,6 +109,10 @@ DAILY_METRICS = {
     E.CONTRACT_GENERATED: "contractsGenerated", E.CONTRACT_ACTIVATED: "activations", E.ESCROW_RELEASED: "releases",
     E.DISPUTE_INITIATED: "disputesOpened", E.DISPUTE_RESOLVED: "disputesResolved",
 }
+# Product-funnel events sent by the web app (POST /v1/analytics/events) share the facts table but are not domain events:
+# they are kept out of marketplace health and survive a rebuild, which replays only the audit ledger.
+CLIENT_PREFIX = "zoikorum.client.funnel."
+NOT_CLIENT = EventFact.event_type.not_like(CLIENT_PREFIX + "%")
 UTC_DAY = literal_column("(analytics.event_facts.occurred_at AT TIME ZONE 'UTC')::date")
 
 
@@ -120,8 +127,8 @@ def in_window(stmt, since, until):
 async def marketplace_health(session, since=None, until=None):
     """Aggregated in Postgres so the cost follows the window, not the size of the event history."""
     counts = dict((await session.execute(in_window(
-        select(EventFact.event_type, func.count()).group_by(EventFact.event_type), since, until))).all())
-    last_event_at = await session.scalar(in_window(select(func.max(EventFact.occurred_at)), since, until))
+        select(EventFact.event_type, func.count()).where(NOT_CLIENT).group_by(EventFact.event_type), since, until))).all())
+    last_event_at = await session.scalar(in_window(select(func.max(EventFact.occurred_at)).where(NOT_CLIENT), since, until))
 
     daily: dict = {}
     rows = await session.execute(in_window(
@@ -165,7 +172,7 @@ def report(rows):
 
 async def rebuild(session, actor):
     await session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": PROJECTION_LOCK})
-    await session.execute(delete(EventFact))
+    await session.execute(delete(EventFact).where(NOT_CLIENT))  # funnel events from the web app are not in the ledger: kept
     count, after = 0, 0
     while batch := await audit.replay_events(session, after, 500):
         for seq, event in batch:
@@ -174,3 +181,148 @@ async def rebuild(session, actor):
             after = seq
     record_audit(session, "analytics.rebuilt", object_type="AnalyticsProjection", object_id="all", details={"events": count})
     return {"projectedEvents": count}
+
+
+# ---- Product funnels (Onboarding & Category wireframes, Request flow): events the web app sends ---------------------
+
+CLIENT_EVENTS = frozenset({
+    "onboarding_step_viewed", "onboarding_step_completed", "profile_published",
+    "request_step_viewed", "request_step_completed", "request_abandoned", "proposal_started", "proposal_submitted",
+    "filter_applied", "specialization_selected", "compare_opened", "quick_view_opened", "enterprise_cta_clicked",
+    "verification_detail_viewed", "service_card_opened",
+})
+# The only properties kept: short slugs (a step, a filter, a specialization, where on the page) and small numbers.
+# Free text, emails, names and ids never match (no "@", no spaces, no uuid-like runs, at most 60 characters): dropped.
+CLIENT_PROPS = {"step": str, "filter": str, "specialization": str, "source": str, "position": int}
+SAFE_VALUE = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,59}$")
+UUID_LIKE = re.compile(r"[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}")
+SEARCH_MICRO = ("filter_applied", "specialization_selected", "quick_view_opened", "compare_opened", "service_card_opened",
+                "verification_detail_viewed", "enterprise_cta_clicked")
+
+
+def client_type(name: str) -> str:
+    return f"{CLIENT_PREFIX}{name}.v1"
+
+
+def client_name(event_type: str) -> str:
+    return event_type[len(CLIENT_PREFIX):-len(".v1")]
+
+
+def clean_props(props: dict) -> dict:
+    out: dict = {}
+    for key, value in props.items():
+        kind = CLIENT_PROPS.get(key)
+        if kind is None or isinstance(value, bool) or not isinstance(value, kind):
+            continue
+        if kind is int:
+            if 0 <= value <= 100_000:
+                out[key] = value
+        else:
+            text_value = value.strip().lower()
+            if SAFE_VALUE.match(text_value) and not UUID_LIKE.search(text_value):
+                out[key] = text_value
+    return out
+
+
+def session_key(session_id: str | None) -> str:
+    """A one-way hash of the browser's random visit id: steps of one visit count together, nothing names a person."""
+    return "client:" + (hashlib.sha256(session_id.encode()).hexdigest()[:32] if session_id else "unknown")
+
+
+async def record_client_events(session, events, session_id: str | None, signed_in: bool) -> dict:
+    """Stores allowlisted events at the server's time (the browser's clock is never trusted). Unknown names are skipped."""
+    now, key, rows = clock.now(), session_key(session_id), []
+    for e in events:
+        if e.name not in CLIENT_EVENTS:
+            continue
+        rows.append({"id": uuid.uuid4(), "source_event_id": uuid.uuid4(), "event_type": client_type(e.name), "aggregate_id": key,
+                     "organization_id": None, "professional_id": None, "occurred_at": now,
+                     "payload": {**clean_props(e.props), "signedIn": signed_in}})
+    if rows:
+        await session.execute(insert(EventFact), rows)
+    return {"accepted": len(rows), "ignored": len(events) - len(rows)}
+
+
+def pct(part, whole):
+    return round(100 * part / whole, 1) if whole else None
+
+
+async def _visits(session, names, since, until) -> dict[str, set[str]]:
+    rows = await session.execute(in_window(select(EventFact.event_type, EventFact.aggregate_id).distinct()
+                                           .where(EventFact.event_type.in_([client_type(n) for n in names])), since, until))
+    out: dict[str, set[str]] = {n: set() for n in names}
+    for kind, key in rows:
+        out[client_name(kind)].add(key)
+    return out
+
+
+async def _steps(session, viewed: str, completed: str, since, until) -> list[dict]:
+    """Per step: visits that saw it, visits that completed it, and the share that left without completing it. Steps are in
+    the order the web app numbers them (``position``), then by how many visits reached them."""
+    step = EventFact.payload["step"].astext
+    position = func.min(cast(EventFact.payload["position"].astext, Integer))
+    rows = await session.execute(in_window(
+        select(EventFact.event_type, step, func.count(func.distinct(EventFact.aggregate_id)), position)
+        .where(EventFact.event_type.in_((client_type(viewed), client_type(completed))), step.isnot(None))
+        .group_by(EventFact.event_type, step), since, until))
+    steps: dict[str, dict] = {}
+    for kind, name, n, pos in rows:
+        s = steps.setdefault(name, {"step": name, "viewed": 0, "completed": 0, "position": None})
+        s["viewed" if kind == client_type(viewed) else "completed"] = n
+        if pos is not None:
+            s["position"] = pos if s["position"] is None else min(s["position"], pos)
+    for s in steps.values():
+        s["dropOffPct"] = pct(max(s["viewed"] - s["completed"], 0), s["viewed"])
+    return sorted(steps.values(), key=lambda s: (s["position"] if s["position"] is not None else 10**6, -s["viewed"], s["step"]))
+
+
+async def onboarding_funnel(session, since, until, signup_to_publish_hours: list[float]) -> dict:
+    """Professional onboarding: visits that started, per-step drop-off, visits that published, and (from profile records,
+    not the browser) the median time from sign-up to a published profile."""
+    visits = await _visits(session, ("onboarding_step_viewed", "profile_published"), since, until)
+    started, published = visits["onboarding_step_viewed"], visits["profile_published"]
+    return {"window": {"from": since, "to": until}, "visitsStarted": len(started), "visitsPublished": len(published & started),
+            "completionRatePct": pct(len(published & started), len(started)),
+            "steps": await _steps(session, "onboarding_step_viewed", "onboarding_step_completed", since, until),
+            "profilesPublished": len(signup_to_publish_hours),
+            "medianHoursSignupToPublish": round(median(signup_to_publish_hours), 1) if signup_to_publish_hours else None}
+
+
+async def request_funnel(session, since, until) -> dict:
+    """The buyer's request flow (per-step completion and where visits abandoned) and the professional's proposal flow."""
+    visits = await _visits(session, ("request_step_viewed", "request_abandoned", "proposal_started", "proposal_submitted"), since, until)
+    step = func.coalesce(EventFact.payload["step"].astext, "unknown")
+    abandoned = dict((await session.execute(in_window(
+        select(step, func.count(func.distinct(EventFact.aggregate_id)))
+        .where(EventFact.event_type == client_type("request_abandoned")).group_by(step), since, until))).all())
+    sent = await session.scalar(in_window(select(func.count()).where(EventFact.event_type == E.PROPOSAL_REQUESTED), since, until)) or 0
+    viewed, left = visits["request_step_viewed"], visits["request_abandoned"]
+    started, submitted = visits["proposal_started"], visits["proposal_submitted"]
+    return {"window": {"from": since, "to": until}, "visitsStarted": len(viewed), "visitsAbandoned": len(left & viewed),
+            "abandonmentRatePct": pct(len(left & viewed), len(viewed)),
+            "steps": await _steps(session, "request_step_viewed", "request_step_completed", since, until),
+            "abandonedByStep": [{"step": k, "visits": v} for k, v in sorted(abandoned.items(), key=lambda kv: (-kv[1], kv[0]))],
+            "requestsSent": sent,
+            "proposals": {"started": len(started), "submitted": len(submitted & started),
+                          "completionRatePct": pct(len(submitted & started), len(started))}}
+
+
+async def search_micro_conversions(session, since, until) -> dict:
+    """What people do after searching: filters, specializations, quick views, comparisons, opened services, verification
+    details and the enterprise call to action, per 100 searches (searches come from the search domain's own events)."""
+    searches = await session.scalar(in_window(select(func.count()).where(EventFact.event_type == E.SEARCH_PERFORMED), since, until)) or 0
+    counts = {client_name(kind): (n, v) for kind, n, v in (await session.execute(in_window(
+        select(EventFact.event_type, func.count(), func.count(func.distinct(EventFact.aggregate_id)))
+        .where(EventFact.event_type.in_([client_type(n) for n in SEARCH_MICRO])).group_by(EventFact.event_type), since, until))).all()}
+
+    async def top(name: str, prop: str) -> list[dict]:
+        value = EventFact.payload[prop].astext
+        rows = await session.execute(in_window(select(value, func.count()).where(EventFact.event_type == client_type(name), value.isnot(None))
+                                               .group_by(value).order_by(func.count().desc(), value).limit(10), since, until))
+        return [{"value": v, "count": n} for v, n in rows]
+
+    return {"window": {"from": since, "to": until}, "searches": searches,
+            "actions": [{"event": name, "count": counts.get(name, (0, 0))[0], "visits": counts.get(name, (0, 0))[1],
+                         "per100Searches": round(100 * counts.get(name, (0, 0))[0] / searches, 1) if searches else None}
+                        for name in SEARCH_MICRO],
+            "topFilters": await top("filter_applied", "filter"), "topSpecializations": await top("specialization_selected", "specialization")}

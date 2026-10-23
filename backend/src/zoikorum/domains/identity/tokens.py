@@ -1,4 +1,5 @@
-"""Access/refresh token minting. Only the identity domain mints tokens."""
+"""Access/refresh token minting. Only the identity domain mints tokens; the algorithm and key come from
+shared/signing_keys.py (HS256 shared secret, or RS256 with rotation and a published JWKS)."""
 
 from __future__ import annotations
 
@@ -10,7 +11,7 @@ import jwt
 
 from zoikorum.config import get_settings
 from zoikorum.domains.identity.models import Identity, IdentityLink
-from zoikorum.shared import clock
+from zoikorum.shared import clock, signing_keys
 from zoikorum.shared.crypto import sha256_hex
 
 
@@ -53,7 +54,7 @@ def mint_access_token(
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(seconds=s.access_token_ttl_seconds)).timestamp()),
     }
-    return jwt.encode(claims, s.jwt_secret, algorithm="HS256"), s.access_token_ttl_seconds
+    return signing_keys.sign(claims), s.access_token_ttl_seconds
 
 
 def new_refresh_token() -> tuple[str, str]:
@@ -65,7 +66,7 @@ def new_refresh_token() -> tuple[str, str]:
 def mint_purpose_token(identity_id: uuid.UUID, purpose: str, ttl_seconds: int, extra: dict | None = None) -> str:
     s = get_settings()
     now = clock.now()
-    return jwt.encode(
+    return signing_keys.sign(
         {
             **(extra or {}),
             "iss": s.jwt_issuer,
@@ -74,16 +75,13 @@ def mint_purpose_token(identity_id: uuid.UUID, purpose: str, ttl_seconds: int, e
             "iat": int(now.timestamp()),
             "exp": int((now + timedelta(seconds=ttl_seconds)).timestamp()),
         },
-        s.jwt_secret,
-        algorithm="HS256",
     )
 
 
 def read_purpose_claims(token: str, purpose: str) -> dict:
     s = get_settings()
     # Expiry is checked against the domain clock (tests travel in time); "issued at" too, for the same reason.
-    claims = jwt.decode(token, s.jwt_secret, algorithms=["HS256"], issuer=s.jwt_issuer,
-                        options={"verify_exp": False, "verify_iat": False})
+    claims = signing_keys.decode(token, issuer=s.jwt_issuer, options={"verify_exp": False, "verify_iat": False})
     if claims.get("typ") != purpose:
         raise jwt.InvalidTokenError("wrong token purpose")
     now = clock.now().timestamp()

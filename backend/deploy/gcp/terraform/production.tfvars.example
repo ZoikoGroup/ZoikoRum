@@ -8,3 +8,9 @@ staff_domain      = "staff.example.com"
 staff_members     = ["group:staff@example.com"]
 github_repository = "ZoikoGroup/ZoikoRum"
 analytics_replica = true
+# Disaster recovery (optional): a copy of the files bucket and a database read replica in a second region.
+files_replica_location         = "asia-southeast1"
+db_cross_region_replica_region = ""
+# Cloud Armor: start in preview for a few days, check the logs for false positives, then set to false.
+cloud_armor_preview   = true
+rate_limit_per_minute = 600

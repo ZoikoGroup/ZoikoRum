@@ -12,6 +12,7 @@ import { ErrorAlert, Field, useStepUp, Loading } from '../components/ui'
 import { useMyFirm } from './FirmPages'
 import { COUNTRIES } from './Join'
 import { countryName, useMyProfile } from './ProfessionalPages'
+import { proApi, type Profile } from '../api/professional'
 
 const OPEN = ['PENDING', 'IN_REVIEW', 'NEEDS_INFO']
 const fmtDate = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString() : '—')
@@ -138,6 +139,10 @@ function CaseCard({ c, onChange, hostedOn }: { c: VerificationCase; onChange: (c
         <ul className="deliverables">{c.evidence.map((e) => <li key={e.id}><FileLink file={{ name: e.fileName, hasFile: e.hasFile }} url={evidenceFileUrl(e.id)} /> <span className="muted small">· {fmtDate(e.uploadedAt)}</span></li>)}</ul>
       )}
       {hosted && <HostedVerification c={c} onChange={onChange} />}
+      {c.isMine && (c.status === 'NEEDS_INFO' || (c.status === 'IN_REVIEW' && (c.evidence.length > 0 || (!!c.hostedStatus && !['pending', 'submitted'].includes(c.hostedStatus))))) && (
+        <p className="small" style={{ margin: '8px 0 0' }}>A person is reviewing this check.{' '}
+          <Link to={`/app/help?topic=verification&case=${c.id}`}>Request review help</Link> if something is unclear or urgent.</p>
+      )}
       {hosted && !uploadInstead && <button type="button" className="text-btn small"
         onClick={() => setUploadInstead(true)}>Can't use a camera? Upload your document for a person to review instead</button>}
       {c.isMine && OPEN.includes(c.status) && (c.verificationType !== 'RESTRICTIONS' || c.status === 'NEEDS_INFO')
@@ -360,6 +365,7 @@ export function ProfessionalVerificationPage() {
       <div className="page-head"><div><h1>Verification &amp; trust</h1>
         <p className="muted" style={{ margin: 0 }}>Verified checks raise your Trust Tier. Checks are made by a verification provider or a compliance reviewer — never by AI.</p></div></div>
       {trust && <TrustSummary trust={trust} />}
+      <IdentityDetailsConfirm profile={profile} />
       <ChecksPanel subjectType="PROFESSIONAL" subjectId={profile.id} allowed={['IDENTITY', 'JURISDICTION', 'INSURANCE', 'BACKGROUND']}
         onChanged={() => setTimeout(loadTrust, 1500)} />
     </>
@@ -701,3 +707,65 @@ function OwnersEditor({ owners, onChange }: { owners: BeneficialOwner[]; onChang
     </span>
   )
 }
+
+const CAPTURED = ['submitted', 'approved', 'declined', 'failed', 'needs_review', 'completed', 'resubmission_requested']
+
+/** After the identity partner has captured the ID (or a document was uploaded): confirm the name on the ID matches the
+    legal name on the profile. The partner does not send the extracted name back to us, so the person confirms it here;
+    a mismatch can be corrected while the check is open, or raised with support once it is verified. */
+function IdentityDetailsConfirm({ profile: initial }: { profile: Profile }) {
+  const [profile, setProfile] = useState(initial)
+  const [c, setCase] = useState<VerificationCase | null>(null)
+  const [editing, setEditing] = useState(false)
+  const [name, setName] = useState(initial.legalName ?? '')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<unknown>(null)
+  const storageKey = c ? `zk.identity-confirmed.${c.id}` : null
+  const [confirmed, setConfirmed] = useState(false)
+  useEffect(() => {
+    verificationApi.forSubject('PROFESSIONAL', initial.id).then((cases) => {
+      const k = cases.find((x) => x.verificationType === 'IDENTITY' && x.isMine && !['FAILED', 'REVOKED', 'EXPIRED'].includes(x.status)) ?? null
+      setCase(k)
+      try { setConfirmed(!!k && localStorage.getItem(`zk.identity-confirmed.${k.id}`) === '1') } catch { /* storage blocked */ }
+    }).catch(() => {})
+  }, [initial.id])
+  if (!c || !(c.evidence.length > 0 || CAPTURED.includes(c.hostedStatus ?? ''))) return null
+  const verified = c.status === 'VERIFIED'
+  if (confirmed && !editing) return null
+  return (
+    <section className="card panel" aria-labelledby="idc-h">
+      <h2 id="idc-h" style={{ marginTop: 0 }}>Confirm your details</h2>
+      <p className="small">Your ID has been {verified ? 'verified' : 'captured'}. Check that the name on it matches the legal name on your profile;
+        a mismatch is the most common reason a check is sent back.</p>
+      <ErrorAlert error={error} />
+      <ul className="checklist small">
+        <li><span>Legal name on your profile (private)</span><strong>{profile.legalName || 'Not set'}</strong></li>
+        <li><span>Name shown to buyers</span><strong>{profile.displayName}</strong></li>
+      </ul>
+      {editing && !verified ? (
+        <form className="row" style={{ alignItems: 'flex-end', marginTop: 8 }} onSubmit={async (e) => {
+          e.preventDefault(); setBusy(true); setError(null)
+          try { const p = await proApi.update(profile.version, { legalName: name.trim() }); setProfile(p); setEditing(false) }
+          catch (err) { setError(err) } finally { setBusy(false) }
+        }}>
+          <Field label="Legal name exactly as on your ID" id="idc-name">
+            <input id="idc-name" className="input" required maxLength={200} value={name} onChange={(e) => setName(e.target.value)} />
+          </Field>
+          <button className="btn btn-primary btn-sm" disabled={busy || !name.trim()}>{busy ? 'Saving…' : 'Save correction'}</button>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing(false)}>Cancel</button>
+        </form>
+      ) : (
+        <div className="row" style={{ marginTop: 8 }}>
+          <button type="button" className="btn btn-primary btn-sm" onClick={() => {
+            try { if (storageKey) localStorage.setItem(storageKey, '1') } catch { /* storage blocked */ }
+            setConfirmed(true)
+          }}>Yes, it matches my ID</button>
+          {verified
+            ? <Link className="btn btn-secondary btn-sm" to={`/app/help?topic=verification&case=${c.id}&request=name-correction`}>Request a name correction</Link>
+            : <button type="button" className="btn btn-secondary btn-sm" onClick={() => setEditing(true)}>Correct my legal name</button>}
+        </div>
+      )}
+    </section>
+  )
+}
+

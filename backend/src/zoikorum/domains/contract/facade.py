@@ -263,3 +263,16 @@ async def staff_search_contracts(session: AsyncSession, term: str, exact_id: uui
         match.append(Contract.id == exact_id)
     rows = (await session.scalars(select(Contract).where(or_(*match)).order_by(Contract.created_at.desc(), Contract.id).limit(limit))).all()
     return [{"id": c.id, "title": c.title, "reference": c.reference, "status": c.status} for c in rows]
+
+
+async def acceptance_kpis(session: AsyncSession, since, until) -> dict:
+    """Milestones accepted in the period and the time from the (last) submission to acceptance (Payments & Escrow:
+    acceptance latency, which is what releases payment)."""
+    from sqlalchemy import func
+
+    hours = func.extract("epoch", Milestone.accepted_at - Milestone.submitted_at) / 3600
+    n, med, p90 = (await session.execute(select(func.count(), func.percentile_cont(0.5).within_group(hours),
+                                                func.percentile_cont(0.9).within_group(hours)).where(
+        Milestone.accepted_at >= since, Milestone.accepted_at < until, Milestone.submitted_at.is_not(None)))).one()
+    return {"milestonesAccepted": n or 0, "medianHoursSubmitToAccept": round(float(med), 1) if med is not None else None,
+            "p90HoursSubmitToAccept": round(float(p90), 1) if p90 is not None else None}

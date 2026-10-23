@@ -101,3 +101,32 @@ class SpecializationSuggestion(Base, UUIDPk, Timestamps):
     resolved_by: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     resolution_note: Mapped[str | None] = mapped_column(String(500))
+
+
+class ReferralAttribution(Base, UUIDPk, CreatedAt):
+    """The referral or invite code someone entered when they joined (optional). One per account, never changed after."""
+
+    __tablename__ = "referral_attributions"
+    __table_args__ = (UniqueConstraint("identity_id"), {"schema": SCHEMA})
+
+    identity_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    code: Mapped[str] = mapped_column(String(40), nullable=False, index=True)  # normalised to upper case
+    source: Mapped[str] = mapped_column(String(20), nullable=False, default="SIGN_UP")
+
+
+class ProcurementRequest(Base, UUIDPk, Timestamps):
+    """A public request for a professional's procurement pack or a security review (a sales lead for the Zoikorum team).
+    No account is needed; the form is rate-limited per caller. NEW -> CONTACTED -> CLOSED."""
+
+    __tablename__ = "procurement_requests"
+    __table_args__ = {"schema": SCHEMA}
+
+    reference: Mapped[str] = mapped_column(String(20), nullable=False, unique=True)  # ZK-PRC-XXXXXXXX
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)  # PROCUREMENT_PACK | SECURITY_REVIEW
+    professional_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), index=True)
+    requester_identity_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))  # set when signed in
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    organization: Mapped[str] = mapped_column(String(200), nullable=False)
+    email: Mapped[str] = mapped_column(String(254), nullable=False)
+    message: Mapped[str] = mapped_column(String(2000), nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="NEW")

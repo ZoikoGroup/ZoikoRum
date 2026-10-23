@@ -3,7 +3,9 @@
 #   sudo ZK_RELEASE=2026.10.14-1 ZK_REGISTRY=asia-south1-docker.pkg.dev/<project>/zoikorum/ ./backend/deploy/gcp/deploy.sh
 #
 # 1. Settings come from Google Secret Manager (fetch-secrets.sh) into a file readable by root only, in memory (/run).
-# 2. The new images are pulled; the settings and outside services are checked; migrations run.
+# 2. The images' signatures are verified (cosign, keyless: signed by this repository's Release workflow) when cosign is
+#    installed on the VM; ZK_COSIGN_REQUIRED=true makes a missing cosign or a bad signature stop the deploy. Then the new
+#    images are pulled; the settings and outside services are checked; migrations run.
 # 3. Canary: the new API starts next to the running one and must answer /ready before anything is switched.
 # 4. Switch: the services restart on the new release and must answer /ready through the web app. If they do not, the
 #    previous release is started again automatically (migrations only ever add, so it runs on the newer schema).
@@ -29,6 +31,29 @@ export ZK_RELEASE ZK_REGISTRY  # the shell's ZK_RELEASE picks the image tag (it 
 
 DC=(docker compose --env-file "$ENV_FILE" -f docker-compose.prod.yml)
 gcloud auth configure-docker "${ZK_REGISTRY%%/*}" --quiet >/dev/null
+
+# Signature check before pulling (best effort unless ZK_COSIGN_REQUIRED=true).
+verify_signatures() {
+  local repo="${ZK_COSIGN_REPOSITORY:-}" image
+  if ! command -v cosign >/dev/null 2>&1; then
+    if [ "${ZK_COSIGN_REQUIRED:-false}" = true ]; then echo "cosign is not installed and signatures are required." >&2; return 1; fi
+    echo "cosign is not installed on this VM: image signatures not checked." >&2
+    return 0
+  fi
+  if [ -z "$repo" ]; then
+    if [ "${ZK_COSIGN_REQUIRED:-false}" = true ]; then echo "ZK_COSIGN_REPOSITORY (owner/name) is needed to check signatures." >&2; return 1; fi
+    echo "ZK_COSIGN_REPOSITORY not set: image signatures not checked." >&2
+    return 0
+  fi
+  for image in zoikorum-backend zoikorum-web zoikorum-web-staff; do
+    if ! cosign verify "${ZK_REGISTRY}${image}:${ZK_RELEASE}"         --certificate-identity-regexp "^https://github.com/${repo}/\.github/workflows/release\.yml@"         --certificate-oidc-issuer https://token.actions.githubusercontent.com >/dev/null; then
+      echo "The signature of ${image}:${ZK_RELEASE} could not be verified; nothing was deployed." >&2
+      return 1
+    fi
+  done
+  echo "Image signatures verified."
+}
+verify_signatures
 "${DC[@]}" pull api worker migrate web web-staff
 "${DC[@]}" run --rm api python -m zoikorum.cli check-config --connect
 "${DC[@]}" run --rm migrate

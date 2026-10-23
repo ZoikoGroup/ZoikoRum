@@ -6,12 +6,26 @@ import type { Money } from './orgs'
    the professional minus the platform fee. Only provider tokens are used: no card or bank numbers are stored. */
 
 export type AllocationState = 'UNFUNDED' | 'FUNDING' | 'HELD' | 'ON_HOLD' | 'RELEASE_PENDING_APPROVAL' | 'RELEASED' | 'PARTIALLY_RELEASED' | 'REFUNDED'
+  | 'CANCELLED' | 'EXPIRED'
+export type ReleaseModel = 'MILESTONE' | 'RETAINER' | 'FIXED'
+export const RELEASE_MODELS: [ReleaseModel, string, string][] = [
+  ['MILESTONE', 'Milestone release', 'Fund each milestone before its work starts; each is released when you accept it.'],
+  ['FIXED', 'Fixed release', 'Fund the whole fee at once; it is still released milestone by milestone, on your acceptance.'],
+  ['RETAINER', 'Retainer release', 'Fund each cycle before it starts; each is released when you accept that cycle.'],
+]
+export interface Protection {
+  releaseModel: ReleaseModel | null; approverIdentityId: string | null; approverName: string | null; confirmedAt: string | null
+  explanation: string; disputeHold: string; firstFunding: string[]
+}
+export interface Screening { status: 'CLEAR' | 'PENDING' | 'FLAGGED' | 'NOT_SCREENED'; message: string | null }
 
 export interface Escrow {
   autoFundingEnabledAt?: string | null
+  protection?: Protection | null
+  buyerScreening?: Screening | null  // buyer side only: FLAGGED blocks funding, PENDING warns
   id: string
   contractId: string
-  status: 'UNFUNDED' | 'FUNDED' | 'PARTIALLY_RELEASED' | 'FULLY_RELEASED' | 'DISPUTED' | 'REFUNDED' | 'CLOSED'
+  status: 'UNFUNDED' | 'FUNDED' | 'PARTIALLY_RELEASED' | 'FULLY_RELEASED' | 'DISPUTED' | 'REFUNDED' | 'CLOSED' | 'EXPIRED'
   currency: string
   total: Money
   funded: Money
@@ -21,7 +35,8 @@ export interface Escrow {
   refunded: Money
   unfunded: Money
   feeBps: number
-  allocations: { milestoneId: string; sequence: number; title: string; amount: Money; state: AllocationState; released: Money; fee: Money; fundedAt: string | null; releasedAt: string | null; releaseReference?: string | null }[]
+  allocations: { milestoneId: string; sequence: number; title: string; amount: Money; state: AllocationState; released: Money; fee: Money; fundedAt: string | null; releasedAt: string | null; releaseReference?: string | null
+    releaseId?: string | null; releaseApprovalDueAt?: string | null }[]
   fundings: { id: string; amount: Money; milestoneIds: string[]; status: 'REQUESTED' | 'CAPTURED' | 'FAILED'; failureMessage: string | null; createdAt: string; capturedAt: string | null }[]
   viewerRole: 'BUYER' | 'PROFESSIONAL' | 'OPERATOR'
   canFund: boolean
@@ -70,7 +85,13 @@ export interface PaymentsOverview {
 
 export const escrowApi = {
   byContract: (contractId: string) => api<Escrow>(`/v1/escrow/by-contract/${contractId}`),
-  ledger: (id: string) => api<LedgerLine[]>(`/v1/escrow/${id}/ledger`),
+  /** One page of ledger lines, oldest first; pass the previous page's nextCursor for the next one. */
+  ledger: (id: string, cursor?: string | null) =>
+    api<{ items: LedgerLine[]; nextCursor: string | null }>(`/v1/escrow/${id}/ledger`, { query: cursor ? { cursor } : {} }),
+  setProtection: (id: string, body: { releaseModel: ReleaseModel; approverIdentityId?: string | null; disputeHoldAcknowledged: boolean }) =>
+    api<Escrow>(`/v1/escrow/${id}/protection`, { method: 'PUT', body }),
+  /** The receipt for one release as a PDF (audited). */
+  releaseReceipt: (releaseId: string) => api<Blob>(`/v1/escrow/releases/${releaseId}/receipt`, { blob: true }),
   fund: (id: string, body: { milestoneIds?: string[]; all?: boolean; paymentMethodToken: string }) =>
     api<Escrow>(`/v1/escrow/${id}/fund`, { method: 'POST', body, headers: idem() }),
   autoFunding: (id: string, paymentMethodToken: string | null) =>
@@ -117,6 +138,7 @@ export const ALLOCATION_STATE: Record<AllocationState, { label: string; tone: ''
   UNFUNDED: { label: 'Not funded', tone: '' }, FUNDING: { label: 'Payment processing', tone: 'warn' }, HELD: { label: 'Held in escrow', tone: 'green' },
   ON_HOLD: { label: 'Frozen (dispute)', tone: 'warn' }, RELEASE_PENDING_APPROVAL: { label: 'Release awaiting approval', tone: 'warn' },
   RELEASED: { label: 'Released', tone: 'green' }, PARTIALLY_RELEASED: { label: 'Partly released', tone: 'warn' }, REFUNDED: { label: 'Refunded', tone: '' },
+  CANCELLED: { label: 'Cancelled', tone: '' }, EXPIRED: { label: 'Expired (never funded)', tone: '' },
 }
 export const PAYOUT_STATUS: Record<Payout['status'], { label: string; tone: '' | 'green' | 'warn' }> = {
   QUEUED: { label: 'Waiting for payout account', tone: 'warn' }, INITIATED: { label: 'Sending', tone: 'warn' },

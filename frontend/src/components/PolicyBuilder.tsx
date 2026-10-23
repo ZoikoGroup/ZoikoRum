@@ -68,6 +68,98 @@ export function PolicySettingsForm({ settings, onChange, disabled }: { settings:
   )
 }
 
+const ORG_ROLES: [string, string][] = [['ORG_ADMIN', 'Org Admin'], ['REQUESTER', 'Requester'], ['APPROVER', 'Approver'],
+  ['BUDGET_OWNER', 'Budget Owner'], ['LEGAL_REVIEWER', 'Legal Reviewer'], ['EXCEPTION_AUTHORITY', 'Exception Authority']]
+
+/** Payment rules (escrow itself is always required) and who may request or decide exceptions. */
+export function PaymentAndExceptionControls({ settings, onChange, disabled }: { settings: string; onChange: (v: string) => void; disabled: boolean }) {
+  const s = parse<Record<string, unknown>>(settings, {})
+  const set = (key: string, value: unknown) => onChange(JSON.stringify({ ...s, [key]: value }, null, 2))
+  const roles = (key: string, fallback: string[]) => (Array.isArray(s[key]) ? (s[key] as string[]) : fallback)
+  const toggleRole = (key: string, role: string, fallback: string[] | null) => {
+    const cur = roles(key, fallback ?? [])
+    const next = cur.includes(role) ? cur.filter((r) => r !== role) : [...cur, role]
+    set(key, next.length ? next : null)
+  }
+  return (
+    <fieldset disabled={disabled} className="panel policy-form"><legend>Payments and exceptions</legend>
+      <p className="small muted" style={{ marginTop: 0 }}>Escrow before work is required for every engagement and cannot be turned off.</p>
+      <label className="checkbox small"><input type="checkbox" checked={s.partialReleaseAllowed !== false}
+        onChange={(e) => set('partialReleaseAllowed', e.target.checked)} /> <span>Release each milestone as it is accepted (off: pay only when every milestone is accepted)</span></label>
+      <h4 style={{ margin: '12px 0 4px' }}>Milestones</h4>
+      <div className="row">
+        <label style={{ flex: 1, minWidth: 180 }}>Largest share of the total in one milestone (%; empty: any)
+          <input className="input" type="number" min={1} max={100} value={typeof s.milestoneMaxSharePercent === 'number' ? String(s.milestoneMaxSharePercent) : ''}
+            onChange={(e) => set('milestoneMaxSharePercent', e.target.value ? Math.min(100, Math.max(1, Math.round(Number(e.target.value)))) : null)} /></label>
+      </div>
+      <label className="checkbox small"><input type="checkbox" checked={s.milestoneAcceptanceCriteriaRequired === true}
+        onChange={(e) => set('milestoneAcceptanceCriteriaRequired', e.target.checked)} /> <span>Every milestone names deliverables with acceptance criteria</span></label>
+      <p className="small muted" style={{ margin: '4px 0 0' }}>Checked when a proposal is sent or accepted and when the contract is signed.</p>
+      <h4 style={{ margin: '12px 0 4px' }}>Retainers</h4>
+      <label className="checkbox small"><input type="checkbox" checked={s.retainerAutoFundAllowed !== false}
+        onChange={(e) => set('retainerAutoFundAllowed', e.target.checked)} /> <span>Retainer cycles may be funded automatically from a saved payment method</span></label>
+      <label className="checkbox small"><input type="checkbox" checked={s.retainerCycleApproval === true}
+        onChange={(e) => set('retainerCycleApproval', e.target.checked)} /> <span>Each retainer cycle needs approval before it is funded</span></label>
+      {s.retainerCycleApproval === true && <label style={{ display: 'block', maxWidth: 280 }}>Cycle approved by
+        <select className="input" value={String(s.retainerCycleApprovalRole ?? 'APPROVER')} onChange={(e) => set('retainerCycleApprovalRole', e.target.value)}>
+          {ORG_ROLES.filter(([r]) => r !== 'REQUESTER').map(([r, l]) => <option key={r} value={r}>{l}</option>)}</select></label>}
+      <h4 style={{ margin: '12px 0 4px' }}>Exceptions</h4>
+      <p className="small" style={{ margin: '4px 0' }}>Who may request one (none ticked: any member)</p>
+      {ORG_ROLES.map(([r, l]) => <label key={r} className="checkbox small" style={{ display: 'inline-flex', marginRight: 12 }}>
+        <input type="checkbox" checked={roles('exceptionRequestRoles', []).includes(r)} onChange={() => toggleRole('exceptionRequestRoles', r, null)} /> <span>{l}</span></label>)}
+      <p className="small" style={{ margin: '8px 0 4px' }}>Who may decide (none ticked: Exception Authority)</p>
+      {ORG_ROLES.map(([r, l]) => <label key={r} className="checkbox small" style={{ display: 'inline-flex', marginRight: 12 }}>
+        <input type="checkbox" checked={roles('exceptionApproverRoles', ['EXCEPTION_AUTHORITY']).includes(r)}
+          onChange={() => toggleRole('exceptionApproverRoles', r, ['EXCEPTION_AUTHORITY'])} /> <span>{l}</span></label>)}
+      <p className="small muted" style={{ margin: '4px 0 0' }}>Nobody decides their own request, whatever their role.</p>
+    </fieldset>
+  )
+}
+
+interface Variant { id: string; name: string; jurisdictions: string[]; governingLaw?: string | null; clauseTexts?: Record<string, string> }
+
+/** Regional contract variants: the contracting country picks the governing law and clause wording. */
+export function ContractVariantsEditor({ settings, onChange, disabled }: { settings: string; onChange: (v: string) => void; disabled: boolean }) {
+  const s = parse<Record<string, unknown>>(settings, {})
+  const variants = (Array.isArray(s.contractVariants) ? s.contractVariants : []) as Variant[]
+  const save = (next: Variant[]) => onChange(JSON.stringify({ ...s, contractVariants: next }, null, 2))
+  const [f, setF] = useState({ name: '', countries: '', law: '', clause: 'CONFIDENTIALITY', text: '' })
+  const countries = f.countries.split(',').map((x) => x.trim().toUpperCase()).filter((x) => /^[A-Z]{2}$/.test(x))
+  const taken = new Set(variants.flatMap((v) => v.jurisdictions))
+  const clash = countries.filter((c) => taken.has(c))
+  function add() {
+    const id = (f.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'variant').slice(0, 30) + `-${variants.length + 1}`
+    save([...variants, { id, name: f.name.trim(), jurisdictions: countries, governingLaw: f.law.trim() || null,
+      clauseTexts: f.text.trim() ? { [f.clause]: f.text.trim() } : {} }])
+    setF({ name: '', countries: '', law: '', clause: 'CONFIDENTIALITY', text: '' })
+  }
+  return (
+    <fieldset disabled={disabled} className="panel policy-form"><legend>Regional contract variants</legend>
+      <p className="small muted" style={{ marginTop: 0 }}>When your organisation contracts from one of these countries, the contract uses this governing law and wording.</p>
+      {variants.length === 0 ? <p className="muted small">No variants: the governing law above applies everywhere.</p> : (
+        <table className="data small"><thead><tr><th>Variant</th><th>Countries</th><th>Governing law</th><th>Clauses</th><th /></tr></thead>
+          <tbody>{variants.map((v, i) => <tr key={v.id}><td>{v.name}</td><td>{v.jurisdictions.join(', ')}</td><td>{v.governingLaw || '—'}</td>
+            <td>{Object.keys(v.clauseTexts ?? {}).map((k) => CLAUSES.find(([c]) => c === k)?.[1] ?? k).join(', ') || '—'}</td>
+            <td><button type="button" className="btn btn-ghost btn-sm" onClick={() => save(variants.filter((_, j) => j !== i))}>Remove</button></td></tr>)}</tbody></table>)}
+      <details style={{ marginTop: 10 }}><summary className="small"><strong>Add a variant</strong></summary>
+        <div className="row" style={{ marginTop: 8 }}>
+          <label style={{ flex: 1 }}>Name<input className="input" value={f.name} maxLength={80} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="e.g. United Kingdom" /></label>
+          <label style={{ flex: 1 }}>Countries (two-letter codes)<input className="input" value={f.countries} onChange={(e) => setF({ ...f, countries: e.target.value })} placeholder="GB, IE" /></label>
+        </div>
+        <label style={{ display: 'block' }}>Governing law<input className="input" value={f.law} maxLength={200} onChange={(e) => setF({ ...f, law: e.target.value })} placeholder="e.g. England and Wales" /></label>
+        <div className="row">
+          <label>Clause<select className="input" value={f.clause} onChange={(e) => setF({ ...f, clause: e.target.value })}>
+            {CLAUSES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
+          <label style={{ flex: 1 }}>Wording (optional)<textarea className="input" rows={2} maxLength={6000} value={f.text} onChange={(e) => setF({ ...f, text: e.target.value })} /></label>
+        </div>
+        {clash.length > 0 && <p className="small warn-text">{clash.join(', ')} already belong to another variant.</p>}
+        <button type="button" className="btn btn-secondary btn-sm" style={{ marginTop: 8 }}
+          disabled={f.name.trim().length < 2 || countries.length === 0 || clash.length > 0 || (!f.law.trim() && !f.text.trim())} onClick={add}>Add variant</button>
+      </details>
+    </fieldset>
+  )
+}
+
 export function RuleBuilder({ rules, onChange, disabled }: { rules: string; onChange: (v: string) => void; disabled: boolean }) {
   const current = parse<PolicyRule[]>(rules, [])
   const [f, setF] = useState({ actions: ['PROPOSAL_ACCEPT'], field: 'engagement.valueMinor', op: 'GT', value: '', decision: 'REQUIRE_APPROVAL', message: '', role: 'APPROVER' })

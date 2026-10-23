@@ -149,6 +149,10 @@
   "identity",
   "jurisdiction"
  ],
+ "AgreementIn": [
+  "consent",
+  "kind"
+ ],
  "AlertsIn": [
   "on"
  ],
@@ -238,6 +242,7 @@
   "rejectedOrExpired7d"
  ],
  "ArbitrationAwardIn": [
+  "accountRestriction",
   "allocations",
   "awardReference",
   "citations",
@@ -252,7 +257,8 @@
  ],
  "AssessmentIn": [
   "level",
-  "reasonCode"
+  "reasonCode",
+  "userImpact"
  ],
  "AssignableStaffOut": [
   "email",
@@ -454,6 +460,14 @@
   "question",
   "to"
  ],
+ "ClientEventIn": [
+  "name",
+  "props"
+ ],
+ "ClientEventsIn": [
+  "events",
+  "sessionId"
+ ],
  "CloseCaseIn": [
   "reason"
  ],
@@ -492,6 +506,14 @@
  "ConfirmEmailIn": [
   "token"
  ],
+ "ConflictIn": [
+  "caseId",
+  "caseKind",
+  "kind",
+  "reason",
+  "subjectId",
+  "subjectType"
+ ],
  "ContractIn": [
   "contractId"
  ],
@@ -525,6 +547,7 @@
   "revisions",
   "signatureDeadline",
   "signatures",
+  "stage",
   "status",
   "terminationRequest",
   "terms",
@@ -546,9 +569,17 @@
   "total"
  ],
  "ContractSummaryOut": [
+  "awaitingPaymentProtection",
   "contracts",
   "milestones",
   "role"
+ ],
+ "ContractVariantIn": [
+  "clauseTexts",
+  "governingLaw",
+  "id",
+  "jurisdictions",
+  "name"
  ],
  "CostCenterIn": [
   "businessUnitId",
@@ -601,12 +632,6 @@
   "scheduledFor",
   "status"
  ],
- "DecisionIn": [
-  "decision",
-  "expiresAt",
-  "publicReason",
-  "reasonCode"
- ],
  "DeclineIn": [
   "note",
   "reasonCode"
@@ -632,8 +657,11 @@
   "title"
  ],
  "DisputeOut": [
+  "agreements",
   "arbitration",
+  "bindingRecommendation",
   "canCooldown",
+  "canDecideAsEnterpriseAdmin",
   "canEscalate",
   "category",
   "clarifications",
@@ -647,6 +675,8 @@
   "desiredOutcome",
   "directDeadline",
   "disputed",
+  "enterpriseAdminPath",
+  "enterpriseEngagement",
   "evidence",
   "evidenceComplete",
   "evidenceDeadline",
@@ -661,6 +691,7 @@
   "pendingDecision",
   "prefersEarlyResolution",
   "proposals",
+  "provisionalDecision",
   "recommendation",
   "reference",
   "retainUntil",
@@ -741,6 +772,7 @@
  "EscrowOut": [
   "allocations",
   "autoFundingEnabledAt",
+  "buyerScreening",
   "canFund",
   "contractId",
   "currency",
@@ -750,6 +782,7 @@
   "fundings",
   "held",
   "id",
+  "protection",
   "refunded",
   "released",
   "status",
@@ -846,6 +879,45 @@
  "FirmMemberPatch": [
   "roles"
  ],
+ "FirmOfferingIn": [
+  "currency",
+  "deliveredBy",
+  "engagementTypes",
+  "pricingModel",
+  "specialization",
+  "startingPriceMinor",
+  "summary",
+  "title"
+ ],
+ "FirmOfferingOut": [
+  "createdAt",
+  "currency",
+  "deliveredBy",
+  "engagementTypes",
+  "firmId",
+  "id",
+  "pricingModel",
+  "publishedAt",
+  "regulated",
+  "specialization",
+  "specializationName",
+  "startingPriceMinor",
+  "status",
+  "summary",
+  "title",
+  "unpublishedReason",
+  "version"
+ ],
+ "FirmOfferingPatch": [
+  "currency",
+  "deliveredBy",
+  "engagementTypes",
+  "pricingModel",
+  "specialization",
+  "startingPriceMinor",
+  "summary",
+  "title"
+ ],
  "FirmOut": [
   "createdAt",
   "hasAuthorizedRepresentative",
@@ -885,6 +957,7 @@
   "id",
   "legalName",
   "name",
+  "offerings",
   "primaryCategory",
   "professionals",
   "sizeBand",
@@ -998,10 +1071,12 @@
   "completeRemediation",
   "note",
   "notified",
+  "policyUpdates",
   "recoveryNote",
   "review",
   "rootCause",
-  "severity"
+  "severity",
+  "uxImpact"
  ],
  "IntentFilters": [
   "availability",
@@ -1187,6 +1262,10 @@
  "MfaVerifyIn": [
   "totpCode"
  ],
+ "MfaVerifyOut": [
+  "recoveryCodes",
+  "tokens"
+ ],
  "Milestone": [
   "amountMinor",
   "deliverableKeys",
@@ -1250,6 +1329,12 @@
   "summary",
   "title",
   "typicalDuration"
+ ],
+ "OfferingMemberOut": [
+  "displayName",
+  "licensed",
+  "professionalId",
+  "tier"
  ],
  "OfferingOut": [
   "deliverables",
@@ -1374,6 +1459,10 @@
   "items",
   "nextCursor"
  ],
+ "Page_LedgerLineOut_": [
+  "items",
+  "nextCursor"
+ ],
  "Page_MessageOut_": [
   "items",
   "nextCursor"
@@ -1485,6 +1574,11 @@
   "organizationName",
   "requiredDimensions"
  ],
+ "PostReviewIn": [
+  "policyUpdates",
+  "rootCause",
+  "uxImpact"
+ ],
  "PreferencesIO": [
   "digest",
   "email",
@@ -1492,6 +1586,27 @@
   "mandatoryNotice",
   "marketing",
   "sms"
+ ],
+ "ProcurementRequestIn": [
+  "email",
+  "kind",
+  "message",
+  "name",
+  "organization",
+  "professionalId",
+  "website"
+ ],
+ "ProcurementRequestOut": [
+  "createdAt",
+  "email",
+  "id",
+  "kind",
+  "message",
+  "name",
+  "organization",
+  "professionalId",
+  "reference",
+  "status"
  ],
  "ProfessionalBrief": [
   "country",
@@ -1530,6 +1645,7 @@
   "legalName",
   "licensedJurisdictions",
   "maxConcurrentEngagements",
+  "onsiteRegions",
   "pendingSpecializations",
   "photoUrl",
   "pricingModels",
@@ -1559,6 +1675,7 @@
   "industries",
   "languages",
   "legalName",
+  "onsiteRegions",
   "pricingModels",
   "rateUnit",
   "website",
@@ -1589,11 +1706,26 @@
   "milestones",
   "pricingModel",
   "scopeAlignment",
+  "scopeChanges",
   "scopeNotes",
   "startDate",
   "summary",
   "total",
   "validUntil"
+ ],
+ "ProtectionIn": [
+  "approverIdentityId",
+  "disputeHoldAcknowledged",
+  "releaseModel"
+ ],
+ "ProtectionOut": [
+  "approverIdentityId",
+  "approverName",
+  "confirmedAt",
+  "disputeHold",
+  "explanation",
+  "firstFunding",
+  "releaseModel"
  ],
  "PublicCredentialOut": [
   "displayLabel",
@@ -1628,16 +1760,19 @@
   "languages",
   "licensedJurisdictions",
   "offerings",
+  "onsiteRegions",
   "pendingSpecializations",
   "photoUrl",
   "pricingModels",
   "primaryCategory",
   "primaryCategoryName",
+  "profileStatus",
   "publishedAt",
   "rateUnit",
   "servedJurisdictions",
   "specializations",
   "trust",
+  "underReview",
   "verificationInProgress",
   "verificationReport",
   "verifiedJurisdictions",
@@ -1685,6 +1820,15 @@
  ],
  "ReadIn": [
   "throughSequence"
+ ],
+ "Readiness": [
+  "auditRecord",
+  "auditRecordNote",
+  "contractReady",
+  "contractReadyNote",
+  "disputeResolution",
+  "paymentProtection",
+  "paymentProtectionNote"
  ],
  "ReadinessItem": [
   "done",
@@ -1761,6 +1905,10 @@
  "RecoveryCodesOut": [
   "recoveryCodes"
  ],
+ "ReferralOut": [
+  "code",
+  "recordedAt"
+ ],
  "RefreshIn": [
   "refreshToken"
  ],
@@ -1790,12 +1938,19 @@
  "ReplayIn": [
   "justification"
  ],
+ "ReplyIn": [
+  "body"
+ ],
  "ReportIn": [
   "category",
   "confidential",
   "description",
   "subjectId",
   "subjectType"
+ ],
+ "ReportSubscriptionIn": [
+  "frequency",
+  "orgId"
  ],
  "RepresentativeOut": [
   "displayName",
@@ -1843,6 +1998,7 @@
   "service",
   "specialization",
   "status",
+  "successCriteria",
   "version",
   "viewerRole"
  ],
@@ -1865,14 +2021,20 @@
   "note",
   "outcome"
  ],
+ "RestrictionReferralIn": [
+  "party",
+  "reason"
+ ],
  "ResultItem": [
   "availability",
   "city",
   "country",
+  "currencies",
   "deliveryModes",
   "dimensions",
   "displayName",
   "engagementTypes",
+  "enterpriseEngagements",
   "enterpriseReady",
   "firm",
   "headline",
@@ -1967,6 +2129,30 @@
   "name",
   "params"
  ],
+ "ScopeChangeIn": [
+  "kind",
+  "proposed",
+  "reason",
+  "target"
+ ],
+ "ScopeChangeOut": [
+  "decidedAt",
+  "id",
+  "kind",
+  "note",
+  "proposed",
+  "reason",
+  "status",
+  "target"
+ ],
+ "ScopeDecisionIn": [
+  "accept",
+  "note"
+ ],
+ "ScreeningOut": [
+  "message",
+  "status"
+ ],
  "SearchOut": [
   "facets",
   "items",
@@ -1988,6 +2174,12 @@
   "id",
   "signedInAt"
  ],
+ "SessionPolicyIn": [
+  "allowedIdps",
+  "idleTimeoutSeconds",
+  "maxSessionSeconds",
+  "requireMfa"
+ ],
  "SettingsIn": [
   "acceptanceWindowDays",
   "allowedCurrencies",
@@ -1998,6 +2190,7 @@
   "autoDisputeRejectionCount",
   "challengeWindowDays",
   "clauseTexts",
+  "contractVariants",
   "directResolutionBusinessDays",
   "disputeEscalationRoles",
   "disputeEvidenceDays",
@@ -2005,11 +2198,18 @@
   "disputeMediationAboveMinor",
   "disputeRetentionYears",
   "escrowRequired",
+  "exceptionApproverRoles",
+  "exceptionRequestRoles",
   "governingLaw",
+  "milestoneAcceptanceCriteriaRequired",
+  "milestoneMaxSharePercent",
   "minTrustTier",
   "partialReleaseAllowed",
   "requiredClauses",
   "requiredDimensions",
+  "retainerAutoFundAllowed",
+  "retainerCycleApproval",
+  "retainerCycleApprovalRole",
   "signatureDeadlineDays",
   "stepUpForApprovals"
  ],
@@ -2100,8 +2300,14 @@
   "emailDomains",
   "enabled",
   "enforce",
+  "groupRoleMap",
   "issuer",
-  "justInTime"
+  "justInTime",
+  "protocol",
+  "samlCertificate",
+  "samlEntityId",
+  "samlMetadataXml",
+  "samlSsoUrl"
  ],
  "SsoStartIn": [
   "email",
@@ -2183,6 +2389,10 @@
   "files",
   "lateReason",
   "note"
+ ],
+ "SuccessCriteria": [
+  "definition",
+  "measures"
  ],
  "SuggestIn": [
   "text"
@@ -2371,6 +2581,9 @@
   "tierLabel",
   "updatedAt"
  ],
+ "UnpublishIn": [
+  "reason"
+ ],
  "UnreadSummaryOut": [
   "unreadMessages",
   "unreadThreads"
@@ -2428,6 +2641,12 @@
   "subjectType",
   "summary"
  ],
+ "zoikorum__domains__admin__schemas__ReferralIn": [
+  "agency",
+  "agencyReference",
+  "legalSignOff",
+  "referredOn"
+ ],
  "zoikorum__domains__ai__api__DisputeIn": [
   "disputeId"
  ],
@@ -2478,6 +2697,15 @@
  "zoikorum__domains__dispute__schemas__AssignIn": [
   "mediatorIdentityId"
  ],
+ "zoikorum__domains__dispute__schemas__DecisionIn": [
+  "accountRestriction",
+  "allocations",
+  "citations",
+  "extendDays",
+  "note",
+  "outcome",
+  "summary"
+ ],
  "zoikorum__domains__dispute__schemas__DisputeIn": [
   "category",
   "context",
@@ -2516,6 +2744,8 @@
   "fee",
   "fundedAt",
   "milestoneId",
+  "releaseApprovalDueAt",
+  "releaseId",
   "releaseReference",
   "released",
   "releasedAt",
@@ -2532,6 +2762,9 @@
   "organizationName",
   "password",
   "termsVersion"
+ ],
+ "zoikorum__domains__marketplace__schemas__ReferralIn": [
+  "code"
  ],
  "zoikorum__domains__marketplace__schemas__SuggestOut": [
   "draft",
@@ -2569,16 +2802,19 @@
   "organizationId",
   "pricingModel",
   "professional",
+  "readiness",
   "reasonCode",
   "reasonNote",
   "requestId",
   "revisionCount",
   "revisionRequests",
   "scopeAlignment",
+  "scopeChanges",
   "scopeNotes",
   "startDate",
   "status",
   "submittedAt",
+  "successCriteria",
   "summary",
   "termsHash",
   "total",
@@ -2611,7 +2847,9 @@
   "pricingPreferences",
   "professionalIds",
   "service",
-  "specialization"
+  "specialization",
+  "successDefinition",
+  "successMeasures"
  ],
  "zoikorum__domains__proposal__schemas__RevisionIn": [
   "changes",
@@ -2641,6 +2879,12 @@
   "subjectId",
   "subjectType",
   "verificationType"
+ ],
+ "zoikorum__domains__verification__schemas__DecisionIn": [
+  "decision",
+  "expiresAt",
+  "publicReason",
+  "reasonCode"
  ],
  "zoikorum__domains__verification__schemas__EvidenceIn": [
   "evidenceType",

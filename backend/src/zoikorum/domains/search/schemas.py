@@ -24,6 +24,7 @@ class SearchParams(BaseModel):
     availability: str | None = None
     pricingModel: str | None = None
     credential: str | None = None
+    credentials: list[str] = []  # any of these verified credentials (multi-select)
     jurisdiction: str | None = None
     experience: str | None = None  # years band, e.g. 6-10
     publishedAfter: datetime | None = None  # saved searches: "new since you last looked"
@@ -32,7 +33,9 @@ class SearchParams(BaseModel):
     budgetMaxMinor: int | None = None  # starting price at or under this (in budgetCurrency); unpriced offers still show
     budgetCurrency: str | None = None
     language: str | None = None
-    enterpriseReady: bool = False
+    enterpriseReady: bool = False  # Enterprise Ready: security practice reviewed by compliance ("security-review ready")
+    priorEnterprise: bool = False  # has completed at least one engagement for an enterprise buyer
+    multiCurrency: bool = False  # prices services in more than one currency
     sort: Sort = "best"
     limit: int = 20
     offset: int = 0
@@ -94,6 +97,8 @@ class ResultItem(BaseModel):
     licensedJurisdictions: list[str] = []
     whyThisResult: list[str]
     regulatedPreview: bool = False
+    enterpriseEngagements: int = 0  # completed engagements for enterprise buyers
+    currencies: list[str] = []  # currencies the professional prices in
     enterpriseReady: bool = False  # offers regulated work but is below Tier A: shown, but cannot take that work yet
     firm: FirmRef | None = None  # the firm they practise under
 

@@ -115,6 +115,9 @@ def clean_db(request):
     """Unit tests never touch the database; every other test starts from empty tables (and closed circuit breakers)."""
     clock.set_now(None)
     _close_breakers()
+    from zoikorum.shared import cache
+    if isinstance(cache.get_cache(), cache.MemoryCache):  # the read cache must not carry rows of an earlier test's database
+        cache.get_cache().clear()
     if not request.node.get_closest_marker("unit"):
         request.getfixturevalue("_fresh_db")
     yield

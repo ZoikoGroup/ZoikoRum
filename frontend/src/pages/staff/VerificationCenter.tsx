@@ -196,6 +196,7 @@ export default function VerificationCenter() {
                               <td><div className="cell-main">{i.subjectName ?? '—'}</div><div className="cell-sub">{i.subjectType === 'FIRM' ? 'Firm' : 'Professional'}</div></td>
                               <td>{label(i.verificationType)}
                                 {i.providerResult === 'REVIEW' && i.verificationType === 'RESTRICTIONS' && <div className="cell-sub">Possible screening match</div>}
+                                {i.providerResult === 'PASS' && i.status !== 'VERIFIED' && <div className="cell-sub">Provider check passed: your decision verifies it</div>}
                                 {i.hostedProvider && <div className="cell-sub">{PARTNER_NAME[i.hostedProvider] ?? i.hostedProvider}: {HOSTED_NOTE[i.hostedStatus ?? ''] ?? i.hostedStatus}
                                   {i.hostedReason && ` — ${i.hostedReason}`}</div>}</td>
                               <td>{i.jurisdiction ?? '—'}</td>

@@ -278,7 +278,7 @@ async def test_enforcement_live_suspension_independent_appeal(client, make_user,
     response = await client.post('/v1/admin/enforcement-cases', headers=users['analyst'].idem(), json={'subjectType': 'IDENTITY', 'subjectId': str(subject.id), 'signalSource': 'HUMAN_REVIEW', 'summary': 'Confirmed account risk requires an independently approved restriction.', 'evidenceRefs': ['review-evidence-001']})
     assert response.status_code == 201, response.text
     cid = response.json()['id']; root = f'/v1/admin/enforcement-cases/{cid}'
-    assert (await client.post(root + '/assess', headers=users['risk'].idem(), json={'level': 4, 'reasonCode': 'CONFIRMED_RISK'})).status_code == 200
+    assert (await client.post(root + '/assess', headers=users['risk'].idem(), json={'level': 4, 'reasonCode': 'CONFIRMED_RISK', 'userImpact': 'Clients of this account are exposed to fraud.'})).status_code == 200
     notice = {key: 'Review the documented account restriction and contact support for help.' for key in ['whatHappened', 'whyItHappened', 'whatChanged', 'whatYouCanDo', 'whatHappensNext', 'howToGetHelp']}
     assert (await client.post(root + '/propose-action', headers=users['analyst'].idem(), json={'action': 'SUSPEND_ACCOUNT', 'notice': notice})).status_code == 200
     assert (await client.post(root + '/approve-action', headers=users['executive'].idem())).json()['status'] == 'AWAITING_APPROVAL'
@@ -351,7 +351,7 @@ async def test_expiring_one_enforcement_case_preserves_another_active_restrictio
             'summary': 'An independent compliance review confirmed an engagement restriction.', 'evidenceRefs': ['verified-case-reference']})
         assert opened.status_code == 201, opened.text
         root = '/v1/admin/enforcement-cases/' + opened.json()['id']
-        assessed = await client.post(root + '/assess', headers=staff['risk'].idem(), json={'level': 3, 'reasonCode': 'CONFIRMED_COMPLIANCE'})
+        assessed = await client.post(root + '/assess', headers=staff['risk'].idem(), json={'level': 3, 'reasonCode': 'CONFIRMED_COMPLIANCE', 'userImpact': 'Active clients lose their adviser mid-engagement.'})
         assert assessed.status_code == 200, assessed.text
         proposed = await client.post(root + '/propose-action', headers=staff['analyst'].idem(), json={'action': 'ENGAGEMENT_SUSPENSION', 'durationDays': duration, 'notice': notice})
         assert proposed.status_code == 200, proposed.text

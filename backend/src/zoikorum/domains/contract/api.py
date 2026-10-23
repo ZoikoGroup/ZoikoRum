@@ -201,8 +201,8 @@ async def all_files(contract_id: uuid.UUID, actor: CurrentActor, session: DbSess
 
 @router.get("/v1/contracts/{contract_id}/evidence-pack")
 async def evidence_pack(contract_id: uuid.UUID, actor: CurrentActor, session: DbSession,
-                        format: Literal["pdf", "json"] = "pdf") -> Response:
-    """The engagement record with its fingerprint (PDF or JSON), for an auditor, a regulator or a court. Audited."""
+                        format: Literal["pdf", "json", "csv"] = "pdf") -> Response:
+    """The engagement record with its fingerprint (PDF, JSON or CSV), for an auditor, a regulator or a court. Audited."""
     data, name, media = await service.evidence_pack(session, actor, contract_id, format)
     return Response(data, media_type=media, headers={"Content-Disposition": f'attachment; filename="{name}"',
                                                      "Cache-Control": "no-store"})

@@ -307,12 +307,9 @@ async def list_messages(session, actor, thread_id, before=None, limit=50):
 
 
 def signals(body):
-    flags = []
-    if re.search(r"[\w.+-]+@[\w.-]+\.[a-z]{2,}", body, re.I): flags.append("CONTACT_EMAIL")
-    if re.search(r"(?<!\w)\+?\d[\d ()-]{8,}\d(?!\w)", body): flags.append("CONTACT_PHONE")
-    if re.search(r"(?:paypal\.me|cash\.app|venmo\.com|buy\.stripe\.com|wise\.com)/", body, re.I): flags.append("OFF_PLATFORM_PAYMENT")
-    if re.search(r"\b(?:kill you|hurt you|idiot|stupid|fuck you)\b", body, re.I): flags.append("POSSIBLE_HARASSMENT")
-    return flags
+    """Advisory abuse flags (messaging/abuse.py): normalised, leetspeak- and disguise-aware, configurable."""
+    from zoikorum.domains.messaging import abuse
+    return abuse.signals(body)
 
 
 async def append_message(session, thread, body, *, sender=None, name="Zoikorum", files=(), event_id=None):

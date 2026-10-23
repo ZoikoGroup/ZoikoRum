@@ -23,7 +23,14 @@ class Settings(BaseSettings):
     sentry_dsn: str | None = None  # error reporting (needs backend[monitoring]); personal data is never sent
     tracing_endpoint: str | None = None  # OpenTelemetry collector (OTLP/HTTP traces URL); needs backend[tracing]
     tracing_sample_ratio: float = Field(default=0.1, ge=0, le=1)  # share of new traces kept
+    # Requests whose path starts with one of these are always traced in full, whatever the ratio (money and legal flows).
+    tracing_always_sample_paths: list[str] = Field(default_factory=lambda: [
+        "/v1/payments", "/v1/payout-accounts", "/v1/escrow", "/v1/contracts", "/v1/milestones", "/v1/change-orders",
+        "/v1/disputes", "/v1/resolution-proposals"])
     frontend_url: str = "http://localhost:5173"  # used to build links in invitations / emails
+    # The API's public address, where identity providers post SAML sign-ins (<this>/v1/auth/saml/acs). Empty: frontend_url
+    # (the web app's address forwards /v1 to the API).
+    public_api_url: str | None = None
     # Sign in with Google / Microsoft (OpenID Connect apps registered with each; empty: the button is not shown).
     google_client_id: str | None = None
     # Browser push notifications (Web Push): a VAPID key pair (python -m zoikorum.cli new-push-keys) and a contact address.
@@ -58,6 +65,21 @@ class Settings(BaseSettings):
     field_data_keys: dict[str, str] = Field(default_factory=dict)
     field_active_key: str | None = None
     jwt_issuer: str = "zoikorum"
+    # Access/purpose token signing (identity/tokens.py, shared/signing_keys.py). hs256: the shared ZK_JWT_SECRET (default,
+    # for existing deployments). rs256: an RSA key whose public half is published at /.well-known/jwks.json.
+    # Keys: jwt_private_keys {"<kid>": "<PEM private key>"} with jwt_active_kid signing new tokens; rotate by adding a key,
+    # switching the active kid, and moving the old one to jwt_public_keys {"<kid>": "<PEM public key>"} until its tokens
+    # expire. Or jwt_kms_key_name: a Cloud KMS asymmetric signing key version (RSA_SIGN_PKCS1_2048_SHA256), which never
+    # leaves KMS. jwt_accept_hs256: while switching to rs256, tokens signed with ZK_JWT_SECRET are still accepted.
+    jwt_signing: str = Field(default="hs256", pattern="^(hs256|rs256)$")
+    jwt_private_keys: dict[str, str] = Field(default_factory=dict)
+    jwt_active_kid: str | None = None
+    jwt_public_keys: dict[str, str] = Field(default_factory=dict)
+    jwt_kms_key_name: str | None = None  # projects/<p>/locations/<l>/keyRings/<r>/cryptoKeys/<k>/cryptoKeyVersions/<n>
+    jwt_accept_hs256: bool = True
+    # Advisory sign-in risk signals (identity/risk.py): never block a sign-in, they are recorded and shown.
+    sign_in_velocity_per_hour: int = Field(default=10, ge=1)  # more sign-ins than this to one account in an hour
+    sign_in_max_travel_kmh: int = Field(default=900, ge=100)  # faster than an airliner between two sign-ins
     access_token_ttl_seconds: int = 900
     refresh_token_ttl_seconds: int = 14 * 24 * 3600
     step_up_max_age_seconds: int = 300
@@ -116,7 +138,17 @@ class Settings(BaseSettings):
     email_from: str = "notifications@zoikorum.com"
 
     rate_limit_enabled: bool = True
-    redis_url: str | None = None  # shared rate limits across API servers, e.g. redis://redis:6379/0
+    redis_url: str | None = None  # shared rate limits and read cache across API servers, e.g. redis://redis:6379/0
+    # Read cache (shared/cache.py) for taxonomy, trust tiers, policy profiles, search facets. Redis when ZK_REDIS_URL is
+    # set, else per process; if Redis fails the cache falls back to the database, never to an error.
+    cache_enabled: bool = True
+    cache_ttl_seconds: int = Field(default=300, ge=1, le=86_400)
+    # Evidence retention (shared/storage.py): days to keep each evidence type, per jurisdiction (country) with a
+    # "default", e.g. {"verification_document": {"default": 2555, "DE": 1825}, "data_export": {"default": 30}}. A type
+    # not listed is never purged. The daily purge only reports until retention_purge_enabled is on, and never touches a
+    # file under legal hold. Report: python -m zoikorum.cli retention-report
+    retention_rules: dict[str, dict[str, int]] = Field(default_factory=dict)
+    retention_purge_enabled: bool = False
     storage_dir: str = "var/storage"  # LocalDiskStorage root (development); S3 bucket in production
     storage_provider: str = "local"  # local | gcs (Google Cloud Storage) | s3 (Amazon S3)
     gcs_bucket: str | None = None  # Google Cloud Storage bucket (object versioning on, public access prevented)
@@ -146,6 +178,9 @@ class Settings(BaseSettings):
     # a payment-release dispute.
     release_block_escalation_days: int = 5
     funding_reminder_days: int = 7  # remind the buyer this many days before an unfunded milestone / retainer cycle is due
+    # A signed engagement whose escrow was never funded this many days after activation expires: its allocations end as
+    # EXPIRED and the engagement is terminated (nothing was ever paid in, so nothing moves).
+    funding_expiry_days: int = Field(default=30, ge=1, le=365)
 
     # Disputes (Step 9). Direct resolution default is from the Dispute Resolution doc s.10; the evidence window is not
     # stated in the documents (management to confirm).
@@ -164,6 +199,9 @@ class Settings(BaseSettings):
     # for a second person to approve it, then expires unused.
     approval_expiry_hours: int = Field(default=24, ge=1, le=168)
     dispute_direct_resolution_business_days: int = 5
+    # Message abuse detection (messaging/abuse.py): extra terms on top of the built-in lists. Advisory flags only.
+    messaging_abuse_terms: list[str] = Field(default_factory=list)
+    messaging_circumvention_terms: list[str] = Field(default_factory=list)
     # Invoice tax by the buyer's country (their contracting legal entity, else the organisation). Amounts are tax-inclusive:
     # the invoice shows "of which <label> <rate>%" and the money moved does not change. Finance sets the rules, e.g.
     # {"IN": {"label": "GST", "rateBps": 1800, "basis": "FEE"}, "GB": {"label": "VAT", "rateBps": 2000, "basis": "TOTAL"}}
@@ -197,6 +235,18 @@ class Settings(BaseSettings):
             raise ValueError(f"ZK_DEV_SKIP_MFA is only allowed in development (env is {self.env!r}); remove it")
         if self.verification_provider == "simulated" and self.env not in (*DEV_ENVS, "test"):
             raise ValueError(f"ZK_VERIFICATION_PROVIDER=simulated is only allowed in development (env is {self.env!r})")
+        return self
+
+    @model_validator(mode="after")
+    def _signing_keys_named(self):
+        """rs256 needs a key to sign with: a KMS key, or an active kid that is in jwt_private_keys (development and tests
+        may run without one: a temporary key is made per process)."""
+        if self.jwt_signing != "rs256" or self.jwt_kms_key_name:
+            return self
+        if self.jwt_active_kid and self.jwt_active_kid not in self.jwt_private_keys:
+            raise ValueError("ZK_JWT_ACTIVE_KID must name one of the keys in ZK_JWT_PRIVATE_KEYS")
+        if self.env not in (*DEV_ENVS, "test") and not self.jwt_active_kid:
+            raise ValueError(f"ZK_JWT_SIGNING=rs256 needs ZK_JWT_KMS_KEY_NAME or ZK_JWT_PRIVATE_KEYS with ZK_JWT_ACTIVE_KID in {self.env}")
         return self
 
     @model_validator(mode="after")

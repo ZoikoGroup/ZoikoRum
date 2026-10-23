@@ -147,6 +147,15 @@ class ProfileSettings:
     dispute_legal_review_above_minor: int | None = None  # the buyer's settlement above this needs a Legal Reviewer
     dispute_escalation_roles: tuple[str, ...] | None = None
     dispute_retention_years: int | None = None  # org roles that may escalate; None => any dispute decider
+    # Payment rules (escrow stays mandatory): milestone shape, and how retainer cycles are funded.
+    milestone_max_share_percent: int | None = None
+    milestone_acceptance_criteria_required: bool = False
+    retainer_auto_fund_allowed: bool = True
+    retainer_cycle_approval: bool = False
+    retainer_cycle_approval_role: str = "APPROVER"
+    # Exceptions: roles that may request (None => any member) and decide (None => EXCEPTION_AUTHORITY).
+    exception_request_roles: tuple[str, ...] | None = None
+    exception_approver_roles: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -221,10 +230,37 @@ async def require_allowed(session: AsyncSession, ctx: PolicyContext) -> PolicyDe
     raise error(reason.message if reason else "Organization policy requires authorization", code=code, extra=extra)
 
 
-async def contract_terms(session: AsyncSession, org_id: uuid.UUID, version_id: uuid.UUID) -> dict:
+async def contract_terms(session: AsyncSession, org_id: uuid.UUID, version_id: uuid.UUID, jurisdiction: str | None = None) -> dict:
+    """Governing law and clause texts for a contract generated under this policy version. A regional contract variant
+    whose countries include the contracting jurisdiction (default: the organisation's country) overrides the profile's
+    own governing law and clause texts; the variant chosen is named in ``contractVariant``."""
     from zoikorum.domains.policy import service
-    _, version = await service.effective_version(session, org_id, version_id)
-    return {"governingLaw": version.settings.get("governingLaw"), "clauseTexts": version.settings.get("clauseTexts", {})}
+    return await service.contract_terms(session, org_id, version_id, jurisdiction)
+
+
+async def exception_roles(session: AsyncSession, org_id: uuid.UUID | None, version_id: uuid.UUID | None) -> dict:
+    """{"request": [...] | None (any member), "approve": [...]} for exceptions under this policy version."""
+    from zoikorum.domains.policy import service
+    return await service.exception_roles(session, org_id, version_id)
+
+
+async def engagement_indicators(session: AsyncSession, org_id: uuid.UUID, contract_ids: list[uuid.UUID]) -> dict[uuid.UUID, dict]:
+    """Live policy indicators per contract of this organisation: risk level, exception flag, approval-chain progress."""
+    from zoikorum.domains.policy import indicators
+    return await indicators.for_contracts(session, org_id, contract_ids)
+
+
+async def engagement_evidence(session: AsyncSession, org_id: uuid.UUID, subject_ids: list[uuid.UUID]) -> dict:
+    """Policy evidence for an engagement record: {"approvals": [...], "exceptions": [...], "eligibility": [...]} for
+    the given subjects (request, proposal, contract, milestones, escrow account)."""
+    from zoikorum.domains.policy import indicators
+    return await indicators.evidence(session, org_id, subject_ids)
+
+
+async def record_ids(session: AsyncSession, org_id: uuid.UUID, subject_ids: list[uuid.UUID]) -> list[str]:
+    """Approval and exception request ids about these subjects (their audit rows belong in the engagement's activity)."""
+    from zoikorum.domains.policy import indicators
+    return await indicators.record_ids(session, org_id, subject_ids)
 
 
 async def continuation_actor(session, payload):
@@ -246,3 +282,11 @@ async def preview(session: AsyncSession, ctx: PolicyContext) -> PolicyDecision:
     """What the policy would decide, without creating approval requests (a dry run, recorded as such)."""
     from zoikorum.domains.policy import service
     return await service.evaluate(session, ctx, dry_run=True)
+
+
+async def approval_bottlenecks(session: AsyncSession, since, until) -> dict:
+    """Platform-wide approval waits per step for requests raised in the period (staff KPIs): requests, pending now, per
+    step the median wait and what still waits, and the slowest step."""
+    from zoikorum.domains.policy import insights
+
+    return await insights.step_waits(session, since, until)

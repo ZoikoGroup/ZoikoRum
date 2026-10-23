@@ -80,3 +80,14 @@ async def appeal_exists(session: AsyncSession, appeal_id: uuid.UUID) -> bool:
     from zoikorum.domains.verification.models import Appeal
 
     return await session.get(Appeal, appeal_id) is not None
+
+
+async def credential_expiries(session: AsyncSession, since, until) -> int:
+    """Verified credentials, licences, insurance or jurisdiction checks that lapsed in the period without being renewed
+    first (board brief: credential-expiry incidents). A check replaced by its renewal is not an incident."""
+    from sqlalchemy import func
+
+    return await session.scalar(select(func.count()).select_from(VerificationCase).where(
+        VerificationCase.status == "EXPIRED", VerificationCase.verification_type.in_(("CREDENTIAL", "INSURANCE", "JURISDICTION")),
+        func.coalesce(VerificationCase.reason_code, "") != "RENEWED",
+        VerificationCase.updated_at >= since, VerificationCase.updated_at < until)) or 0

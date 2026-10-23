@@ -5,7 +5,7 @@ import { formatMoney } from '../../api/orgs'
 import { adminApi, type AdminOverview } from '../../api/saved'
 import { useCapabilities } from '../../auth/capabilities'
 import {
-  AdminHeader, AdminKpi, Callout, CountTabs, Donut, HBars, KpiStrip, MetricList, Panel, PanelRow, TrendChart, CHART_COLORS,
+  AdminHeader, AdminKpi, Callout, CountTabs, Donut, HBars, KpiStrip, MetricList, Panel, PanelRow, TrendChart, CHART_COLORS, label,
 } from '../../components/admin'
 import { Icon } from '../../components/dashboard'
 import { ErrorAlert, Loading, useStepUp } from '../../components/ui'
@@ -33,10 +33,53 @@ export interface Kpis {
   onboarding: { profilesStarted: number; profilesPublished: number; publishedNow: number; enterpriseReadyNow: number }
   trust: { tiersNow: Record<string, number>; reachedB: number; reachedA: number; downgrades: number }
   engagements: { engagementsStarted: number; engagementsCompleted: number; runningNow: number; activeBuyerOrganisations: number; activeProfessionals: number }
-  payments: { byCurrency: { currency: string; fundedMinor: number; releasedMinor: number; feesMinor: number; heldNowMinor: number; frozenNowMinor: number; takeRateBps: number | null }[] }
-  disputes: { opened: number; decided: number; openNow: number; medianDaysToDecision: number | null; decidedWithoutPlatform: number; byDecisionPath: Record<string, number> }
-  enforcement: { casesOpened: number; openNow: number; medianHoursToFirstDecision: number | null; actionsTaken: Record<string, number>; incidentsOpenNow: number; incidentsBySeverity: Record<string, number> }
+  payments: { byCurrency: { currency: string; fundedMinor: number; releasedMinor: number; feesMinor: number; heldNowMinor: number; frozenNowMinor: number; takeRateBps: number | null }[]
+    acceptance?: { milestonesAccepted: number; medianHoursSubmitToAccept: number | null; p90HoursSubmitToAccept: number | null }
+    paymentsCaptured?: number; refunds?: number; refundsPer100Payments?: number | null; disputesPer100Payments?: number | null
+    refundsByCurrency?: { currency: string; payments: number; refunds: number; refundedMinor: number; refundsPer100Payments: number | null }[]
+    approvals?: ApprovalBottlenecks }
+  disputes: { opened: number; decided: number; openNow: number; medianDaysToDecision: number | null; decidedWithoutPlatform: number; byDecisionPath: Record<string, number>
+    escalated?: number; escalationRatePct?: number | null; evidenceCompletenessPct?: number | null; appealsFiled?: number; appealRatePct?: number | null
+    organisationsWithDisputes?: number; repeatOrganisations?: number; professionalsWithDisputes?: number; repeatProfessionals?: number }
+  enforcement: { casesOpened: number; openNow: number; medianHoursToFirstDecision: number | null; actionsTaken: Record<string, number>; incidentsOpenNow: number; incidentsBySeverity: Record<string, number>
+    byLevel?: Record<string, number>; actionsApplied?: number; reversed?: number; reversalRatePct?: number | null; appealsFiled?: number; appealsDecided?: number
+    appealsUpheld?: number; appealSuccessRatePct?: number | null; subjectsActioned?: number; recurringSubjects?: number }
 }
+export interface ApprovalStep { step: number; role: string; completed: number; medianHoursWait: number | null; pending: number; oldestPendingHours: number | null; expired: number }
+export interface ApprovalBottlenecks { requests: number; pendingNow: number; steps: ApprovalStep[]; bottleneck: { step: number; role: string; medianHoursWait: number | null; pending: number } | null }
+export interface BoardExtras {
+  trustTierTrend?: { date: string; A: number; B: number; C: number }[]; enforcementReversalRatePct?: number | null; credentialExpiryIncidents?: number
+  enterpriseOnboarding?: { decided: number; approved: number; pendingNow: number; medianDaysToDecision: number | null }
+}
+export interface FunnelStep { step: string; viewed: number; completed: number; dropOffPct: number | null; position: number | null }
+export interface OnboardingFunnel { visitsStarted: number; visitsPublished: number; completionRatePct: number | null; steps: FunnelStep[]; profilesPublished: number; medianHoursSignupToPublish: number | null }
+export interface RequestFunnel { visitsStarted: number; visitsAbandoned: number; abandonmentRatePct: number | null; steps: FunnelStep[]
+  abandonedByStep: { step: string; visits: number }[]; requestsSent: number; proposals: { started: number; submitted: number; completionRatePct: number | null } }
+export interface SearchFunnel { searches: number; actions: { event: string; count: number; visits: number; per100Searches: number | null }[]
+  topFilters: { value: string; count: number }[]; topSpecializations: { value: string; count: number }[] }
+export interface Funnels { onboarding: OnboardingFunnel; request: RequestFunnel; search: SearchFunnel }
+
+/** Loads the three product funnels for a window; null when the person may not read them or the call fails. */
+export async function loadFunnels(range: Record<string, string>): Promise<Funnels | null> {
+  try {
+    const [onboarding, request, search] = await Promise.all([
+      api<OnboardingFunnel>('/v1/admin/analytics/funnels/onboarding', { query: range }),
+      api<RequestFunnel>('/v1/admin/analytics/funnels/request', { query: range }),
+      api<SearchFunnel>('/v1/admin/analytics/funnels/search', { query: range }),
+    ])
+    return { onboarding, request, search }
+  } catch {
+    return null
+  }
+}
+export const pctText = (v: number | null | undefined) => (v == null ? '—' : `${v.toLocaleString()}%`)
+export const hoursText = (h: number | null | undefined) => (h == null ? '—' : h < 48 ? `${h.toLocaleString()} h` : `${(h / 24).toFixed(1)} days`)
+const ACTION_LABEL: Record<string, string> = {
+  filter_applied: 'Filter applied', specialization_selected: 'Specialization chosen', quick_view_opened: 'Quick view opened',
+  compare_opened: 'Comparison opened', service_card_opened: 'Service opened', verification_detail_viewed: 'Verification details viewed',
+  enterprise_cta_clicked: 'Enterprise call to action',
+}
+const stepLabel = (s: string) => sentence(s.replace(/[-_]/g, ' '))
 export interface WorkerBacklog { unpublishedEvents: number; oldestUnpublishedSeconds: number; overdueTimers: number; oldestOverdueTimerSeconds: number
   retryingDeliveries: number; deadLetters: number; deadFinancialLetters: number }
 
@@ -102,7 +145,8 @@ export default function Analytics() {
   const canKpis = has('analytics.kpis.read')
   const canMoney = has('health.read')
   const [data, setData] = useState<MarketplaceHealth | null>(null)
-  const [kpis, setKpis] = useState<Kpis | null>(null)
+  const [kpis, setKpis] = useState<(Kpis & { board: Kpis['board'] & BoardExtras }) | null>(null)
+  const [funnels, setFunnels] = useState<Funnels | null>(null)
   const [kpiError, setKpiError] = useState<unknown>(null)
   const [overview, setOverview] = useState<AdminOverview | null>(null)
   const [worker, setWorker] = useState<WorkerBacklog | null>(null)
@@ -128,6 +172,7 @@ export default function Analytics() {
       // KPIs need a start date: "All time" asks from 2000, before any platform activity.
       if (canKpis) api<Kpis>('/v1/admin/kpis', { query: bounded ? range : { from: '2000-01-01T00:00:00Z', to: new Date().toISOString() } })
         .then((k) => { setKpis(k); setKpiError(null) }).catch(setKpiError)
+      loadFunnels(bounded ? range : { from: '2000-01-01T00:00:00Z', to: new Date().toISOString() }).then(setFunnels)
       adminApi.overview().then(setOverview).catch(() => {})
       if (canMoney) {
         api<WorkerBacklog>('/v1/admin/worker').then(setWorker).catch(() => {})
@@ -156,7 +201,7 @@ export default function Analytics() {
     if (!data) return
     const range = bounded ? `${since}_to_${until}` : 'all-time'
     downloadFile(`zoikorum-analytics-${range}.json`, JSON.stringify({ exportedAt: new Date().toISOString(), window: windowLabel,
-      marketplaceHealth: data, kpis, overview, worker, openPaymentExceptions: exceptions }, null, 2), 'application/json')
+      marketplaceHealth: data, kpis, funnels, overview, worker, openPaymentExceptions: exceptions }, null, 2), 'application/json')
   }
 
   const tiers = Object.entries(data?.trustTierDistribution ?? {}).sort(([a], [b]) => a.localeCompare(b))
@@ -175,6 +220,11 @@ export default function Analytics() {
   const pay = currencies.find((c) => c.currency === currency) ?? currencies[0] ?? null
   const fee = pay ? kpis?.board.feesByCurrency.find((f) => f.currency === pay.currency) : undefined
   const groups = data ? groupEventCounts(data.eventCounts) : []
+  const tierTrend = kpis?.board.trustTierTrend ?? []
+  const approvals = kpis?.payments.approvals
+  const ob = funnels?.onboarding
+  const rq = funnels?.request
+  const sr = funnels?.search
 
   const funnel = [
     overview && { label: 'Profiles created', value: overview.professionalProfiles.total },
@@ -322,6 +372,92 @@ export default function Analytics() {
                   { label: 'Actions taken', value: Object.values(kpis.enforcement.actionsTaken).reduce((a, b) => a + b, 0) },
                 ]} />
                 {Object.keys(kpis.enforcement.incidentsBySeverity).length > 0 && <HBars rows={Object.entries(kpis.enforcement.incidentsBySeverity).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => ({ label: `Incidents ${k}`, value: v }))} />}
+              </Panel>
+            </PanelRow>
+          )}
+
+          {funnels && (
+            <PanelRow>
+              <Panel title="Professional onboarding funnel" meta={windowLabel}>
+                <MetricList rows={[
+                  { label: 'Visits that started onboarding', value: ob!.visitsStarted.toLocaleString() },
+                  { label: 'Completion (published)', value: `${pctText(ob!.completionRatePct)} (${ob!.visitsPublished.toLocaleString()})` },
+                  { label: 'Median sign-up → published', value: hoursText(ob!.medianHoursSignupToPublish) },
+                ]} />
+                {ob!.steps.length ? <HBars rows={ob!.steps.map((s) => ({ label: `${stepLabel(s.step)} · ${pctText(s.dropOffPct)} drop-off`, value: s.viewed }))} format={(v) => `${v.toLocaleString()} visits`} />
+                  : <p className="muted small">No onboarding steps recorded in this period.</p>}
+                <p className="adm-foot-note">Steps from the web app; the median time comes from profile records ({ob!.profilesPublished.toLocaleString()} published).</p>
+              </Panel>
+              <Panel title="Request & proposal funnel" meta={windowLabel}>
+                <MetricList rows={[
+                  { label: 'Visits that started a request', value: rq!.visitsStarted.toLocaleString() },
+                  { label: 'Abandoned', value: `${pctText(rq!.abandonmentRatePct)} (${rq!.visitsAbandoned.toLocaleString()})`, tone: (rq!.abandonmentRatePct ?? 0) > 50 ? 'amber' : undefined },
+                  { label: 'Requests sent', value: rq!.requestsSent.toLocaleString() },
+                  { label: 'Proposals submitted / started', value: `${rq!.proposals.submitted} / ${rq!.proposals.started} (${pctText(rq!.proposals.completionRatePct)})` },
+                ]} />
+                {rq!.abandonedByStep.length > 0 && <HBars rows={rq!.abandonedByStep.map((a) => ({ label: `Left at ${stepLabel(a.step)}`, value: a.visits, color: CHART_COLORS[3] }))} />}
+                {rq!.steps.length > 0 && <details style={{ marginTop: 10 }}><summary className="small">Per-step completion</summary>
+                  <MetricList rows={rq!.steps.map((s) => ({ label: stepLabel(s.step), value: `${s.completed} of ${s.viewed} · ${pctText(s.dropOffPct)} drop-off` }))} /></details>}
+              </Panel>
+              <Panel title="Search micro-conversions" meta={`${sr!.searches.toLocaleString()} searches`}>
+                <HBars rows={sr!.actions.map((a) => ({ label: ACTION_LABEL[a.event] ?? a.event, value: a.count }))}
+                  format={(v) => (sr!.searches ? `${v.toLocaleString()} · ${(Math.round((1000 * v) / sr!.searches) / 10).toLocaleString()} per 100` : v.toLocaleString())} />
+                {sr!.topFilters.length > 0 && <p className="adm-foot-note">Top filters: {sr!.topFilters.slice(0, 5).map((f) => `${stepLabel(f.value)} (${f.count})`).join(', ')}</p>}
+                {sr!.topSpecializations.length > 0 && <p className="adm-foot-note">Top specializations: {sr!.topSpecializations.slice(0, 5).map((f) => `${stepLabel(f.value)} (${f.count})`).join(', ')}</p>}
+              </Panel>
+            </PanelRow>
+          )}
+
+          {kpis && (
+            <PanelRow>
+              <Panel title="Payment flow" meta={windowLabel}>
+                <MetricList rows={[
+                  { label: 'Median submit → acceptance', value: hoursText(kpis.payments.acceptance?.medianHoursSubmitToAccept) },
+                  { label: '90th percentile submit → acceptance', value: hoursText(kpis.payments.acceptance?.p90HoursSubmitToAccept) },
+                  { label: 'Payments captured', value: (kpis.payments.paymentsCaptured ?? 0).toLocaleString() },
+                  { label: 'Refunds per 100 payments', value: kpis.payments.refundsPer100Payments ?? '—', tone: (kpis.payments.refundsPer100Payments ?? 0) > 10 ? 'amber' : undefined },
+                  { label: 'Disputes per 100 payments', value: kpis.payments.disputesPer100Payments ?? '—', tone: (kpis.payments.disputesPer100Payments ?? 0) > 5 ? 'amber' : undefined },
+                ]} />
+                {(kpis.payments.refundsByCurrency ?? []).some((r) => r.refunds) && <p className="adm-foot-note">Refunded: {moneyList((kpis.payments.refundsByCurrency ?? []).filter((r) => r.refunds).map((r) => ({ currency: r.currency, amountMinor: r.refundedMinor })))}</p>}
+              </Panel>
+              <Panel title="Approval bottlenecks" meta={approvals ? `${approvals.requests} requests · ${approvals.pendingNow} pending` : windowLabel}>
+                {!approvals || approvals.steps.length === 0 ? <p className="muted small">No policy approvals in this period.</p> : <>
+                  <HBars rows={approvals.steps.map((s) => ({ label: `Step ${s.step} · ${label(s.role)}`, value: s.medianHoursWait ?? 0 }))} format={(v) => hoursText(v)} />
+                  {approvals.bottleneck && <p className="adm-foot-note">Slowest: step {approvals.bottleneck.step} ({label(approvals.bottleneck.role)}), median {hoursText(approvals.bottleneck.medianHoursWait)}, {approvals.bottleneck.pending} waiting now.</p>}
+                </>}
+              </Panel>
+              <Panel title="Dispute & enforcement quality" meta={windowLabel}>
+                <MetricList rows={[
+                  { label: 'Disputes escalated to mediation', value: pctText(kpis.disputes.escalationRatePct) },
+                  { label: 'Evidence complete from both parties', value: pctText(kpis.disputes.evidenceCompletenessPct) },
+                  { label: 'Appeals per decided dispute', value: pctText(kpis.disputes.appealRatePct) },
+                  { label: 'Repeat disputes (organisations / professionals)', value: `${kpis.disputes.repeatOrganisations ?? 0} / ${kpis.disputes.repeatProfessionals ?? 0}`,
+                    tone: (kpis.disputes.repeatOrganisations ?? 0) + (kpis.disputes.repeatProfessionals ?? 0) ? 'amber' : undefined },
+                  { label: 'Enforcement reversal rate', value: pctText(kpis.enforcement.reversalRatePct) },
+                  { label: 'Appeal success rate', value: `${pctText(kpis.enforcement.appealSuccessRatePct)} of ${kpis.enforcement.appealsDecided ?? 0}` },
+                  { label: 'Recurring violations (subjects)', value: kpis.enforcement.recurringSubjects ?? 0, tone: kpis.enforcement.recurringSubjects ? 'red' : undefined },
+                ]} />
+                {Object.keys(kpis.enforcement.byLevel ?? {}).length > 0 && <HBars rows={Object.entries(kpis.enforcement.byLevel ?? {}).map(([k, v]) => ({ label: `Level ${k.slice(1)}`, value: v }))} />}
+              </Panel>
+            </PanelRow>
+          )}
+
+          {kpis && (
+            <PanelRow cols={2}>
+              <Panel title="Trust tier trend" meta="From the tier history">
+                {tierTrend.length > 1 ? <TrendChart kind="line" labels={tierTrend.map((p) => axisLabel(p.date.slice(0, 10)))} series={(['A', 'B', 'C'] as const).map((t) => ({
+                  label: `Tier ${t}`, values: tierTrend.map((p) => p[t]), color: TIER_COLORS[t] }))} />
+                  : <p className="muted small">Not enough tier history in this period.</p>}
+                <p className="adm-foot-note">Professionals with a recorded tier at the end of each interval.</p>
+              </Panel>
+              <Panel title="Board indicators" meta={windowLabel}>
+                <MetricList rows={[
+                  { label: 'Enforcement reversal rate', value: pctText(kpis.board.enforcementReversalRatePct) },
+                  { label: 'Credential-expiry incidents', value: kpis.board.credentialExpiryIncidents ?? 0, tone: kpis.board.credentialExpiryIncidents ? 'amber' : undefined },
+                  { label: 'Enterprise Ready decisions (approved)', value: `${kpis.board.enterpriseOnboarding?.decided ?? 0} (${kpis.board.enterpriseOnboarding?.approved ?? 0})` },
+                  { label: 'Enterprise onboarding cycle (median)', value: kpis.board.enterpriseOnboarding?.medianDaysToDecision == null ? '—' : `${kpis.board.enterpriseOnboarding.medianDaysToDecision} days` },
+                  { label: 'Enterprise applications waiting', value: kpis.board.enterpriseOnboarding?.pendingNow ?? 0 },
+                ]} />
               </Panel>
             </PanelRow>
           )}

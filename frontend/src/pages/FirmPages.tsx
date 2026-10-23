@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
-import { FIRM_ROLE_INFO, firmApi, formatMoney, type Firm, type FirmMember, type FirmMoney, type FirmOverview, type FirmRole,
+import { FIRM_ROLE_INFO, firmApi, formatMoney, type Firm, type FirmMember, type FirmMoney, type FirmOffering, type FirmOverview, type FirmRole,
   type Invitation } from '../api/orgs'
+import { taxonomyApi, type TaxonomySpecialization } from '../api/professional'
 import { verificationApi, type VerificationCase } from '../api/verification'
 import { ChecksPanel } from './VerificationPages'
 import { useAuth } from '../auth/AuthContext'
@@ -276,7 +277,111 @@ export function FirmProfilePage() {
         </fieldset>
         {!isAdmin && <p className="muted small">Only Firm Admins can edit the firm profile.</p>}
       </form>
+      <FirmOfferingsPanel firm={firm} isAdmin={isAdmin} />
     </>
+  )
+}
+
+const OFFERING_TYPES: [string, string][] = [['ADVISORY', 'Advisory'], ['PROJECT', 'Project'], ['RETAINER', 'Retainer'], ['FRACTIONAL', 'Fractional']]
+const OFFERING_STATUS: Record<string, string> = { DRAFT: 'Draft', PUBLISHED: 'Published', UNPUBLISHED: 'Unpublished' }
+const NO_OFFERING = { title: '', summary: '', specialization: '', engagementTypes: ['PROJECT'], pricingModel: 'FIXED', price: '', currency: 'USD', deliveredBy: [] as string[] }
+
+/** Firm-level offerings: services the firm publishes, delivered by its members. A regulated specialization needs a
+    verified firm, a verified representative and a verified, licensed delivering member before it can be published. */
+export function FirmOfferingsPanel({ firm, isAdmin }: { firm: Firm; isAdmin: boolean }) {
+  const [items, setItems] = useState<FirmOffering[]>([])
+  const [pros, setPros] = useState<{ professionalId: string; displayName: string; tier: string }[]>([])
+  const [specs, setSpecs] = useState<TaxonomySpecialization[]>([])
+  const [form, setForm] = useState(NO_OFFERING)
+  const [error, setError] = useState<unknown>(null)
+  const [busy, setBusy] = useState(false)
+  const load = useCallback(async () => { setItems(await firmApi.offerings(firm.id)) }, [firm.id])
+  useEffect(() => {
+    load().catch(setError)
+    if (isAdmin) firmApi.overview(firm.id).then((o) => setPros(o.professionals)).catch(setError)
+    taxonomyApi.all().then((cats) => setSpecs(cats.flatMap((c) => c.groups.flatMap((g) => g.specializations)))).catch(() => setSpecs([]))
+  }, [load, firm.id, isAdmin])
+
+  async function act(work: () => Promise<unknown>) {
+    setBusy(true)
+    setError(null)
+    try {
+      await work()
+      await load()
+    } catch (err) {
+      setError(err)
+    } finally {
+      setBusy(false)
+    }
+  }
+  const chosen = specs.find((s) => s.slug === form.specialization)
+  function create(e: FormEvent) {
+    e.preventDefault()
+    act(async () => {
+      await firmApi.createOffering(firm.id, { title: form.title.trim(), summary: form.summary.trim(), specialization: form.specialization,
+        engagementTypes: form.engagementTypes, pricingModel: form.pricingModel,
+        startingPriceMinor: form.price ? Math.round(parseFloat(form.price) * 100) : null, currency: form.price ? form.currency : null,
+        deliveredBy: form.deliveredBy })
+      setForm(NO_OFFERING)
+    })
+  }
+  const toggle = (list: string[], v: string) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v])
+
+  return (
+    <section className="card panel" style={{ maxWidth: 880 }} aria-label="Firm offerings">
+      <h2>Firm offerings</h2>
+      <p className="muted small">Services your firm offers, delivered by named members. Regulated work needs a verified firm, a verified
+        authorized representative, and at least one verified, licensed member delivering it.</p>
+      <ErrorAlert error={error} />
+      {items.length === 0 ? <p className="muted">No offerings yet.</p> : (
+        <table className="data small"><thead><tr><th>Offering</th><th>Delivered by</th><th>Status</th><th /></tr></thead>
+          <tbody>{items.map((o) => (
+            <tr key={o.id}>
+              <td><strong>{o.title}</strong>{o.regulated && <span className="badge warn" style={{ marginLeft: 6 }}>regulated</span>}
+                <div className="muted">{o.specializationName ?? o.specialization}
+                  {o.startingPriceMinor != null && o.currency ? ` · from ${formatMoney({ amountMinor: o.startingPriceMinor, currency: o.currency })}` : ''}</div></td>
+              <td>{o.deliveredBy.map((d) => <div key={d.professionalId}>{d.displayName} <span className="muted">Tier {d.tier}</span>
+                {o.regulated && <span className={`badge ${d.licensed ? 'green' : ''}`} style={{ marginLeft: 4 }}>{d.licensed ? 'licensed' : 'not licensed'}</span>}</div>)}</td>
+              <td><span className={`badge ${o.status === 'PUBLISHED' ? 'green' : 'warn'}`}>{OFFERING_STATUS[o.status] ?? o.status}</span>
+                {o.unpublishedReason && <div className="muted">{o.unpublishedReason}</div>}</td>
+              <td>{isAdmin && (o.status === 'PUBLISHED'
+                ? <button type="button" className="btn btn-ghost btn-sm" disabled={busy} onClick={() => act(() => firmApi.unpublishOffering(firm.id, o.id))}>Unpublish</button>
+                : <button type="button" className="btn btn-secondary btn-sm" disabled={busy} onClick={() => act(() => firmApi.publishOffering(firm.id, o.id))}>Publish</button>)}</td>
+            </tr>))}</tbody></table>)}
+      {isAdmin && (
+        <details style={{ marginTop: 12 }}><summary><strong>Add an offering</strong></summary>
+          <form onSubmit={create} style={{ marginTop: 8 }}>
+            <Field label="Title" id="fo-title"><input id="fo-title" className="input" value={form.title} maxLength={200}
+              onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field>
+            <Field label="Summary" id="fo-summary"><textarea id="fo-summary" className="input" rows={3} maxLength={2000} value={form.summary}
+              onChange={(e) => setForm({ ...form, summary: e.target.value })} /></Field>
+            <Field label="Specialization" id="fo-spec" hint={chosen?.regulated ? 'Regulated: a verified, licensed member must deliver it.' : undefined}>
+              <select id="fo-spec" className="input" value={form.specialization} onChange={(e) => setForm({ ...form, specialization: e.target.value })}>
+                <option value="">Choose…</option>
+                {specs.map((s) => <option key={s.slug} value={s.slug}>{s.name}{s.regulated ? ' (regulated)' : ''}</option>)}
+              </select></Field>
+            <p id="fo-types" className="small" style={{ margin: '8px 0 4px' }}>Engagement types</p>
+            <div role="group" aria-labelledby="fo-types">{OFFERING_TYPES.map(([k, l]) => <label key={k} className="checkbox small" style={{ display: 'inline-flex', marginRight: 12 }}>
+              <input type="checkbox" checked={form.engagementTypes.includes(k)} onChange={() => setForm({ ...form, engagementTypes: toggle(form.engagementTypes, k) })} /> <span>{l}</span></label>)}</div>
+            <div className="row">
+              <Field label="Pricing" id="fo-pricing"><select id="fo-pricing" className="input" value={form.pricingModel} onChange={(e) => setForm({ ...form, pricingModel: e.target.value })}>
+                {['FIXED', 'HOURLY', 'RETAINER', 'CUSTOM'].map((p) => <option key={p} value={p}>{p.toLowerCase()}</option>)}</select></Field>
+              <Field label="Starting price (optional)" id="fo-price"><input id="fo-price" className="input" inputMode="decimal" value={form.price}
+                onChange={(e) => setForm({ ...form, price: e.target.value.replace(/[^\d.]/g, '') })} /></Field>
+              <Field label="Currency" id="fo-currency"><select id="fo-currency" className="input" value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })}>
+                {['USD', 'GBP', 'EUR', 'INR', 'CAD', 'AUD', 'SGD', 'AED'].map((c) => <option key={c}>{c}</option>)}</select></Field>
+            </div>
+            <p id="fo-people" className="small" style={{ margin: '8px 0 4px' }}>Delivered by</p>
+            {pros.length === 0 ? <p className="muted small">No professionals practise under the firm yet.</p> : (
+              <div role="group" aria-labelledby="fo-people">{pros.map((p) => <label key={p.professionalId} className="checkbox small" style={{ display: 'inline-flex', marginRight: 12 }}>
+                <input type="checkbox" checked={form.deliveredBy.includes(p.professionalId)}
+                  onChange={() => setForm({ ...form, deliveredBy: toggle(form.deliveredBy, p.professionalId) })} /> <span>{p.displayName} (Tier {p.tier})</span></label>)}</div>)}
+            <button className="btn btn-primary" style={{ marginTop: 8 }}
+              disabled={busy || form.title.trim().length < 3 || !form.specialization || form.engagementTypes.length === 0 || form.deliveredBy.length === 0}>Save as draft</button>
+          </form>
+        </details>
+      )}
+    </section>
   )
 }
 

@@ -1,16 +1,21 @@
 import csv
 import io
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
-from fastapi import APIRouter, Query, Response
+from fastapi import APIRouter, Query, Request, Response
+from zoikorum.config import get_settings
 from zoikorum.domains.analytics import service
+from zoikorum.domains.analytics.schemas import ClientEventsIn
 from zoikorum.domains.buyer import facade as buyer
+from zoikorum.domains.identity import facade as identity
 from zoikorum.domains.professional import facade as professional
-from zoikorum.shared.auth import CurrentActor
+from zoikorum.shared import clock, ratelimit
+from zoikorum.shared.auth import CurrentActor, OptionalActor
 from zoikorum.shared.capabilities import Cap
 from zoikorum.shared.db import AnalyticsSession, DbSession
-from zoikorum.shared.errors import NotFound, ValidationFailed
+from zoikorum.shared.errors import NotFound, RateLimited, ValidationFailed
+from zoikorum.shared.http import caller_key
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_audit
 from zoikorum.shared.report_pdf import render_pdf
@@ -55,6 +60,58 @@ async def marketplace_health(actor: CurrentActor, session: AnalyticsSession, sin
     actor.require_capability(Cap.ANALYTICS_READ)
     validate_dates(since, until)
     return await service.marketplace_health(session, since, until)
+
+
+# Funnel events arrive in small batches from every page view: a budget per signed-in session or client address on top of
+# the general limit, so one browser cannot flood the facts table.
+EVENTS_LIMIT = (60, 30)  # batches per minute, burst
+
+
+@router.post("/v1/analytics/events", status_code=202)
+async def client_events(body: ClientEventsIn, request: Request, session: DbSession, actor: OptionalActor):
+    """Product-funnel events from the web app (sign-in optional). Only allowlisted names and a few short, non-personal
+    properties are stored, at the server's time; the visit id is kept only as a one-way hash. Unknown names are skipped."""
+    if get_settings().rate_limit_enabled:
+        if not await ratelimit.get_buckets().take(ratelimit.bucket_key("client-events", ":".join(caller_key(request))), *EVENTS_LIMIT):
+            raise RateLimited("Too many analytics events. Please wait a minute.")
+    return await service.record_client_events(session, body.events, body.sessionId, actor is not None)
+
+
+def funnel_window(since, until):
+    validate_dates(since, until)
+    until = until or clock.now()
+    return since or until - timedelta(days=30), until
+
+
+@router.get("/v1/admin/analytics/funnels/onboarding")
+async def onboarding_funnel(actor: CurrentActor, session: AnalyticsSession, since: datetime | None = Query(None, alias="from"),
+                            until: datetime | None = Query(None, alias="to")):
+    """Professional onboarding for [from, to) (default the last 30 days): per-step views, completions and drop-off,
+    the completion rate, and the median time from sign-up to a published profile (from profile records)."""
+    actor.require_capability(Cap.ANALYTICS_READ)
+    since, until = funnel_window(since, until)
+    published = await professional.publish_times(session, since, until)
+    signed_up = await identity.created_at_many(session, list({i for i, _, _ in published}))
+    hours = [(p - signed_up.get(i, c)).total_seconds() / 3600 for i, c, p in published]
+    return await service.onboarding_funnel(session, since, until, hours)
+
+
+@router.get("/v1/admin/analytics/funnels/request")
+async def request_funnel(actor: CurrentActor, session: AnalyticsSession, since: datetime | None = Query(None, alias="from"),
+                         until: datetime | None = Query(None, alias="to")):
+    """The buyer request flow (per-step completion, abandonment per step) and the proposal flow for [from, to)."""
+    actor.require_capability(Cap.ANALYTICS_READ)
+    since, until = funnel_window(since, until)
+    return await service.request_funnel(session, since, until)
+
+
+@router.get("/v1/admin/analytics/funnels/search")
+async def search_funnel(actor: CurrentActor, session: AnalyticsSession, since: datetime | None = Query(None, alias="from"),
+                        until: datetime | None = Query(None, alias="to")):
+    """Search micro-conversions for [from, to): filters, specializations, quick views, comparisons and more per 100 searches."""
+    actor.require_capability(Cap.ANALYTICS_READ)
+    since, until = funnel_window(since, until)
+    return await service.search_micro_conversions(session, since, until)
 
 
 @router.post("/v1/admin/analytics/rebuild")

@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
   AVAILABILITY, CURRENCIES, ENGAGEMENT_TYPES, LABEL, PRICING_MODELS, proApi, taxonomyApi, toMajor, toMinor,
   type Availability, type EngagementType, type Offering, type PricingModel, type Profile, type TaxonomySpecialization,
 } from '../api/professional'
 import { HoursSlider } from '../components/HoursSlider'
 import { ErrorAlert, Field, Loading } from '../components/ui'
+import { DraftSaved, ResumeDraft } from '../components/ResumeDraft'
+import { useAuth } from '../auth/AuthContext'
+import { clearDraft, readDraft, useAutosave } from '../lib/autosave'
 import { priceText, useMyProfile } from './ProfessionalPages'
 
 const STATUS_CLS: Record<string, string> = { ACTIVE: 'green', PAUSED: 'warn', DRAFT: '' }
@@ -42,7 +45,13 @@ function OfferingWizard({ profile: initialProfile, offering: initial, onDone, on
   const [templates, setTemplates] = useState<Record<string, TaxonomySpecialization>>({})
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
-  const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value })
+  const [touched, setTouched] = useState(false)
+  const set = (k: keyof typeof f) => (e: { target: { value: string } }) => { setTouched(true); setF({ ...f, [k]: e.target.value }) }
+  // Autosave (same as the profile steps): unsaved wording is kept in this browser and offered back on return.
+  const { user } = useAuth()
+  const draftKey = user ? `${user.id}.offering.${initial?.id ?? 'new'}` : null
+  const savedAt = useAutosave(draftKey, { f, types }, touched)
+  const [pending, setPending] = useState(() => readDraft<{ f: typeof f; types: EngagementType[] }>(draftKey))
 
   useEffect(() => {
     taxonomyApi.all().then((cats) => setTemplates(Object.fromEntries(
@@ -94,6 +103,7 @@ function OfferingWizard({ profile: initialProfile, offering: initial, onDone, on
     setError(null)
     try {
       if (offering.status !== 'ACTIVE') await proApi.activateOffering(offering.id)
+      clearDraft(draftKey)
       onDone()
     } catch (err) {
       setError(err)
@@ -114,7 +124,11 @@ function OfferingWizard({ profile: initialProfile, offering: initial, onDone, on
           </button>
         ))}
       </nav>
+      {pending && !touched && <ResumeDraft savedAt={pending.savedAt}
+        onResume={() => { setF(pending.value.f); setTypes(pending.value.types); setPending(null); setTouched(true) }}
+        onDiscard={() => { clearDraft(draftKey); setPending(null) }} />}
       <ErrorAlert error={error} />
+      <div style={{ textAlign: 'right', minHeight: 18 }}><DraftSaved at={savedAt} /></div>
       <form onSubmit={save}>
         {step === 0 && <>
           <div className="row">
@@ -139,7 +153,7 @@ function OfferingWizard({ profile: initialProfile, offering: initial, onDone, on
           </Field>
           {suggested.length > 0 && !f.deliverables.trim() && (
             <p className="small" style={{ marginTop: -8 }}>
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setF({ ...f, deliverables: suggested.join('\n') })}>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setTouched(true); setF({ ...f, deliverables: suggested.join('\n') }) }}>
                 Use typical deliverables</button>{' '}<span className="muted">{suggested.join(' · ')}</span>
             </p>
           )}
@@ -151,7 +165,7 @@ function OfferingWizard({ profile: initialProfile, offering: initial, onDone, on
             {ENGAGEMENT_TYPES.map((t) => (
               <label key={t} className="role-option">
                 <input type="checkbox" checked={types.includes(t)}
-                  onChange={(e) => setTypes(e.target.checked ? [...types, t] : types.filter((x) => x !== t))} />
+                  onChange={(e) => { setTouched(true); setTypes(e.target.checked ? [...types, t] : types.filter((x) => x !== t)) }} />
                 <span>{LABEL[t]}</span>
               </label>
             ))}
@@ -230,10 +244,24 @@ function OfferingWizard({ profile: initialProfile, offering: initial, onDone, on
 export function OfferingsPage() {
   const { profile, loading } = useMyProfile()
   const [offerings, setOfferings] = useState<Offering[]>([])
-  const [editing, setEditing] = useState<Offering | 'new' | null>(null)
+  const [editing, setEditingState] = useState<Offering | 'new' | null>(null)
   const [error, setError] = useState<unknown>(null)
+  const [params, setParams] = useSearchParams()
   const load = useCallback(() => proApi.offerings().then(setOfferings).catch(setError), [])
   useEffect(() => { if (profile) load() }, [profile, load])
+  // Deep links from the dashboard: ?edit=<offering id> opens that service, ?new=1 starts a new one.
+  const wanted = params.get('edit')
+  const startNew = params.get('new') === '1'
+  useEffect(() => {
+    if (wanted) {
+      const o = offerings.find((x) => x.id === wanted)
+      if (o) setEditingState(o)
+    } else if (startNew) setEditingState('new')
+  }, [wanted, startNew, offerings])
+  function setEditing(o: Offering | 'new' | null) {
+    setEditingState(o)
+    setParams(o === null ? {} : o === 'new' ? { new: '1' } : { edit: o.id }, { replace: true })
+  }
 
   if (loading) return <Loading />
   if (!profile) return <p className="muted">Create your <Link to="/app/professional">professional profile</Link> first.</p>
@@ -282,6 +310,7 @@ export function OfferingsPage() {
       )}
       {editing && (
         <OfferingWizard profile={profile} offering={editing === 'new' ? null : editing}
+          key={editing === 'new' ? 'new' : editing.id}
           onCancel={() => setEditing(null)} onDone={async () => { setEditing(null); await load() }} />
       )}
       {offerings.length === 0 && !editing && profile.specializations.length > 0 && (
@@ -289,7 +318,7 @@ export function OfferingsPage() {
       )}
       <div className="offering-grid">
         {offerings.map((o) => (
-          <article key={o.id} className="card offering">
+          <article key={o.id} id={`offering-${o.id}`} className="card offering">
             <div className="offering-top">
               <h3>{o.title}</h3>
               <span className={`badge ${STATUS_CLS[o.status]}`}>{LABEL[o.status]}</span>

@@ -6,6 +6,8 @@ import type { Money } from './orgs'
    then the professional; each needs a fresh two-step confirmation) and milestones. */
 
 export type ContractStatus = 'PENDING_SIGNATURE' | 'ACTIVE' | 'COMPLETED' | 'TERMINATED' | 'DISPUTED'
+/** What people see: AWAITING_PAYMENT_PROTECTION is a signed engagement (status ACTIVE) whose first funding is not in place. */
+export type ContractStage = 'AWAITING_SIGNATURES' | 'AWAITING_PAYMENT_PROTECTION' | ContractStatus
 export type MilestoneStatus = 'PENDING_FUNDING' | 'IN_PROGRESS' | 'SUBMITTED' | 'REVISION_REQUESTED' | 'ACCEPTANCE_PENDING_APPROVAL'
   | 'ACCEPTED' | 'DISPUTED' | 'CANCELLED'
 
@@ -91,6 +93,8 @@ export interface ContractTerms {
   startDate: string | null
   endDate: string | null
   governingLaw?: string  // set by an enterprise policy; otherwise the Terms of Service apply
+  successCriteria?: { definition: string | null; measures: string[] }  // from the request
+  scopeChanges?: { kind: string; target: string | null; proposed: string; reason: string | null }[]  // agreed suggestions
   /** Deadlines pinned when the contract was made; challengeWindowDays: days after acceptance before payment is released. */
   policySettings?: { challengeWindowDays?: number | null }
 }
@@ -136,6 +140,7 @@ export interface Contract {
   engagementType: string
   pricingModel: string | null
   status: ContractStatus
+  stage?: ContractStage
   pendingChangeOrderId: string | null
   total: Money
   termsHash: string
@@ -182,7 +187,8 @@ export interface TerminationRequest {
 export interface ActivityEntry { at: string; what: string; action: string; by: string; hash: string }
 export interface EngagementFile { source: string; name: string; sha256: string; size: number; uploadedAt: string | null; url: string }
 
-export interface ContractSummary { role: 'buyer' | 'professional'; contracts: Partial<Record<ContractStatus, number>>; milestones: Partial<Record<MilestoneStatus, number>> }
+export interface ContractSummary { role: 'buyer' | 'professional'; contracts: Partial<Record<ContractStatus, number>>; milestones: Partial<Record<MilestoneStatus, number>>
+  awaitingPaymentProtection?: number }
 
 const C = '/v1/contracts'
 const idem = () => ({ 'Idempotency-Key': crypto.randomUUID() })
@@ -271,6 +277,12 @@ export const CONTRACT_STATUS: Record<ContractStatus, { label: string; tone: '' |
   PENDING_SIGNATURE: { label: 'Awaiting signatures', tone: 'warn' }, ACTIVE: { label: 'Active', tone: 'green' },
   COMPLETED: { label: 'Completed', tone: 'green' }, TERMINATED: { label: 'Terminated', tone: '' }, DISPUTED: { label: 'Disputed', tone: 'warn' },
 }
+export const CONTRACT_STAGE: Record<ContractStage, { label: string; tone: '' | 'green' | 'warn' }> = {
+  ...CONTRACT_STATUS, AWAITING_SIGNATURES: CONTRACT_STATUS.PENDING_SIGNATURE,
+  AWAITING_PAYMENT_PROTECTION: { label: 'Awaiting payment protection', tone: 'warn' },
+}
+/** The stage to show (older responses without `stage` fall back to the status). */
+export const stageOf = (c: Pick<Contract, 'status' | 'stage'>): ContractStage => c.stage || c.status
 export const MILESTONE_STATUS: Record<MilestoneStatus, { label: string; tone: '' | 'green' | 'warn' }> = {
   PENDING_FUNDING: { label: 'Awaiting funding', tone: '' }, IN_PROGRESS: { label: 'In progress', tone: 'warn' },
   SUBMITTED: { label: 'Submitted for review', tone: 'warn' }, REVISION_REQUESTED: { label: 'Revision requested', tone: 'warn' },

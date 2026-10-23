@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Date, Boolean, BigInteger, DateTime, ForeignKey, Index, String
+from sqlalchemy import Date, Boolean, BigInteger, DateTime, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -59,6 +59,11 @@ class DisputeCase(Base, UUIDPk, Timestamps, Versioned):
     retention_basis: Mapped[str | None] = mapped_column(String(200))  # why that date: platform, policy or jurisdiction
     legal_hold: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     retention_review_due: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")  # referral to an outside arbitrator: {forum, reason, referredAt, award...}
+    # Opt-in decision paths each party consents to: {"BINDING_RECOMMENDATION": ["BUYER", ...], "ENTERPRISE_ADMIN": [...]}
+    agreements: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
+    # A binding mediator recommendation or an enterprise admin decision, waiting out its challenge period:
+    # {path, outcome, allocations, summary, citations, decidedBy, issuedAt, challengeEndsAt, appealed}
+    provisional_decision: Mapped[dict | None] = mapped_column(JSONB)
 
 
 class DisputeAppeal(Base, UUIDPk, Timestamps):
@@ -75,6 +80,23 @@ class DisputeAppeal(Base, UUIDPk, Timestamps):
     decision_reason: Mapped[str | None] = mapped_column(String(4000))
     remediation: Mapped[str | None] = mapped_column(String(4000))
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # DECISION: a platform decision already in force; PROVISIONAL: a binding recommendation or enterprise admin decision
+    # challenged before it took effect (nothing has moved yet).
+    against: Mapped[str] = mapped_column(String(20), nullable=False, default="DECISION", server_default="DECISION")
+
+
+class ReportSubscription(Base, UUIDPk, Timestamps):
+    """An organisation admin's opt-in to a scheduled dispute report (CSV), sent on a durable timer."""
+
+    __tablename__ = "report_subscriptions"
+    __table_args__ = (UniqueConstraint("organization_id", "identity_id", name="uq_dispute_report_subscriber"), {"schema": SCHEMA})
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    identity_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    frequency: Mapped[str] = mapped_column(String(10), nullable=False)  # WEEKLY | MONTHLY
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    next_run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class EvidenceItem(Base, UUIDPk, CreatedAt):

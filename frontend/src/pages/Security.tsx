@@ -1,6 +1,7 @@
 import QRCode from 'qrcode'
 import { useEffect, useState, type FormEvent } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import { tokens } from '../api/client'
 import { authApi, type Passkey } from '../api/auth'
 import { createPasskey, passkeyCancelled, passkeysSupported } from '../lib/passkeys'
 import { useAuth } from '../auth/AuthContext'
@@ -20,7 +21,7 @@ function SetupQr({ uri }: { uri: string }) {
 
 /** Two-step verification (TOTP). Required for staff, Firm Admins and Enterprise Admins. */
 export default function Security() {
-  const { user, reloadUser, stepUp } = useAuth()
+  const { user, reloadUser } = useAuth()
   const navigate = useNavigate()
   const required = (useLocation().state as { required?: boolean } | null)?.required || user?.mfaRequired
   const [setup, setSetup] = useState<{ secret: string; otpauthUri: string } | null>(null)
@@ -50,9 +51,10 @@ export default function Security() {
     setBusy(true)
     setError(null)
     try {
-      const { recoveryCodes } = await authApi.verifyMfa(code)
+      const { recoveryCodes, tokens: upgraded } = await authApi.verifyMfa(code)
       setCodes(recoveryCodes)  // show them even if the step below fails: they are already active
-      await stepUp(code) // upgrade this session to MFA strength right away
+      // The server already upgraded this sign-in to a two-step session (the same code cannot be used twice).
+      if (upgraded) { tokens.set(upgraded); window.dispatchEvent(new Event('zk:session-upgraded')) }
       await reloadUser()
       setSetup(null)
       setCode('')
@@ -85,7 +87,7 @@ export default function Security() {
               {codes.map((c) => <li key={c}>{c}</li>)}</ul>
             <div className="row">
               <button type="button" className="btn btn-secondary" onClick={() => navigator.clipboard?.writeText(codes.join('\n')).catch(() => {})}>Copy</button>
-              <button type="button" className="btn btn-primary" onClick={() => { setCodes(null); if (required) navigate(dashboardPath(user), { replace: true }) }}>
+              <button type="button" className="btn btn-primary" onClick={() => { setCodes(null); if (required || user.platformRoles.length) navigate(dashboardPath(user), { replace: true }) }}>
                 I have saved them</button>
             </div>
           </div>

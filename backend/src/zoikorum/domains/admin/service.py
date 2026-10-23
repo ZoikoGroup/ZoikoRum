@@ -24,7 +24,7 @@ from zoikorum.shared.event_catalog import E
 from zoikorum.shared.relay import schedule_timer, cancel_timer
 
 EXPIRY_TIMER = "admin.restriction_expiry"
-ACTION_LEVEL = {"WARNING": 1, "VISIBILITY_REDUCTION": 2, "DISPUTE_ACCESS_RESTRICTION": 2, "ENGAGEMENT_SUSPENSION": 3,
+ACTION_LEVEL = {"WARNING": 1, "VISIBILITY_REDUCTION": 2, "DISPUTE_ACCESS_RESTRICTION": 2, "MANDATORY_REMEDIATION": 2, "ENGAGEMENT_SUSPENSION": 3,
                 "CREDENTIAL_ENFORCEMENT": 3, "VERIFICATION_RESET": 3, "SUSPEND_ACCOUNT": 4, "OFFBOARD": 4}
 
 
@@ -35,6 +35,26 @@ async def is_subject(session, actor, case):
         pro = await professional_facade.get_professional(session, case.subject_id)
         return pro is not None and pro.identity_id == actor.identity_id
     return "ORG_ADMIN" in await buyer_facade.get_member_roles(session, case.subject_id, actor.identity_id)
+
+
+async def no_conflict(session, actor, c):
+    """Staff who declared a conflict of interest with the case's subject, or recused themselves from the case, may not
+    assess, act on, approve or review it (Ethics: conflicts of interest)."""
+    from zoikorum.domains.admin import governance
+    subjects = [(c.subject_type, c.subject_id)]
+    if c.subject_type == "PROFESSIONAL":
+        pro = await professional_facade.get_professional(session, c.subject_id)
+        if pro:
+            subjects.append(("IDENTITY", pro.identity_id))
+    if await governance.declared_conflict(session, actor.identity_id, subjects, ("ENFORCEMENT_CASE", str(c.id))):
+        raise Forbidden("You declared a conflict of interest with this subject, or recused yourself from this case",
+                        code="CONFLICT_OF_INTEREST_DECLARED")
+
+
+def require_post_review(c):
+    if c.level >= 3 and not c.post_review:
+        raise Conflict("A Level 3 or 4 case needs its post-review (root cause, user experience impact, policy updates "
+                       "proposed) before it closes", code="POST_REVIEW_REQUIRED")
 
 
 async def staff(session, actor, *caps):
@@ -63,7 +83,9 @@ def case_out(c):
             "triageDueAt": triage_due(c) if open_ else None, "overdue": open_ and triage_due(c) < clock.now(),
             "appealDeadline": deadline, "canAppeal": c.level >= 2 and c.status == "ACTIVE" and not c.appeal
             and deadline is not None and clock.now() <= deadline,
-            "remediation": c.remediation or []}
+            "remediation": c.remediation or [], "userImpact": c.user_impact, "postReview": c.post_review,
+            "postReviewRequired": c.level >= 3 and not c.post_review and c.status not in ("CLOSED_NO_ACTION", "CONCLUDED"),
+            "concludedAt": c.concluded_at, "canConclude": c.level >= 3 and c.status == "REVERSED"}
 
 
 async def case_get(session, case_id, lock=False):
@@ -99,18 +121,35 @@ async def open_case(session, actor, body):
 
 async def close_case(session, actor, case_id, reason):
     """Reviewed and no action is needed (Level 0: no breach, or an education message is enough). Recorded with the
-    reason; reporters are told it was reviewed. A case with a proposed or applied action is reversed instead."""
+    reason; reporters are told it was reviewed and the subject gets an educational notice (never who reported or the
+    staff reason). A case with a proposed or applied action is reversed instead."""
     await staff(session, actor, Cap.SAFETY_ACT)
     c = await case_get(session, case_id, True)
     if c.status not in ("TRIAGE", "ASSESSED"):
         raise Conflict("Only a case without a proposed or applied action can be closed this way", code="CASE_NOT_OPEN")
     if await is_subject(session, actor, c):
         raise Forbidden("You cannot close your own case")
+    await no_conflict(session, actor, c)
+    require_post_review(c)
     c.status = "CLOSED_NO_ACTION"
     record_audit(session, "admin.case.closed", object_type="EnforcementCase", object_id=c.id, details={"reason": reason.strip()})
     record_event(session, E.ENFORCEMENT_CASE_CLOSED, aggregate_type="EnforcementCase", aggregate_id=c.id,
-                 payload={"caseId": c.id, "level": c.level, "reason": reason.strip()})
+                 payload={"caseId": c.id, "level": c.level, "reason": reason.strip(), "subjectType": c.subject_type,
+                          "subjectId": c.subject_id, "notice": CLOSED_NOTICE,
+                          "organizationId": c.subject_id if c.subject_type == "ORGANIZATION" else None})
     return case_out(c)
+
+
+# What the subject of a closed case is told (notification/service.py): educational, no reporter and no staff reason.
+CLOSED_NOTICE = {
+    "whatHappened": "Our Trust & Safety team reviewed a concern about activity on your account.",
+    "whyItHappened": "We look into every concern raised with us, whether it comes from a report or our own checks.",
+    "whatChanged": "Nothing. No action was taken and your account is not restricted.",
+    "whatYouCanDo": "Please take a moment to re-read the Trust & Safety Charter: keep payments, contracts and messages "
+                    "on Zoikorum and describe your services and credentials accurately.",
+    "whatHappensNext": "No further steps are needed. This review does not count against you.",
+    "howToGetHelp": "If you have questions, contact Support from the Help page.",
+}
 
 
 async def assess(session, actor, case_id, body):
@@ -120,9 +159,11 @@ async def assess(session, actor, case_id, body):
         raise Conflict("An issued or proposed action cannot be reassessed")
     if await is_subject(session, actor, c):
         raise Forbidden("You cannot assess your own case")
+    await no_conflict(session, actor, c)
     c.level, c.reason_code, c.status = body.level, body.reasonCode, "ASSESSED"
+    c.user_impact = body.userImpact.strip()
     record_audit(session, "admin.case.assessed", object_type="EnforcementCase", object_id=c.id,
-                 details={"level": c.level, "reasonCode": c.reason_code})
+                 details={"level": c.level, "reasonCode": c.reason_code, "userImpact": c.user_impact})
     return case_out(c)
 
 
@@ -134,6 +175,11 @@ async def propose_action(session, actor, case_id, body):
         raise Conflict("The action must match the assessed enforcement level")
     if await is_subject(session, actor, c):
         raise Forbidden("You cannot propose an action on your own case")
+    await no_conflict(session, actor, c)
+    if body.action == "MANDATORY_REMEDIATION" and not any(t.strip() for t in body.remediation):
+        raise ValidationFailed("Mandatory remediation names at least one task the person must complete", code="REMEDIATION_TASKS_REQUIRED")
+    if not c.user_impact:
+        raise ValidationFailed("Record the user impact assessment before proposing an action", code="USER_IMPACT_REQUIRED")
     if body.action in ("SUSPEND_ACCOUNT", "OFFBOARD") and c.subject_type != "IDENTITY":
         raise ValidationFailed("Account suspension and offboarding require an identity subject")
     if body.action in ("VISIBILITY_REDUCTION", "CREDENTIAL_ENFORCEMENT", "VERIFICATION_RESET") and c.subject_type != "PROFESSIONAL":
@@ -158,6 +204,7 @@ async def approve_action(session, actor, case_id):
         raise Conflict("There is no action awaiting approval")
     if c.proposed_by == actor.identity_id or await is_subject(session, actor, c):
         raise Forbidden("An independent operator must approve the action", code="FOUR_EYES")
+    await no_conflict(session, actor, c)
     if any(v["identityId"] == str(actor.identity_id) for v in c.approvals):
         raise Conflict("You already approved this action")
     live_roles = await identity_facade.live_platform_roles(session, actor.identity_id)
@@ -185,6 +232,7 @@ async def reverse_case(session, actor, case_id, reason):
     c = await case_get(session, case_id, True)
     if await is_subject(session, actor, c):
         raise Forbidden("You cannot reverse your own restriction")
+    await no_conflict(session, actor, c)
     if c.level >= 3 and c.proposed_by == actor.identity_id:
         raise Forbidden("Another senior reviewer must reverse a restriction you proposed", code="FOUR_EYES")
     await reverse(session, c, actor.identity_id, reason)
@@ -229,6 +277,7 @@ async def decide_appeal(session, actor, case_id, body):
     involved = {str(c.opened_by), str(c.proposed_by), *(v["identityId"] for v in c.approvals)}
     if str(actor.identity_id) in involved or await is_subject(session, actor, c):
         raise Forbidden("An independent reviewer must decide the appeal", code="FOUR_EYES")
+    await no_conflict(session, actor, c)
     if not c.appeal or c.appeal["status"] != "PENDING":
         raise Conflict("No appeal is awaiting review")
     c.appeal = {**c.appeal, "status": "UPHELD" if body.upheld else "REJECTED", "decisionReason": body.reason,
@@ -291,6 +340,7 @@ async def remediation_confirm(session, actor, case_id, index: int):
     c = await case_get(session, case_id, True)
     if await is_subject(session, actor, c):
         raise Forbidden("You cannot confirm your own remediation")
+    await no_conflict(session, actor, c)
     tasks = list(c.remediation or [])
     if not 0 <= index < len(tasks) or not tasks[index].get("done"):
         raise Conflict("The task is not marked done yet", code="TASK_NOT_DONE")
@@ -299,6 +349,8 @@ async def remediation_confirm(session, actor, case_id, index: int):
     record_audit(session, "admin.remediation.confirmed", object_type="EnforcementCase", object_id=c.id, details={"task": index})
     if all(t.get("confirmedBy") for t in tasks):
         event(session, E.ENFORCEMENT_REMEDIATION_COMPLETED, c)
+        if c.action == "MANDATORY_REMEDIATION" and c.status == "ACTIVE":  # the remediation was the whole action: it ends
+            await reverse(session, c, actor.identity_id, "Every mandatory remediation task was completed and confirmed.")
     return case_out(c)
 
 
@@ -311,6 +363,7 @@ async def executive_override(session, actor, case_id, reason: str):
     involved = {str(c.opened_by), str(c.proposed_by), *(v["identityId"] for v in c.approvals)}
     if str(actor.identity_id) in involved or await is_subject(session, actor, c):
         raise Forbidden("An executive not involved in the case must make an override", code="FOUR_EYES")
+    await no_conflict(session, actor, c)
     record_audit(session, "admin.executive_override", object_type="EnforcementCase", object_id=c.id,
                  details={"reason": reason, "previousStatus": c.status})
     await reverse(session, c, actor.identity_id, "Executive override: " + reason)
@@ -336,6 +389,49 @@ async def queue(session, actor, status: str | None, level: int | None, overdue: 
         stmt = stmt.where(is_overdue)
     stmt = stmt.order_by(sql_case((is_overdue, 0), else_=1), EnforcementCase.created_at.desc()).limit(limit).offset(offset)
     return [case_out(c) for c in (await session.scalars(stmt)).all()]
+
+
+# ---- Level 3+ post-review and conclusion (Governance playbook: learning from serious cases) ---------------------------
+
+async def post_review(session, actor, case_id, body):
+    """Root cause, user experience impact and policy updates proposed, for a Level 3 or 4 case (Risk Lead or Legal).
+    Audited; recording it again replaces it."""
+    await staff(session, actor, Cap.SAFETY_ASSESS, Cap.SAFETY_APPEALS_DECIDE)
+    c = await case_get(session, case_id, True)
+    if c.level < 3:
+        raise Conflict("Post-reviews are for Level 3 and 4 cases", code="POST_REVIEW_NOT_NEEDED")
+    if c.status in ("CLOSED_NO_ACTION", "CONCLUDED"):
+        raise Conflict("This case is closed", code="CASE_CLOSED")
+    if await is_subject(session, actor, c):
+        raise Forbidden("You cannot review your own case")
+    await no_conflict(session, actor, c)
+    c.post_review = {"rootCause": body.rootCause.strip(), "uxImpact": body.uxImpact.strip(), "policyUpdates": body.policyUpdates.strip(),
+                     "by": str(actor.identity_id), "at": clock.now().isoformat()}
+    record_audit(session, "admin.case.post_review", object_type="EnforcementCase", object_id=c.id, details=c.post_review)
+    return case_out(c)
+
+
+async def conclude_case(session, actor, case_id):
+    """A Level 3+ case whose action has ended (reversed, expired or completed) is concluded once its post-review is in."""
+    await staff(session, actor, Cap.SAFETY_ACT, Cap.SAFETY_REVERSE)
+    c = await case_get(session, case_id, True)
+    if c.level < 3 or c.status != "REVERSED":
+        raise Conflict("Only a Level 3 or 4 case whose action has ended is concluded", code="CASE_NOT_ENDED")
+    await no_conflict(session, actor, c)
+    require_post_review(c)
+    c.status, c.concluded_at = "CONCLUDED", clock.now()
+    record_audit(session, "admin.case.concluded", object_type="EnforcementCase", object_id=c.id, details={"level": c.level})
+    return case_out(c)
+
+
+async def open_referral_case(session, subject_type: str, subject_id: uuid.UUID, source: str, summary: str, evidence_refs: list[str]) -> uuid.UUID:
+    """A Level 0 review opened by another workstream (a dispute decision recommending an account restriction, a
+    third-party fraud alert). Trust & Safety decides any action through the usual assess / propose / approve steps."""
+    c = EnforcementCase(subject_type=subject_type, subject_id=subject_id, signal_source=source, summary=summary[:2000],
+                        evidence_refs=list(evidence_refs), level=0)
+    session.add(c); await session.flush()
+    event(session, E.ENFORCEMENT_CASE_OPENED, c)
+    return c.id
 
 
 # ---- Staff admin console: platform configuration (read-only) --------------------------------------------------------

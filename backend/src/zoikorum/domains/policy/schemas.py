@@ -13,6 +13,37 @@ from zoikorum.shared.auth import OrgRole
 from zoikorum.shared.uploads import UploadIn
 
 
+OrgRoleName = Literal["ORG_ADMIN", "REQUESTER", "APPROVER", "BUDGET_OWNER", "LEGAL_REVIEWER", "EXCEPTION_AUTHORITY"]
+CLAUSE_NAMES = {"CONFIDENTIALITY", "IP_OWNERSHIP", "TERMINATION", "GOVERNING_LAW"}
+
+
+class ContractVariantIn(BaseModel):
+    """A regional contract variant: engagements whose contracting jurisdiction is listed use this governing law and
+    these clause texts (over the profile's own) when the contract is generated."""
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(min_length=1, max_length=40, pattern="^[A-Za-z0-9_-]+$")
+    name: str = Field(min_length=2, max_length=80)
+    jurisdictions: list[str] = Field(min_length=1, max_length=50)
+    governingLaw: str | None = Field(default=None, max_length=200)
+    clauseTexts: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("jurisdictions")
+    @classmethod
+    def countries(cls, values):
+        values = sorted(set(v.upper() for v in values))
+        if any(len(v) != 2 or not v.isalpha() or not v.isascii() for v in values):
+            raise ValueError("use ISO two-letter country codes")
+        return values
+
+    @model_validator(mode="after")
+    def clauses(self):
+        if any(k not in CLAUSE_NAMES or not v.strip() or len(v) > 6000 for k, v in self.clauseTexts.items()):
+            raise ValueError("variant clause texts must use supported clause names with nonempty text of at most 6000 characters")
+        if not self.governingLaw and not self.clauseTexts:
+            raise ValueError("a contract variant sets a governing law, clause texts, or both")
+        return self
+
+
 class SettingsIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     minTrustTier: Literal["A", "B", "C"] = "B"
@@ -44,6 +75,26 @@ class SettingsIn(BaseModel):
     governingLaw: str | None = Field(default=None, max_length=200)
     clauseTexts: dict[str, str] = Field(default_factory=dict)
     stepUpForApprovals: bool = True
+    # Payment rules. Escrow itself is never optional (platform baseline); these shape how milestones and retainers use it.
+    milestoneMaxSharePercent: int | None = Field(default=None, ge=1, le=100)  # no milestone above this share of the total
+    milestoneAcceptanceCriteriaRequired: bool = False  # every milestone names deliverables with acceptance criteria
+    retainerAutoFundAllowed: bool = True  # retainer cycles may be funded automatically from a saved payment method
+    retainerCycleApproval: bool = False  # each retainer cycle needs an approval before it is funded
+    retainerCycleApprovalRole: OrgRoleName = "APPROVER"
+    # Exceptions: who may ask (None: any member) and who may decide (None: Exception Authority only).
+    exceptionRequestRoles: list[OrgRoleName] | None = None
+    exceptionApproverRoles: list[OrgRoleName] | None = None
+    # Regional contract variants, chosen by the contracting jurisdiction when the contract is generated.
+    contractVariants: list[ContractVariantIn] = Field(default_factory=list, max_length=20)
+
+    @field_validator("exceptionRequestRoles", "exceptionApproverRoles")
+    @classmethod
+    def role_lists(cls, values):
+        if values is None:
+            return values
+        if not values:
+            raise ValueError("name at least one role, or leave empty for the default")
+        return sorted(set(values))
 
     @field_validator("allowedJurisdictions", "allowedCurrencies")
     @classmethod
@@ -58,11 +109,17 @@ class SettingsIn(BaseModel):
 
     @model_validator(mode="after")
     def platform_safety(self):
-        allowed_clauses = {"CONFIDENTIALITY", "IP_OWNERSHIP", "TERMINATION", "GOVERNING_LAW"}
-        if any(k not in allowed_clauses or not v.strip() or len(v) > 6000 for k, v in self.clauseTexts.items()):
+        if any(k not in CLAUSE_NAMES or not v.strip() or len(v) > 6000 for k, v in self.clauseTexts.items()):
             raise ValueError("clause texts must use supported clause names with nonempty text of at most 6000 characters")
         if not self.escrowRequired:
             raise ValueError("the platform baseline requires escrow before work; enterprise profiles cannot disable it")
+        if len({v.id for v in self.contractVariants}) != len(self.contractVariants):
+            raise ValueError("contract variant ids must be unique")
+        seen: set[str] = set()
+        for variant in self.contractVariants:
+            if seen & set(variant.jurisdictions):
+                raise ValueError("a country can belong to one contract variant only")
+            seen |= set(variant.jurisdictions)
         window = self.acceptanceWindowDays or get_settings().acceptance_window_days
         if self.autoAcceptAfterDays is not None and self.autoAcceptAfterDays < window:
             raise ValueError("automatic acceptance cannot precede the review window")

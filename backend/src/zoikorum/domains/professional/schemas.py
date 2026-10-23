@@ -40,6 +40,7 @@ class ProfilePatch(BaseModel):
     clearRate: bool = False
     # Attests to controls for regulated data (confidential financial, personal or client-money records); audited.
     handlesRegulatedData: bool | None = None
+    onsiteRegions: list[str] | None = Field(default=None, max_length=20)  # cities or regions for on-site work
 
 
 class RegisterIn(BaseModel):
@@ -109,6 +110,7 @@ class ProfileOut(BaseModel):
     servedJurisdictions: list[str]
     licensedJurisdictions: list[str]
     handlesRegulatedData: bool = False
+    onsiteRegions: list[str] = []
     crossBorderAcknowledged: bool
     publishedAt: datetime | None
     version: int
@@ -266,6 +268,9 @@ class PublicProfileOut(BaseModel):
     pendingSpecializations: list[str] = []  # shown as "Custom (under review)"
     verificationInProgress: list[str] = []  # checks under review now, e.g. "Identity", "CPA (California)"
     verificationReport: list[dict] = []  # completed checks: {check, status, verifiedAt, expiresAt}
+    onsiteRegions: list[str] = []  # where on-site work is offered
+    profileStatus: str = "PUBLISHED"  # DRAFT | PUBLISHED | UNPUBLISHED | SUSPENDED (owner/operator previews only differ)
+    underReview: bool = False  # Zoikorum is reviewing the profile (reduced visibility): shown as "Profile under review"
     enterprise: dict = {}  # Enterprise Signals: {enterpriseReady, signals: [...]}
 
 

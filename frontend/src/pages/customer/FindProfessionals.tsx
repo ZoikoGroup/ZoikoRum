@@ -16,6 +16,7 @@ import { countryName } from '../ProfessionalPages'
 import { useSavedIds } from '../SavedPage'
 import { savedApi } from '../../api/saved'
 import { SearchBox } from '../../components/SearchBox'
+import { ProcurementFilters } from '../BrowseProfessionals'
 
 const INDUSTRIES = ['Professional Services', 'Financial Services', 'Technology', 'Healthcare', 'Manufacturing', 'Retail & Consumer',
   'Energy & Utilities', 'Public Sector', 'Education', 'Real Estate', 'Other']
@@ -149,7 +150,9 @@ export default function FindProfessionals() {
     engagementType: (v) => LABEL[v] ?? v, delivery: (v) => LABEL[v] ?? v, availability: (v) => LABEL[v] ?? v, pricingModel: (v) => LABEL[v] ?? v,
     credential: (v) => `Credential: ${v}`, industry: (v) => `Industry: ${v}`, crossBorder: () => 'Cross-border',
     budgetMaxMinor: (v) => `Up to ${formatMoney({ amountMinor: Number(v), currency: params.get('budgetCurrency') ?? 'USD' })}`,
-    language: (v) => `Speaks ${v}`, enterpriseReady: () => 'Enterprise Ready', specMatch: () => 'Match all expertise',
+    language: (v) => `Speaks ${v}`, enterpriseReady: () => 'Security-review ready', specMatch: () => 'Match all expertise',
+    credentials: (v) => `Credentials: ${v.replace(/,/g, ' or ')}`, priorEnterprise: () => 'Prior enterprise engagements',
+    multiCurrency: () => 'Multiple currencies',
   }
   const active: [string, string][] = [...params.entries()].filter(([k]) => k in NAMES).map(([k, v]) => [k, NAMES[k](v)])
   const relaxable = active.some(([k]) => !['q', 'spec'].includes(k))
@@ -272,8 +275,7 @@ export default function FindProfessionals() {
             <label className="filter-label" htmlFor="f-ind">Industry experience</label>
             <select id="f-ind" className="input" value={params.get('industry') ?? ''} onChange={(e) => set('industry', e.target.value || null)}>
               <option value="">Any</option>{INDUSTRIES.map((i) => <option key={i}>{i}</option>)}</select>
-            <label className="checkbox small"><input type="checkbox" checked={params.get('enterpriseReady') === 'true'}
-              onChange={(e) => set('enterpriseReady', e.target.checked ? 'true' : null)} /><span>Enterprise Ready only</span></label>
+            <ProcurementFilters params={params} facets={data?.facets} set={set} toggleList={toggleList} />
             <label className="checkbox small"><input type="checkbox" checked={params.get('crossBorder') === 'true'}
               onChange={(e) => set('crossBorder', e.target.checked ? 'true' : null)} /><span>Works across borders</span></label>
             <label className="filter-label" htmlFor="f-budget">Starting price up to</label>

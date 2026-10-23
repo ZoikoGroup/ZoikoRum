@@ -162,6 +162,10 @@ class RecoveryCodesOut(BaseModel):
     recoveryCodes: list[str]  # shown once: keep them somewhere safe
 
 
+class MfaVerifyOut(RecoveryCodesOut):
+    tokens: TokenPair | None = None  # this sign-in, now a two-step session (set when two-step was just turned on)
+
+
 class MfaResetIn(BaseModel):
     reason: str = Field(min_length=10, max_length=500)  # how the person's identity was confirmed
 

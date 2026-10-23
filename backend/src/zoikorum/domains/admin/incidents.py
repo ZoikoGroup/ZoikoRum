@@ -4,7 +4,8 @@ Any staff member opens an incident; its owner (the incident commander) moves it 
 UNACKNOWLEDGED -> INVESTIGATING -> MITIGATING -> MONITORING -> RECOVERED -> CLOSED.
 Mitigation is not verified recovery: RECOVERED needs a recovery verification note from a staff member who is neither
 the incident owner nor the person who set MITIGATING. Severity SEV1/SEV2 incidents need a root cause, every
-remediation task done and a written post-incident review before they close. Every change is audited and timestamped;
+remediation task done and a written post-incident review (with the user experience impact and the policy updates
+proposed) before they close. Every change is audited and timestamped;
 nothing is deleted.
 """
 
@@ -32,7 +33,9 @@ STAMP = {"INVESTIGATING": "acknowledged_at", "MITIGATING": "contained_at", "MONI
 
 class IncidentIn(BaseModel):
     title: str = Field(min_length=5, max_length=200)
-    kind: Literal["SECURITY", "DATA", "PAYMENTS", "OUTAGE", "SAFETY", "OTHER"]
+    # CREDENTIAL_FAILURE: a verification or credential check failed at scale (wrong passes or fails);
+    # SYSTEM_INTEGRITY: records, ledgers or audit trails may be wrong or tampered with.
+    kind: Literal["SECURITY", "DATA", "PAYMENTS", "OUTAGE", "SAFETY", "CREDENTIAL_FAILURE", "SYSTEM_INTEGRITY", "OTHER"]
     severity: Literal["SEV1", "SEV2", "SEV3", "SEV4"]
     summary: str = Field(min_length=10, max_length=4000)
 
@@ -47,6 +50,8 @@ class IncidentUpdateIn(BaseModel):
     completeRemediation: list[int] = Field(default_factory=list, max_length=20)
     notified: list[dict] = Field(default_factory=list, max_length=10)  # [{party, note}] e.g. regulator, customers
     review: str | None = Field(default=None, max_length=8000)
+    uxImpact: str | None = Field(default=None, max_length=4000)  # post-incident review: how people were affected
+    policyUpdates: str | None = Field(default=None, max_length=4000)  # post-incident review: policy changes proposed
 
 
 async def _out(session, i: Incident) -> dict:
@@ -62,7 +67,8 @@ async def _out(session, i: Incident) -> dict:
             "mitigatedBy": name(i.mitigated_by), "mitigatedById": str(i.mitigated_by) if i.mitigated_by else None,
             "recoveryNote": i.recovery_note, "recoveryVerifiedBy": name(i.recovery_verified_by),
             "timeline": i.timeline, "notifications": i.notifications, "rootCause": i.root_cause,
-            "remediation": i.remediation, "review": i.review, "createdAt": i.created_at, "updatedAt": i.updated_at}
+            "remediation": i.remediation, "review": i.review, "uxImpact": i.ux_impact, "policyUpdates": i.policy_updates,
+            "createdAt": i.created_at, "updatedAt": i.updated_at}
 
 
 async def open_incident(session, actor, body: IncidentIn) -> dict:
@@ -99,7 +105,7 @@ async def update_incident(session, actor, incident_id: uuid.UUID, body: Incident
     owner = i.owner_id == actor.identity_id
     # Recovery is verified independently: any staff member other than the owner and the mitigator may record it.
     verifying = body.advanceTo == "RECOVERED"
-    if not owner and not lead and ((body.advanceTo and not verifying) or body.severity or body.review):
+    if not owner and not lead and ((body.advanceTo and not verifying) or body.severity or body.review or body.uxImpact or body.policyUpdates):
         raise Conflict("Only the incident owner or an incident lead can change its state", code="NOT_INCIDENT_OWNER")
     if body.advanceTo and NEXT.get(i.status) != body.advanceTo:
         raise Conflict(f"An incident moves {i.status.lower()} -> {NEXT.get(i.status, '?').lower()}", code="INVALID_STEP")
@@ -129,9 +135,14 @@ async def update_incident(session, actor, incident_id: uuid.UUID, body: Incident
                                                "at": now.isoformat(), "by": by} for n in body.notified]]
     if body.review:
         i.review = body.review.strip()
+    if body.uxImpact:
+        i.ux_impact = body.uxImpact.strip()
+    if body.policyUpdates:
+        i.policy_updates = body.policyUpdates.strip()
     if body.advanceTo:
         if body.advanceTo == "CLOSED" and i.severity in ("SEV1", "SEV2"):
             missing = [m for m, ok in (("a root cause", i.root_cause), ("a post-incident review", i.review),
+                                       ("the user experience impact", i.ux_impact), ("the policy updates proposed", i.policy_updates),
                                        ("every remediation task done", all(t["done"] for t in tasks))) if not ok]
             if missing:
                 raise ValidationFailed("Before closing a SEV1/SEV2 incident, record " + ", ".join(missing), code="REVIEW_REQUIRED")

@@ -20,6 +20,52 @@ const PAGES: Record<string, Page> = {
       'Verification documents and engagement records are access-controlled and every access is logged.',
     ],
   },
+  // Drafts: summaries of how the platform works today, pending legal review before launch.
+  'dispute-resolution': {
+    title: 'Dispute Resolution',
+    draft: true,
+    intro: 'How a disagreement about an engagement is settled: with the money held safely, evidence from both sides and a neutral person deciding.',
+    sections: [
+      { heading: 'Raising a dispute', points: [
+        'Either party can raise a dispute on a milestone from the engagement page, saying what went wrong and what outcome they want.',
+        'The moment a dispute is raised, the escrowed money for that milestone is frozen: neither side can release or withdraw it.'] },
+      { heading: 'Evidence and timing', points: [
+        'Both sides add evidence (deliverables, messages, files). Evidence cannot be edited or deleted once added.',
+        'Each stage has a clear time limit, shown on the dispute, so a case never stalls silently.'] },
+      { heading: 'Settling', points: [
+        'Most disputes are settled directly between the parties with a proposed split or a revision.',
+        'If not, a neutral mediator reviews the evidence and decides, with written reasons. One independent appeal is available.',
+        'The outcome is carried out exactly through escrow and recorded in the audit ledger.'] },
+    ],
+  },
+  security: {
+    title: 'Security',
+    draft: true,
+    intro: 'How Zoikorum protects accounts, documents, payments and records.',
+    sections: [
+      { heading: 'Accounts', points: [
+        'Two-step sign-in with an authenticator app or passkey; required for staff and for sensitive actions such as signing and releasing money.',
+        'Sessions can be reviewed and signed out from your security settings.'] },
+      { heading: 'Data', points: [
+        'Encryption in transit and at rest. Verification documents are access-controlled and every opening is recorded.',
+        'Role-based access for staff, with the least access needed for each role, and an append-only audit ledger.'] },
+      { heading: 'Reporting a vulnerability', points: [
+        'If you believe you have found a security issue, contact us through Help in the app. Please do not access other people’s data or disrupt the service while testing.'] },
+    ],
+  },
+  accessibility: {
+    title: 'Accessibility',
+    draft: true,
+    intro: 'Zoikorum aims to be usable by everyone, including people who use a keyboard only, a screen reader or magnification.',
+    sections: [
+      { heading: 'What we aim for', points: [
+        'WCAG 2.2 level AA: text alternatives, visible focus, sufficient colour contrast, labelled form fields and errors that say how to fix them.',
+        'Every task can be completed with a keyboard, and layouts adapt to small screens and zoom.'] },
+      { heading: 'Known gaps and feedback', points: [
+        'Some charts and document previews are still being improved for screen readers.',
+        'If something is hard to use, tell us through Help in the app; we treat accessibility problems as bugs.'] },
+    ],
+  },
   // Public commitments from the Trust & Safety Governance Charter v1.0.
   'trust-and-safety': {
     title: 'Trust & Safety Charter',
@@ -84,12 +130,13 @@ export default function Legal() {
       <main className="profile-wrap" style={{ maxWidth: 760 }}>
         <section className="card panel">
           <h1>{page.title}</h1>
-          {page.draft && <div className="alert alert-warn">The full, legally approved text will be published here before launch.</div>}
+          {page.draft && <div className="alert alert-warn"><span className="badge warn">Draft</span> The full, legally approved text will be published here before launch.</div>}
           {page.intro && <p className="lead">{page.intro}</p>}
           {page.points?.map((p) => <p key={p}>{p}</p>)}
           {page.sections?.map((s) => <section key={s.heading}><h2>{s.heading}</h2><ul className="why">{s.points.map((p) => <li key={p}>{p}</li>)}</ul></section>)}
           <p className="muted small">Also see: <Link to="/legal/trust-and-safety">Trust &amp; Safety Charter</Link> · <Link to="/legal/ethics">Ethics Code</Link> ·{' '}
-            <Link to="/legal/terms">Terms</Link> · <Link to="/legal/privacy">Privacy</Link></p>
+            <Link to="/legal/terms">Terms</Link> · <Link to="/legal/privacy">Privacy</Link> · <Link to="/legal/dispute-resolution">Dispute Resolution</Link> ·{' '}
+            <Link to="/legal/security">Security</Link> · <Link to="/legal/accessibility">Accessibility</Link></p>
         </section>
       </main>
       <SiteFooter />

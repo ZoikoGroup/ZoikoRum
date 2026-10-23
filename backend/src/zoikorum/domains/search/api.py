@@ -37,6 +37,7 @@ async def search_professionals(
     availability: str | None = None,
     pricingModel: str | None = None,
     credential: str | None = Query(default=None, max_length=100),
+    credentials: str | None = Query(default=None, max_length=500, description="Comma-separated credential names: any of them, verified"),
     jurisdiction: str | None = Query(default=None, pattern="^[A-Za-z]{2}$"),
     experience: str | None = Query(default=None, pattern=r"^(0-2|3-5|6-10|11-15|16\+)$"),
     publishedAfter: datetime | None = None,
@@ -46,6 +47,8 @@ async def search_professionals(
     budgetCurrency: str | None = Query(default=None, pattern="^[A-Za-z]{3}$"),
     language: str | None = Query(default=None, max_length=40),
     enterpriseReady: bool = False,
+    priorEnterprise: bool = False,
+    multiCurrency: bool = False,
     sort: Sort = "best",
     limit: int = Query(default=20, ge=1, le=50),
     offset: int = Query(default=0, ge=0, le=1000),
@@ -55,7 +58,8 @@ async def search_professionals(
                           engagementType=engagementType, delivery=delivery, availability=availability, pricingModel=pricingModel,
                           credential=credential, jurisdiction=jurisdiction, experience=experience, publishedAfter=publishedAfter,
                           industry=industry, crossBorder=crossBorder, budgetMaxMinor=budgetMaxMinor, budgetCurrency=budgetCurrency,
-                          language=language, enterpriseReady=enterpriseReady, sort=sort, limit=limit, offset=offset)
+                          language=language, enterpriseReady=enterpriseReady, credentials=_csv(credentials)[:10],
+                          priorEnterprise=priorEnterprise, multiCurrency=multiCurrency, sort=sort, limit=limit, offset=offset)
     return await service.cached_search(session, actor, params)
 
 

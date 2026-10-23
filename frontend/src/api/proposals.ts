@@ -24,6 +24,24 @@ export const PRICING_PREFS: [PricingPreference, string][] = [['HOURLY', 'Hourly'
 export const CADENCES: [PaymentCadence, string][] = [['MILESTONE', 'Milestone-based'], ['MONTHLY', 'Monthly'], ['COMPLETION', 'On completion']]
 
 export interface Budget { minMinor: number | null; maxMinor: number; currency: string }
+/** What the buyer said success looks like: carried into every proposal and into the contract scope. */
+export interface SuccessCriteria { definition: string | null; measures: string[] }
+
+export type ScopeChangeKind = 'ADD_DELIVERABLE' | 'REMOVE_DELIVERABLE' | 'MODIFY_DELIVERABLE' | 'TIMELINE' | 'BUDGET'
+export const SCOPE_CHANGE_KINDS: [ScopeChangeKind, string][] = [['ADD_DELIVERABLE', 'Add a deliverable'],
+  ['REMOVE_DELIVERABLE', 'Remove a deliverable'], ['MODIFY_DELIVERABLE', 'Change a deliverable'], ['TIMELINE', 'Change the timeline'],
+  ['BUDGET', 'Change the budget']]
+export const SCOPE_CHANGE_LABEL = Object.fromEntries(SCOPE_CHANGE_KINDS) as Record<ScopeChangeKind, string>
+/** One suggested change to what the buyer asked for; `target` is the requested deliverable it removes or changes. */
+export interface ScopeChangeInput { kind: ScopeChangeKind; target: string | null; proposed: string; reason: string | null }
+export interface ScopeChange extends ScopeChangeInput {
+  id: string; status: 'PENDING' | 'ACCEPTED' | 'REJECTED'; decidedAt: string | null; note: string | null
+}
+/** Governance signals on a proposal card. */
+export interface ProposalReadiness {
+  contractReady: boolean; contractReadyNote: string; paymentProtection: boolean; paymentProtectionNote: string
+  auditRecord: boolean; auditRecordNote: string; disputeResolution: boolean
+}
 export interface Attachment { name: string; sha256: string; size: number }
 export interface ProfessionalBrief { id: string; displayName: string; headline: string | null; photoUrl: string | null; tier: 'A' | 'B' | 'C'; country: string | null }
 
@@ -64,6 +82,7 @@ export interface ProposalRequest {
   dependencies: Dependency[]
   pricingPreferences: PricingPreference[]
   paymentCadence: PaymentCadence | null
+  successCriteria?: SuccessCriteria  // hidden with the details until the NDA is accepted
   jurisdictionConflict: boolean
   viewerRole: 'BUYER' | 'PROFESSIONAL' | 'OPERATOR'
   createdAt: string
@@ -94,6 +113,8 @@ export interface RequestInput {
   dependencies: Dependency[]
   pricingPreferences: PricingPreference[]
   paymentCadence: PaymentCadence | null
+  successDefinition?: string | null  // "What does done look like"
+  successMeasures?: string[]  // "How will it be measured"
   acknowledged: boolean
   draft: boolean
 }
@@ -105,7 +126,8 @@ export interface Delta { field: string; label: string; requested: string; propos
 export interface ProposalInput {
   summary: string
   scopeAlignment: 'CONFIRMED' | 'ADJUSTED'
-  scopeNotes: string | null
+  scopeNotes: string | null  // optional context for the structured changes
+  scopeChanges?: ScopeChangeInput[]
   deliverables: Deliverable[]
   milestones: Milestone[]
   pricingModel: 'HOURLY' | 'FIXED' | 'RETAINER'
@@ -117,8 +139,11 @@ export interface ProposalInput {
   validUntil: string | null
 }
 
-export interface Proposal extends ProposalInput {
+export interface Proposal extends Omit<ProposalInput, 'scopeChanges'> {
   attachments?: StoredFile[]  // portfolio items / supporting documents
+  scopeChanges?: ScopeChange[]
+  successCriteria?: SuccessCriteria
+  readiness?: ProposalReadiness | null
   id: string
   requestId: string
   groupId: string
@@ -174,6 +199,9 @@ export const proposalApi = {
   withdraw: (id: string) => api<Proposal>(`${P}/${id}/withdraw`, { method: 'POST' }),
   requestRevision: (id: string, changes: { field: string; requested: string }[], note?: string) =>
     api<Proposal>(`${P}/${id}/request-revision`, { method: 'POST', body: { changes, note: note || null } }),
+  /** Buyer: accept or reject one suggested scope change (accepted ones join the agreed scope and the contract). */
+  decideScopeChange: (id: string, changeId: string, accept: boolean, note?: string) =>
+    api<Proposal>(`${P}/${id}/scope-changes/${changeId}/decide`, { method: 'POST', body: { accept, note: note || null } }),
   reject: (id: string, reasonCode: BuyerDeclineReason, note?: string) =>
     api<Proposal>(`${P}/${id}/reject`, { method: 'POST', body: { reasonCode, note: note || null } }),
   accept: (id: string) => api<Proposal>(`${P}/${id}/accept`, { method: 'POST', headers: idem() }),

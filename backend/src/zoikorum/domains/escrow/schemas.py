@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -34,6 +35,8 @@ class AllocationOut(BaseModel):
     fundedAt: datetime | None
     releasedAt: datetime | None
     releaseReference: str | None = None  # shown on "Funds released": the release's transaction reference
+    releaseId: uuid.UUID | None = None  # its receipt: GET /v1/escrow/releases/{releaseId}/receipt
+    releaseApprovalDueAt: datetime | None = None  # RELEASE_PENDING_APPROVAL: the buyer's approval is due by then (SLA)
 
 
 class FundingOut(BaseModel):
@@ -46,8 +49,36 @@ class FundingOut(BaseModel):
     capturedAt: datetime | None
 
 
+ReleaseModel = Literal["MILESTONE", "RETAINER", "FIXED"]
+
+
+class ProtectionIn(BaseModel):
+    """Payment protection setup, after both signatures and before the first funding. Escrow is mandatory whatever the model."""
+    releaseModel: ReleaseModel
+    approverIdentityId: uuid.UUID | None = None  # who approves releases on the buyer side; empty: the person setting it up
+    disputeHoldAcknowledged: bool = False  # "a dispute freezes the affected money until it is resolved"
+
+
+class ProtectionOut(BaseModel):
+    releaseModel: ReleaseModel | None  # null: not set up yet (MILESTONE applies)
+    approverIdentityId: uuid.UUID | None
+    approverName: str | None
+    confirmedAt: datetime | None
+    explanation: str  # how money moves under the chosen model
+    disputeHold: str  # what happens to the money in a dispute
+    firstFunding: list[uuid.UUID]  # milestones the first funding must cover under this model
+
+
+class ScreeningOut(BaseModel):
+    """Buyer organisation screening, checked before any funding: FLAGGED blocks funding, PENDING warns."""
+    status: Literal["CLEAR", "PENDING", "FLAGGED", "NOT_SCREENED"]
+    message: str | None
+
+
 class EscrowOut(BaseModel):
     autoFundingEnabledAt: datetime | None = None  # retainer cycles funded automatically from a saved method
+    protection: ProtectionOut | None = None
+    buyerScreening: ScreeningOut | None = None  # buyer side only
     id: uuid.UUID
     contractId: uuid.UUID
     status: str

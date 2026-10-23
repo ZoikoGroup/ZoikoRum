@@ -12,10 +12,14 @@ from zoikorum.domains.firm.schemas import (
     FirmInviteIn,
     FirmMemberOut,
     FirmMemberPatch,
+    FirmOfferingIn,
+    FirmOfferingOut,
+    FirmOfferingPatch,
     FirmOut,
     FirmOverviewOut,
     FirmPatch,
     FirmPageOut,
+    UnpublishIn,
 )
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
@@ -102,3 +106,32 @@ async def invitations(firm_id: uuid.UUID, actor: CurrentActor, session: DbSessio
 @router.delete("/{firm_id}/invitations/{invitation_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_invitation(firm_id: uuid.UUID, invitation_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> None:
     await service.revoke_invitation(session, actor, firm_id, invitation_id)
+
+
+@router.get("/{firm_id}/offerings", response_model=list[FirmOfferingOut])
+async def offerings(firm_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    """The firm's offerings (drafts, published and unpublished), for its members."""
+    return await service.list_offerings(session, actor, firm_id)
+
+
+@router.post("/{firm_id}/offerings", response_model=FirmOfferingOut, status_code=status.HTTP_201_CREATED)
+async def create_offering(firm_id: uuid.UUID, body: FirmOfferingIn, actor: CurrentActor, session: DbSession):
+    """Firm Admins: a draft offering delivered by named member professionals."""
+    return await service.create_offering(session, actor, firm_id, body)
+
+
+@router.patch("/{firm_id}/offerings/{offering_id}", response_model=FirmOfferingOut)
+async def update_offering(firm_id: uuid.UUID, offering_id: uuid.UUID, body: FirmOfferingPatch, actor: CurrentActor, session: DbSession):
+    return await service.update_offering(session, actor, firm_id, offering_id, body)
+
+
+@router.post("/{firm_id}/offerings/{offering_id}/publish", response_model=FirmOfferingOut)
+async def publish_offering(firm_id: uuid.UUID, offering_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    """Publish. Regulated specializations need a verified firm, a verified representative and a verified, licensed
+    delivering member (403 REGULATED_OFFERING_NEEDS_LICENSED_MEMBER with the reasons otherwise)."""
+    return await service.publish_offering(session, actor, firm_id, offering_id)
+
+
+@router.post("/{firm_id}/offerings/{offering_id}/unpublish", response_model=FirmOfferingOut)
+async def unpublish_offering(firm_id: uuid.UUID, offering_id: uuid.UUID, body: UnpublishIn, actor: CurrentActor, session: DbSession):
+    return await service.unpublish_offering(session, actor, firm_id, offering_id, body.reason)

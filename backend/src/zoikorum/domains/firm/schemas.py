@@ -86,6 +86,7 @@ class FirmPageOut(BaseModel):
     hasVerifiedRepresentative: bool
     verifiedCredentials: list[str]
     professionals: list[FirmPageMember]
+    offerings: list["FirmOfferingOut"] = []
 
 
 class FirmPatch(BaseModel):
@@ -129,3 +130,63 @@ class FirmInvitationOut(BaseModel):
 
 class AcceptByTokenIn(BaseModel):
     token: str = Field(min_length=10)
+
+
+EngagementTypeName = Literal["ADVISORY", "PROJECT", "RETAINER", "FRACTIONAL"]
+PricingModelName = Literal["HOURLY", "FIXED", "RETAINER", "CUSTOM"]
+
+
+class FirmOfferingIn(BaseModel):
+    title: str = Field(min_length=3, max_length=200)
+    summary: str = Field(default="", max_length=2000)
+    specialization: str = Field(min_length=1, max_length=100)
+    engagementTypes: list[EngagementTypeName] = Field(default_factory=lambda: ["PROJECT"], min_length=1)
+    pricingModel: PricingModelName = "FIXED"
+    startingPriceMinor: int | None = Field(default=None, ge=0)
+    currency: str | None = Field(default=None, pattern="^[A-Z]{3}$")
+    deliveredBy: list[uuid.UUID] = Field(min_length=1, max_length=50)  # member professional ids
+
+
+class FirmOfferingPatch(BaseModel):
+    title: str | None = Field(default=None, min_length=3, max_length=200)
+    summary: str | None = Field(default=None, max_length=2000)
+    specialization: str | None = Field(default=None, min_length=1, max_length=100)
+    engagementTypes: list[EngagementTypeName] | None = Field(default=None, min_length=1)
+    pricingModel: PricingModelName | None = None
+    startingPriceMinor: int | None = Field(default=None, ge=0)
+    currency: str | None = Field(default=None, pattern="^[A-Z]{3}$")
+    deliveredBy: list[uuid.UUID] | None = Field(default=None, min_length=1, max_length=50)
+
+
+class OfferingMemberOut(BaseModel):
+    professionalId: uuid.UUID
+    displayName: str
+    tier: str
+    licensed: bool  # verified, licensed member (counts for regulated offerings)
+
+
+class FirmOfferingOut(BaseModel):
+    id: uuid.UUID
+    firmId: uuid.UUID
+    title: str
+    summary: str
+    specialization: str
+    specializationName: str | None
+    regulated: bool
+    engagementTypes: list[str]
+    pricingModel: str
+    startingPriceMinor: int | None
+    currency: str | None
+    deliveredBy: list[OfferingMemberOut]
+    status: str
+    publishedAt: datetime | None
+    unpublishedReason: str | None
+    version: int
+    createdAt: datetime
+
+
+class UnpublishIn(BaseModel):
+    reason: str | None = Field(default=None, max_length=300)
+
+
+FirmPageOut.model_rebuild()

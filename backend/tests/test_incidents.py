@@ -35,7 +35,9 @@ async def test_a_serious_incident_closes_only_after_root_cause_remediation_and_r
     blocked = await client.patch(url, headers=lead.h, json={"advanceTo": "CLOSED"})
     assert blocked.json()["code"] == "REVIEW_REQUIRED" and "root cause" in blocked.json()["detail"]
     r = await client.patch(url, headers=lead.h, json={"rootCause": "Expired provider API key.", "completeRemediation": [0],
-                                                      "review": "Key rotation is now calendared; alert added.", "advanceTo": "CLOSED"})
+                                                      "review": "Key rotation is now calendared; alert added.",
+                                                      "uxImpact": "Professionals saw payouts delayed by up to a day.",
+                                                      "policyUpdates": "None proposed: the payout policy held.", "advanceTo": "CLOSED"})
     body = r.json()
     assert body["status"] == "CLOSED" and body["closedAt"] and body["remediation"][0]["done"]
     assert [t["note"] for t in body["timeline"]][-1] == "Status: closed" and body["notifications"][0]["party"] == "Professionals affected"

@@ -164,3 +164,16 @@ async def accepted_values(session: AsyncSession, specializations: list[str], cur
     if engagement_type:
         q = q.where(ProposalRequest.engagement_type == engagement_type)
     return [int(v) for v in (await session.scalars(q)).all()]
+
+
+async def milestone_terms(session: AsyncSession, proposal_id: uuid.UUID) -> dict | None:
+    """The proposal's milestone plan and deliverables (policy checks milestone shape before submission and acceptance):
+    {"totalMinor", "milestones": [{title, amountMinor, deliverableKeys}], "deliverables": [{key, title, acceptanceCriteria}]}."""
+    p = await session.get(Proposal, proposal_id)
+    if p is None:
+        return None
+    return {"totalMinor": p.total_minor,
+            "milestones": [{"title": m.get("title"), "amountMinor": m.get("amountMinor"), "deliverableKeys": list(m.get("deliverableKeys") or [])}
+                           for m in p.milestones],
+            "deliverables": [{"key": d.get("key"), "title": d.get("title"), "acceptanceCriteria": d.get("acceptanceCriteria") or ""}
+                             for d in p.deliverables if isinstance(d, dict)]}

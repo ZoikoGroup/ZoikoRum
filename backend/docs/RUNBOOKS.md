@@ -112,3 +112,32 @@ Switches & Worker shows who paused it and why) and switch it back on when the ca
    `/ready`.
 3. To switch production over: pause funding, releases and payouts; stop the worker; change `ZK_DATABASE_URL`; start the
    API and worker; check `/ready`, reconciliation and the audit chain; resume.
+
+## SLO error budget burn
+
+Sign-in (`/v1/auth/*`), escrow, payments and the audit trail API each have a 30-day availability objective: 99.9% of
+requests without a server error (audit 99.95%). The `*ErrorBudgetFastBurn` alerts fire when the budget would be used up
+in about two days, `*SlowBurn` in about five; `ErrorBudgetSlowLeak` is a ticket for a steady leak over three days.
+
+1. Open the error-rate panel filtered to the area's routes; find the route templates and the status class.
+2. Check recent deploys (roll back if the burn started with one), partner circuit breakers (`zk_circuit_open`), the
+   database (connections, slow queries) and Redis (rate limits and the read cache fall back on their own, but slow).
+3. Traces of payments, escrow, contracts and disputes are always kept in full (`ZK_TRACING_ALWAYS_SAMPLE_PATHS`):
+   search the trace store for the failing route.
+4. When the burn stops, note the budget spent in the incident record; with less than 25% of the budget left, freeze
+   risky changes to that area until the window recovers.
+
+## Escrow ledger snapshot mismatch
+
+The daily escrow ledger snapshot (03:30 UTC, `python -m zoikorum.cli escrow-snapshots` on demand) found an account
+where the ledger and its balances disagree. P0 for Financial Operations: treat as possible ledger corruption.
+
+1. `GET /v1/admin/escrow/{accountId}/ledger-snapshot` shows the failed checks: `CHAIN` (a ledger line changed or
+   disappeared since the previous snapshot), `GROUP_BALANCE` (a money movement whose debits and credits differ) or
+   `HELD` (the ledger's held amount differs from the account's).
+2. Freeze money movement on the account (incident switch for releases) and preserve the evidence: the audit entry
+   `escrow.ledger_snapshot.mismatch` has the snapshot id and the figures.
+3. Compare with the payment provider (daily reconciliation) and the audit trail for the account's entry groups.
+4. Corrections are new balancing ledger lines approved by maker-checker; never edit or delete ledger rows. Take a new
+   snapshot (`POST /v1/admin/escrow/{accountId}/ledger-snapshot`) to confirm it is OK again.
+`EscrowLedgerSnapshotsNotRunning`: the worker's daily timer did not run; see "Worker stopped or behind".

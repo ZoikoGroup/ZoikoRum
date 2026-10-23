@@ -106,6 +106,7 @@ export interface Profile {
   licensedJurisdictions: string[]
   handlesRegulatedData?: boolean
   industries?: string[]
+  onsiteRegions?: string[]  // cities or regions where on-site work is offered
   crossBorderAcknowledged: boolean
   publishedAt: string | null
   version: number
@@ -129,6 +130,7 @@ export interface ProfilePatch {
   indicativeRate?: Money | null
   rateUnit?: string
   clearRate?: boolean
+  onsiteRegions?: string[]
 }
 
 export interface ReadinessItem { key: string; label: string; done: boolean; required: boolean }
@@ -220,6 +222,9 @@ export interface PublicProfile {
   history: { completedEngagements: number; onTimeRate: number | null; medianResponseHours: number | null; newToPlatform: boolean } | null
   firm: { id: string; name: string; verified: boolean } | null
   pendingSpecializations?: string[]
+  onsiteRegions?: string[]
+  profileStatus?: string  // differs from PUBLISHED only in the owner's (or staff) preview
+  underReview?: boolean  // Zoikorum is reviewing the profile: shown as "Profile under review"
 }
 
 const P = '/v1/professionals'
@@ -296,3 +301,30 @@ export const proApi = {
 /** Major-unit text ("1500.50") <-> integer minor units. Two-decimal currencies only for now. */
 export const toMinor = (major: string) => Math.round(Number(major) * 100)
 export const toMajor = (m: Money | null) => (m ? String(m.amountMinor / 100) : '')
+
+// ---- Review replies, sign-up referral codes and procurement requests ----------------------------------------------
+
+export interface ReviewReply { id: string; body: string; createdAt: string; updatedAt: string; edited: boolean }
+export interface PublicReview {
+  id: string; rating: number; comment: string; reviewerName: string; organizationName: string; engagementReference: string
+  createdAt: string; reply: ReviewReply | null
+}
+export interface ReviewPage { reviewCount: number; averageRating: number | null; items: PublicReview[] }
+export type ProcurementKind = 'PROCUREMENT_PACK' | 'SECURITY_REVIEW'
+export interface ProcurementRequestInput {
+  kind: ProcurementKind; professionalId?: string | null; name: string; organization: string; email: string; message?: string
+  website?: string  // honeypot, always empty for people
+}
+
+export const growthApi = {
+  reviews: (professionalId: string, offset = 0) =>
+    api<ReviewPage>(`${P}/${professionalId}/reviews`, { auth: false, query: { offset: String(offset) } }),
+  /** The reviewed professional's one public reply to a review (creates it, or edits it). */
+  replyToReview: (reviewId: string, body: string) => api<PublicReview>(`/v1/reviews/${reviewId}/reply`, { method: 'PUT', body: { body } }),
+  /** The optional referral or invite code typed at sign-up, stored once against the new account. */
+  recordReferral: (code: string) => api<{ code: string; recordedAt: string }>('/v1/referrals', { method: 'POST', body: { code } }),
+  /** Public: ask for a professional's procurement pack or a security review (a lead the Zoikorum team answers). */
+  procurementRequest: (body: ProcurementRequestInput) =>
+    api<{ id: string; reference: string; kind: ProcurementKind; status: string; createdAt: string }>('/v1/procurement-requests',
+      { method: 'POST', body }),  // signed in: the request is linked to the account
+}

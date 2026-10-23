@@ -1,7 +1,8 @@
 """Verification provider adapter. A real KYC / sanctions / registry provider plugs in behind
 ``VerificationProvider``; ``FakeProvider`` is deterministic for development and tests.
 
-A provider can say PASS (verified automatically), REVIEW (a compliance officer decides) or FAIL.
+A provider can say PASS, REVIEW (a compliance officer decides) or FAIL. PASS verifies automatically only for
+identity and screening (service.AUTO_VERIFY_TYPES); on any other check it is evidence for the officer.
 AI never decides a verification.
 """
 

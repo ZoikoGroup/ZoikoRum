@@ -476,6 +476,10 @@ def render_document(c: Contract, milestones: list[Milestone]) -> str:
     ]
     for i, d in enumerate(t.get("deliverables", []), 1):
         lines.append(f"  3.{i} {d['title']}. Acceptance criteria: {d['acceptanceCriteria']}")
+    success = t.get("successCriteria") or {}
+    if success.get("definition") or success.get("measures"):
+        lines.append(f"  Success criteria (what done looks like): {success.get('definition') or 'as measured below'}")
+        lines += [f"  - Measured by: {m}" for m in success.get("measures") or []]
     lines += ["", "4. MILESTONES AND PAYMENT SCHEDULE"]
     for m in milestones:
         delivers = ", ".join(keys.get(k, k) for k in m.deliverable_keys)
@@ -609,7 +613,42 @@ async def signature_expired(session: AsyncSession, payload: dict) -> None:
     _evt(session, E.CONTRACT_TERMINATED, c, reason="SIGNATURE_EXPIRED")
 
 
+async def funding_expired(session: AsyncSession, payload: dict) -> None:
+    """Consumer of ESCROW_FUNDING_EXPIRED: the engagement was signed but never funded within the funding window. No work
+    can have started (no work without funding) and no money was paid in, so it ends: its milestones are cancelled."""
+    c = await session.get(Contract, uuid.UUID(str(payload["contractId"])), with_for_update=True)
+    if c is None or c.status != "ACTIVE":
+        return
+    ms = await _milestones(session, c.id, lock=True)
+    if any(m.started_at for m in ms):
+        return  # funded at some point after all: the engagement carries on
+    for m in ms:
+        if MILESTONE_STATES.can(m.status, "CANCELLED"):
+            m.status = "CANCELLED"
+            await cancel_timer(session, TIMER_FUNDING_REMINDER, str(m.id))
+    CONTRACT_STATES.assert_can(c.status, "TERMINATED")
+    c.status = "TERMINATED"
+    await _close_termination_request(session, c, "CANCELLED", "The engagement ended: it was never funded.")
+    _evt(session, E.CONTRACT_TERMINATED, c, reason="FUNDING_EXPIRED")
+
+
 # ---- Reads ------------------------------------------------------------------------------------
+
+def awaiting_payment_protection(c: Contract, ms: list[Milestone]) -> bool:
+    """Signed, but the first required funding is not in place yet: no milestone has ever started (work starts only when its
+    money is held in escrow). The contract status stays ACTIVE (escrow funds only an active contract); this is the stage
+    people see instead of "Active"."""
+    return (c.status == "ACTIVE" and c.activated_at is not None and not any(m.started_at for m in ms)
+            and any(m.status == "PENDING_FUNDING" for m in ms))
+
+
+def _stage(c: Contract, ms: list[Milestone]) -> str:
+    if c.status == "PENDING_SIGNATURE":
+        return "AWAITING_SIGNATURES"
+    if awaiting_payment_protection(c, ms):
+        return "AWAITING_PAYMENT_PROTECTION"
+    return c.status
+
 
 def _next_action(c: Contract, ms: list[Milestone], signed: set[str], viewer: str, pro_name: str) -> str:
     if c.status == "PENDING_SIGNATURE":
@@ -620,6 +659,10 @@ def _next_action(c: Contract, ms: list[Milestone], signed: set[str], viewer: str
         return "Completed — all milestones accepted"
     if c.status != "ACTIVE":
         return c.status.replace("_", " ").capitalize()
+    if awaiting_payment_protection(c, ms):
+        first = next(m for m in ms if m.status == "PENDING_FUNDING")
+        return (f"Set up payment protection and fund M{first.sequence} to start work" if viewer == "BUYER"
+                else f"Awaiting payment protection: do not start work until the buyer funds M{first.sequence}")
     by = {s: [m for m in ms if m.status == s] for s in ("SUBMITTED", "REVISION_REQUESTED", "IN_PROGRESS", "PENDING_FUNDING")}
     if by["SUBMITTED"]:
         m = by["SUBMITTED"][0]
@@ -685,7 +728,7 @@ async def _out(session: AsyncSession, actor: Actor, c: Contract, viewer: str) ->
     return ContractOut(
         id=c.id, reference=c.reference, proposalId=c.proposal_id, requestId=c.request_id, organizationId=c.organization_id,
         professionalId=c.professional_id, title=c.title, engagementType=c.engagement_type, pricingModel=c.pricing_model,
-        status=c.status, pendingChangeOrderId=c.pending_change_order_id,
+        status=c.status, stage=_stage(c, ms), pendingChangeOrderId=c.pending_change_order_id,
         total=MoneyDTO(amountMinor=c.total_minor, currency=c.currency), termsHash=c.terms_hash,
         contractVersion=c.contract_version,
         parties=[_buyer_party(p["buyer"]),
@@ -808,9 +851,12 @@ async def summary(session: AsyncSession, actor: Actor, role: str) -> ContractSum
     if where is None:
         return ContractSummaryOut(role=role, contracts={}, milestones={})
     contracts = dict((await session.execute(select(Contract.status, func.count()).where(where).group_by(Contract.status))).all())
+    started = select(Milestone.contract_id).where(Milestone.started_at.is_not(None))
+    awaiting = await session.scalar(select(func.count()).select_from(Contract).where(
+        where, Contract.status == "ACTIVE", Contract.activated_at.is_not(None), Contract.id.not_in(started))) or 0
     milestones = dict((await session.execute(select(Milestone.status, func.count()).join(Contract, Contract.id == Milestone.contract_id)
                                              .where(where, Contract.status != "TERMINATED").group_by(Milestone.status))).all())
-    return ContractSummaryOut(role=role, contracts=contracts, milestones=milestones)
+    return ContractSummaryOut(role=role, contracts=contracts, milestones=milestones, awaitingPaymentProtection=awaiting)
 
 
 def _amendable(c: Contract) -> bool:
@@ -1840,20 +1886,29 @@ def _plain(action: str) -> str:
     return text[:1].upper() + text[1:]
 
 
-async def _record_ids(session: AsyncSession, c: Contract) -> list[str]:
-    ids = [str(c.id), str(c.proposal_id), str(c.request_id)] + [str(m.id) for m in await _milestones(session, c.id)]
+async def _subject_ids(session: AsyncSession, c: Contract) -> list[uuid.UUID]:
+    """The engagement's own records: request, proposal, contract, milestones and its escrow account."""
+    ids = [c.id, c.proposal_id, c.request_id] + [m.id for m in await _milestones(session, c.id)]
     account = await escrow_facade.account_id_for_contract(session, c.id)
-    if account:
-        ids.append(str(account))
+    return ids + ([account] if account else [])
+
+
+async def _record_ids(session: AsyncSession, c: Contract, include_policy: bool = True) -> list[str]:
+    """Objects whose audit rows make up the engagement's activity: its own records, its disputes and, for the buyer
+    organisation, its policy approval and exception requests (the buyer's internal authorisations)."""
+    subjects = await _subject_ids(session, c)
+    ids = [str(i) for i in subjects]
     ids += [d["id"] for d in await dispute_facade.disputes_for_contract(session, c.id)]
+    if include_policy:
+        ids += await policy_facade.record_ids(session, c.organization_id, subjects)
     return ids
 
 
 async def activity(session: AsyncSession, actor: Actor, contract_id: uuid.UUID) -> list[dict]:
     """The engagement's history from the tamper-evident audit trail (each line carries its chain hash)."""
     c = await _contract(session, contract_id)
-    await _viewer(session, actor, c)
-    entries = await audit_facade.timeline_for_objects(session, await _record_ids(session, c))
+    viewer = await _viewer(session, actor, c)
+    entries = await audit_facade.timeline_for_objects(session, await _record_ids(session, c, include_policy=viewer == "BUYER"))
     people = await identity_facade.get_identities(session, [uuid.UUID(e.actor_id) for e in entries
                                                             if e.actor_id and _is_uuid(e.actor_id)])
     return [{"at": e.occurred_at, "what": _plain(e.action), "action": e.action,
@@ -1887,8 +1942,9 @@ async def files(session: AsyncSession, actor: Actor, contract_id: uuid.UUID) -> 
 
 
 async def evidence_pack(session: AsyncSession, actor: Actor, contract_id: uuid.UUID, fmt: str) -> tuple[bytes, str, str]:
-    """The engagement record as one attested document (PDF or JSON): parties, agreement versions and their hashes,
-    signatures, milestones and acceptance, escrow ledger, disputes, files with fingerprints, and the audit timeline.
+    """The engagement record as one attested document (PDF, JSON or CSV): parties, agreement versions and their hashes,
+    signatures, milestones and acceptance, escrow ledger, disputes, files with fingerprints, eligibility evidence, the
+    buyer's approval log and exception history (buyer's pack only), and the audit timeline.
     The SHA-256 of the record is printed on every page and recorded with the download."""
     c = await _contract(session, contract_id)
     viewer = await _viewer(session, actor, c)
@@ -1910,6 +1966,12 @@ async def evidence_pack(session: AsyncSession, actor: Actor, contract_id: uuid.U
         "activity": [{"at": a["at"].isoformat(), "what": a["what"], "by": a["by"], "hash": a["hash"]}
                      for a in await activity(session, actor, c.id)],
     }
+    # Policy evidence: eligibility checks for both parties; the approval log and exception history are the buyer
+    # organisation's internal authorisations, so only its own pack carries them.
+    policy = await policy_facade.engagement_evidence(session, c.organization_id, await _subject_ids(session, c))
+    record["eligibility"] = policy["eligibility"]
+    if viewer == "BUYER":
+        record["approvalLog"], record["exceptionHistory"] = policy["approvals"], policy["exceptions"]
     body = json.dumps(record, sort_keys=True, separators=(",", ":"), default=str)
     fingerprint = hashlib.sha256(body.encode()).hexdigest()
     record_audit(session, "contract.evidence_pack.downloaded", object_type="Contract", object_id=c.id,
@@ -1918,7 +1980,23 @@ async def evidence_pack(session: AsyncSession, actor: Actor, contract_id: uuid.U
     if fmt == "json":
         return (json.dumps({"fingerprintSha256": fingerprint, "record": record}, indent=2, default=str).encode(),
                 f"{name}.json", "application/json")
+    if fmt == "csv":
+        return _evidence_csv(c, record, fingerprint), f"{name}.csv", "text/csv; charset=utf-8"
     money = lambda m: pdf.money(m, c.currency)  # noqa: E731
+    approval_rows = [(f"{a['requestedAt'][:10]} {a['action'].replace('_', ' ').lower()}",
+                      f"{a['status'].lower()}" + "".join(f" · {v['by']} ({v['role'].replace('_', ' ').lower()}) {v['decision'].lower()}: {v['reason']}"
+                                                         for v in a["votes"])) for a in record.get("approvalLog", [])]
+    exception_rows = [(f"{x['requestedAt'][:10]} {x['action'].replace('_', ' ').lower()}" + (" (emergency)" if x["emergency"] else ""),
+                       f"{x['status'].lower()}" + (f" · {x['decidedBy']}: {x['decisionReason']}" if x["decidedBy"] else "")
+                       + f" · until {x['expiresAt'][:10]}") for x in record.get("exceptionHistory", [])]
+    eligibility_rows = [(f"{e['at'][:10]} {e['action'].replace('_', ' ').lower()}",
+                         f"{e['decision'].lower()} · tier {e['professionalTier'] or '—'} · "
+                         + (", ".join(f"{k} {v.lower()}" for k, v in sorted(e["dimensions"].items())) or "no checks recorded")
+                         + f" · {e['policy']}") for e in record["eligibility"]]
+    policy_sections = [pdf.Section("Eligibility evidence (policy checks)", rows=eligibility_rows or [("None recorded", "")])]
+    if viewer == "BUYER":
+        policy_sections += [pdf.Section("Approval log", rows=approval_rows or [("No approvals were needed", "")]),
+                            pdf.Section("Exception history", rows=exception_rows or [("No exceptions", "")])]
     doc = pdf.PdfDocument(
         title="Engagement evidence pack", reference=c.reference, issued=clock.now(), fingerprint=fingerprint,
         subtitle=f"{c.title} · {c.status.replace('_', ' ').lower()} · policy {c.policy_version_label}",
@@ -1937,6 +2015,7 @@ async def evidence_pack(session: AsyncSession, actor: Actor, contract_id: uuid.U
                                           for d in record["disputes"]] or [("None", "")]),
             pdf.Section("Files", rows=[(f["name"], f"{f['source']} · SHA-256 {f['sha256'][:16]}…") for f in record["files"]]
                         or [("None", "")]),
+            *policy_sections,
             pdf.Section("Activity (from the audit trail)", rows=[(a["at"][:19].replace("T", " "), f"{a['what']} · {a['by']}")
                                                                  for a in record["activity"]]),
             pdf.Section(text="Attestation: this pack was produced by Zoikorum from its records. Each activity line comes from "
@@ -1944,6 +2023,53 @@ async def evidence_pack(session: AsyncSession, actor: Actor, contract_id: uuid.U
                              "below is the SHA-256 of this record and is stored with the download in the audit trail."),
         ])
     return pdf.render(doc), f"{name}.pdf", "application/pdf"
+
+
+def _evidence_csv(c: Contract, record: dict, fingerprint: str) -> bytes:
+    """The evidence pack as one CSV (section, date, item, detail, reference) for spreadsheets and audit tools."""
+    import csv
+    import io
+
+    class _Safe:  # a cell starting with = + - @ would run as a formula in a spreadsheet: keep it text
+        def __init__(self, inner):
+            self.inner = inner
+
+        def writerow(self, row):
+            self.inner.writerow(["'" + v if isinstance(v, str) and v[:1] in ("=", "+", "-", "@") else v for v in row])
+
+    buf = io.StringIO()
+    w = _Safe(csv.writer(buf))
+    w.writerow(["section", "date", "item", "detail", "reference"])
+    w.writerow(["Engagement", "", c.reference, f"{c.title} · {c.status} · policy {c.policy_version_label}", f"fingerprint {fingerprint}"])
+    for p in record["parties"]:
+        w.writerow(["Parties", "", p.get("role"), p.get("name"), ""])
+    for v in record["versions"]:
+        w.writerow(["Agreement versions", v["createdAt"], f"Version {v['version']}", f"terms {v['termsHash']}", v["documentSha256"]])
+    for s in record["signatures"]:
+        w.writerow(["Signatures", s["signedAt"], s["party"], f"{s['signer']} (v{s['version']}, {s['authStrength']})", s["termsHash"]])
+    for m in record["milestones"]:
+        w.writerow(["Milestones", m["acceptedAt"] or "", f"M{m['sequence']} {m['title']}", f"{m['status']} · {m['amountMinor']} {c.currency}", ""])
+    for e in record["escrowLedger"]:
+        w.writerow(["Escrow ledger", e.get("at", ""), e.get("type", ""), f"{e.get('account', '')} · debit {e.get('debitMinor', 0)} · "
+                    f"credit {e.get('creditMinor', 0)} {c.currency}", ""])
+    for d in record["disputes"]:
+        w.writerow(["Disputes", "", d.get("reference", ""), f"{d.get('category', '')} · {d.get('status', '')}", d.get("id", "")])
+    for f in record["files"]:
+        w.writerow(["Files", f.get("uploadedAt", ""), f.get("name", ""), f.get("source", ""), f.get("sha256", "")])
+    for e in record["eligibility"]:
+        w.writerow(["Eligibility evidence", e["at"], e["action"], f"{e['decision']} · tier {e['professionalTier'] or '-'} · "
+                    + "; ".join(f"{k} {v}" for k, v in sorted(e["dimensions"].items())) + f" · {e['policy']}", e["contextHash"]])
+    for a in record.get("approvalLog", []):
+        w.writerow(["Approval log", a["requestedAt"], a["action"], f"{a['status']} · " + "; ".join(a["reasons"] or []), a["id"]])
+        for v in a["votes"]:
+            w.writerow(["Approval log", v["at"], f"{v['role']} {v['decision']}", f"{v['by']}: {v['reason']}", a["id"]])
+    for x in record.get("exceptionHistory", []):
+        w.writerow(["Exception history", x["requestedAt"], x["action"] + (" (emergency)" if x["emergency"] else ""),
+                    f"{x['status']} · until {x['expiresAt']}" + (f" · {x['decidedBy']}: {x['decisionReason']}" if x["decidedBy"] else ""),
+                    x["id"]])
+    for a in record["activity"]:
+        w.writerow(["Activity", a["at"], a["what"], a["by"], a["hash"]])
+    return buf.getvalue().encode("utf-8")
 
 
 

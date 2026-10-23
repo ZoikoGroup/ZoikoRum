@@ -67,6 +67,9 @@ ALLOWED_TYPES = {"PROFESSIONAL": ("IDENTITY", "JURISDICTION", "INSURANCE", "BACK
 WRONG_TYPE_MESSAGE = {"PROFESSIONAL": "Firm registration and beneficial ownership checks apply to firms only",
                       "FIRM": "Firms cannot request personal checks such as identity",
                       "IDENTITY": "Only an identity check can be requested for a person"}
+# Only identity and screening results may verify on a provider PASS (sampled for a second look); a credential,
+# jurisdiction or insurance check is always decided by a compliance officer: no automated credential approval.
+AUTO_VERIFY_TYPES = ("IDENTITY", "RESTRICTIONS", "BACKGROUND")
 TIMER_REMINDER = "verification.expiry_reminder"
 TIMER_EXPIRY = "verification.expiry"
 
@@ -217,10 +220,11 @@ async def _open(session: AsyncSession, *, subject_type: str, subject_id: uuid.UU
     await session.flush()
     _evt(session, E.VERIFICATION_STARTED, case)
     case.provider_result = await get_provider().check(verification_type, case.details)
-    if case.provider_result == "PASS":
+    if case.provider_result == "PASS" and verification_type in AUTO_VERIFY_TYPES:
         await _verify(session, case, reviewer_id=None, expires_at=None)
-    elif case.provider_result == "FAIL":
-        # A negative provider result is never final on its own: a person reviews it (Architecture 10.4).
+    elif case.provider_result in ("PASS", "FAIL"):
+        # A negative provider result is never final on its own (Architecture 10.4), and a positive one on a
+        # credential, licence or insurance is evidence for a compliance officer, not an approval (ethics code).
         CASE_STATES.assert_can(case.status, "IN_REVIEW")
         case.status = "IN_REVIEW"
     await session.flush()

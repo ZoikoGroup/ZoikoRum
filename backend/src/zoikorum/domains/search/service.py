@@ -93,6 +93,13 @@ async def rebuild(session: AsyncSession, professional_id: uuid.UUID, occurred_at
     if firm and firm.status == "SUSPENDED":
         firm = None
     firm_name = (firm.trading_name or firm.legal_name) if firm else None
+    currencies = sorted({o.currency for o in priced if o.currency} | ({pro.indicative_rate_currency} if pro.indicative_rate_currency else set()))
+    enterprise_engagements = 0
+    for org_id, row in (await contract_facade.engagements_by_organization(session, pro.id)).items():
+        if row["completed"]:
+            org = await buyer_facade.get_organization(session, org_id)
+            if org is not None and org.org_type == "ENTERPRISE":
+                enterprise_engagements += row["completed"]
 
     text_a = " ".join(filter(None, [pro.display_name, pro.headline]))
     text_b = " ".join(names.values())
@@ -115,7 +122,7 @@ async def rebuild(session: AsyncSession, professional_id: uuid.UUID, occurred_at
         tier=trust.tier, trust_score=trust.score, dimensions=dict(trust.dimensions), verified_credentials=verified_credentials,
         verified_jurisdictions=verified_jurisdictions,
         offering_titles=[o.title for o in offerings], starting_price_minor=cheapest.starting_price_minor if cheapest else None,
-        price_currency=cheapest.currency if cheapest else None, bio_excerpt=(pro.bio or "")[:300] or None, photo_url=pro.photo_url,
+        price_currency=cheapest.currency if cheapest else None, currencies=currencies, enterprise_engagements=enterprise_engagements, bio_excerpt=(pro.bio or "")[:300] or None, photo_url=pro.photo_url,
         published_at=pro.published_at, last_event_at=occurred_at,
         completed_engagements=delivery["completed"], milestones_due=delivery["milestonesWithDueDate"],
         milestones_on_time=delivery["onTime"], review_count=reviews["reviewCount"], review_average=reviews["averageRating"],
@@ -176,6 +183,13 @@ def _conditions(p: SearchParams, tsquery) -> list:
         conds.append(Doc.availability == p.availability)
     if p.credential:
         conds.append(func.array_to_string(Doc.verified_credentials, " ").ilike(f"%{_escape_like(p.credential)}%", escape="\\"))
+    if p.credentials:
+        names = func.array_to_string(Doc.verified_credentials, " ")
+        conds.append(or_(*(names.ilike(f"%{_escape_like(c)}%", escape="\\") for c in p.credentials)))
+    if p.priorEnterprise:
+        conds.append(Doc.enterprise_engagements > 0)
+    if p.multiCurrency:
+        conds.append(func.cardinality(Doc.currencies) > 1)
     if p.experience:
         conds.append(Doc.years_experience_band == p.experience)
     if p.publishedAfter:
@@ -322,6 +336,11 @@ def _facets(docs: list[Doc]) -> dict[str, list[FacetValue]]:
         "pricingModel": count(lambda d: d.pricing_models),
         "engagementType": count(lambda d: d.engagement_types),
         "availability": count(lambda d: [d.availability]),
+        "credential": count(lambda d: d.verified_credentials)[:30],
+        "enterpriseReady": count(lambda d: ["true"] if d.enterprise_ready else []),
+        "priorEnterprise": count(lambda d: ["true"] if d.enterprise_engagements else []),
+        "multiCurrency": count(lambda d: ["true"] if len(d.currencies or []) > 1 else []),
+        "insurance": count(lambda d: ["true"] if d.dimensions.get("insurance") == "VERIFIED" else []),
     }
 
 
@@ -338,6 +357,7 @@ def _item(doc: Doc, why: list[str], regulated: set[str] = frozenset()) -> Result
         servedJurisdictions=list(doc.served_jurisdictions), licensedJurisdictions=list(doc.licensed_jurisdictions),
         dimensions={**doc.dimensions, **({"restrictions": "UNKNOWN"} if doc.dimensions.get("restrictions") not in (None, "CLEAR") else {})},
         regulatedPreview=doc.tier != "A" and bool(regulated.intersection(doc.specializations)), enterpriseReady=doc.enterprise_ready,
+        enterpriseEngagements=doc.enterprise_engagements or 0, currencies=list(doc.currencies or []),
         firm=FirmRef(id=doc.firm_id, name=doc.firm_name, verified=doc.firm_verified) if doc.firm_id and doc.firm_name else None,
     )
 
@@ -505,7 +525,22 @@ async def cached_search(session: AsyncSession, actor: Actor | None, p: SearchPar
         record_event(session, E.SEARCH_PERFORMED, aggregate_type="Search", aggregate_id=uuid.uuid4(),
                      payload={"query": p.q, "filters": {}, "sort": p.sort, "total": hit[1].total, "actorId": None, "cached": True})
         return hit[1]
-    out = await search(session, actor, p)
+    # Shared read cache (shared/cache.py, Redis across servers): results and facets of signed-out searches, keyed by the
+    # same table stamp, and dropped when profiles, trust tiers or the taxonomy change.
+    import hashlib
+
+    from zoikorum.shared import cache
+    ran = []
+
+    async def run() -> dict:
+        ran.append(True)
+        return (await search(session, actor, p)).model_dump(mode="json")
+
+    out = SearchOut.model_validate(await cache.cached(cache.SEARCH_FACETS, hashlib.sha256(key.encode()).hexdigest(), run,
+                                                      ttl=CACHE_SECONDS))
+    if not ran:  # served by another server's search: still recorded for analytics
+        record_event(session, E.SEARCH_PERFORMED, aggregate_type="Search", aggregate_id=uuid.uuid4(),
+                     payload={"query": p.q, "filters": {}, "sort": p.sort, "total": out.total, "actorId": None, "cached": True})
     if len(_cache) >= CACHE_MAX:
         for k in sorted(_cache, key=lambda k: _cache[k][0])[: CACHE_MAX // 4]:
             _cache.pop(k, None)

@@ -1,5 +1,5 @@
 """Single sign-on (Enterprise: SAML/OIDC, SCIM, Google and Microsoft sign-in). OpenID Connect, which Okta, Microsoft
-Entra ID and Google Workspace all speak.
+Entra ID and Google Workspace all speak, and SAML 2.0 (identity/saml.py) for identity providers that only speak SAML.
 
 * Organisation SSO: an Organisation Admin registers their identity provider (issuer, client id and secret) and the email
   domains it vouches for. People with those addresses sign in through it; with ``enforce`` the password is refused.
@@ -97,11 +97,16 @@ def _domains(values: list[str]) -> list[str]:
 
 
 def connection_out(c: SsoConnection | None) -> dict:
+    from zoikorum.domains.identity import saml
+
+    sp = {"samlSpEntityId": saml.sp_entity_id(), "samlAcsUrl": saml.acs_url(), "samlSpMetadataUrl": saml.sp_entity_id()}
     if c is None:
-        return {"configured": False}
-    return {"configured": True, "issuer": c.issuer, "clientId": c.client_id, "emailDomains": c.email_domains, "enforce": c.enforce,
-            "justInTime": c.jit, "defaultRoles": c.default_roles, "enabled": c.enabled, "scimEnabled": c.scim_token_hash is not None,
-            "redirectUri": web_url() + "/sso/callback", "scimBaseUrl": "/scim/v2", "updatedAt": c.updated_at}
+        return {"configured": False, **sp}
+    return {"configured": True, "protocol": c.protocol, "issuer": c.issuer, "clientId": c.client_id, "emailDomains": c.email_domains,
+            "enforce": c.enforce, "justInTime": c.jit, "defaultRoles": c.default_roles, "enabled": c.enabled,
+            "scimEnabled": c.scim_token_hash is not None, "redirectUri": web_url() + "/sso/callback", "scimBaseUrl": "/scim/v2",
+            "samlIdpEntityId": c.saml_idp_entity_id, "samlSsoUrl": c.saml_sso_url, "samlCertificates": len(c.saml_certificates or []),
+            "groupRoleMap": c.group_role_map or {}, "updatedAt": c.updated_at, **sp}
 
 
 async def _require_org_admin(session: AsyncSession, actor: Actor, org_id: uuid.UUID) -> None:
@@ -123,27 +128,60 @@ async def set_connection(session: AsyncSession, actor: Actor, org_id: uuid.UUID,
                                                                SsoConnection.email_domains.overlap(domains)))).all()
     if taken:
         raise Conflict("Another organisation already uses one of these domains for single sign-on", code="DOMAIN_IN_USE")
-    issuer = body.issuer.rstrip("/")
-    try:
-        doc = await discover(issuer)
-    except Exception as exc:
-        raise ValidationFailed("The issuer's OpenID configuration could not be read; check the issuer address", code="ISSUER_UNREACHABLE") from exc
-    if doc.get("issuer", "").rstrip("/") != issuer:
-        raise ValidationFailed("The issuer address does not match the provider's own configuration", code="ISSUER_MISMATCH")
+    protocol = getattr(body, "protocol", None) or "OIDC"
     c = await session.scalar(select(SsoConnection).where(SsoConnection.organization_id == org_id).with_for_update())
-    if c is None:
-        if not body.clientSecret:
-            raise ValidationFailed("Enter the client secret from your identity provider", code="SECRET_REQUIRED")
-        c = SsoConnection(organization_id=org_id, created_by=actor.identity_id, client_secret_enc=encrypt_field(body.clientSecret))
-        session.add(c)
-    elif body.clientSecret:
-        c.client_secret_enc = encrypt_field(body.clientSecret)
-    c.issuer, c.client_id, c.email_domains, c.enforce, c.jit = issuer, body.clientId.strip(), domains, body.enforce, body.justInTime
+    if protocol == "SAML":
+        idp = _saml_settings(body, c)
+        issuer = idp["entityId"]
+        if c is None:
+            c = SsoConnection(organization_id=org_id, created_by=actor.identity_id, client_secret_enc=encrypt_field(""))
+            session.add(c)
+        c.issuer, c.client_id = "", ""
+        c.saml_idp_entity_id, c.saml_sso_url, c.saml_certificates = idp["entityId"], idp["ssoUrl"], idp["certificates"]
+    else:
+        if not body.issuer or not body.clientId:
+            raise ValidationFailed("Enter the issuer address and client id from your identity provider", code="ISSUER_REQUIRED")
+        issuer = body.issuer.rstrip("/")
+        try:
+            doc = await discover(issuer)
+        except Exception as exc:
+            raise ValidationFailed("The issuer's OpenID configuration could not be read; check the issuer address", code="ISSUER_UNREACHABLE") from exc
+        if doc.get("issuer", "").rstrip("/") != issuer:
+            raise ValidationFailed("The issuer address does not match the provider's own configuration", code="ISSUER_MISMATCH")
+        if c is None:
+            if not body.clientSecret:
+                raise ValidationFailed("Enter the client secret from your identity provider", code="SECRET_REQUIRED")
+            c = SsoConnection(organization_id=org_id, created_by=actor.identity_id, client_secret_enc=encrypt_field(body.clientSecret))
+            session.add(c)
+        elif body.clientSecret:
+            c.client_secret_enc = encrypt_field(body.clientSecret)
+        c.issuer, c.client_id = issuer, body.clientId.strip()
+    c.protocol, c.email_domains, c.enforce, c.jit = protocol, domains, body.enforce, body.justInTime
     c.default_roles, c.enabled = list(body.defaultRoles) or [OrgRole.REQUESTER], body.enabled
+    if getattr(body, "groupRoleMap", None) is not None:
+        c.group_role_map = {k.strip(): v for k, v in body.groupRoleMap.items() if k.strip()}
     await session.flush()
     record_audit(session, "identity.sso.configured", object_type="SsoConnection", object_id=c.id, tenant_id=org_id,
-                 details={"issuer": issuer, "domains": domains, "enforce": c.enforce, "jit": c.jit})
+                 details={"protocol": protocol, "issuer": issuer, "domains": domains, "enforce": c.enforce, "jit": c.jit})
     return connection_out(c)
+
+
+def _saml_settings(body, c: SsoConnection | None) -> dict:
+    """The identity provider's entity id, sign-on address and certificates: from uploaded metadata, from the fields typed
+    in, or (on an update that sends neither) the ones already stored."""
+    from zoikorum.domains.identity import saml
+
+    if getattr(body, "samlMetadataXml", None):
+        return saml.parse_metadata(body.samlMetadataXml)
+    if getattr(body, "samlEntityId", None) and getattr(body, "samlSsoUrl", None) and getattr(body, "samlCertificate", None):
+        if not body.samlSsoUrl.startswith("https://"):
+            raise ValidationFailed("The single sign-on address must start with https://", code="SAML_NO_REDIRECT_BINDING")
+        return {"entityId": body.samlEntityId.strip(), "ssoUrl": body.samlSsoUrl.strip(),
+                "certificates": [saml.normalise_certificate(body.samlCertificate)]}
+    if c is not None and c.protocol == "SAML" and c.saml_idp_entity_id:
+        return {"entityId": c.saml_idp_entity_id, "ssoUrl": c.saml_sso_url, "certificates": list(c.saml_certificates)}
+    raise ValidationFailed("Upload your identity provider's SAML metadata (or its entity id, sign-on address and certificate)",
+                           code="SAML_METADATA_REQUIRED")
 
 
 async def rotate_scim_token(session: AsyncSession, actor: Actor, org_id: uuid.UUID) -> dict:
@@ -200,6 +238,8 @@ async def start(session: AsyncSession, *, email: str | None = None, provider: st
                                                                       SsoConnection.email_domains.contains([domain])))
         if connection is None:
             raise NotFound("Single sign-on is not set up for this email address", code="SSO_NOT_CONFIGURED")
+        if connection.protocol == "SAML":
+            return await _saml_start(session, connection, email)
         issuer, client_id = connection.issuer, connection.client_id
     doc = await discover(issuer)
     verifier = secrets.token_urlsafe(48)
@@ -227,6 +267,8 @@ async def callback(session: AsyncSession, code: str, state: str, user_agent: str
         raise Unauthenticated("This sign-in link has expired; start again", code="SSO_STATE_INVALID")
     row.used_at = clock.now()
     connection = await session.get(SsoConnection, row.connection_id) if row.connection_id else None
+    if row.provider == "saml":
+        return await _saml_finish(session, row, connection, code, user_agent)
     if row.provider == "org":
         if connection is None or not connection.enabled:
             raise Unauthenticated("Single sign-on is no longer set up for this organisation", code="SSO_NOT_CONFIGURED")
@@ -257,7 +299,8 @@ async def callback(session: AsyncSession, code: str, state: str, user_agent: str
         identity = await _social_identity(session, row.provider, email, name, subject, bool(claims.get("email_verified")))
     if identity.status != "ACTIVE":
         raise Forbidden("This account is not active", code="ACCOUNT_NOT_ACTIVE")
-    pair = await service._start_session(session, identity, AuthStrength.PASSWORD, user_agent)
+    idp = {"org": "OIDC", "google": "GOOGLE", "microsoft": "MICROSOFT"}.get(row.provider, "OIDC")
+    pair = await service._start_session(session, identity, AuthStrength.PASSWORD, user_agent, idp=idp)
     record_audit(session, "identity.sso.signed_in", object_type="Identity", object_id=identity.id,
                  details={"provider": row.provider, "issuer": claims["iss"]})
     from zoikorum.domains.identity.schemas import AuthOut
@@ -320,3 +363,68 @@ async def _social_identity(session: AsyncSession, provider: str, email: str, nam
     identity = await _new_identity(session, email, name, Persona.BUYER)
     await _link(session, identity.id, provider, subject)
     return identity
+
+
+# ---- SAML 2.0 (identity/saml.py) ---------------------------------------------------------------------------------------------
+
+async def _saml_start(session: AsyncSession, c: SsoConnection, email: str | None) -> dict:
+    from zoikorum.domains.identity import saml
+
+    request_id = "_" + secrets.token_hex(20)  # an XML ID must not start with a digit
+    row = SsoLogin(connection_id=c.id, provider="saml", nonce=request_id, code_verifier=secrets.token_urlsafe(48),
+                   expires_at=clock.now() + STATE_TTL)
+    session.add(row)
+    await session.flush()
+    return {"url": saml.authn_request_url(c.saml_sso_url, request_id, str(row.id), clock.now(), email)}
+
+
+def _callback_error(message: str) -> str:
+    return web_url() + "/sso/callback?" + urlencode({"error": "access_denied", "error_description": message})
+
+
+async def saml_acs(session: AsyncSession, saml_response: str | None, relay_state: str | None) -> str:
+    """The identity provider's post. Verifies the response and returns where to send the browser: the web app's callback
+    with a one-time code (or an error description). Nothing is signed in until the web app redeems the code."""
+    from zoikorum.domains.identity import saml
+
+    try:
+        row = await session.get(SsoLogin, uuid.UUID(relay_state or ""), with_for_update=True)
+    except ValueError:
+        row = None
+    if row is None or row.provider != "saml" or row.used_at or row.assertion is not None or row.expires_at < clock.now():
+        return _callback_error("This sign-in link has expired; start again.")
+    c = await session.get(SsoConnection, row.connection_id) if row.connection_id else None
+    if c is None or not c.enabled or c.protocol != "SAML":
+        return _callback_error("Single sign-on is no longer set up for this organisation.")
+    try:
+        claims = saml.verify_response(saml_response or "", certificates=list(c.saml_certificates or []),
+                                      idp_entity_id=c.saml_idp_entity_id or "", request_id=row.nonce, now=clock.now())
+    except (Unauthenticated, ValidationFailed) as exc:
+        row.used_at = clock.now()  # a refused response burns the request: start again
+        record_audit(session, "identity.sso.saml_refused", object_type="SsoConnection", object_id=c.id, tenant_id=c.organization_id,
+                     details={"code": exc.code})
+        return _callback_error(exc.detail)
+    handoff = secrets.token_urlsafe(32)
+    row.assertion, row.code_verifier = claims, hashlib.sha256(handoff.encode()).hexdigest()
+    await session.flush()
+    return web_url() + "/sso/callback?" + urlencode({"code": handoff, "state": str(row.id)})
+
+
+async def _saml_finish(session: AsyncSession, row: SsoLogin, c: SsoConnection | None, code: str, user_agent: str | None):
+    import hmac
+
+    from zoikorum.domains.identity import service
+    from zoikorum.domains.identity.schemas import AuthOut
+
+    if row.assertion is None or not hmac.compare_digest(hashlib.sha256(code.encode()).hexdigest(), row.code_verifier):
+        raise Unauthenticated("This sign-in link has expired; start again", code="SSO_STATE_INVALID")
+    if c is None or not c.enabled or c.protocol != "SAML":
+        raise Unauthenticated("Single sign-on is no longer set up for this organisation", code="SSO_NOT_CONFIGURED")
+    a = row.assertion
+    identity = await _org_identity(session, c, a["email"], a["name"], f"saml:{a['issuer']}|{a['subject']}")
+    if identity.status != "ACTIVE":
+        raise Forbidden("This account is not active", code="ACCOUNT_NOT_ACTIVE")
+    pair = await service._start_session(session, identity, AuthStrength.PASSWORD, user_agent, idp="SAML")
+    record_audit(session, "identity.sso.signed_in", object_type="Identity", object_id=identity.id,
+                 details={"provider": "saml", "issuer": a["issuer"]})
+    return AuthOut(tokens=pair, user=service.to_out(identity, await service._links(session, identity.id)))

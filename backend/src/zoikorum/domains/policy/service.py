@@ -48,7 +48,13 @@ SETTING_NAMES = {
     "autoDisputeComplianceFlag": "auto_dispute_compliance_flag",
     "disputeMediationAboveMinor": "dispute_mediation_above_minor", "disputeLegalReviewAboveMinor": "dispute_legal_review_above_minor",
     "disputeEscalationRoles": "dispute_escalation_roles", "disputeRetentionYears": "dispute_retention_years",
+    "milestoneMaxSharePercent": "milestone_max_share_percent",
+    "milestoneAcceptanceCriteriaRequired": "milestone_acceptance_criteria_required",
+    "retainerAutoFundAllowed": "retainer_auto_fund_allowed", "retainerCycleApproval": "retainer_cycle_approval",
+    "retainerCycleApprovalRole": "retainer_cycle_approval_role",
+    "exceptionRequestRoles": "exception_request_roles", "exceptionApproverRoles": "exception_approver_roles",
 }
+RETAINER_CYCLE_STEP = "retainer-cycle"
 
 
 async def require_member(session, actor, org_id, *roles):
@@ -169,6 +175,44 @@ async def settings_for_org(session, org_id, pinned=None):
     values = {SETTING_NAMES[k]: tuple(v) if isinstance(v, list) else v for k, v in version.settings.items()
               if k in SETTING_NAMES and v is not None}
     return ProfileSettings(profile.id, version.id, label(profile, version), **{**platform_deadlines(), **values})
+
+
+def choose_variant(settings: dict, jurisdiction: str | None) -> dict | None:
+    """The regional contract variant covering this contracting jurisdiction, if the profile defines one."""
+    code = (jurisdiction or "").upper()
+    return next((v for v in settings.get("contractVariants") or [] if code and code in v.get("jurisdictions", [])), None)
+
+
+async def contract_terms(session, org_id, version_id, jurisdiction=None):
+    _, version = await effective_version(session, org_id, version_id)
+    settings = version.settings
+    if jurisdiction is None:
+        org = await buyer.get_organization(session, org_id)
+        jurisdiction = org.country if org else None
+    terms = {"governingLaw": settings.get("governingLaw"), "clauseTexts": dict(settings.get("clauseTexts", {}))}
+    variant = choose_variant(settings, jurisdiction)
+    if variant:
+        terms["governingLaw"] = variant.get("governingLaw") or terms["governingLaw"]
+        terms["clauseTexts"] = {**terms["clauseTexts"], **(variant.get("clauseTexts") or {})}
+        terms["contractVariant"] = {"id": variant["id"], "name": variant["name"], "jurisdiction": jurisdiction.upper()}
+    return terms
+
+
+async def version_settings(session, version_id) -> dict:
+    version = await session.get(PolicyVersion, version_id) if version_id else None
+    return version.settings if version else {}
+
+
+async def exception_roles(session, org_id, version_id) -> dict:
+    """Who may request and who may decide exceptions under a policy version (the platform default without one)."""
+    settings = await version_settings(session, version_id)
+    if version_id and org_id:
+        version = await session.get(PolicyVersion, version_id)
+        profile = await session.get(PolicyProfile, version.profile_id) if version else None
+        if not profile or profile.organization_id != org_id:
+            settings = {}
+    return {"request": settings.get("exceptionRequestRoles"),
+            "approve": settings.get("exceptionApproverRoles") or [OrgRole.EXCEPTION_AUTHORITY]}
 
 
 async def profile_out(session, profile):
@@ -341,6 +385,79 @@ def steps_satisfied(workflows, votes):
         for workflow in workflows for step in workflow["steps"])
 
 
+async def milestone_plan(session, ctx) -> dict | None:
+    """The milestone plan the action is about: the proposal's (submit, accept) or the contract's (sign)."""
+    from zoikorum.domains.contract import facade as contract_facade
+    from zoikorum.domains.proposal import facade as proposal_facade
+
+    if ctx.subject_type == "Proposal" and ctx.action in (PolicyAction.PROPOSAL_SUBMIT, PolicyAction.PROPOSAL_ACCEPT):
+        return await proposal_facade.milestone_terms(session, ctx.subject_id)
+    if ctx.subject_type == "Contract" and ctx.action == PolicyAction.CONTRACT_SIGN:
+        found = await contract_facade.assistance_terms(session, ctx.subject_id)
+        if found:
+            terms = found["terms"] or {}
+            return {"milestones": terms.get("milestones") or [], "deliverables": terms.get("deliverables") or []}
+    return None
+
+
+async def is_retainer_funding(session, ctx) -> bool:
+    from zoikorum.domains.contract import facade as contract_facade
+
+    if ctx.attributes.get(Attr.ENGAGEMENT_TYPE) == "RETAINER":
+        return True
+    for raw in (ctx.attributes.get("funding.milestoneIds") or [])[:1]:
+        milestone = await contract_facade.get_milestone(session, uuid.UUID(str(raw)))
+        if milestone:
+            return await contract_facade.is_retainer(session, milestone.contract_id)
+    return False
+
+
+async def payment_rules(session, ctx, settings) -> tuple[list[tuple], list[dict]]:
+    """Payment-rule controls of the profile (escrow itself is always required): milestone shape at proposal and
+    signature, and retainer funding (automatic funding allowed, an approval per cycle). Returns findings
+    (decision, code, message, rule id) and the approval workflows the built-in controls need."""
+    from zoikorum.shared import context
+
+    findings, workflows = [], []
+    share = settings.get("milestoneMaxSharePercent")
+    criteria = settings.get("milestoneAcceptanceCriteriaRequired")
+    if share or criteria:
+        plan = await milestone_plan(session, ctx)
+        milestones = (plan or {}).get("milestones") or []
+        total = sum(int(m.get("amountMinor") or 0) for m in milestones)
+        for i, m in enumerate(milestones, start=1):
+            if share and total and int(m.get("amountMinor") or 0) * 100 > share * total:
+                findings.append((Decision.BLOCK, "POLICY_BLOCKED_MILESTONE_SHARE",
+                                 f"Your organisation's policy allows at most {share}% of the total in one milestone; "
+                                 f"M{i} {m.get('title') or ''} is {round(100 * int(m.get('amountMinor') or 0) / total)}%. "
+                                 "Split it into smaller milestones.", "payment-rules"))
+                break
+        if criteria and milestones:
+            criteria_by_key = {d.get("key"): (d.get("acceptanceCriteria") or "").strip() for d in (plan or {}).get("deliverables") or []}
+            for i, m in enumerate(milestones, start=1):
+                keys = m.get("deliverableKeys") or []
+                if not keys or not all(criteria_by_key.get(k) for k in keys):
+                    findings.append((Decision.BLOCK, "POLICY_BLOCKED_ACCEPTANCE_CRITERIA",
+                                     f"Your organisation's policy needs acceptance criteria for every milestone; M{i} "
+                                     f"{m.get('title') or ''} has a deliverable without them.", "payment-rules"))
+                    break
+    if ctx.action == PolicyAction.ESCROW_FUND and (settings.get("retainerAutoFundAllowed") is False or settings.get("retainerCycleApproval")):
+        if await is_retainer_funding(session, ctx):
+            automatic = (context.current().actor_id or "").startswith("consumer:")
+            if automatic and settings.get("retainerAutoFundAllowed") is False:
+                findings.append((Decision.BLOCK, "POLICY_BLOCKED_RETAINER_AUTO_FUNDING",
+                                 "Your organisation's policy does not allow retainer cycles to be funded automatically; "
+                                 "fund each cycle from the engagement.", "retainer-rules"))
+            if settings.get("retainerCycleApproval"):
+                role = settings.get("retainerCycleApprovalRole") or OrgRole.APPROVER
+                findings.append((Decision.REQUIRE_APPROVAL, "RETAINER_CYCLE_APPROVAL",
+                                 f"Each retainer cycle needs approval from a {role.replace('_', ' ').title()} before it is funded.",
+                                 "retainer-rules"))
+                workflows.append({"mode": "SINGLE", "steps": [{"role": role, "count": 1, "id": f"{RETAINER_CYCLE_STEP}:0"}],
+                                  "timeoutHours": 48, "escalationRole": OrgRole.ORG_ADMIN})
+    return findings, workflows
+
+
 async def evaluate(session, ctx, *, dry_run=False, preview_profile_id=None):
     if ctx.action not in PolicyAction.ALL:
         raise ValidationFailed("Unknown policy action")
@@ -394,6 +511,11 @@ async def evaluate(session, ctx, *, dry_run=False, preview_profile_id=None):
         for rule in version.rules:
             if ctx.action in rule["appliesTo"] and matches(rule["condition"], attrs):
                 fail(rule["decision"], rule["reasonCode"], rule["message"], rule["id"])
+        payment_findings, built_in_workflows = await payment_rules(session, ctx, settings)
+        for found in payment_findings:
+            fail(*found)
+    else:
+        built_in_workflows = []
     decision = max((f[0] for f in findings), key=lambda d: Decision.SEVERITY[d], default=Decision.ALLOW)
     digest = context_hash(ctx, version.id if version else None)
     approval_id = exception_id = None
@@ -406,7 +528,8 @@ async def evaluate(session, ctx, *, dry_run=False, preview_profile_id=None):
             for granted in candidates:
                 roles = await buyer.get_member_roles(session, ctx.org_id, granted.decided_by)
                 account = await identity.get_identity(session, granted.decided_by)
-                if OrgRole.EXCEPTION_AUTHORITY in roles and account and await identity.account_is_active(session, granted.decided_by):
+                deciders = (await exception_roles(session, ctx.org_id, granted.policy_version_id))["approve"]
+                if roles.intersection(deciders) and account and await identity.account_is_active(session, granted.decided_by):
                     exception_id = granted.id
                     decision = max((d for d, _ in findings if d != Decision.REQUIRE_EXCEPTION),
                         key=lambda d: Decision.SEVERITY[d], default=Decision.ALLOW)
@@ -421,7 +544,7 @@ async def evaluate(session, ctx, *, dry_run=False, preview_profile_id=None):
                 decision = Decision.BLOCK
             else:
                 if request is None:
-                    workflows = []
+                    workflows = list(built_in_workflows)
                     for rule in version.rules:
                         if rule["decision"] == Decision.REQUIRE_APPROVAL and ctx.action in rule["appliesTo"] and matches(rule["condition"], attrs):
                             route = rule["approval"]
@@ -563,8 +686,12 @@ def exception_out(request):
         "decisionReason": request.decision_reason, "decidedAt": request.decided_at, "createdAt": request.created_at}
 
 
+def _role_names(roles) -> str:
+    return " or ".join(r.replace("_", " ").title() for r in roles)
+
+
 async def create_exception(session, actor, body):
-    await require_member(session, actor, body.orgId)
+    have = await require_member(session, actor, body.orgId)
     if body.expiresAt.tzinfo is None or not clock.now() < body.expiresAt <= clock.now() + timedelta(days=90):
         raise ValidationFailed("Exception expiry must be within the next 90 days")
     if body.emergency and body.expiresAt > clock.now() + timedelta(hours=72):
@@ -579,6 +706,10 @@ async def create_exception(session, actor, body):
         ).order_by(PolicyEvaluation.created_at.desc()).limit(1))
     if not evaluation or evaluation.decision != Decision.REQUIRE_EXCEPTION:
         raise Conflict("A current commercial evaluation requiring an exception is needed")
+    allowed = (await exception_roles(session, body.orgId, evaluation.policy_version_id))["request"]
+    if allowed and not have.intersection(allowed):
+        raise Forbidden(f"Your organisation's policy lets a {_role_names(allowed)} request exceptions",
+                        code="EXCEPTION_REQUEST_ROLE_REQUIRED")
     existing = await session.scalar(select(ExceptionRequest).where(ExceptionRequest.context_hash == evaluation.context_hash,
         ExceptionRequest.status.in_(["PENDING", "GRANTED"]), ExceptionRequest.expires_at > clock.now()))
     if existing:
@@ -596,6 +727,7 @@ async def create_exception(session, actor, body):
         tenant_id=body.orgId, payload={"organizationId": body.orgId, "exceptionRequestId": request.id,
             "requesterIdentityId": actor.identity_id, "subjectId": request.subject_id, "action": request.action,
             "expiresAt": request.expires_at, "emergency": body.emergency,
+            "approverRoles": (await exception_roles(session, body.orgId, evaluation.policy_version_id))["approve"],
             **({"message": "Emergency exception requested: it needs a decision now. " + body.justification[:200]} if body.emergency else {})})
     await session.flush()
     return exception_out(request)
@@ -605,7 +737,9 @@ async def decide_exception(session, actor, request_id, body):
     request = await session.get(ExceptionRequest, request_id, with_for_update=True)
     if not request:
         raise NotFound("Exception request not found")
-    await require_member(session, actor, request.organization_id, OrgRole.EXCEPTION_AUTHORITY)
+    deciders = (await exception_roles(session, request.organization_id, request.policy_version_id))["approve"]
+    if not (await require_member(session, actor, request.organization_id)).intersection(deciders):
+        raise Forbidden(f"Your organisation's policy lets a {_role_names(deciders)} decide exceptions", code="ROLE_REQUIRED")
     actor.require_step_up()
     if request.requester_identity_id == actor.identity_id:
         raise Forbidden("Requesters cannot decide their own exceptions", code="SEPARATION_OF_DUTIES")
@@ -640,3 +774,26 @@ async def business_units_merged(session, payload):
             PolicyProfile.organization_id == uuid.UUID(str(payload["organizationId"]))).with_for_update())).all():
         if source in [str(b) for b in profile.business_unit_ids]:
             profile.business_unit_ids = list(dict.fromkeys(target if str(b) == source else str(b) for b in profile.business_unit_ids))
+
+
+async def setup_status(session, actor, org_id):
+    """Procurement setup progress for the organisation, and whether its first engagement should prompt "Define your
+    policy" (``needsPolicySetup``: an enterprise or business organisation with no policy profile at all)."""
+    from zoikorum.domains.contract import facade as contract_facade
+
+    await require_member(session, actor, org_id)
+    facts = await buyer.setup_facts(session, org_id)
+    profiles = list((await session.scalars(select(PolicyProfile).where(PolicyProfile.organization_id == org_id))).all())
+    engagements = (await contract_facade.counts_by_party(session, [org_id], []))[0].get(org_id, 0)
+    roles = facts.get("roles", {})
+    steps = [
+        {"key": "ORGANISATION", "label": "Organisation basics", "done": bool(facts.get("basicsComplete"))},
+        {"key": "POLICY", "label": "Policy from a template", "done": any(p.active_version_id for p in profiles)},
+        {"key": "APPROVERS", "label": "Approvers and an Exception Authority",
+         "done": bool(roles.get(OrgRole.APPROVER) and roles.get(OrgRole.EXCEPTION_AUTHORITY))},
+        {"key": "BUDGETS", "label": "Cost centres and budgets", "done": bool(facts.get("costCenters"))},
+    ]
+    return {"orgId": org_id, "needsPolicySetup": facts.get("orgType") != "INDIVIDUAL" and not profiles,
+            "hasProfile": bool(profiles), "hasActivePolicy": any(p.active_version_id for p in profiles),
+            "engagements": engagements, "firstEngagement": engagements == 0, "steps": steps,
+            "complete": all(s["done"] for s in steps), "facts": facts}

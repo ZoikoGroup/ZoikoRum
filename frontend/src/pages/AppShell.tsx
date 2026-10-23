@@ -10,7 +10,7 @@ import { Icon, type IconName } from '../components/dashboard'
 import { GlobalSearch } from '../components/GlobalSearch'
 import { DuplicateNotice } from '../components/DuplicateNotice'
 import { dashboardPath, isStaffPath, STAFF_PREFIX } from '../staffRoutes'
-import { useCapabilities } from '../auth/capabilities'
+import { useCapabilities, StaffSessionNotice } from '../auth/capabilities'
 
   /* Signed-in layout: navy sidebar (only the areas this account's roles can use) and a top bar with
    search, notifications and the account menu. Areas still being built are listed as "Soon", not linked. */
@@ -200,6 +200,7 @@ export default function AppShell() {
   const dashboards = new Set(user.personas.map((p) => DASHBOARD_FOR_PERSONA[p]))
   const isStaff = user.platformRoles.length > 0
   const customer = dashboards.has('enterprise') ? 'enterprise' : dashboards.has('buyer') ? 'buyer' : null
+  const staffOnly = user.platformRoles.length > 0 && user.personas.length === 0
   const initials = user.displayName.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase()
   // Staff: the most senior role (PLATFORM_ROLES runs from Platform Admin down), not the first alphabetically.
   const staffRoles = PLATFORM_ROLES.filter((r) => user.platformRoles.includes(r))
@@ -283,9 +284,11 @@ export default function AppShell() {
           {customer === 'enterprise' && <Item to="/app/enterprise/structure" icon="folder">Structure &amp; Budgets</Item>}
           <Item to="/app/verification" icon="shield">Verification</Item>
         </>}
-        <Item to="/app/invitations" icon="mail" count={n('/app/invitations')}>Invitations</Item>
+        {/* Organisation invitations and Safety & Appeals belong to customer and professional accounts, not staff-only ones. */}
+        {!staffOnly && <Item to="/app/invitations" icon="mail" count={n('/app/invitations')}>Invitations</Item>}
         <Item to="/app/settings" icon="gear">Settings</Item>
-        <Item to="/app/safety" icon="shield">Safety &amp; Appeals</Item>
+        {staffOnly && <Item to="/app/security" icon="lock">Two-step &amp; Passkeys</Item>}
+        {!staffOnly && <Item to="/app/safety" icon="shield">Safety &amp; Appeals</Item>}
         {!customer && !user.platformRoles.length && <Item to="/app/reports" icon="contract">Reports</Item>}
         <Item to="/app/help" icon="help">Help &amp; Support</Item>
 
@@ -347,6 +350,7 @@ export default function AppShell() {
           {user.status === 'SUSPENDED' && <div className="alert alert-warn" role="status">Your account is restricted. <NavLink to="/app/safety">Read the notice and submit an appeal</NavLink>.</div>}
           {user.mfaBypass && <div className="alert alert-warn" role="status" style={{ margin: '0 0 12px' }}>Development mode: two-step verification (authenticator codes) is switched off. Never use this setting in production.</div>}
           <DuplicateNotice />
+          <StaffSessionNotice />
           <Suspense fallback={<p className="muted page-loading">Loading…</p>}><Outlet /></Suspense>
         </main>
       </div>

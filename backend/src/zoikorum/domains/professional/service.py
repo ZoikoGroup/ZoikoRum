@@ -183,7 +183,7 @@ async def _profile_out(session: AsyncSession, pro: Professional) -> ProfileOut:
         weeklyHours=pro.weekly_hours,
         temporarilyUnavailable=pro.temporarily_unavailable, servedJurisdictions=list(pro.served_jurisdictions),
         licensedJurisdictions=list(pro.licensed_jurisdictions), handlesRegulatedData=pro.regulated_data_attested_at is not None,
-        crossBorderAcknowledged=pro.cross_border_acknowledged_at is not None, publishedAt=pro.published_at,
+        onsiteRegions=list(pro.onsite_regions or []), crossBorderAcknowledged=pro.cross_border_acknowledged_at is not None, publishedAt=pro.published_at,
         version=pro.version,
     )
 
@@ -275,6 +275,13 @@ async def update_me(session: AsyncSession, actor: Actor, patch: ProfilePatch, if
         if (patch.indicativeRate.amountMinor, patch.indicativeRate.currency) != (pro.rate_minor, pro.rate_currency):
             pro.rate_minor, pro.rate_currency = patch.indicativeRate.amountMinor, patch.indicativeRate.currency
             changed.append("indicativeRate")
+    if patch.onsiteRegions is not None:
+        regions = list(dict.fromkeys(r.strip()[:100] for r in patch.onsiteRegions if r and r.strip()))
+        for r in regions:
+            check_copy("on-site region", r)
+        if regions != list(pro.onsite_regions or []):
+            pro.onsite_regions = regions
+            changed.append("onsiteRegions")
     if patch.handlesRegulatedData is not None and patch.handlesRegulatedData != (pro.regulated_data_attested_at is not None):
         pro.regulated_data_attested_at = clock.now() if patch.handlesRegulatedData else None
         changed.append("handlesRegulatedData")
@@ -738,7 +745,8 @@ async def public_profile(session: AsyncSession, actor: Actor | None, professiona
         offerings=[_offering_out(o, names) for o in offerings],
         trust=PublicTrustOut(tier=trust.tier, dimensions=public_dimensions(trust.dimensions),
                              explanation=public_explanation(trust.explanation), updatedAt=trust.updated_at),
-        publishedAt=pro.published_at, isOwnProfile=own,
+        publishedAt=pro.published_at, isOwnProfile=own, onsiteRegions=list(pro.onsite_regions or []),
+        profileStatus=pro.status, underReview=bool(pro.visibility_reduced),
     )
 
 

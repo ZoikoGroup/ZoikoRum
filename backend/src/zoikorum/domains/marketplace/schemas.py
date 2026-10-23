@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 from zoikorum.shared.money import MoneyDTO
 
@@ -184,3 +184,38 @@ class SuggestionDecisionIn(BaseModel):
     regulated: bool = False
     mergeSlug: str | None = Field(default=None, max_length=120)  # MERGE: the existing specialization it means
     note: str = Field(default="", max_length=500)  # shown to the professional (required to reject)
+
+
+# ---- Referral codes and procurement requests (leads.py) ----------------------------------------------------------------
+
+class ReferralIn(BaseModel):
+    code: str = Field(min_length=3, max_length=40, pattern=r"^\s*[A-Za-z0-9][A-Za-z0-9_-]{1,38}[A-Za-z0-9]\s*$")
+
+
+class ReferralOut(BaseModel):
+    code: str
+    recordedAt: datetime
+
+
+class ProcurementRequestIn(BaseModel):
+    kind: Literal["PROCUREMENT_PACK", "SECURITY_REVIEW"] = "PROCUREMENT_PACK"
+    professionalId: uuid.UUID | None = None
+    name: str = Field(min_length=2, max_length=200)
+    organization: str = Field(min_length=2, max_length=200)
+    email: EmailStr
+    message: str = Field(default="", max_length=2000)
+    website: str = Field(default="", max_length=200)  # honeypot: people never see or fill it
+
+
+class ProcurementRequestOut(BaseModel):
+    id: uuid.UUID
+    reference: str
+    kind: str
+    professionalId: uuid.UUID | None
+    status: str
+    createdAt: datetime
+    # Staff only (the requester's own copy leaves contact details out).
+    name: str | None = None
+    organization: str | None = None
+    email: str | None = None
+    message: str | None = None

@@ -1,11 +1,12 @@
 name: Deploy backend
 
+# Deploys only what passed CI: runs after the CI workflow (ci.yml) finishes on a push to main, and only when it
+# succeeded, at the exact commit CI tested. workflow_dispatch stays for a manual (re)deploy of the chosen ref.
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
-    paths:
-      - "backend/**"
-      - ".github/workflows/deploy-backend.yml"
   workflow_dispatch:
 
 concurrency:
@@ -14,9 +15,14 @@ concurrency:
 
 jobs:
   deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Configure SSH
         env:

@@ -3,13 +3,14 @@ from __future__ import annotations
 import uuid
 from typing import Literal
 
-from fastapi import APIRouter, Query, Request, Response, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 
 from zoikorum.config import get_settings
 from zoikorum.shared.errors import ValidationFailed
 from pydantic import BaseModel, Field
-from zoikorum.domains.identity import duplicates, passkeys, privacy_requests, service
+from zoikorum.domains.identity import duplicates, passkeys, privacy_requests, risk, service
 from zoikorum.domains.identity.schemas import (
+    MfaVerifyOut,
     DataRequestIn,
     DuplicateAnswerIn,
     DuplicateOut,
@@ -51,7 +52,10 @@ from zoikorum.shared.db import DbSession, session_factory
 from zoikorum.shared.errors import RateLimited, Unauthenticated
 from zoikorum.shared.http import Page, enforce_budget
 
-router = APIRouter(prefix="/v1", tags=["identity"])
+# risk.bind_request keeps the caller's address and coarse location for the sign-in risk signals (identity/risk.py).
+router = APIRouter(prefix="/v1", tags=["identity"], dependencies=[Depends(risk.bind_request)])
+# Outside /v1: the public signing keys (RFC 8414 / OpenID-style well-known address), mounted by main.py.
+root_router = APIRouter(tags=["identity"])
 
 
 def _ua(request: Request) -> str | None:
@@ -155,10 +159,15 @@ async def mfa_enroll(actor: CurrentActor, session: DbSession) -> MfaEnrollOut:
     return MfaEnrollOut(secret=secret, otpauthUri=uri)
 
 
-@router.post("/auth/mfa/verify", response_model=RecoveryCodesOut)
-async def mfa_verify(body: MfaVerifyIn, actor: CurrentActor, session: DbSession) -> RecoveryCodesOut:
-    """Turns two-step verification on and returns one-time recovery codes (shown only now)."""
-    return RecoveryCodesOut(recoveryCodes=await service.verify_mfa(session, actor, body.totpCode))
+@router.post("/auth/mfa/verify", response_model=MfaVerifyOut)
+async def mfa_verify(body: MfaVerifyIn, request: Request, response: Response, actor: CurrentActor, session: DbSession) -> MfaVerifyOut:
+    """Turns two-step verification on, returns one-time recovery codes (shown only now) and upgrades this sign-in to a
+    two-step session (the same code cannot be used again for a step-up)."""
+    codes = await service.verify_mfa(session, actor, body.totpCode)
+    if not codes:  # already on: nothing new to issue
+        return MfaVerifyOut(recoveryCodes=[])
+    pair = await service.elevate_after_enrollment(session, actor, _ua(request))
+    return MfaVerifyOut(recoveryCodes=codes, tokens=_issue(request, response, pair))
 
 
 @router.post("/auth/mfa/recovery-codes", response_model=RecoveryCodesOut)
@@ -391,8 +400,17 @@ class SsoCallbackIn(BaseModel):
 
 
 class SsoConnectionIn(BaseModel):
-    issuer: str = Field(min_length=8, max_length=500, pattern=r"^https://")
-    clientId: str = Field(min_length=1, max_length=300)
+    # OIDC: issuer, client id and secret. SAML: the identity provider's metadata XML, or its entity id, sign-on address
+    # and signing certificate.
+    protocol: Literal["OIDC", "SAML"] = "OIDC"
+    issuer: str | None = Field(default=None, min_length=8, max_length=500, pattern=r"^https://")
+    clientId: str | None = Field(default=None, min_length=1, max_length=300)
+    samlMetadataXml: str | None = Field(default=None, max_length=200_000)
+    samlEntityId: str | None = Field(default=None, max_length=500)
+    samlSsoUrl: str | None = Field(default=None, max_length=1000)
+    samlCertificate: str | None = Field(default=None, max_length=20_000)
+    # SCIM groups to organisation roles, e.g. {"Finance approvers": "APPROVER"}; null: keep the current map.
+    groupRoleMap: dict[str, Literal["REQUESTER", "APPROVER", "BUDGET_OWNER", "LEGAL_REVIEWER", "EXCEPTION_AUTHORITY"]] | None = None
     clientSecret: str | None = Field(default=None, max_length=2000)  # empty on update: keep the stored one
     emailDomains: list[str] = Field(min_length=1, max_length=20)
     enforce: bool = False
@@ -496,3 +514,119 @@ async def scim_delete(user_id: str, request: Request, session: DbSession) -> Res
     c = await scim.connection_for(session, request.headers.get("Authorization"))
     await scim.delete_user(session, c, user_id)
     return Response(status_code=204)
+
+
+
+# ---- SAML 2.0 service provider (identity/saml.py) -------------------------------------------------------------------------
+
+@router.get("/auth/saml/metadata", response_class=Response)
+async def saml_metadata() -> Response:
+    """This service provider's SAML metadata (entity id and assertion consumer service), for the identity provider."""
+    from zoikorum.domains.identity import saml
+    return Response(saml.sp_metadata(), media_type="application/samlmetadata+xml")
+
+
+@router.post("/auth/saml/acs", status_code=status.HTTP_303_SEE_OTHER, response_class=Response)
+async def saml_acs(request: Request) -> Response:
+    """Assertion consumer service (HTTP-POST binding): the identity provider posts SAMLResponse and RelayState here; the
+    browser is sent on to the web app's /sso/callback with a one-time code, which POST /v1/auth/sso/callback redeems."""
+    from urllib.parse import parse_qs
+
+    from zoikorum.domains.identity import sso
+    body = await request.body()
+    if len(body) > 512 * 1024:
+        raise ValidationFailed("The sign-in response is too large")
+    form = parse_qs(body.decode("utf-8", "replace"), max_num_fields=10)
+    await enforce_budget("saml-acs", request.client.host if request.client else "", 30, 30, "Too many sign-in attempts.")
+    # Own transaction: a refused response must still burn its request.
+    async with session_factory()() as session:
+        async with session.begin():
+            target = await sso.saml_acs(session, (form.get("SAMLResponse") or [None])[0], (form.get("RelayState") or [None])[0])
+    return Response(status_code=303, headers={"Location": target, "Cache-Control": "no-store"})
+
+
+# ---- SCIM 2.0 Groups (identity/scim.py) -------------------------------------------------------------------------------------
+
+@router.get("/scim/v2/Groups")
+async def scim_groups(request: Request, session: DbSession, filter: str | None = None, startIndex: int = 1, count: int = 100) -> dict:
+    from zoikorum.domains.identity import scim
+    c = await scim.connection_for(session, request.headers.get("Authorization"))
+    return await scim.list_groups(session, c, filter, max(1, startIndex), max(0, min(count, 200)))
+
+
+@router.post("/scim/v2/Groups", status_code=status.HTTP_201_CREATED)
+async def scim_group_create(body: dict, request: Request, session: DbSession) -> dict:
+    from zoikorum.domains.identity import scim
+    c = await scim.connection_for(session, request.headers.get("Authorization"))
+    return await scim.create_group(session, c, body)
+
+
+@router.get("/scim/v2/Groups/{group_id}")
+async def scim_group(group_id: str, request: Request, session: DbSession) -> dict:
+    from zoikorum.domains.identity import scim
+    c = await scim.connection_for(session, request.headers.get("Authorization"))
+    return await scim.get_group(session, c, group_id)
+
+
+@router.put("/scim/v2/Groups/{group_id}")
+@router.patch("/scim/v2/Groups/{group_id}")
+async def scim_group_update(group_id: str, body: dict, request: Request, session: DbSession) -> dict:
+    from zoikorum.domains.identity import scim
+    c = await scim.connection_for(session, request.headers.get("Authorization"))
+    return await scim.update_group(session, c, group_id, body)
+
+
+@router.delete("/scim/v2/Groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def scim_group_delete(group_id: str, request: Request, session: DbSession) -> Response:
+    from zoikorum.domains.identity import scim
+    c = await scim.connection_for(session, request.headers.get("Authorization"))
+    await scim.delete_group(session, c, group_id)
+    return Response(status_code=204)
+
+
+# ---- Enterprise session policy (identity/session_policy.py) -----------------------------------------------------------------
+
+class SessionPolicyIn(BaseModel):
+    maxSessionSeconds: int | None = Field(default=None, ge=900, le=90 * 24 * 3600)
+    idleTimeoutSeconds: int | None = Field(default=None, ge=300, le=30 * 24 * 3600)
+    requireMfa: bool = False
+    allowedIdps: list[Literal["PASSWORD", "PASSKEY", "OIDC", "SAML", "GOOGLE", "MICROSOFT"]] = Field(default_factory=list, max_length=6)
+
+
+@router.get("/organizations/{org_id}/session-policy")
+async def get_session_policy(org_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> dict:
+    """The organisation's rules for its members' sessions (Organisation Admin)."""
+    from zoikorum.domains.identity import session_policy
+    return await session_policy.get_policy(session, actor, org_id)
+
+
+@router.put("/organizations/{org_id}/session-policy")
+async def set_session_policy(org_id: uuid.UUID, body: SessionPolicyIn, actor: CurrentActor, session: DbSession) -> dict:
+    """Set the session rules (needs a fresh two-step check). Members' sessions follow them from their next refresh."""
+    from zoikorum.domains.identity import session_policy
+    return await session_policy.set_policy(session, actor, org_id, body)
+
+
+# ---- Sign-in risk signals (identity/risk.py) ----------------------------------------------------------------------------------
+
+@router.get("/me/sign-in-signals")
+async def my_sign_in_signals(actor: CurrentActor, session: DbSession) -> list[dict]:
+    """My recent sign-ins with advisory risk signals (new device, new country, impossible travel, velocity)."""
+    return await service.sign_in_signals(session, actor)
+
+
+@router.get("/admin/identities/{identity_id}/sign-in-signals")
+async def account_sign_in_signals(identity_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> list[dict]:
+    """Staff (account access): an account's recent sign-ins with their risk signals."""
+    actor.require_capability("accounts.read")
+    return await service.sign_in_signals(session, actor, identity_id)
+
+
+# ---- Public signing keys (shared/signing_keys.py) -----------------------------------------------------------------------------
+
+@root_router.get("/.well-known/jwks.json")
+async def jwks(response: Response) -> dict:
+    """The public keys Zoikorum's RS256 sign-in tokens are signed with (empty while tokens use the shared secret)."""
+    from zoikorum.shared import signing_keys
+    response.headers["Cache-Control"] = "public, max-age=300"
+    return signing_keys.jwks()

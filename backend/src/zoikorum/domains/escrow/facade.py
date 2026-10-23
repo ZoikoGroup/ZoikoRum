@@ -200,3 +200,26 @@ async def money_by_contract(session: AsyncSession, contract_ids: list[uuid.UUID]
     rows = (await session.execute(select(EscrowAccount.contract_id, EscrowAccount.funded_minor, EscrowAccount.released_minor)
                                   .where(EscrowAccount.contract_id.in_(contract_ids)))).all()
     return {cid: {"funded": funded, "released": released} for cid, funded, released in rows}
+
+
+async def refund_kpis(session: AsyncSession, since, until) -> dict:
+    """Payments captured and refunds to buyers in the period, per currency (counts may be totalled, amounts never are)."""
+    from sqlalchemy import func
+
+    from zoikorum.domains.escrow.models import Funding, LedgerEntry
+
+    out: dict[str, dict] = {}
+
+    def row(ccy: str) -> dict:
+        return out.setdefault(ccy, {"currency": ccy, "payments": 0, "refunds": 0, "refundedMinor": 0})
+    for ccy, n in (await session.execute(select(Funding.currency, func.count()).where(
+            Funding.status == "CAPTURED", Funding.captured_at >= since, Funding.captured_at < until).group_by(Funding.currency))).all():
+        row(ccy)["payments"] = n
+    for ccy, n, total in (await session.execute(select(LedgerEntry.currency, func.count(), func.sum(LedgerEntry.credit_minor)).where(
+            LedgerEntry.entry_type == "REFUND", LedgerEntry.ledger_account == "BUYER_REFUND_PAYABLE",
+            LedgerEntry.created_at >= since, LedgerEntry.created_at < until).group_by(LedgerEntry.currency))).all():
+        row(ccy)["refunds"], row(ccy)["refundedMinor"] = n, int(total or 0)
+    for r in out.values():
+        r["refundsPer100Payments"] = round(100 * r["refunds"] / r["payments"], 1) if r["payments"] else None
+    rows = sorted(out.values(), key=lambda r: r["currency"])
+    return {"payments": sum(r["payments"] for r in rows), "refunds": sum(r["refunds"] for r in rows), "byCurrency": rows}

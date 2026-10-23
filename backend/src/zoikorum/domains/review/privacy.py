@@ -7,13 +7,14 @@ import uuid
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from zoikorum.domains.review.models import Review
+from zoikorum.domains.review.models import Review, ReviewReply
 from zoikorum.shared import privacy
 from zoikorum.shared.ddl import ERASED_NAME
 
 
 async def export(session: AsyncSession, identity_id: uuid.UUID) -> dict:
-    return {"reviewsWritten": await privacy.rows(session, Review, Review.reviewer_identity_id == identity_id)}
+    return {"reviewsWritten": await privacy.rows(session, Review, Review.reviewer_identity_id == identity_id),
+            "reviewRepliesWritten": await privacy.rows(session, ReviewReply, ReviewReply.author_identity_id == identity_id)}
 
 
 async def erase(session: AsyncSession, identity_id: uuid.UUID) -> dict:
