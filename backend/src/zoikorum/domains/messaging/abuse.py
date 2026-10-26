@@ -20,7 +20,7 @@ from zoikorum.config import get_settings
 
 LEET = str.maketrans({"0": "o", "1": "i", "!": "i", "|": "i", "3": "e", "4": "a", "@": "a", "5": "s", "7": "t", "+": "t",
                       "8": "b", "9": "g"})
-ZERO_WIDTH = re.compile("[​-‏⁠﻿­]")
+ZERO_WIDTH = re.compile(r"[\u200b-\u200f\u2060\ufeff\xad]")
 NUMBER_WORDS = {"zero": "0", "oh": "0", "one": "1", "two": "2", "three": "3", "four": "4", "five": "5", "six": "6", "seven": "7",
                 "eight": "8", "nine": "9"}
 
