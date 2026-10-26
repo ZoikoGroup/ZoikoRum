@@ -48,6 +48,7 @@ from zoikorum.shared.http import page_of, paginate
 from zoikorum.shared.money import MoneyDTO
 from zoikorum.shared.relay import cancel_timer, schedule_timer
 from zoikorum.shared.state_machine import StateMachine
+from zoikorum.shared.trust_light import light
 from zoikorum.shared import uploads
 from zoikorum.shared.uploads import file_out, find_file, read_file, store_uploads
 
@@ -1990,7 +1991,7 @@ async def evidence_pack(session: AsyncSession, actor: Actor, contract_id: uuid.U
                        f"{x['status'].lower()}" + (f" · {x['decidedBy']}: {x['decisionReason']}" if x["decidedBy"] else "")
                        + f" · until {x['expiresAt'][:10]}") for x in record.get("exceptionHistory", [])]
     eligibility_rows = [(f"{e['at'][:10]} {e['action'].replace('_', ' ').lower()}",
-                         f"{e['decision'].lower()} · tier {e['professionalTier'] or '—'} · "
+                         f"{e['decision'].lower()} · trust light {light(e['professionalTier']) if e['professionalTier'] else '—'} · "
                          + (", ".join(f"{k} {v.lower()}" for k, v in sorted(e["dimensions"].items())) or "no checks recorded")
                          + f" · {e['policy']}") for e in record["eligibility"]]
     policy_sections = [pdf.Section("Eligibility evidence (policy checks)", rows=eligibility_rows or [("None recorded", "")])]
@@ -2057,7 +2058,7 @@ def _evidence_csv(c: Contract, record: dict, fingerprint: str) -> bytes:
     for f in record["files"]:
         w.writerow(["Files", f.get("uploadedAt", ""), f.get("name", ""), f.get("source", ""), f.get("sha256", "")])
     for e in record["eligibility"]:
-        w.writerow(["Eligibility evidence", e["at"], e["action"], f"{e['decision']} · tier {e['professionalTier'] or '-'} · "
+        w.writerow(["Eligibility evidence", e["at"], e["action"], f"{e['decision']} · trust light {light(e['professionalTier']) if e['professionalTier'] else '-'} · "
                     + "; ".join(f"{k} {v}" for k, v in sorted(e["dimensions"].items())) + f" · {e['policy']}", e["contextHash"]])
     for a in record.get("approvalLog", []):
         w.writerow(["Approval log", a["requestedAt"], a["action"], f"{a['status']} · " + "; ".join(a["reasons"] or []), a["id"]])

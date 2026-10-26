@@ -23,7 +23,7 @@ async def test_rollout_to_named_organisations_and_the_ranking_experiment(client,
     assert (await client.get("/v1/flags", headers=buyer.h)).json() == {KEY: False}
 
     fairness = (await client.get(f"/v1/admin/flags/{KEY}/fairness", headers=admin.h)).json()
-    assert fairness["passes"] is True and {g["group"] for g in fairness["groups"]} >= {"Tier B"}
+    assert fairness["passes"] is True and {g["group"] for g in fairness["groups"]} >= {"Amber light"}
     body = {"rolloutPct": 0, "organizationIds": [org["id"]], "reason": "Pilot with one buyer organisation"}
     assert (await client.put(f"/v1/admin/flags/{KEY}", headers=buyer.h, json=body)).status_code == 403
     r = (await client.put(f"/v1/admin/flags/{KEY}", headers=admin.h, json=body)).json()

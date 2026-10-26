@@ -276,3 +276,15 @@ async def acceptance_kpis(session: AsyncSession, since, until) -> dict:
         Milestone.accepted_at >= since, Milestone.accepted_at < until, Milestone.submitted_at.is_not(None)))).one()
     return {"milestonesAccepted": n or 0, "medianHoursSubmitToAccept": round(float(med), 1) if med is not None else None,
             "p90HoursSubmitToAccept": round(float(p90), 1) if p90 is not None else None}
+
+
+async def engagement_facts(session: AsyncSession, contract_id: uuid.UUID) -> dict | None:
+    """What a payout statement shows about the engagement: title (the service), type, pricing model, the agreed work
+    period and when it started and completed. Never the parties' contact details."""
+    c = await session.get(Contract, contract_id)
+    if c is None:
+        return None
+    buyer = (c.parties or {}).get("buyer", {})
+    return {"title": c.title, "engagementType": c.engagement_type, "pricingModel": c.pricing_model,
+            "startDate": c.terms.get("startDate"), "endDate": c.terms.get("endDate"), "activatedAt": c.activated_at,
+            "completedAt": c.completed_at, "buyerCountry": buyer.get("country")}

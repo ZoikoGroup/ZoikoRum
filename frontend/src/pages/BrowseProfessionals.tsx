@@ -9,6 +9,8 @@ import { COUNTRIES } from './Join'
 import { countryName } from './ProfessionalPages'
 import { SaveButton, useSavedIds } from './SavedPage'
 import { SearchBox } from '../components/SearchBox'
+import { TrustLight } from '../components/TrustLight'
+import { lightColor, lightName } from '../lib/trustLight'
 
 const PAGE = 20
 const SORTS: [string, string][] = [
@@ -35,9 +37,9 @@ export function ResultCard({ r, saved, onToggle }: { r: SearchResult; saved?: bo
             {' · '}{LABEL[r.availability] ?? r.availability}</div>
         </div>
         <div className="result-side">
-          <span className={`badge ${r.tier === 'C' ? 'warn' : 'green'}`}>Tier {r.tier} · {r.tierLabel}</span>
+          <TrustLight tier={r.tier} />
           {r.enterpriseReady && <span className="badge green">Enterprise Ready</span>}
-          {r.regulatedPreview && <span className="badge warn" title="Regulated work (audit, tax filing, regulatory reporting) needs Tier A">Preview for regulated work</span>}
+          {r.regulatedPreview && <span className="badge warn" title="Regulated work (audit, tax filing, regulatory reporting) needs a Green trust light (fully verified)">Preview for regulated work</span>}
           {onToggle && <SaveButton id={r.professionalId} saved={!!saved} onToggle={onToggle} />}
         </div>
       </div>
@@ -102,7 +104,7 @@ export default function BrowseProfessionals() {
       <SiteHeader />
       <main className="profile-wrap">
         <div className="page-head"><div><h1>Browse verified professionals</h1>
-          <p className="muted" style={{ margin: 0 }}>Every result shows its Trust Tier and why it matched. Ranking can't be bought.</p></div></div>
+          <p className="muted" style={{ margin: 0 }}>Every result shows its trust light and why it matched. Ranking can't be bought.</p></div></div>
         <SearchBox value={q} onChange={setQ} onSearch={(v) => set('q', v || null)}
           onPickSpecialization={(slug) => { if (!inList('spec', slug)) toggleList('spec', slug) }} placeholder="Try “fractional CFO”, “transfer pricing” or “SOX”" />
         <div className="browse">
@@ -110,10 +112,10 @@ export default function BrowseProfessionals() {
             <SpecializationNavigator groups={groups} selected={list('spec')} onToggle={(slug) => toggleList('spec', slug)}
               facets={data?.facets} />
 
-            <div className="filter-label">Trust Tier</div>
+            <div className="filter-label">Trust light</div>
             {['A', 'B', 'C'].map((t) => (
               <label key={t} className="checkbox small"><input type="checkbox" checked={inList('tier', t)} onChange={() => toggleList('tier', t)} />
-                <span>Tier {t}<FacetCount facets={data?.facets} name="tier" value={t} /></span></label>
+                <span><span className="light-dot" style={{ background: lightColor(t), marginRight: 6 }} aria-hidden />{lightName(t)}<FacetCount facets={data?.facets} name="tier" value={t} /></span></label>
             ))}
 
             <div className="filter-label">Verification</div>

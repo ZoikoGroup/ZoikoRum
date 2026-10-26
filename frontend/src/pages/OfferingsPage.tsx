@@ -280,6 +280,17 @@ export function OfferingsPage() {
     }
   }
 
+  async function remove(o: Offering) {
+    if (!confirm(`Delete "${o.title}"? Buyers will no longer see it. Requests already sent for it keep their record.`)) return
+    setError(null)
+    try {
+      await proApi.deleteOffering(o.id)
+      await load()
+    } catch (err) {
+      setError(err)
+    }
+  }
+
   async function setStatus(o: Offering, action: 'activate' | 'pause') {
     setError(null)
     try {
@@ -295,7 +306,7 @@ export function OfferingsPage() {
       <div className="page-head">
         <div>
           <h1>Service offerings</h1>
-          <p className="muted" style={{ margin: 0 }}>Active offerings appear on your public profile. Paused ones are kept, not deleted.</p>
+          <p className="muted" style={{ margin: 0 }}>Active offerings appear on your public profile. Paused ones are kept but hidden; Delete removes one for good (for example a duplicate).</p>
         </div>
         {profile.specializations.length > 0 && !editing && (
           <button className="btn btn-primary" onClick={() => setEditing('new')}>New offering</button>
@@ -333,6 +344,7 @@ export function OfferingsPage() {
                 ? <button className="btn btn-secondary btn-sm" onClick={() => setStatus(o, 'pause')}>Pause</button>
                 : <button className="btn btn-primary btn-sm" onClick={() => setStatus(o, 'activate')}>Activate</button>}
               <button className="btn btn-ghost btn-sm" onClick={() => duplicate(o)}>Duplicate</button>
+              <button className="btn btn-ghost btn-sm" aria-label={`Delete ${o.title}`} onClick={() => remove(o)}>Delete</button>
             </div>
           </article>
         ))}

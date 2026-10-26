@@ -10,6 +10,7 @@ import {
 import { Icon } from '../../components/dashboard'
 import { ErrorAlert, Loading, useStepUp } from '../../components/ui'
 import { downloadFile } from '../../lib/exports'
+import { lightColor, lightName } from '../../lib/trustLight'
 
 /* Analytics & Insights: marketplace health (/v1/analytics/marketplace-health) and the platform KPIs (/v1/admin/kpis) for
    one period, drawn as charts. Every figure is live; money is shown per currency and never converted. */
@@ -137,7 +138,6 @@ function groupEventCounts(counts: Record<string, number>) {
 type Preset = '7' | '30' | '90' | 'all' | 'custom'
 const PRESETS: [Preset, string][] = [['7', 'Last 7 days'], ['30', 'Last 30 days'], ['90', 'Last 90 days'], ['all', 'All time'], ['custom', 'Custom range']]
 type Trend = 'engagements' | 'search' | 'disputes'
-const TIER_COLORS: Record<string, string> = { A: '#12b76a', B: '#2f80ed', C: '#9b8afb' }
 
 export default function Analytics() {
   const { has } = useCapabilities()
@@ -229,8 +229,8 @@ export default function Analytics() {
   const funnel = [
     overview && { label: 'Profiles created', value: overview.professionalProfiles.total },
     kpis ? { label: 'Published now', value: kpis.onboarding.publishedNow } : overview && { label: 'Published now', value: overview.professionalProfiles.published },
-    (kpis || data) && { label: 'Tier A + B', value: tierOf('A') + tierOf('B') },
-    (kpis || data) && { label: 'Tier A', value: tierOf('A') },
+    (kpis || data) && { label: 'Green + Amber', value: tierOf('A') + tierOf('B') },
+    (kpis || data) && { label: 'Green (fully verified)', value: tierOf('A') },
     kpis && { label: 'Enterprise Ready', value: kpis.onboarding.enterpriseReadyNow },
   ].filter((r): r is { label: string; value: number } => !!r)
 
@@ -295,12 +295,12 @@ export default function Analytics() {
             </Panel>
             <Panel title="Professional readiness funnel" meta="Current counts">
               <HBars rows={funnel} format={(v) => v.toLocaleString()} />
-              <p className="adm-foot-note">Tier A + B is a subset of published profiles. Verification and publication are separate controls.</p>
+              <p className="adm-foot-note">Green + Amber is a subset of published profiles. Verification and publication are separate controls.</p>
             </Panel>
-            <Panel title="Professionals by trust tier" meta="Current snapshot">
-              {tiered ? <Donut segments={tiers.map(([t, n]) => ({ label: `Tier ${t}`, value: n, color: TIER_COLORS[t] }))} center={tiered.toLocaleString()} caption="with a tier" />
-                : <p className="muted small">No tiers assigned yet.</p>}
-              <p className="adm-foot-note">Trust tiers describe platform-defined eligibility, not a guarantee of future performance.</p>
+            <Panel title="Professionals by trust light" meta="Current snapshot">
+              {tiered ? <Donut segments={tiers.map(([t, n]) => ({ label: lightName(t), value: n, color: lightColor(t) }))} center={tiered.toLocaleString()} caption="with a light" />
+                : <p className="muted small">No trust lights assigned yet.</p>}
+              <p className="adm-foot-note">Trust lights describe platform-defined eligibility, not a guarantee of future performance.</p>
             </Panel>
           </PanelRow>
 
@@ -353,9 +353,9 @@ export default function Analytics() {
               <Panel title="Onboarding & trust movement" meta={windowLabel}>
                 <MetricList rows={[
                   { label: 'Profiles started', value: kpis.onboarding.profilesStarted }, { label: 'Profiles published', value: kpis.onboarding.profilesPublished },
-                  { label: 'Reached Tier B', value: kpis.trust.reachedB }, { label: 'Reached Tier A', value: kpis.trust.reachedA },
+                  { label: 'Reached Amber', value: kpis.trust.reachedB }, { label: 'Reached Green', value: kpis.trust.reachedA },
                   { label: 'Downgraded', value: kpis.trust.downgrades, tone: kpis.trust.downgrades ? 'amber' : undefined },
-                  { label: 'Verified supply (Tier A + B)', value: kpis.board.verifiedSupply },
+                  { label: 'Verified supply (Green + Amber)', value: kpis.board.verifiedSupply },
                 ]} />
               </Panel>
               <Panel title="Dispute outcomes" meta={windowLabel}>
@@ -444,11 +444,11 @@ export default function Analytics() {
 
           {kpis && (
             <PanelRow cols={2}>
-              <Panel title="Trust tier trend" meta="From the tier history">
+              <Panel title="Trust light trend" meta="From the trust light history">
                 {tierTrend.length > 1 ? <TrendChart kind="line" labels={tierTrend.map((p) => axisLabel(p.date.slice(0, 10)))} series={(['A', 'B', 'C'] as const).map((t) => ({
-                  label: `Tier ${t}`, values: tierTrend.map((p) => p[t]), color: TIER_COLORS[t] }))} />
-                  : <p className="muted small">Not enough tier history in this period.</p>}
-                <p className="adm-foot-note">Professionals with a recorded tier at the end of each interval.</p>
+                  label: lightName(t), values: tierTrend.map((p) => p[t]), color: lightColor(t) }))} />
+                  : <p className="muted small">Not enough trust light history in this period.</p>}
+                <p className="adm-foot-note">Professionals with a recorded trust light at the end of each interval.</p>
               </Panel>
               <Panel title="Board indicators" meta={windowLabel}>
                 <MetricList rows={[

@@ -37,10 +37,11 @@ from zoikorum.shared.errors import Forbidden, ValidationFailed
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_event
 from zoikorum.shared.money import MoneyDTO
+from zoikorum.shared.trust_light import LIGHT_NAME, light
 
 EN = literal_column("'english'::regconfig")
 CANDIDATE_CAP = 500  # ranked in the application; ample for the current catalogue size
-TIER_LABEL = {"A": "Fully Verified Professional", "B": "Verified Identity", "C": "Unverified (Discovery Only)"}
+TIER_LABEL = {t: light(t) for t in ("A", "B", "C")}  # tier codes stay A/B/C; people see the trust light
 TIER_RANK = {"A": 3, "B": 2, "C": 1}
 # Dimension values that count as "verified" for the `verified=` filter and policy eligibility.
 GOOD = {"identity": ("VERIFIED",), "credentials": ("VALIDATED", "NOT_APPLICABLE"), "jurisdiction": ("ELIGIBLE",),
@@ -52,7 +53,7 @@ LABELS = {
     "ADVISORY": "Advisory", "PROJECT": "Project", "RETAINER": "Retainer", "FRACTIONAL": "Fractional",
     "REMOTE": "Remote", "ONSITE": "On-site", "HYBRID": "Hybrid", "HOURLY": "Hourly", "FIXED": "Fixed fee",
     "CUSTOM": "Quote on request", "NOW": "Available now", "TWO_WEEKS": "Within 2 weeks", "ONE_MONTH": "Within a month",
-    "NOT_SPECIFIED": "Not specified", "AT_CAPACITY": "At capacity", "A": "Tier A", "B": "Tier B", "C": "Tier C",
+    "NOT_SPECIFIED": "Not specified", "AT_CAPACITY": "At capacity", "A": "Green", "B": "Amber", "C": "Red",
 }
 
 
@@ -247,7 +248,7 @@ def _rank_and_explain(doc: Doc, rank: float, max_rank: float, p: SearchParams, n
         primary = doc.primary_specialization in matched
         why.append(f"Specializes in {', '.join(doc.specialization_names.get(s, s) for s in matched)}" + (" (primary)" if primary else ""))
     trust = {"A": 12, "B": 8, "C": 2}[doc.tier] + 8 * doc.trust_score / 100  # tier and trust score (Arch 9.4)
-    why.append(f"Tier {doc.tier}: {TIER_LABEL[doc.tier]}")
+    why.append(f"Trust light: {TIER_LABEL[doc.tier]}")
     if doc.verified_credentials:
         why.append(f"Verified credential: {doc.verified_credentials[0]}")
     availability = AVAILABILITY_POINTS.get(doc.availability, 0)
@@ -261,7 +262,7 @@ def _rank_and_explain(doc: Doc, rank: float, max_rank: float, p: SearchParams, n
             why.append(f"Serves clients in {j}")
     pricing_fit = 5 if p.pricingModel else 0
     record, record_why = track_record(doc)
-    after_tier = next(i for i, w in enumerate(why) if w.startswith("Tier ")) + 1
+    after_tier = next(i for i, w in enumerate(why) if w.startswith("Trust light: ")) + 1
     why[after_tier:after_tier] = record_why  # shown right after the tier, so the 6-reason cap keeps them
     score = relevance + trust + availability + pricing_fit + record
     if new_talent_boost and _new_talent(doc):
@@ -456,7 +457,7 @@ async def search(session: AsyncSession, actor: Actor | None, p: SearchParams) ->
 
 
 def _restrictive(eligibility: dict) -> bool:
-    """Whether the organisation's policy narrows results beyond what anyone may see (Tier C, no extra checks)."""
+    """Whether the organisation's policy narrows results beyond what anyone may see (Red light, no extra checks)."""
     return eligibility["minTier"] != "C" or bool(eligibility["requiredDimensions"]) or bool(eligibility.get("jurisdictions"))
 
 
@@ -565,6 +566,6 @@ async def top10_exposure(session: AsyncSession, new_talent_boost: bool) -> dict[
         for d in ranked:
             total += 1
             places["new to Zoikorum" if (d.completed_engagements or 0) < NEW_TALENT_MAX_COMPLETED else "established"] += 1
-            places[f"Tier {d.tier}"] += 1
+            places[f"{LIGHT_NAME[d.tier]} light"] += 1
             places[f"country {d.country}"] += 1
     return {g: n / total for g, n in places.items()} if total else {}

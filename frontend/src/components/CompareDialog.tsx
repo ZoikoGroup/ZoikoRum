@@ -5,7 +5,7 @@ import { LABEL } from '../api/professional'
 import { savedApi, type CompareItem } from '../api/saved'
 import { DIMENSION_VALUE, DIMENSIONS } from '../api/verification'
 import { Avatar } from './dashboard'
-import { TierBadge } from './portal'
+import { TrustLight } from './TrustLight'
 import { ErrorAlert, useDialog, Loading } from './ui'
 
 /** Shareable link to the same comparison (Category doc s.7.2: "shareable comparison link (signed-in)"). */
@@ -19,7 +19,7 @@ export function CompareTable({ ids }: { ids: string[] }) {
   useEffect(() => { savedApi.compare(ids).then(setItems).catch(setError) }, [ids])
 
   const rows: { label: string; render: (c: CompareItem) => React.ReactNode }[] = [
-    { label: 'Trust Tier', render: (c) => <TierBadge tier={c.tier} /> },
+    { label: 'Trust light', render: (c) => <TrustLight tier={c.tier} /> },
     ...DIMENSIONS.map((d) => ({
       label: d.label,
       render: (c: CompareItem) => {

@@ -114,7 +114,7 @@ async def get_offering(session: AsyncSession, offering_id: uuid.UUID) -> Offerin
 
 
 async def list_offerings(session: AsyncSession, professional_id: uuid.UUID, active_only: bool = True) -> list[OfferingSummary]:
-    stmt = select(Offering).where(Offering.professional_id == professional_id).order_by(Offering.created_at)
+    stmt = select(Offering).where(Offering.professional_id == professional_id, Offering.status != "DELETED").order_by(Offering.created_at)
     if active_only:
         stmt = stmt.where(Offering.status == "ACTIVE")
     return [_offering(o) for o in (await session.scalars(stmt)).all()]

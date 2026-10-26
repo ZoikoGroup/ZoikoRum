@@ -31,7 +31,7 @@ describe('bio readability', () => {
 describe('specialization preview and tiers', () => {
   it('describes regulated and credential-led specializations', () => {
     const text = specDescription({ name: 'Statutory Audit', regulated: true, requiresCredential: true }, 'Audit & Assurance', 'Finance & Accounting')
-    expect(text).toMatch(/Tier A/)
+    expect(text).toMatch(/Green trust light/)
     expect(text).toMatch(/credential/)
   })
   it('points to the next tier', () => {

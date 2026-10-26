@@ -94,7 +94,9 @@ export function EarningsPage() {
                       {p.delayReason && <div className="muted small">{p.delayReason}</div>}</td>
                     <td className="small">{p.settledAt ? <>Arrived {new Date(p.settledAt).toLocaleDateString()}</>
                       : p.expectedAt ? <>By {new Date(p.expectedAt).toLocaleDateString()}</> : '—'}</td>
-                    <td><button className="btn btn-ghost btn-sm" title="Payout statement: what was paid to your bank, with the transfer reference"
+                    <td style={{ whiteSpace: 'nowrap' }}><Link className="btn btn-ghost btn-sm" to={`/app/professional/earnings/payouts/${p.id}`}
+                      aria-label={`Payout statement ZK-PAY-${p.id.slice(0, 8).toUpperCase()}`}>View</Link>
+                      <button className="btn btn-ghost btn-sm" title="Payout statement: what was paid to your bank, with the transfer reference"
                       onClick={() => paymentsApi.payoutPdf(p.id).then((b) => saveBlob(`ZK-PAY-${p.id.slice(0, 8).toUpperCase()}.pdf`, b)).catch(setError)}>
                       <Icon name="download" /> PDF</button></td>
                   </tr>
@@ -132,7 +134,7 @@ export function EarningsPage() {
                   {editing && <button type="button" className="btn btn-ghost" onClick={() => setEditing(false)}>Cancel</button>}
                   <button className="btn btn-primary">Save payout account</button>
                 </div>
-                <p className="muted small" style={{ marginBottom: 0 }}>You'll confirm with your authenticator code. Payouts need Trust Tier B.</p>
+                <p className="muted small" style={{ marginBottom: 0 }}>You'll confirm with your authenticator code. Payouts need an Amber trust light (identity verified).</p>
               </form>
             )}
           </SidePanel>

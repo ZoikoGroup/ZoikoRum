@@ -295,6 +295,7 @@ export const proApi = {
     api<Offering>(`${P}/me/offerings/${id}`, { method: 'PATCH', body, headers: { 'If-Match': String(version) } }),
   activateOffering: (id: string) => api<Offering>(`${P}/me/offerings/${id}/activate`, { method: 'POST' }),
   pauseOffering: (id: string) => api<Offering>(`${P}/me/offerings/${id}/pause`, { method: 'POST' }),
+  deleteOffering: (id: string) => api<void>(`${P}/me/offerings/${id}`, { method: 'DELETE' }),
   publicProfile: (id: string) => api<PublicProfile>(`${P}/${id}`),
 }
 

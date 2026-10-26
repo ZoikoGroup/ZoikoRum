@@ -369,7 +369,7 @@ async def decline_invitation(session: AsyncSession, actor: Actor, invitation_id:
 # ---- Firm-level offerings ---------------------------------------------------
 # A firm publishes services delivered by its own members. Invariant: an offering in a regulated specialization is
 # published only by a verified firm with a verified authorized representative, and at least one delivering member is a
-# verified, licensed professional (identity verified, credentials validated, Trust Tier A, licensed somewhere, and the
+# verified, licensed professional (identity verified, credentials validated, tier A (Green light), licensed somewhere, and the
 # specialization on their profile). Checked at publish and on every change, and again when the firm's people change.
 
 def licensed_member(pro, trust, specialization: str) -> bool:
@@ -435,7 +435,7 @@ async def offering_blockers(session: AsyncSession, firm: Firm, o: FirmOffering) 
         reasons.append("An authorized representative must verify their identity.")
     trust = await trust_facade.get_trust_many(session, ids)
     if not any(licensed_member(members[i], trust.get(i), o.specialization) for i in ids):
-        reasons.append("At least one delivering member must be a verified, licensed professional (Tier A, credentials "
+        reasons.append("At least one delivering member must be a verified, licensed professional (Green: fully verified, credentials "
                        "validated, licensed, with this specialization on their profile).")
     return reasons
 

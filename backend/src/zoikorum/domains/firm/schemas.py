@@ -48,7 +48,7 @@ class FirmProfessionalWork(BaseModel):
     displayName: str
     headline: str | None
     published: bool
-    tier: str = "C"  # Trust Tier: the firm sees which professionals still need verification
+    tier: str = "C"  # trust tier code (shown as a light): the firm sees which professionals still need verification
     openRequests: int
     awaitingSignature: int
     activeContracts: int

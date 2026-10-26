@@ -11,7 +11,7 @@ import hashlib
 import json
 import uuid
 import asyncio
-from datetime import timedelta
+from datetime import date, timedelta
 
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,15 +20,21 @@ from zoikorum.domains.admin import facade as admin_facade
 from zoikorum.domains.buyer import facade as buyer_facade
 from zoikorum.domains.contract import facade as contract_facade
 from zoikorum.domains.escrow import facade as escrow_facade
+from zoikorum.domains.marketplace import facade as marketplace_facade
 from zoikorum.domains.payments.models import INVOICE_NUMBER_SEQ, Invoice, PaymentIntent, Payout, PayoutAccount, Refund
 from zoikorum.domains.payments.providers import get_provider
 from zoikorum.domains.payments.tax import included_tax
-from zoikorum.domains.payments.schemas import ChargeOut, EarningsOut, InvoiceOut, PayoutAccountIn, PayoutAccountOut, PayoutOut, RefundOut
+from zoikorum.domains.payments.schemas import (
+    ChargeOut, EarningsOut, InvoiceOut, PayoutAccountIn, PayoutAccountOut, PayoutClientOut, PayoutDestinationOut,
+    PayoutEngagementOut, PayoutOut, PayoutStatementOut, PayoutStepOut, PayoutTransactionOut, RefundOut,
+)
 from zoikorum.domains.professional import facade as professional_facade
+from zoikorum.domains.proposal import facade as proposal_facade
 from zoikorum.domains.trust import facade as trust_facade
 from zoikorum.config import get_settings
 from zoikorum.shared import clock, pdf
 from zoikorum.shared.auth import Actor
+from zoikorum.shared.capabilities import Cap
 from zoikorum.shared.errors import DomainError, Forbidden, NotFound, PolicyBlocked, ServiceUnavailable, ValidationFailed
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_audit, record_event
@@ -192,11 +198,11 @@ async def _my_professional(session: AsyncSession, actor: Actor):
 
 
 async def set_payout_account(session: AsyncSession, actor: Actor, body: PayoutAccountIn) -> PayoutAccountOut:
-    """Needs a fresh two-step confirmation, Trust Tier B or above and clear restrictions (compliance checks)."""
+    """Needs a fresh two-step confirmation, an Amber trust light (identity verified) or better and clear restrictions (compliance checks)."""
     pro = await _my_professional(session, actor)
     trust = await trust_facade.get_trust(session, pro.id)
     if trust.tier == "C" or trust.dimensions.get("restrictions") != "CLEAR":
-        raise PolicyBlocked("Payouts need a verified identity (Trust Tier B) and clear restrictions screening", code="PAYOUT_COMPLIANCE_REQUIRED")
+        raise PolicyBlocked("Payouts need an Amber trust light (identity verified) and clear restrictions screening", code="PAYOUT_COMPLIANCE_REQUIRED")
     actor.require_step_up()
     digits = body.accountNumber.replace(" ", "")
     ref = get_provider().create_payout_account(body.holderName, body.country, body.currency, digits)
@@ -349,6 +355,116 @@ async def payout_statement_pdf(session: AsyncSession, actor: Actor, payout_id: u
     record_audit(session, "payments.payout.statement_downloaded", object_type="Payout", object_id=p.id,
                  evidence_hash=fingerprint)
     return pdf.render(doc), f"{reference}.pdf"
+
+
+_STATEMENT_STATUS = {"QUEUED": "Processing", "INITIATED": "In transit", "SETTLED": "Paid", "FAILED": "Failed"}
+_PROVIDER_NAMES = {"stripe": "Stripe", "fake": "Test payment partner"}
+
+
+def _initiated_at(p: Payout):
+    """When the transfer started. Recorded only through the expected date: a payout sent as soon as it was created has
+    expected_at = created_at + settlement days; one that waited (no account, payouts paused) has no start time stored."""
+    if p.status == "QUEUED" or p.expected_at is None:
+        return None
+    if clock.add_business_days(p.created_at, get_settings().payout_settlement_business_days) == p.expected_at:
+        return p.created_at
+    return None
+
+
+def _statement_steps(p: Payout, funded_at, accepted_at, initiated_at) -> list[PayoutStepOut]:
+    sent = p.status in ("INITIATED", "SETTLED")
+    expected = f"Expected by {p.expected_at:%d %b %Y}" if p.expected_at and p.status == "INITIATED" else None
+    return [PayoutStepOut(key="FUNDED", label="Client funded escrow", state="DONE" if funded_at else "UPCOMING", at=funded_at),
+            PayoutStepOut(key="ACCEPTED", label="Work accepted", state="DONE", at=accepted_at),
+            PayoutStepOut(key="INITIATED", label="Payout initiated", state="DONE" if p.status != "QUEUED" else "CURRENT",
+                          at=initiated_at, note=delay_reason(p) if p.status == "QUEUED" else None),
+            PayoutStepOut(key="IN_TRANSIT", label="In transit",
+                          state="FAILED" if p.status == "FAILED" else "DONE" if p.status == "SETTLED" else
+                          "CURRENT" if sent else "UPCOMING", at=initiated_at if sent else None,
+                          note=(p.failure_message or "The transfer failed") if p.status == "FAILED" else expected),
+            PayoutStepOut(key="COMPLETED", label="Completed", state="DONE" if p.status == "SETTLED" else "UPCOMING",
+                          at=p.settled_at)]
+
+
+def _day(v) -> date | None:
+    return date.fromisoformat(v) if isinstance(v, str) else v.date() if v else None
+
+
+async def payout_statement(session: AsyncSession, actor: Actor, payout_id: uuid.UUID) -> PayoutStatementOut:
+    """One payout in full for the professional it was paid to (Financial Operations staff may read any; audited): the
+    amounts, the engagement and milestone it pays for, the buyer organisation (name and country only, never a person's
+    contact details), each step with its time, the related money movements and where it was paid (masked)."""
+    if actor.has_capability(Cap.PAYMENTS_READ):
+        actor.require_capability(Cap.PAYMENTS_READ)  # staff session with MFA
+        p = await session.get(Payout, payout_id)
+        if p is None:
+            raise NotFound("Payout not found")
+        record_audit(session, "payments.payout.statement_viewed", object_type="Payout", object_id=p.id, tenant_id=p.professional_id)
+    else:
+        pro = await _my_professional(session, actor)
+        p = await session.get(Payout, payout_id)
+        if p is None or p.professional_id != pro.id:
+            raise NotFound("Payout not found")
+    ccy = p.currency
+    engagement = await contract_facade.get_contract(session, p.contract_id)
+    facts = await contract_facade.engagement_facts(session, p.contract_id) or {}
+    milestone = await contract_facade.get_milestone(session, p.milestone_id) if p.milestone_id else None
+    org = await buyer_facade.get_organization(session, engagement.organization_id) if engagement else None
+    entity = (engagement.buyer_legal_entity or {}) if engagement else {}
+    trail = await escrow_facade.release_trail(session, p.release_id)
+    invoice = await session.scalar(select(Invoice).where(Invoice.release_id == p.release_id))
+    account = await session.scalar(select(PayoutAccount).where(PayoutAccount.professional_id == p.professional_id))
+    specialization = None
+    slug = await proposal_facade.request_specialization(session, engagement.request_id) if engagement else None
+    if slug:
+        info = (await marketplace_facade.get_specializations(session, [slug])).get(slug)
+        specialization = info.name if info else None
+
+    reference = f"ZK-PAY-{str(p.id)[:8].upper()}"
+    fee_bps = trail.fee_bps if trail else (round(p.fee_minor * 10000 / p.gross_minor) if p.gross_minor else 0)
+    accepted_at = (milestone.accepted_at if milestone else None) or (trail.released_at if trail else None) or facts.get("completedAt")
+    initiated_at = _initiated_at(p)
+    project = engagement.reference if engagement else None
+
+    transactions: list[PayoutTransactionOut] = []
+    if trail and trail.funded_at and trail.funded_minor is not None:  # same engagement, so the same currency
+        transactions.append(PayoutTransactionOut(
+            kind="ESCROW_FUNDED", at=trail.funded_at, reference=project, amount=_m(trail.funded_minor, ccy), status="Funded",
+            description=f"Client funded escrow for M{milestone.sequence} {milestone.title}" if milestone else "Client funded escrow"))
+    if invoice:
+        transactions.append(PayoutTransactionOut(
+            kind="MILESTONE_INVOICE", at=invoice.issued_at, reference=invoice.number, amount=_m(invoice.total_minor, invoice.currency),
+            status="Issued", description="Invoice issued to the client for the accepted work"))
+    if trail:
+        transactions.append(PayoutTransactionOut(
+            kind="ESCROW_RELEASE", at=trail.released_at, reference=project, amount=_m(trail.gross_minor, trail.currency),
+            status="Released", description="Released from escrow for accepted work"))
+    transactions.append(PayoutTransactionOut(
+        kind="PAYOUT", at=p.created_at, reference=reference, amount=_m(p.amount_minor, ccy), status=_STATEMENT_STATUS[p.status],
+        description=f"Payout to bank account \u2022\u2022\u2022\u2022 {account.last4}" if account else "Payout to your bank account"))
+    transactions.sort(key=lambda t: t.at)
+
+    return PayoutStatementOut(
+        id=p.id, reference=reference, status=p.status, statusLabel=_STATEMENT_STATUS[p.status], createdAt=p.created_at,
+        initiatedAt=initiated_at, expectedAt=p.expected_at, settledAt=p.settled_at, failureMessage=p.failure_message,
+        delayReason=delay_reason(p),
+        transferReference=(p.transfer_ref or p.provider_ref) if p.status in ("INITIATED", "SETTLED") else None,
+        gross=_m(p.gross_minor, ccy), fee=_m(p.fee_minor, ccy), feeBps=fee_bps, net=_m(p.amount_minor, ccy),
+        engagement=PayoutEngagementOut(
+            contractId=p.contract_id, reference=project or "", title=facts.get("title") or "Engagement",
+            milestoneId=p.milestone_id, milestoneTitle=milestone.title if milestone else None,
+            milestoneSequence=milestone.sequence if milestone else None, specialization=specialization,
+            engagementType=facts.get("engagementType") or "PROJECT", pricingModel=facts.get("pricingModel"),
+            workStart=_day(facts.get("startDate") or facts.get("activatedAt")),
+            workEnd=_day(facts.get("endDate") or facts.get("completedAt")),
+            acceptedAt=accepted_at, clientInvoiceNumber=invoice.number if invoice else None),
+        client=PayoutClientOut(name=entity.get("legalName") or (org.name if org else "Client"),
+                               country=entity.get("country") or facts.get("buyerCountry") or (org.country if org else None)),
+        steps=_statement_steps(p, trail.funded_at if trail else None, accepted_at, initiated_at),
+        transactions=transactions,
+        destination=PayoutDestinationOut(provider=_PROVIDER_NAMES.get(account.provider, account.provider.title()),
+                                         label=f"Bank account \u2022\u2022\u2022\u2022 {account.last4}", last4=account.last4,
+                                         currency=account.currency, country=account.country) if account else None)
 
 
 async def charges(session: AsyncSession, actor: Actor, organization_id: uuid.UUID, cursor: str | None = None,

@@ -111,7 +111,7 @@ export function SiteFooter() {
 }
 
 const DEFAULT_POINTS = [
-  'Verification-first onboarding with Trust Tiers A, B and C',
+  'Verification-first onboarding with Green, Amber and Red trust lights',
   'Contract-required engagements with scope versioning',
   'Escrow-protected payments released on acceptance',
   'Every action recorded in an audit-grade ledger',

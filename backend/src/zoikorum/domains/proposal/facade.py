@@ -177,3 +177,8 @@ async def milestone_terms(session: AsyncSession, proposal_id: uuid.UUID) -> dict
                            for m in p.milestones],
             "deliverables": [{"key": d.get("key"), "title": d.get("title"), "acceptanceCriteria": d.get("acceptanceCriteria") or ""}
                              for d in p.deliverables if isinstance(d, dict)]}
+
+
+async def request_specialization(session: AsyncSession, request_id: uuid.UUID) -> str | None:
+    """The specialization slug the buyer asked for (None when the request named none)."""
+    return await session.scalar(select(ProposalRequest.specialization).where(ProposalRequest.id == request_id))

@@ -1548,6 +1548,33 @@
   "label",
   "status"
  ],
+ "PayoutClientOut": [
+  "country",
+  "name"
+ ],
+ "PayoutDestinationOut": [
+  "accountType",
+  "country",
+  "currency",
+  "label",
+  "last4",
+  "provider"
+ ],
+ "PayoutEngagementOut": [
+  "acceptedAt",
+  "clientInvoiceNumber",
+  "contractId",
+  "engagementType",
+  "milestoneId",
+  "milestoneSequence",
+  "milestoneTitle",
+  "pricingModel",
+  "reference",
+  "specialization",
+  "title",
+  "workEnd",
+  "workStart"
+ ],
  "PayoutOut": [
   "contractId",
   "createdAt",
@@ -1560,6 +1587,43 @@
   "milestoneId",
   "net",
   "settledAt",
+  "status"
+ ],
+ "PayoutStatementOut": [
+  "client",
+  "createdAt",
+  "delayReason",
+  "destination",
+  "engagement",
+  "expectedAt",
+  "failureMessage",
+  "fee",
+  "feeBps",
+  "gross",
+  "id",
+  "initiatedAt",
+  "net",
+  "reference",
+  "settledAt",
+  "status",
+  "statusLabel",
+  "steps",
+  "transactions",
+  "transferReference"
+ ],
+ "PayoutStepOut": [
+  "at",
+  "key",
+  "label",
+  "note",
+  "state"
+ ],
+ "PayoutTransactionOut": [
+  "amount",
+  "at",
+  "description",
+  "kind",
+  "reference",
   "status"
  ],
  "PhotoIn": [

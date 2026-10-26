@@ -396,7 +396,7 @@ export function EnterpriseStructurePage() {
 
 const WIZARD_TEMPLATES: [string, string, string][] = [
   ['ENTERPRISE_STANDARD', 'Enterprise standard', 'Verified identity; an approver signs off each payment release.'],
-  ['REGULATED', 'Regulated work', 'Tier A only, all checks complete; finance and a budget owner approve releases.'],
+  ['REGULATED', 'Regulated work', 'Green trust light only (fully verified), all checks complete; finance and a budget owner approve releases.'],
   ['CROSS_BORDER', 'Cross-border', 'Right to practise and screening verified; Legal approves engagements abroad.'],
   ['GROWTH_ADVISORY', 'Growth advisory', 'Verified identity; an approver only for engagements above 25,000.'],
 ]

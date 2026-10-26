@@ -19,7 +19,7 @@ export const ACTIONS: [string, string][] = [['ENGAGEMENT_ELIGIBILITY', 'Sending 
 const FIELDS: [string, string, 'money' | 'bool' | 'text' | 'tier'][] = [
   ['engagement.valueMinor', 'Engagement value', 'money'], ['action.amountMinor', 'Amount of this action', 'money'],
   ['engagement.crossBorder', 'Professional in another country', 'bool'], ['engagement.regulated', 'Regulated work', 'bool'],
-  ['professional.tier', 'Professional trust tier', 'tier'], ['engagement.type', 'Engagement type', 'text'],
+  ['professional.tier', 'Professional trust light', 'tier'], ['engagement.type', 'Engagement type', 'text'],
   ['buyer.country', 'Your organisation country', 'text'], ['engagement.currency', 'Currency', 'text']]
 const ROLES = ['APPROVER', 'BUDGET_OWNER', 'LEGAL_REVIEWER', 'EXCEPTION_AUTHORITY', 'ORG_ADMIN']
 const DECISION_LABEL: Record<string, string> = { REQUIRE_APPROVAL: 'Needs approval', REQUIRE_EXCEPTION: 'Needs an exception', BLOCK: 'Blocked' }
@@ -39,9 +39,9 @@ export function PolicySettingsForm({ settings, onChange, disabled }: { settings:
   }
   return (
     <fieldset disabled={disabled} className="panel policy-form"><legend>Who can be engaged</legend>
-      <label>Minimum trust tier
+      <label>Minimum trust light
         <select className="input" value={String(s.minTrustTier ?? 'B')} onChange={(e) => set('minTrustTier', e.target.value)}>
-          <option value="A">Tier A: fully verified</option><option value="B">Tier B: verified identity</option></select></label>
+          <option value="A">Green: fully verified</option><option value="B">Amber: identity verified</option></select></label>
       <p className="small" style={{ margin: '10px 0 4px' }}>Checks that must be complete</p>
       {DIMENSIONS.map(([k, l]) => <label key={k} className="checkbox small" style={{ display: 'inline-flex', marginRight: 12 }}>
         <input type="checkbox" checked={list(s.requiredDimensions ?? ['identity']).includes(k)} onChange={() => toggle('requiredDimensions', k)} /> <span>{l}</span></label>)}
@@ -203,7 +203,7 @@ export function RuleBuilder({ rules, onChange, disabled }: { rules: string; onCh
             {kind === 'bool' ? <select className="input" value={f.value || 'true'} onChange={(e) => setF({ ...f, value: e.target.value })}>
               <option value="true">yes</option><option value="false">no</option></select>
               : kind === 'tier' ? <select className="input" value={f.value} onChange={(e) => setF({ ...f, value: e.target.value })}>
-                <option value="">Choose…</option><option>A</option><option>B</option></select>
+                <option value="">Choose…</option><option value="A">Green: fully verified</option><option value="B">Amber: identity verified</option></select>
               : <input className="input" type={kind === 'money' ? 'number' : 'text'} min={0} value={f.value} onChange={(e) => setF({ ...f, value: e.target.value })} />}</label>
         </div>
         <div className="row">

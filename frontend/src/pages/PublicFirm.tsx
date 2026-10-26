@@ -4,8 +4,8 @@ import { firmApi, type PublicFirm } from '../api/orgs'
 import { Avatar } from '../components/dashboard'
 import { ErrorAlert, Loading, SiteFooter, SiteHeader } from '../components/ui'
 import { countryName } from './ProfessionalPages'
+import { TrustLight } from '../components/TrustLight'
 
-const TIER_CLASS: Record<string, string> = { A: 'green', B: 'green', C: 'warn' }
 
 /** Public firm page: who the firm is, what is verified, and the professionals who practise under it.
     Works signed in or out; never shows the registration number, people's emails or internal roles. */
@@ -61,7 +61,7 @@ export default function PublicFirmPage() {
                         <span><Link to={`/professionals/${p.professionalId}`}><strong>{p.displayName}</strong></Link>
                           {p.headline && <><br /><span className="muted small">{p.headline}</span></>}</span>
                       </span>
-                      <span className={`badge ${TIER_CLASS[p.tier] ?? ''}`}>Tier {p.tier}</span>
+                      <TrustLight tier={p.tier} />
                     </li>
                   ))}
                 </ul>

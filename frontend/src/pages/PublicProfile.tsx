@@ -12,12 +12,12 @@ import { equivalency } from '../lib/equivalency'
 import { countryName, priceText } from './ProfessionalPages'
 import { SaveButton, useSavedIds } from './SavedPage'
 import { PublicReviews } from '../components/PublicReviews'
+import { lightText, trustLight } from '../lib/trustLight'
 
-const TIER_LABEL = { A: 'Fully Verified Professional', B: 'Verified Identity', C: 'Unverified (Discovery Only)' }
 const TIER_MEANING: Record<string, string> = {
-  A: 'Tier A: identity, credentials, right to practise and screening are all verified. Can take regulated work.',
-  B: 'Tier B: identity is verified. Can be engaged; regulated work needs Tier A.',
-  C: 'Tier C: not verified yet. Can be found, but cannot send or have a proposal accepted.',
+  A: 'Green (fully verified): identity, credentials, right to practise and screening are all verified. Can take regulated work.',
+  B: 'Amber (identity verified): identity is verified. Can be engaged; regulated work needs a Green light.',
+  C: 'Red (not verified yet): can be found, but cannot send or have a proposal accepted.',
 }
 
 /** Search engines read the profile and breadcrumb from structured data (schema.org), added while the page is open. */
@@ -82,7 +82,7 @@ export default function PublicProfilePage() {
   const similar = `/professionals?${new URLSearchParams({ ...(primary ? { spec: primary.slug } : {}), availability: 'NOW' })}`
   const response = p.history?.medianResponseHours
   const snapshot: [string, string][] = [
-    ['Trust Tier', `Tier ${p.trust.tier} · ${TIER_LABEL[p.trust.tier]}`],
+    ['Trust light', lightText(p.trust.tier)],
     ['Availability', LABEL[p.availability] ?? p.availability],
     ['Based in', [p.city, countryName(p.country)].filter(Boolean).join(', ')],
     ['Experience', p.yearsExperienceBand ? `${p.yearsExperienceBand} years` : '—'],
@@ -123,8 +123,8 @@ export default function PublicProfilePage() {
             {p.firm && <p className="small" style={{ margin: '0 0 6px' }}>Practises with <Link to={`/firms/${p.firm.id}`}><strong>{p.firm.name}</strong></Link>
               {p.firm.verified ? <span className="badge green" style={{ marginLeft: 8 }}>Firm verified</span> : null}</p>}
             <div className="badges" style={{ marginTop: 12 }}>
-              <a href="#verification-report" className={`badge ${p.trust.tier === 'C' ? 'warn' : 'green'}`} title={TIER_MEANING[p.trust.tier]}
-                aria-describedby="tier-meaning">Tier {p.trust.tier} · {TIER_LABEL[p.trust.tier]} ⓘ</a>
+              <a href="#verification-report" className={`badge trust-light ${trustLight(p.trust.tier).tone}`} title={TIER_MEANING[p.trust.tier]}
+                aria-describedby="tier-meaning"><span className="light-dot" style={{ background: trustLight(p.trust.tier).color }} aria-hidden />{lightText(p.trust.tier)} ⓘ</a>
               <span id="tier-meaning" className="sr-only">{TIER_MEANING[p.trust.tier]}</span>
               {(p.verificationInProgress ?? []).length > 0 && <span className="badge" title={`Under review: ${p.verificationInProgress!.join(', ')}`}>
                 Verification in progress</span>}
@@ -308,7 +308,7 @@ export function ProcurementDialog({ kind: initialKind, professionalId, name, sig
             setDone(r.reference)
           } catch (err) { setError(err) } finally { setBusy(false) }
         }}>
-          <p className="small" style={{ marginTop: 0 }}>Enterprises engage{name ? ` ${name}` : ''} under their own procurement rules: minimum Trust Tier,
+          <p className="small" style={{ marginTop: 0 }}>Enterprises engage{name ? ` ${name}` : ''} under their own procurement rules: minimum trust light,
             required credentials, approvers, spend limits and contract clauses. {signedIn
               ? <>Your organisation's rules are under <Link to="/app/policies">Policies</Link>.</>
               : <>Set up your organisation through <Link to="/enterprise">enterprise access</Link>.</>}</p>

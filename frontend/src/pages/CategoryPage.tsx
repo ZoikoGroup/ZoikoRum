@@ -7,6 +7,7 @@ import { EducationCards } from '../components/Explainers'
 import { ErrorAlert, SiteFooter, SiteHeader } from '../components/ui'
 import { ProcurementFilters, ResultCard, SelectedPills, SpecializationNavigator } from './BrowseProfessionals'
 import { useSavedIds } from './SavedPage'
+import { lightColor, lightName } from '../lib/trustLight'
 
 const PAGE = 12
 
@@ -16,7 +17,7 @@ const GUIDANCE: Record<string, { intro: string; points: [string, string][] }> = 
     intro: 'Accountants, controllers, fractional CFOs, tax and transaction specialists - verified before they appear, paid through escrow milestone by milestone.',
     points: [
       ['Credentials checked', 'CPA, CA, ACCA, CFA and other designations are validated with the issuing body before a profile shows them as verified.'],
-      ['Regulated work', 'Audit, tax filing and regulatory reporting are marked as regulated. Enterprise policies usually require Tier A for them.'],
+      ['Regulated work', 'Audit, tax filing and regulatory reporting are marked as regulated. Enterprise policies usually require a Green trust light (fully verified) for them.'],
       ['Money in escrow', 'You fund each milestone before work starts and release it only when you accept the deliverable.'],
       ['Your controls', 'Spend limits, approvers and required clauses from your organisation\'s policy apply to every engagement.'],
     ],
@@ -120,10 +121,10 @@ export default function CategoryPage() {
           <div className="cat-layout">
             <aside className="card panel filters" aria-label="Filters">
               <SpecializationNavigator groups={category.groups} selected={specs} onToggle={(s) => toggleList('spec', s)} facets={data?.facets} />
-              <div className="filter-label">Trust Tier</div>
+              <div className="filter-label">Trust light</div>
               {['A', 'B', 'C'].map((t) => (
                 <label key={t} className="checkbox small"><input type="checkbox" checked={tiers.includes(t)} onChange={() => toggleList('tier', t)} />
-                  <span>Tier {t}</span></label>
+                  <span><span className="light-dot" style={{ background: lightColor(t), marginRight: 6 }} aria-hidden />{lightName(t)}</span></label>
               ))}
               <ProcurementFilters params={params} facets={data?.facets} set={set} toggleList={toggleList} />
               {key && <button type="button" className="btn btn-ghost btn-sm" style={{ marginTop: 12 }} onClick={() => { setQ(''); setParams({}) }}>Clear all</button>}
@@ -154,7 +155,7 @@ export default function CategoryPage() {
                 <h3>{g.name}</h3>
                 <ul className="plain">{g.specializations.map((s) => <li key={s.slug}>
                   <Link to={`/categories/${slug}?spec=${encodeURIComponent(s.slug)}`}>{s.name}</Link>
-                  {s.regulated && <span className="badge warn" title="Regulated work: enterprise policies usually require Tier A"> regulated</span>}
+                  {s.regulated && <span className="badge warn" title="Regulated work: enterprise policies usually require a Green trust light (fully verified)"> regulated</span>}
                   {s.requiresCredential && <span className="badge" title="A validated credential is required"> credential</span>}
                 </li>)}</ul>
               </div>)}
@@ -164,7 +165,7 @@ export default function CategoryPage() {
 
           <section className="card panel">
             <h2>For enterprises</h2>
-            <p>Bring your procurement rules: minimum trust tier, required credentials and jurisdictions, approvers and spend limits,
+            <p>Bring your procurement rules: minimum trust light, required credentials and jurisdictions, approvers and spend limits,
               required contract clauses and cost centres. They are applied to every request and engagement automatically.</p>
             <Link className="btn btn-secondary" to={user ? '/app/policies' : '/enterprise'}>{user ? 'Your procurement rules' : 'Set up enterprise access'}</Link>
           </section>

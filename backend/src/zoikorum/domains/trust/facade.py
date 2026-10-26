@@ -37,7 +37,7 @@ class TrustSnapshot:
 
 
 async def get_trust(session: AsyncSession, professional_id: uuid.UUID) -> TrustSnapshot:
-    """Never None: an unknown professional is Tier C with score 0."""
+    """Never None: an unknown professional is tier C with score 0."""
     return (await get_trust_many(session, [professional_id]))[professional_id]
 
 
@@ -77,7 +77,7 @@ DEFAULT_DIMENSIONS = {"identity": "NONE", "credentials": "NONE", "jurisdiction":
 
 
 async def tiers_and_dimensions(session: AsyncSession, ids: list[uuid.UUID]) -> dict[uuid.UUID, tuple[str, dict[str, str]]]:
-    """Per professional: (tier, dimensions). A professional not yet assessed is Tier C with nothing verified. Display
+    """Per professional: (tier, dimensions). A professional not yet assessed is tier C with nothing verified. Display
     reads only (staff console): served from the read cache, dropped on every trust change. Decisions (payouts, policy)
     use get_trust, which always reads the database."""
     from zoikorum.shared import cache
@@ -99,7 +99,7 @@ async def professionals_in_tiers(session: AsyncSession, tiers: tuple[str, ...]) 
 
 
 async def admin_counts(session: AsyncSession) -> dict[str, int]:
-    """Professionals in Tier A and Tier B, and those whose identity is verified."""
+    """Professionals in tier A (Green) and tier B (Amber), and those whose identity is verified."""
     from sqlalchemy import func
 
     tiers = dict((await session.execute(select(TrustProfile.tier, func.count()).group_by(TrustProfile.tier))).all())

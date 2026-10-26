@@ -99,7 +99,7 @@ class ResultItem(BaseModel):
     regulatedPreview: bool = False
     enterpriseEngagements: int = 0  # completed engagements for enterprise buyers
     currencies: list[str] = []  # currencies the professional prices in
-    enterpriseReady: bool = False  # offers regulated work but is below Tier A: shown, but cannot take that work yet
+    enterpriseReady: bool = False  # offers regulated work but is below tier A: shown, but cannot take that work yet
     firm: FirmRef | None = None  # the firm they practise under
 
 

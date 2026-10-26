@@ -12,10 +12,12 @@ import {
 import { api } from '../../api/client'
 import type { StoredFile } from '../../api/files'
 import { Avatar, Icon, type IconName } from '../../components/dashboard'
-import { EmptyTable, PortalHeader, SidePanel, StatCard, Tabs, TierBadge } from '../../components/portal'
+import { EmptyTable, PortalHeader, SidePanel, StatCard, Tabs } from '../../components/portal'
+import { TrustLight } from '../../components/TrustLight'
 import { FileLink } from '../../components/FileLink'
 import { ErrorAlert, Loading } from '../../components/ui'
 import { ApiError } from '../../api/client'
+import { lightName } from '../../lib/trustLight'
 
 /* Customer side of Step 6: requests (one requirement sent to 1–3 professionals), the proposals that come back,
    side-by-side comparison, revision requests and acceptance. */
@@ -189,7 +191,7 @@ export function ProposalsPage() {
               return (
                 <tr key={r.id}>
                   <td><div className="name-row"><Avatar name={r.professional.displayName} photoUrl={r.professional.photoUrl} size={32} />
-                    <span><strong>{r.professional.displayName}</strong><br /><TierBadge tier={r.professional.tier} /></span></div></td>
+                    <span><strong>{r.professional.displayName}</strong><br /><TrustLight tier={r.professional.tier} /></span></div></td>
                   <td className="small">{r.service}</td>
                   <td><strong>{formatMoney(r.proposal!.total)}</strong></td>
                   <td><span className={`badge ${st.tone}`}>{st.label}</span></td>
@@ -261,7 +263,7 @@ export function RequestDetailPage() {
       <ErrorAlert error={error} />
       {error instanceof ApiError && error.code.startsWith('POLICY_BLOCKED') && <div className="tip" style={{ marginBottom: 12 }}><Icon name="search" />
         <span>Your organisation's policy does not allow this professional for this engagement. {error.code === 'POLICY_BLOCKED_MINIMUM_TRUST_TIER'
-          ? <Link to="/app/find?tier=A">Find Tier A professionals</Link> : <Link to="/app/find">Find professionals your policy allows</Link>}
+          ? <Link to="/app/find?tier=A">Find Green (fully verified) professionals</Link> : <Link to="/app/find">Find professionals your policy allows</Link>}
           {' '}(search already hides the ones it does not allow), or ask your Exception Authority for an exception.</span></div>}
       {accepted && <div className="attention-banner ok"><span className="kpi-icon green"><Icon name="check" /></span>
         <div><strong>You accepted {accepted.professional.displayName}'s proposal ({formatMoney(accepted.total)}).</strong>
@@ -282,7 +284,7 @@ export function RequestDetailPage() {
               onRevise={(changes, note) => act(() => proposalApi.requestRevision(p.id, changes, note), 'Revision requested. The professional has been notified.')} />
               : <section key={m.id} className="card panel waiting-card">
                 <div className="name-row"><Avatar name={m.professional.displayName} photoUrl={m.professional.photoUrl} size={44} />
-                  <span><strong>{m.professional.displayName}</strong> <TierBadge tier={m.professional.tier} /><br />
+                  <span><strong>{m.professional.displayName}</strong> <TrustLight tier={m.professional.tier} /><br />
                     <span className="muted small">{m.professional.headline}</span></span>
                   <span className={`badge ${requestStatus(m).tone}`} style={{ marginLeft: 'auto' }}>{requestStatus(m).label}</span></div>
                 {m.status === 'DECLINED' && <p className="muted small" style={{ margin: '10px 0 0' }}>Declined{m.reasonCode ? `: ${m.reasonCode.replace(/_/g, ' ').toLowerCase()}` : ''}{m.reasonNote ? ` — “${m.reasonNote}”` : ''}</p>}
@@ -333,7 +335,7 @@ export function RequestDetailPage() {
 function CompareProposals({ proposals }: { proposals: Proposal[] }) {
   const live = proposals.filter((p) => p.status !== 'WITHDRAWN')
   const rows: [string, (p: Proposal) => React.ReactNode][] = [
-    ['Trust Tier', (p) => <TierBadge tier={p.professional.tier} />],
+    ['Trust light', (p) => <TrustLight tier={p.professional.tier} />],
     ['Price', (p) => <strong>{formatMoney(p.total)}</strong>],
     ['Pricing model', (p) => LABEL[p.pricingModel] ?? p.pricingModel],
     ['Vs your budget', (p) => p.deltas.find((d) => d.field === 'price')?.status.toLowerCase() ?? '—'],
@@ -366,7 +368,7 @@ function bestMatch(proposals: Proposal[]): { id: string; reasons: string[] } | n
     || (sameCurrency ? a.total.amountMinor - b.total.amountMinor : 0))
   const best = ranked[0]
   const reasons = [`Matches ${fit(best)} of ${best.deltas.length} of your terms`]
-  if (open.every((p) => tierRank[best.professional.tier] >= tierRank[p.professional.tier])) reasons.push(`Trust Tier ${best.professional.tier}`)
+  if (open.every((p) => tierRank[best.professional.tier] >= tierRank[p.professional.tier])) reasons.push(`${lightName(best.professional.tier)} trust light`)
   if (sameCurrency && open.every((p) => best.total.amountMinor <= p.total.amountMinor)) reasons.push('Lowest price')
   return { id: best.id, reasons }
 }
@@ -422,7 +424,7 @@ function ProposalCard({ p, busy, canDecide, best, onAccept, onReject, onRevise, 
   return (
     <section className="card panel proposal-card">
       <div className="name-row"><Avatar name={p.professional.displayName} photoUrl={p.professional.photoUrl} size={44} />
-        <span><strong>{p.professional.displayName}</strong> <TierBadge tier={p.professional.tier} /><br /><span className="muted small">{p.professional.headline}</span></span>
+        <span><strong>{p.professional.displayName}</strong> <TrustLight tier={p.professional.tier} /><br /><span className="muted small">{p.professional.headline}</span></span>
         <span style={{ marginLeft: 'auto', textAlign: 'right' }}><strong className="big-price">{formatMoney(p.total)}</strong><br />
           <span className={`badge ${st.tone}`}>{st.label}</span></span></div>
       {best && <p className="best-match" title={best.join(' · ')}><span className="badge green">Best match</span>
@@ -514,7 +516,7 @@ function NextMatches({ req, asked }: { req: ProposalRequest; asked: string[] }) 
           <p className="muted small" style={{ marginTop: 0 }}>None of the professionals you asked can take this on. These ones offer the same expertise and serve your country:</p>
           <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 12px' }}>{matches.map((r) => (
             <li key={r.professionalId} className="name-row" style={{ marginBottom: 8 }}><Avatar name={r.displayName} photoUrl={r.photoUrl} size={36} />
-              <span><Link to={`/professionals/${r.professionalId}`}><strong>{r.displayName}</strong></Link> <TierBadge tier={r.tier} /><br />
+              <span><Link to={`/professionals/${r.professionalId}`}><strong>{r.displayName}</strong></Link> <TrustLight tier={r.tier} /><br />
                 <span className="muted small">{r.headline}</span></span></li>))}</ul>
           <Link className="btn btn-primary" to={`/app/requests/new?${matches.map((r) => `pro=${r.professionalId}`).join('&')}&from=${req.id}`}>
             Send this request to {matches.length === 1 ? 'them' : `these ${matches.length}`}</Link>

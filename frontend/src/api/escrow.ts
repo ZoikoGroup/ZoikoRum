@@ -49,6 +49,25 @@ export interface LedgerLine {
 
 export interface Payout { id: string; contractId: string; milestoneId: string | null; gross: Money; fee: Money; net: Money; status: 'QUEUED' | 'INITIATED' | 'SETTLED' | 'FAILED'; failureMessage: string | null
   expectedAt: string | null; delayReason: string | null; settledAt: string | null; createdAt: string }
+/** GET /v1/payments/payouts/{id}: one payout in full for the professional it was paid to. The client is the buyer
+    organisation only (name and country), never a person's contact details; the destination is masked. */
+export interface PayoutStatement {
+  id: string; reference: string; status: Payout['status']; statusLabel: 'Processing' | 'In transit' | 'Paid' | 'Failed'
+  createdAt: string; initiatedAt: string | null; expectedAt: string | null; settledAt: string | null
+  failureMessage: string | null; delayReason: string | null; transferReference: string | null
+  gross: Money; fee: Money; feeBps: number; net: Money
+  engagement: {
+    contractId: string; reference: string; title: string; milestoneId: string | null; milestoneTitle: string | null
+    milestoneSequence: number | null; specialization: string | null; engagementType: string; pricingModel: string | null
+    workStart: string | null; workEnd: string | null; acceptedAt: string | null; clientInvoiceNumber: string | null
+  }
+  client: { name: string; country: string | null }
+  steps: { key: 'FUNDED' | 'ACCEPTED' | 'INITIATED' | 'IN_TRANSIT' | 'COMPLETED'; label: string
+    state: 'DONE' | 'CURRENT' | 'UPCOMING' | 'FAILED'; at: string | null; note: string | null }[]
+  transactions: { kind: 'MILESTONE_INVOICE' | 'ESCROW_FUNDED' | 'ESCROW_RELEASE' | 'PAYOUT'; at: string; description: string
+    reference: string | null; amount: Money; status: string }[]
+  destination: { provider: string; label: string; last4: string; currency: string; country: string; accountType: string | null } | null
+}
 export interface Earnings {
   payoutAccount: { holderName: string; country: string; currency: string; label: string; status: string; createdAt: string } | null
   payouts: Payout[]
@@ -112,6 +131,7 @@ export const paymentsApi = {
   invoices: (organizationId: string) => allPages<Invoice>('/v1/payments/invoices', { organizationId }),
   /** The invoice as a PDF (members of the buyer organisation; audited). */
   invoicePdf: (id: string) => api<Blob>(`/v1/payments/invoices/${id}/pdf`, { blob: true }),
+  payoutStatement: (id: string) => api<PayoutStatement>(`/v1/payments/payouts/${id}`),
   payoutPdf: (id: string) => api<Blob>(`/v1/payments/payouts/${id}/pdf`, { blob: true }),
   charges: (organizationId: string) => allPages<Charge>('/v1/payments/charges', { organizationId }),
   refunds: (organizationId: string) => allPages<Refund>('/v1/payments/refunds', { organizationId }),

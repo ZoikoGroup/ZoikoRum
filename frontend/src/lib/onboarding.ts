@@ -33,7 +33,7 @@ export function readability(text: string): Readability {
 /** One plain sentence describing a specialization from its place in the taxonomy and its flags. */
 export function specDescription(s: { name: string; requiresCredential: boolean; regulated: boolean }, group: string, category: string): string {
   const parts = [`${s.name} work within ${group} (${category}).`]
-  if (s.regulated) parts.push('Regulated work: enterprise buyers usually require Tier A and indemnity insurance.')
+  if (s.regulated) parts.push('Regulated work: enterprise buyers usually require a Green trust light (fully verified) and indemnity insurance.')
   if (s.requiresCredential) parts.push('Shown as verified once a matching credential is validated.')
   if (!s.regulated && !s.requiresCredential) parts.push('No licence is needed; your experience and offerings carry the most weight.')
   return parts.join(' ')
@@ -42,14 +42,14 @@ export function specDescription(s: { name: string; requiresCredential: boolean; 
 /** Verification checklist rows: how long each check usually takes and why it is asked for. */
 export const CHECK_INFO: Record<string, { eta: string; why: string }> = {
   email: { eta: 'Instant, from the link we emailed you', why: 'Requests, contracts and payment notices are sent to this address.' },
-  identity: { eta: 'Minutes online; about 24 hours if a person reviews it', why: 'Proves you are who your profile says. Needed for Tier B and to send proposals.' },
-  credentials: { eta: '2–5 business days', why: 'Checked with the issuing body so buyers can rely on it. Needed for Tier A in credential-led specializations.' },
+  identity: { eta: 'Minutes online; about 24 hours if a person reviews it', why: 'Proves you are who your profile says. Needed for an Amber trust light and to send proposals.' },
+  credentials: { eta: '2–5 business days', why: 'Checked with the issuing body so buyers can rely on it. Needed for a Green trust light in credential-led specializations.' },
   jurisdiction: { eta: '2–5 business days', why: 'Confirms you may practise where you take regulated work.' },
   insurance: { eta: '1–2 business days', why: 'Professional indemnity insurance protects your clients; regulated work and many enterprises require it.' },
   restrictions: { eta: 'Usually within 24 hours', why: 'Sanctions and restrictions screening keeps the marketplace safe. Results are never shown publicly.' },
 }
 
-/** The tier a professional reaches next, and what gets them there. */
+/** The tier code a professional reaches next (shown as a trust light), and what gets them there. */
 export function nextTier(tier: string, dimensions: Record<string, string>): { tier: string; needs: string } | null {
   if (tier === 'A') return null
   if (tier === 'C' || dimensions.identity !== 'VERIFIED') return { tier: 'B', needs: 'Verify your identity (screening runs alongside).' }

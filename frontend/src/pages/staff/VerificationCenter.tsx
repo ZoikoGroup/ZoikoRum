@@ -12,6 +12,7 @@ import { FileLink } from '../../components/FileLink'
 import { Icon } from '../../components/dashboard'
 import { ErrorAlert, Field, useStepUp } from '../../components/ui'
 import { countryName } from '../ProfessionalPages'
+import { lightName } from '../../lib/trustLight'
 
 /* Verification Center (staff design 51 / 84). Replaces the old ReviewQueuePage: one queue of verification checks with
    a right-hand review panel (evidence, readiness, the decision form, revocation), plus the appeals and the second looks
@@ -430,7 +431,7 @@ function RevokeForm({ c, onRevoked, onError }: { c: VerificationCase; onRevoked:
     <div>
       {modal}
       <strong className="small">Revoke “{c.label}”?</strong>
-      <p className="muted small">The check becomes “Revoked”, the professional sees your reason (and can appeal), and their trust tier updates.</p>
+      <p className="muted small">The check becomes “Revoked”, the professional sees your reason (and can appeal), and their trust light updates.</p>
       <input className="input" aria-label="Revocation reason shown to the professional" maxLength={500}
         placeholder="e.g. Verified by mistake: this is an ID, not a licence" value={reason} onChange={(e) => setReason(e.target.value)} />
       <div className="row" style={{ marginTop: 8 }}>
@@ -444,14 +445,14 @@ function RevokeForm({ c, onRevoked, onError }: { c: VerificationCase; onRevoked:
   )
 }
 
-/** Staff: how this professional's Trust Tier changed over time, and the signals behind it (assurance evidence). */
+/** Staff: how this professional's trust light changed over time, and the signals behind it (assurance evidence). */
 function TierHistory({ professionalId }: { professionalId: string }) {
   const [history, setHistory] = useState<TrustHistory | null>(null)
   useEffect(() => { trustApi.history(professionalId).then(setHistory).catch(() => setHistory(null)) }, [professionalId])
   if (!history || (history.tierChanges.length === 0 && history.signals.length === 0)) return null
   return (
-    <details className="doc-full"><summary>Trust Tier history ({history.tierChanges.length} change{history.tierChanges.length === 1 ? '' : 's'})</summary>
-      <ul className="why">{history.tierChanges.map((h, i) => <li key={i}>{shortDate(h.at)}: Tier {h.fromTier ?? '—'} → <strong>Tier {h.toTier}</strong>
+    <details className="doc-full"><summary>Trust light history ({history.tierChanges.length} change{history.tierChanges.length === 1 ? '' : 's'})</summary>
+      <ul className="why">{history.tierChanges.map((h, i) => <li key={i}>{shortDate(h.at)}: {h.fromTier ? lightName(h.fromTier) : '—'} → <strong>{lightName(h.toTier)}</strong>
         {h.reasons.length > 0 && <span className="muted small"> · {h.reasons.join('; ')}</span>}</li>)}</ul>
       {history.signals.length > 0 && <><h4>Signals</h4><ul className="why">{history.signals.slice(0, 15).map((s, i) =>
         <li key={i} className={s.adverse ? 'warn-text' : ''}>{shortDate(s.at)}: {s.summary}</li>)}</ul></>}

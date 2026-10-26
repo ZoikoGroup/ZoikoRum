@@ -24,7 +24,7 @@ export const EXPLAINERS: Explainer[] = [
         validated rather than self-reported. Advisory and analysis work rarely needs a licence, and a broader pool will often
         give you better availability and price. Check the engagement type (advisory, project, retainer or fractional) and the
         delivery mode (remote, on-site or hybrid) so the way they work matches the way your team works.</p>
-      <p>Look at the evidence each profile shows rather than the adjectives. The Trust Tier tells you which checks are complete;
+      <p>Look at the evidence each profile shows rather than the adjectives. The trust light tells you which checks are complete;
         the engagement history shows completed work and on-time milestones on Zoikorum; reviews come only from buyers who
         finished a paid engagement. A newer professional with strong verified credentials can be an excellent choice: the
         platform marks them as new so you know there is less history, not because anything is wrong.</p>
@@ -35,28 +35,28 @@ export const EXPLAINERS: Explainer[] = [
     </>,
   },
   {
-    key: 'tiers', icon: 'shield', title: 'Understanding Trust Tiers', teaser: 'What A, B and C mean, and who decides.',
-    steps: ['Tier C: profile only', 'Tier B: identity + screening', 'Tier A: + credentials, eligibility, insurance'],
+    key: 'tiers', icon: 'shield', title: 'Understanding trust lights', teaser: 'What Green, Amber and Red mean, and who decides.',
+    steps: ['Red: profile only', 'Amber: identity + screening', 'Green: + credentials, eligibility, insurance'],
     body: <>
-      <p>Every professional has a Trust Tier based only on checks that have actually been completed. <strong>Tier C</strong> is a
-        published profile with no completed verification: it can be discovered and can receive questions, but cannot send a
-        proposal or take contract work. <strong>Tier B</strong> means identity has been verified against a government ID and
-        restrictions screening is clear. <strong>Tier A</strong> adds the credentials, jurisdiction eligibility and professional
-        indemnity insurance that the professional's specializations require.</p>
+      <p>Every professional has a trust light based only on checks that have actually been completed. <strong>Red (not verified
+        yet)</strong> is a published profile with no completed verification: it can be discovered and can receive questions, but
+        cannot send a proposal or take contract work. <strong>Amber (identity verified)</strong> means identity has been verified
+        against a government ID and restrictions screening is clear. <strong>Green (fully verified)</strong> adds the credentials,
+        jurisdiction eligibility and professional indemnity insurance that the professional's specializations require.</p>
       <p>Checks are made by a verification partner or a Zoikorum compliance reviewer, never by AI, and every decision is recorded
         with its reason. Credentials marked "self-reported" have not been checked yet; validated ones have been confirmed with the
         issuing body or registry; expired ones are shown as expired. Screening details are never shown publicly: you see only
         whether the check is clear.</p>
-      <p>A tier is not permanent. Licences, certificates and insurance policies have end dates, and when one lapses the tier goes
-        down automatically until it is renewed. That is why the badge always reflects today rather than the day the profile was
-        created, and why a profile shows when it was last verified. If a check is revoked, the change is immediate and explained
-        to the professional, who can appeal once to an independent reviewer.</p>
-      <p>Choose the tier your work needs. Tier B is often enough for advisory, analysis and internal process work, where you mainly
+      <p>A light is not permanent. Licences, certificates and insurance policies have end dates, and when one lapses the light
+        steps down automatically until it is renewed. That is why the badge always reflects today rather than the day the profile
+        was created, and why a profile shows when it was last verified. If a check is revoked, the change is immediate and
+        explained to the professional, who can appeal once to an independent reviewer.</p>
+      <p>Choose the light your work needs. Amber is often enough for advisory, analysis and internal process work, where you mainly
         need to know you are dealing with a real, screened person. Regulated work, such as audit, tax filing and regulatory
-        reporting, should use Tier A, and many enterprise policies require it. If you are an enterprise buyer, your organisation's
-        minimum tier is applied to search, requests and contracts automatically, and results explain which professionals were
-        left out and why.</p>
-      <p>Tiers measure verification, not quality. Pair them with the engagement history and verified reviews on each profile.</p>
+        reporting, should use Green, and many enterprise policies require it. If you are an enterprise buyer, your organisation's
+        minimum trust light is applied to search, requests and contracts automatically, and results explain which professionals
+        were left out and why.</p>
+      <p>Trust lights measure verification, not quality. Pair them with the engagement history and verified reviews on each profile.</p>
     </>,
   },
   {

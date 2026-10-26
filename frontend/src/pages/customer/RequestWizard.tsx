@@ -10,7 +10,8 @@ import {
 } from '../../api/proposals'
 import { DOC_ACCEPT, toUpload, type Upload } from '../../api/files'
 import { Avatar, Icon } from '../../components/dashboard'
-import { PortalHeader, TierBadge } from '../../components/portal'
+import { PortalHeader } from '../../components/portal'
+import { TrustLight } from '../../components/TrustLight'
 import { DraftSaved, ResumeDraft } from '../../components/ResumeDraft'
 import { ErrorAlert, Field } from '../../components/ui'
 import { PriceGuide } from '../../components/PriceGuide'
@@ -363,9 +364,9 @@ export default function RequestWizard() {
             <div className="panel-head"><h2>Engagement summary</h2></div>
             <ul className="pro-list">{pros.map((p) => (
               <li key={p.id}><Avatar name={p.displayName} photoUrl={p.photoUrl} size={32} />
-                <span><strong>{p.displayName}</strong><br /><span className="muted small">{p.headline}</span></span><TierBadge tier={p.trust.tier} /></li>))}</ul>
-            {pros.some((p) => p.trust.tier === 'C') && <p className="tip" style={{ marginTop: 12 }}><Icon name="help" /><span>Tier C professionals can read your request but must
-              verify their identity (Tier B) before they can send a proposal.</span></p>}
+                <span><strong>{p.displayName}</strong><br /><span className="muted small">{p.headline}</span></span><TrustLight tier={p.trust.tier} /></li>))}</ul>
+            {pros.some((p) => p.trust.tier === 'C') && <p className="tip" style={{ marginTop: 12 }}><Icon name="help" /><span>Professionals with a Red trust light (not verified yet) can read your request but must
+              verify their identity (Amber) before they can send a proposal.</span></p>}
             <dl className="facts" style={{ marginTop: 14 }}>
               <dt>Service</dt><dd>{f.service || '—'}</dd>
               <dt>Type</dt><dd>{LABEL[f.engagementType]}</dd>

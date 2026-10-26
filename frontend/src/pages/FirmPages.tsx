@@ -9,6 +9,8 @@ import { useAuth } from '../auth/AuthContext'
 import { ActionList, greeting, Icon, Kpi, type Action } from '../components/dashboard'
 import { ErrorAlert, Field, useStepUp, Loading } from '../components/ui'
 import { COUNTRIES } from './Join'
+import { TrustLight } from '../components/TrustLight'
+import { lightName } from '../lib/trustLight'
 
 // eslint-disable-next-line react-refresh/only-export-components
 export function useMyFirm() {
@@ -340,7 +342,7 @@ export function FirmOfferingsPanel({ firm, isAdmin }: { firm: Firm; isAdmin: boo
               <td><strong>{o.title}</strong>{o.regulated && <span className="badge warn" style={{ marginLeft: 6 }}>regulated</span>}
                 <div className="muted">{o.specializationName ?? o.specialization}
                   {o.startingPriceMinor != null && o.currency ? ` · from ${formatMoney({ amountMinor: o.startingPriceMinor, currency: o.currency })}` : ''}</div></td>
-              <td>{o.deliveredBy.map((d) => <div key={d.professionalId}>{d.displayName} <span className="muted">Tier {d.tier}</span>
+              <td>{o.deliveredBy.map((d) => <div key={d.professionalId}>{d.displayName} <TrustLight tier={d.tier} compact />
                 {o.regulated && <span className={`badge ${d.licensed ? 'green' : ''}`} style={{ marginLeft: 4 }}>{d.licensed ? 'licensed' : 'not licensed'}</span>}</div>)}</td>
               <td><span className={`badge ${o.status === 'PUBLISHED' ? 'green' : 'warn'}`}>{OFFERING_STATUS[o.status] ?? o.status}</span>
                 {o.unpublishedReason && <div className="muted">{o.unpublishedReason}</div>}</td>
@@ -375,7 +377,7 @@ export function FirmOfferingsPanel({ firm, isAdmin }: { firm: Firm; isAdmin: boo
             {pros.length === 0 ? <p className="muted small">No professionals practise under the firm yet.</p> : (
               <div role="group" aria-labelledby="fo-people">{pros.map((p) => <label key={p.professionalId} className="checkbox small" style={{ display: 'inline-flex', marginRight: 12 }}>
                 <input type="checkbox" checked={form.deliveredBy.includes(p.professionalId)}
-                  onChange={() => setForm({ ...form, deliveredBy: toggle(form.deliveredBy, p.professionalId) })} /> <span>{p.displayName} (Tier {p.tier})</span></label>)}</div>)}
+                  onChange={() => setForm({ ...form, deliveredBy: toggle(form.deliveredBy, p.professionalId) })} /> <span>{p.displayName} ({lightName(p.tier)} light)</span></label>)}</div>)}
             <button className="btn btn-primary" style={{ marginTop: 8 }}
               disabled={busy || form.title.trim().length < 3 || !form.specialization || form.engagementTypes.length === 0 || form.deliveredBy.length === 0}>Save as draft</button>
           </form>
@@ -406,19 +408,19 @@ function FirmWork({ firmId }: { firmId: string }) {
             note={`Released to date: ${moneyList(work.money, 'releasedMinor')}`} />
           <Kpi icon="shield" tone={work.professionals.some((p) => p.tier === 'C') ? 'amber' : 'green'} label="Verified professionals"
             value={`${work.professionals.filter((p) => p.tier !== 'C').length} of ${work.professionals.length}`}
-            note="Tier B or A: can send proposals" />
+            note="Green or Amber light: can send proposals" />
         </div>
         {work.professionals.length === 0 ? (
           <p className="muted small" style={{ margin: 0 }}>No professionals practise under the firm yet. Invite them from the team page;
             they choose the firm in their own profile.</p>
         ) : (
           <table className="data">
-            <thead><tr><th>Professional</th><th>Trust Tier</th><th>Open requests</th><th>Contracts</th><th>Held in escrow</th><th>Released</th></tr></thead>
+            <thead><tr><th>Professional</th><th>Trust light</th><th>Open requests</th><th>Contracts</th><th>Held in escrow</th><th>Released</th></tr></thead>
             <tbody>{work.professionals.map((p) => (
               <tr key={p.professionalId}>
                 <td><strong>{p.displayName}</strong>{!p.published && <span className="badge" style={{ marginLeft: 6 }}>Not published</span>}
                   {p.headline && <div className="muted small">{p.headline}</div>}</td>
-                <td><span className={`badge ${p.tier === 'C' ? 'warn' : 'green'}`}>Tier {p.tier}</span>
+                <td><TrustLight tier={p.tier} />
                   {p.tier === 'C' && <div className="muted small">Identity not verified</div>}</td>
                 <td>{p.openRequests}</td>
                 <td>{p.activeContracts} active<div className="muted small">{p.awaitingSignature} to sign · {p.completedContracts} completed</div></td>

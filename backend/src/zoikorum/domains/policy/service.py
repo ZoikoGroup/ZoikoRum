@@ -32,6 +32,7 @@ from zoikorum.shared.events import record_event
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.http import page_of, paginate
 from zoikorum.shared.relay import cancel_timer, schedule_timer
+from zoikorum.shared.trust_light import light
 from zoikorum.shared.uploads import file_out, store_uploads
 
 APPROVAL_TIMER = "policy.approval_deadline"
@@ -482,7 +483,7 @@ async def evaluate(session, ctx, *, dry_run=False, preview_profile_id=None):
         fail(Decision.BLOCK, "BUYER_RESTRICTED", "Engagement activity for your organisation is currently restricted. "
                                                  "See the notice in your account for details and how to appeal.")
     if ctx.action in (PolicyAction.PROPOSAL_SUBMIT, PolicyAction.PROPOSAL_ACCEPT) and attrs.get(Attr.PRO_TIER) == "C":
-        fail(Decision.BLOCK, "MINIMUM_PLATFORM_TIER", "Tier C professionals cannot submit or receive accepted proposals")
+        fail(Decision.BLOCK, "MINIMUM_PLATFORM_TIER", "Red (not verified yet) professionals cannot submit or receive accepted proposals")
     # The cost centre's quarterly budget is the organisation's own limit: it applies with or without a policy profile.
     budget = attrs.get("costCenter.quarterBudgetMinor")
     if (ctx.action == PolicyAction.PROPOSAL_ACCEPT and budget is not None
@@ -493,7 +494,7 @@ async def evaluate(session, ctx, *, dry_run=False, preview_profile_id=None):
     if version:
         minimum = settings.get("minTrustTier", "B")
         if TIER_RANK.get(attrs.get(Attr.PRO_TIER), -1) < TIER_RANK[minimum]:
-            fail(Decision.BLOCK, "POLICY_BLOCKED_MINIMUM_TRUST_TIER", f"This policy requires Trust Tier {minimum}")
+            fail(Decision.BLOCK, "POLICY_BLOCKED_MINIMUM_TRUST_TIER", f"This policy requires the {light(minimum)} trust light or higher")
         dimensions = attrs.get(Attr.PRO_DIMENSIONS, {})
         for dimension in settings.get("requiredDimensions", ["identity"]):
             if dimensions.get(dimension) not in DIMENSION_OK[dimension]:

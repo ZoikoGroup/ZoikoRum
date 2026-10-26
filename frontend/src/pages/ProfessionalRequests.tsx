@@ -467,7 +467,7 @@ export function ProfessionalRequestDetail() {
           </SidePanel>
           <SidePanel title="Good proposals">
             <ul className="assurance compact">{['Map every deliverable to a milestone', 'Write acceptance criteria the buyer can check',
-              'Say what is excluded, to avoid scope creep', 'You need Trust Tier B or higher to submit'].map((t) => <li key={t}><Icon name="check" /><span>{t}</span></li>)}</ul>
+              'Say what is excluded, to avoid scope creep', 'You need an Amber or Green trust light to submit'].map((t) => <li key={t}><Icon name="check" /><span>{t}</span></li>)}</ul>
           </SidePanel>
         </aside>
       </div>

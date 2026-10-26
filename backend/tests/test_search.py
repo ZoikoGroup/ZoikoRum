@@ -82,7 +82,7 @@ async def test_full_text_relevance_and_explanations(client, make_user, drain):
     r = (await client.get(URL, params={"q": "cfo"})).json()
     assert r["total"] == 1 and r["items"][0]["displayName"] == "Pia"
     why = r["items"][0]["whyThisResult"]
-    assert why[0] == "“cfo” matches their name or headline" and "Tier C: Unverified (Discovery Only)" in why
+    assert why[0] == "“cfo” matches their name or headline" and "Trust light: Red (not verified yet)" in why
     # Specialization names are indexed too (weight B).
     assert await names(client, q="transfer pricing") == ["Tom"]
 
@@ -111,7 +111,7 @@ async def test_verified_professionals_rank_first_and_filter(client, make_user, d
 
     r = (await client.get(URL, params={"q": "fractional cfo"})).json()
     assert [i["displayName"] for i in r["items"]] == ["Bea", "Cara"]  # same relevance; Tier B outranks Tier C
-    assert r["items"][0]["tier"] == "B" and "Tier B: Verified Identity" in r["items"][0]["whyThisResult"]
+    assert r["items"][0]["tier"] == "B" and "Trust light: Amber (identity verified)" in r["items"][0]["whyThisResult"]
     assert r["items"][0]["dimensions"]["identity"] == "VERIFIED" and r["items"][0]["yearsExperienceBand"] == "6-10"
     assert {f["value"]: f["count"] for f in r["facets"]["tier"]} == {"B": 1, "C": 1}
     assert await names(client, verified="identity") == ["Bea"]

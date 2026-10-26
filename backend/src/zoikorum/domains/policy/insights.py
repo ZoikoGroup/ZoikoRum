@@ -44,9 +44,9 @@ def checks(settings: dict, rules: list[dict], roles_held: set[str] | None = None
         add("WARNING", "AUTO_ACCEPT_BEFORE_REVIEW",
             f"Work is accepted automatically after {auto} days, before the {accept}-day review window ends.")
     if settings.get("minTrustTier") == "C":
-        add("WARNING", "TIER_C_ALLOWED", "Tier C (unverified) is allowed, but the platform never lets Tier C professionals be engaged.")
+        add("WARNING", "TIER_C_ALLOWED", "Red (not verified yet) is allowed, but the platform never lets Red professionals be engaged.")
     if settings.get("minTrustTier") == "A" and "credentials" not in settings.get("requiredDimensions", []):
-        add("INFO", "TIER_A_IMPLIES_CREDENTIALS", "Tier A already means credentials are validated; listing them too changes nothing.")
+        add("INFO", "TIER_A_IMPLIES_CREDENTIALS", "Green (fully verified) already means credentials are validated; listing them too changes nothing.")
     mediation, legal = settings.get("disputeMediationAboveMinor"), settings.get("disputeLegalReviewAboveMinor")
     if mediation is not None and legal is not None and legal > mediation:
         add("INFO", "LEGAL_REVIEW_ABOVE_MEDIATION",

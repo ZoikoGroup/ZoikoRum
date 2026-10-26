@@ -10,14 +10,14 @@ interface Topic { icon: IconName; title: string; summary: string; answers: [stri
 
 // Plain-language help drawn from the product docs. No invented phone numbers, SLAs or chat agents.
 const TOPICS: Topic[] = [
-  { icon: 'search', title: 'Finding professionals', summary: 'Search, filters, Trust Tiers and compare.', answers: [
+  { icon: 'search', title: 'Finding professionals', summary: 'Search, filters, trust lights and compare.', answers: [
     ['How is search ranked?', 'By relevance to your words, then verification, availability and fit. Nobody can pay to rank higher. Each result shows why it matched.'],
-    ['What does a Trust Tier mean?', 'Tier A: identity, credentials and eligibility verified. Tier B: identity verified and restrictions clear. Tier C: verification not complete.'],
+    ['What does a trust light mean?', 'Green (fully verified): identity, credentials and eligibility verified. Amber (identity verified): identity verified and restrictions clear. Red (not verified yet): verification not complete.'],
     ['How many can I compare?', 'Up to three professionals side by side.'],
   ] },
   { icon: 'shield', title: 'Verification & trust', summary: 'What is checked, and by whom.', answers: [
     ['Who verifies professionals?', 'A verification provider or a compliance reviewer. AI never decides a verification outcome.'],
-    ['Why can’t I see a trust score?', 'The raw score is internal. You see the Tier and each verified dimension, which is what matters for a decision.'],
+    ['Why can’t I see a trust score?', 'The raw score is internal. You see the trust light and each verified dimension, which is what matters for a decision.'],
   ] },
   { icon: 'request', title: 'Requests & proposals', summary: 'From a need to a selected professional.', answers: [
     ['How do I ask for a proposal?', 'Open a verified professional’s profile (or a search result) and choose Request proposal. Describe the work, deliverables and budget; the professional answers with a proposal you can compare, revise or accept.'],
@@ -63,7 +63,7 @@ export default function HelpPage() {
       <PortalHeader eyebrow="Help & support" title="How can we help?" subtitle="Answers about finding, verifying, contracting and paying professionals on Zoikorum." />
       <section className="card panel search-panel">
         <form className="search-bar" role="search" onSubmit={(e) => e.preventDefault()}>
-          <input className="input" aria-label="Search help" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search help (e.g. escrow, Trust Tier, NDA)" />
+          <input className="input" aria-label="Search help" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search help (e.g. escrow, trust light, NDA)" />
         </form>
         {term && (
           matches.length === 0 ? <p className="muted small" style={{ marginBottom: 0 }}>No answers match “{q}”.</p> : (

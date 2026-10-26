@@ -37,12 +37,12 @@ def test_new_profiles_are_tier_c_with_reasons():
     assert r.tier == "C" and r.score == 0
     assert r.dimensions == {"identity": "NONE", "credentials": "NOT_APPLICABLE", "jurisdiction": "UNKNOWN",
                             "restrictions": "UNKNOWN", "insurance": "NOT_REQUIRED"}
-    assert "For Tier B: identity is not verified yet." in r.explanation
+    assert "For Amber (identity verified): identity is not verified yet." in r.explanation
 
 
 def test_verified_identity_gives_tier_b_and_full_checks_give_tier_a():
     b = evaluate(facts(("IDENTITY", "VERIFIED"), ("RESTRICTIONS", "VERIFIED")))
-    assert b.tier == "B" and "For Tier A: no licensed jurisdiction has been verified yet." in b.explanation
+    assert b.tier == "B" and "For Green (fully verified): no licensed jurisdiction has been verified yet." in b.explanation
     a = evaluate(facts(("IDENTITY", "VERIFIED"), ("RESTRICTIONS", "VERIFIED"), ("JURISDICTION", "VERIFIED", "US")))
     assert a.tier == "A" and a.score == 40
 
@@ -58,7 +58,7 @@ def test_regulated_work_needs_credentials_and_insurance_for_tier_a():
 
 def test_tier_b_waits_for_screening_to_clear():
     r = evaluate(facts(("IDENTITY", "VERIFIED"), ("RESTRICTIONS", "PENDING")))
-    assert r.tier == "C" and "For Tier B: sanctions and restrictions screening has not cleared yet." in r.explanation
+    assert r.tier == "C" and "For Amber (identity verified): sanctions and restrictions screening has not cleared yet." in r.explanation
     assert evaluate(facts(("IDENTITY", "VERIFIED"), ("RESTRICTIONS", "VERIFIED"))).tier == "B"
 
 
@@ -109,7 +109,7 @@ async def test_verification_moves_a_professional_from_c_to_b_to_a(client, make_u
     u, pro = await published_pro(client, make_user, drain)
     trust_url = f"/v1/trust/professionals/{pro['id']}"
     t = (await client.get(trust_url)).json()  # public, no sign-in
-    assert t["tier"] == "C" and t["tierLabel"] == "Unverified (Discovery Only)" and t["dimensions"]["restrictions"] == "CLEAR"
+    assert t["tier"] == "C" and t["tierLabel"] == "Red (not verified yet)" and t["dimensions"]["restrictions"] == "CLEAR"
 
     await verify(client, make_user, u, pro, "IDENTITY")
     await drain()
@@ -118,7 +118,7 @@ async def test_verification_moves_a_professional_from_c_to_b_to_a(client, make_u
     await verify(client, make_user, u, pro, "JURISDICTION", jurisdiction="US")
     await drain()
     t = (await client.get(trust_url, headers=u.h)).json()  # the score is for the owner and Trust & Safety
-    assert t["tier"] == "A" and t["tierLabel"] == "Fully Verified Professional" and t["score"] == 40
+    assert t["tier"] == "A" and t["tierLabel"] == "Green (fully verified)" and t["score"] == 40
     assert (await client.get(trust_url)).json()["score"] is None
     assert await tier_changes(sf) == [("C", "B"), ("B", "A")]
 

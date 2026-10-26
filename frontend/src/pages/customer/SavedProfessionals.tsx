@@ -5,7 +5,8 @@ import { LABEL } from '../../api/professional'
 import { savedApi, type Collection, type SavedProfessional } from '../../api/saved'
 import { CompareDialog } from '../../components/CompareDialog'
 import { Avatar, Icon } from '../../components/dashboard'
-import { PortalHeader, SidePanel, StatCard, Tabs, TierBadge, VerifyChips } from '../../components/portal'
+import { PortalHeader, SidePanel, StatCard, Tabs, VerifyChips } from '../../components/portal'
+import { TrustLight } from '../../components/TrustLight'
 import { SavedSearchesPanel } from '../../components/SavedSearches'
 import { ErrorAlert, Loading } from '../../components/ui'
 import { countryName } from '../ProfessionalPages'
@@ -115,7 +116,7 @@ export default function SavedProfessionals() {
               </select></label>
             <label className="filter-box"><span>Sort by</span>
               <select value={sort} onChange={(e) => setSort(e.target.value)}>
-                <option value="recent">Recently added</option><option value="name">Name</option><option value="tier">Trust Tier</option>
+                <option value="recent">Recently added</option><option value="name">Name</option><option value="tier">Trust light</option>
               </select></label>
           </div>
 
@@ -136,7 +137,7 @@ export default function SavedProfessionals() {
                 <div className="muted small"><Icon name="globe" /> {[s.city, s.country && countryName(s.country)].filter(Boolean).join(', ')}</div>
               </div>
               <div className="verify-box">
-                <div className="small"><strong>Verification &amp; eligibility</strong> <TierBadge tier={s.tier} /></div>
+                <div className="small"><strong>Verification &amp; eligibility</strong> <TrustLight tier={s.tier} /></div>
                 <VerifyChips dimensions={s.dimensions} compact />
                 {s.lastVerifiedAt && <div className="muted small">Last checked {new Date(s.lastVerifiedAt).toLocaleDateString()}</div>}
               </div>

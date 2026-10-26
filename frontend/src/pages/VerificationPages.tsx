@@ -13,6 +13,8 @@ import { useMyFirm } from './FirmPages'
 import { COUNTRIES } from './Join'
 import { countryName, useMyProfile } from './ProfessionalPages'
 import { proApi, type Profile } from '../api/professional'
+import { lightName, trustLight } from '../lib/trustLight'
+import { TrustLight } from '../components/TrustLight'
 
 const OPEN = ['PENDING', 'IN_REVIEW', 'NEEDS_INFO']
 const fmtDate = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString() : '—')
@@ -28,7 +30,7 @@ const EVIDENCE_FOR: Record<string, { type: EvidenceType; label: string }> = {
 }
 
 const START_INFO: Record<SelfServiceType, { title: string; desc: string }> = {
-  IDENTITY: { title: 'Verify your identity (start here)', desc: 'Required for everyone: passport, national ID (e.g. Aadhaar) or driving licence. Gives Tier B. Reviewed within about 24 hours.' },
+  IDENTITY: { title: 'Verify your identity (start here)', desc: 'Required for everyone: passport, national ID (e.g. Aadhaar) or driving licence. Gives an Amber trust light. Reviewed within about 24 hours.' },
   JURISDICTION: { title: 'Verify a professional licence for a country', desc: 'Only if you hold a licence to practise (e.g. CA, CPA, bar admission). Upload the licence, not your ID. Not needed for most technology or advisory work.' },
   INSURANCE: { title: 'Verify professional indemnity insurance', desc: 'Only for regulated work (legal, audit, tax filing). Upload the policy schedule.' },
   FIRM_REGISTRATION: { title: 'Verify the firm registration', desc: 'Confirms the firm is a registered legal entity.' },
@@ -44,14 +46,14 @@ export function CaseStatusBadge({ status }: { status: string }) {
   return <span className={`badge ${s.cls}`}>{s.label}</span>
 }
 
-/** Tier, the five verification areas, and why. */
+/** Trust light, the five verification areas, and why. */
 export function TrustSummary({ trust }: { trust: Trust }) {
   return (
     <section className="card panel">
       <div className="trust-head">
-        <span className={`tier tier-${trust.tier}`}>Tier {trust.tier}</span>
+        <span className={`tier tier-${trust.tier}`} aria-hidden><span className="light-dot" style={{ background: trustLight(trust.tier).color, width: 14, height: 14 }} />{lightName(trust.tier)}</span>
         <div>
-          <h2 style={{ margin: 0 }}>{trust.tierLabel}</h2>
+          <h2 style={{ margin: 0 }}>{lightName(trust.tier)} trust light: {trustLight(trust.tier).label}</h2>
           {trust.score !== null && <p className="muted small" style={{ margin: 0 }}>Trust score {trust.score} / 100</p>}
         </div>
       </div>
@@ -64,13 +66,13 @@ export function TrustSummary({ trust }: { trust: Trust }) {
       {trust.explanation.length > 0 && (
         <ul className="why">{trust.explanation.map((e) => <li key={e}>{e}</li>)}</ul>
       )}
-      <h3>What each tier unlocks</h3>
+      <h3>What each trust light unlocks</h3>
       <table className="data">
-        <thead><tr><th>Tier</th><th>Needs</th><th>Unlocks</th></tr></thead>
+        <thead><tr><th>Trust light</th><th>Needs</th><th>Unlocks</th></tr></thead>
         <tbody>
-          <tr><td><strong>C</strong> · Discovery</td><td>A published profile</td><td>Visible in search; no contracts or protected payments</td></tr>
-          <tr><td><strong>B</strong> · Verified Identity</td><td>Identity verified, screening clear</td><td>Respond to requests; limited-risk engagements (per buyer policy)</td></tr>
-          <tr><td><strong>A</strong> · Fully Verified</td><td>B + required credentials, a verified jurisdiction, insurance where required</td><td>Enterprise and regulated engagements</td></tr>
+          <tr><td><TrustLight tier="C" /></td><td>A published profile</td><td>Visible in search; no contracts or protected payments</td></tr>
+          <tr><td><TrustLight tier="B" /></td><td>Identity verified, screening clear</td><td>Respond to requests; limited-risk engagements (per buyer policy)</td></tr>
+          <tr><td><TrustLight tier="A" /></td><td>Amber + required credentials, a verified jurisdiction, insurance where required</td><td>Enterprise and regulated engagements</td></tr>
         </tbody>
       </table>
     </section>
@@ -225,7 +227,7 @@ function AppealsPanel({ onDecided }: { onDecided: (msg: string) => void }) {
 }
 
 /** Compliance officers: recently verified checks, so a mistaken or outdated verification can be revoked (with a reason
-    the professional sees; the trust tier updates). */
+    the professional sees; the trust light updates). */
 function VerifiedPanel({ onRevoked }: { onRevoked: (msg: string) => void }) {
   const [items, setItems] = useState<QueueItem[]>([])
   const [open, setOpen] = useState(false)
@@ -244,7 +246,7 @@ function VerifiedPanel({ onRevoked }: { onRevoked: (msg: string) => void }) {
       {open && (items.length === 0 ? <p className="muted small" style={{ margin: 0 }}>No verified checks.</p> : <>
         {target && <div className="evidence-form">
           <strong>Revoke “{target.label}” for {target.subjectName}?</strong>
-          <p className="muted small">The check becomes “Revoked”, the professional sees your reason (and can appeal), and their trust tier updates.</p>
+          <p className="muted small">The check becomes “Revoked”, the professional sees your reason (and can appeal), and their trust light updates.</p>
           <input className="input" placeholder="Reason shown to the professional, e.g. Verified by mistake: this is an ID, not a licence" maxLength={500}
             value={reason} onChange={(e) => setReason(e.target.value)} />
           <div className="row" style={{ marginTop: 8 }}>
@@ -363,7 +365,7 @@ export function ProfessionalVerificationPage() {
   return (
     <>
       <div className="page-head"><div><h1>Verification &amp; trust</h1>
-        <p className="muted" style={{ margin: 0 }}>Verified checks raise your Trust Tier. Checks are made by a verification provider or a compliance reviewer — never by AI.</p></div></div>
+        <p className="muted" style={{ margin: 0 }}>Verified checks move your trust light towards Green. Checks are made by a verification provider or a compliance reviewer — never by AI.</p></div></div>
       {trust && <TrustSummary trust={trust} />}
       <IdentityDetailsConfirm profile={profile} />
       <ChecksPanel subjectType="PROFESSIONAL" subjectId={profile.id} allowed={['IDENTITY', 'JURISDICTION', 'INSURANCE', 'BACKGROUND']}
@@ -672,14 +674,14 @@ function SecondLooks({ onDone, onError }: { onDone: (msg: string) => void; onErr
 }
 
 
-/** Staff: how this professional's Trust Tier changed over time, and the signals behind it (assurance evidence). */
+/** Staff: how this professional's trust light changed over time, and the signals behind it (assurance evidence). */
 function TierHistoryPanel({ professionalId }: { professionalId: string }) {
   const [history, setHistory] = useState<TrustHistory | null>(null)
   useEffect(() => { trustApi.history(professionalId).then(setHistory).catch(() => setHistory(null)) }, [professionalId])
   if (!history || (history.tierChanges.length === 0 && history.signals.length === 0)) return null
   return (
-    <details className="doc-full" style={{ marginBottom: 12 }}><summary>Trust Tier history ({history.tierChanges.length} change{history.tierChanges.length === 1 ? '' : 's'})</summary>
-      <ul className="why">{history.tierChanges.map((h, i) => <li key={i}>{fmtDate(h.at)}: Tier {h.fromTier ?? '—'} → <strong>Tier {h.toTier}</strong>
+    <details className="doc-full" style={{ marginBottom: 12 }}><summary>Trust light history ({history.tierChanges.length} change{history.tierChanges.length === 1 ? '' : 's'})</summary>
+      <ul className="why">{history.tierChanges.map((h, i) => <li key={i}>{fmtDate(h.at)}: {h.fromTier ? lightName(h.fromTier) : '—'} → <strong>{lightName(h.toTier)}</strong>
         {h.reasons.length > 0 && <span className="muted small"> · {h.reasons.join('; ')}</span>}</li>)}</ul>
       {history.signals.length > 0 && <><h4>Signals</h4><ul className="why">{history.signals.slice(0, 15).map((s, i) =>
         <li key={i} className={s.adverse ? 'warn-text' : ''}>{fmtDate(s.at)}: {s.summary}</li>)}</ul></>}

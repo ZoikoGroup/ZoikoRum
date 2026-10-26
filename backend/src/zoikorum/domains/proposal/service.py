@@ -4,7 +4,7 @@ Zoikorum is not a job board (Homepage wireframe): a buyer sends a structured req
 (one, or several to compare), and each answers with a structured proposal or declines with a reason.
 
 Until the policy domain exists, the platform baseline applies (BUILD_SPEC s.policy): restricted professionals cannot
-be engaged, and Tier C professionals cannot submit or have a proposal accepted. An accepting member's own spend limit
+be engaged, and tier C professionals cannot submit or have a proposal accepted. An accepting member's own spend limit
 is respected; organisation approval workflows arrive with the policy domain.
 """
 
@@ -39,6 +39,7 @@ from zoikorum.shared.events import record_audit, record_event
 from zoikorum.shared.http import expect_version, page_of, paginate
 from zoikorum.shared.money import MoneyDTO
 from zoikorum.shared.relay import cancel_timer, schedule_timer
+from zoikorum.shared.trust_light import light
 from zoikorum.shared.state_machine import StateMachine
 from zoikorum.shared.uploads import file_out, find_file, read_file, store_uploads
 
@@ -192,7 +193,7 @@ async def nudge_verification(professional_id: uuid.UUID, identity_id: uuid.UUID,
         record_event(s, E.TRUST_TIER_NUDGE, aggregate_type="Professional", aggregate_id=professional_id,
                      payload={"identityId": identity_id, "professionalId": professional_id, "requiredTier": needed,
                               "requestId": request_id, "audience": "PROFESSIONAL",
-                              "message": f"This buyer needs Trust Tier {needed} before a proposal can be sent. Complete the "
+                              "message": f"This buyer needs the {light(needed)} trust light before a proposal can be sent. Complete the "
                                          "missing checks under Verification; your proposal stays saved as a draft."})
 
 
@@ -200,19 +201,19 @@ def _check_tier(trust: trust_facade.TrustSnapshot, who: str) -> None:
     if _restricted(trust):
         raise PolicyBlocked(f"{who} cannot be engaged while a restriction is under review", code="POLICY_BLOCKED_RESTRICTIONS")
     if trust.tier == "C":
-        raise PolicyBlocked(f"{who} must reach Trust Tier B (verified identity) before a proposal can be sent or accepted",
+        raise PolicyBlocked(f"{who} must reach Amber (identity verified) before a proposal can be sent or accepted",
                             code="POLICY_BLOCKED_MINIMUM_TRUST_TIER")
 
 
 async def _check_regulated(session: AsyncSession, r, trust: trust_facade.TrustSnapshot, who: str) -> None:
-    """Regulated work (audit, tax filing, regulatory reporting...) needs Trust Tier A, whatever the buyer's own policy says."""
+    """Regulated work (audit, tax filing, regulatory reporting...) needs tier A (Green light), whatever the buyer's own policy says."""
     from zoikorum.domains.marketplace import facade as marketplace_facade
 
     if not r.specialization or trust.tier == "A":
         return
     info = (await marketplace_facade.get_specializations(session, [r.specialization])).get(r.specialization)
     if info and info.regulated:
-        raise PolicyBlocked(f"{who} must reach Trust Tier A before taking regulated work ({info.name})",
+        raise PolicyBlocked(f"{who} must reach Green (fully verified) before taking regulated work ({info.name})",
                             code="POLICY_BLOCKED_MINIMUM_TRUST_TIER")
 
 
@@ -756,7 +757,7 @@ async def submit_proposal(session: AsyncSession, actor: Actor, proposal_id: uuid
             extra={"proposal.termsDigest": hashlib.sha256(json.dumps(_terms(r, p), sort_keys=True, default=str).encode()).hexdigest()}))
     except PolicyBlocked as blocked:
         if blocked.code == "POLICY_BLOCKED_MINIMUM_TRUST_TIER":
-            needed = "A" if "Tier A" in blocked.detail else "B"
+            needed = "A" if "Green" in blocked.detail else "B"
             await nudge_verification(p.professional_id, actor.identity_id, needed, r.id)
         raise
     revised = p.status == "REVISION_REQUESTED"

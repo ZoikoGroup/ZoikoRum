@@ -30,6 +30,8 @@ import { AccountAlerts } from './Dashboards'
 import { ResendConfirmation } from '../components/ResendConfirmation'
 import { formatCurrencies } from '../lib/money'
 import { COUNTRIES } from './Join'
+import { TrustLight } from '../components/TrustLight'
+import { lightName, trustLight } from '../lib/trustLight'
 
 // eslint-disable-next-line react-refresh/only-export-components
 export function useMyProfile() {
@@ -99,7 +101,7 @@ function TrackDifference({ onClose }: { onClose: () => void }) {
           <thead><tr><th /><th>Independent</th><th>With a firm</th></tr></thead>
           <tbody>
             <tr><td>Who signs the contract</td><td>You</td><td>You, shown as practising with the firm</td></tr>
-            <tr><td>Verification</td><td>Your own checks decide your Trust Tier</td><td>Your own checks, plus the firm's registration and insurance</td></tr>
+            <tr><td>Verification</td><td>Your own checks decide your trust light</td><td>Your own checks, plus the firm's registration and insurance</td></tr>
             <tr><td>Payments</td><td>To your payout account</td><td>To your payout account; the firm sees its members' engagements</td></tr>
             <tr><td>How to start</td><td>Right away</td><td>Accept the firm's invitation first</td></tr>
           </tbody>
@@ -284,7 +286,7 @@ export function ProfessionalDashboard() {
       priority: 'High', to: '/app/professional/verification', icon: 'shield' })
   }
   for (const c of expiring) {
-    actions.push({ title: `${c.label} expires soon`, detail: `Valid until ${new Date(c.expiresAt!).toLocaleDateString()}: renew to keep your tier`,
+    actions.push({ title: `${c.label} expires soon`, detail: `Valid until ${new Date(c.expiresAt!).toLocaleDateString()}: renew to keep your trust light`,
       priority: 'High', to: '/app/professional/verification', icon: 'clock' })
   }
   for (const i of readiness?.items.filter((i) => i.required && !i.done) ?? []) {
@@ -295,7 +297,7 @@ export function ProfessionalDashboard() {
       to: '/app/professional/profile?step=publish', icon: 'check' })
   }
   if (trust?.dimensions.identity === 'NONE') {
-    actions.push({ title: 'Verify your identity', detail: 'Reach Tier B to respond to requests', priority: 'Medium',
+    actions.push({ title: 'Verify your identity', detail: 'Reach an Amber trust light to respond to requests', priority: 'Medium',
       to: '/app/professional/verification', icon: 'shield' })
   }
   actions.push(...professionalRequestActions(requests, now).filter((a) => a.priority !== 'High'))  // waiting on the buyer: low, last
@@ -342,7 +344,7 @@ export function ProfessionalDashboard() {
               note={summary && moneyOf(summary.pendingReleaseMinor).length ? `Paid out, after fees · ${formatCurrencies(moneyOf(summary.pendingReleaseMinor))} held in escrow for you`
                 : 'Paid out, after fees'} /></Link>
             <a href="#verification"><Kpi icon="shield" tone={trust?.tier === 'C' ? 'amber' : 'green'} label="Verification Status"
-              value={trust ? `Tier ${trust.tier}` : '—'} note={trust?.tierLabel ?? 'Loading…'} /></a>
+              value={trust ? `${lightName(trust.tier)} light` : '—'} note={trust ? trustLight(trust.tier).label : 'Loading…'} /></a>
           </div>
           <DataFreshness at={summary?.lastEventAt} />
 
@@ -380,7 +382,7 @@ export function ProfessionalDashboard() {
                   <thead><tr><th>Buyer</th><th>Service</th><th>Type</th><th>Budget</th><th>Deadline</th><th>Actions</th></tr></thead>
                   <tbody>{requests.length === 0 ? <tr><td colSpan={6} className="empty-row">
                     <strong>No requests yet.</strong> Buyers find you in search and send requests; they appear here, ready to respond to.
-                    {trust?.tier === 'C' && ' Tier B (verified identity) is needed to send a proposal.'}
+                    {trust?.tier === 'C' && ' An Amber trust light (identity verified) is needed to send a proposal.'}
                   </td></tr> : requests.slice(0, 5).map((q) => {
                     const due = deadlineText(deadlineOf(q), now)
                     return (
@@ -438,7 +440,7 @@ export function ProfessionalDashboard() {
               {trust && (
                 <section className="card panel" id="verification">
                   <div className="panel-head"><h2>Verification &amp; Trust</h2>
-                    <span className={`badge ${trust.tier === 'C' ? 'warn' : 'green'}`}>Tier {trust.tier}</span></div>
+                    <TrustLight tier={trust.tier} /></div>
                   <ul className="checklist">
                     {DIMENSIONS.map((d) => {
                       const v = DIMENSION_VALUE[trust.dimensions[d.key]] ?? { label: 'Not verified', good: false }
@@ -467,9 +469,9 @@ export function ProfessionalDashboard() {
 
 const STEPS = [
   { key: 'basics', label: 'Basics', why: 'Buyers decide in seconds from your name, role title and photo. Your legal name stays private and is only matched against your ID.' },
-  { key: 'specializations', label: 'Services', why: 'Search and buyer policies work from these. Some need a validated credential or Tier A before you can take the work.' },
+  { key: 'specializations', label: 'Services', why: 'Search and buyer policies work from these. Some need a validated credential or a Green trust light before you can take the work.' },
   { key: 'engagement', label: 'Pricing & availability', why: 'Buyers filter by engagement type, delivery, price and availability. Rates are a guide only; the price is agreed in each proposal. At your limit, buyers see “At capacity” instead of waiting on you.' },
-  { key: 'verification', label: 'Verification', why: 'Verified identity (Tier B) is needed to send proposals; full verification (Tier A) for regulated work and many enterprise buyers.' },
+  { key: 'verification', label: 'Verification', why: 'Verified identity (Amber light) is needed to send proposals; full verification (Green light) for regulated work and many enterprise buyers.' },
   { key: 'credentials', label: 'Credentials', why: 'Credentials are checked with the issuing body before they show as validated. Buyers and their policies rely on them.' },
   { key: 'jurisdictions', label: 'Jurisdictions', why: 'Engagements can only be agreed where you serve clients and, for regulated work, where you are licensed.' },
   { key: 'publish', label: 'Review & publish', why: 'You confirm the profile is accurate before buyers can find it. You can unpublish at any time.' },
@@ -781,7 +783,7 @@ function SpecializationsStep({ profile, onSaved, next }: StepProps) {
       <ErrorAlert error={error} />
       <p className="muted small">
         Pick from the Zoikorum list so buyers can find you: one primary specialization and up to five more.
-        Specializations marked “Credential required” need a verified credential before you reach Tier A for them.
+        Specializations marked “Credential required” need a verified credential before you reach a Green trust light for them.
       </p>
       <div className="row" style={{ alignItems: 'flex-end' }}>
         <label className="filter-box grow"><span>Search {total} specializations</span>
@@ -1115,7 +1117,7 @@ function CredentialsStep({ profile, next }: StepProps) {
   )
 }
 
-/** Completion screen (Onboarding s.18, Peak-End Rule): your tier, what you can do now, what to do next. */
+/** Completion screen (Onboarding s.18, Peak-End Rule): your trust light, what you can do now, what to do next. */
 function PublishedCompletion({ profile }: { profile: Profile }) {
   const [trust, setTrust] = useState<Trust | null>(null)
   useEffect(() => { trustApi.get(profile.id).then(setTrust).catch(() => {}) }, [profile.id])
@@ -1129,8 +1131,7 @@ function PublishedCompletion({ profile }: { profile: Profile }) {
     <section className="card panel confirm-state" style={{ margin: '0 0 16px', maxWidth: 'none' }}>
       <span className="kpi-icon green big"><Icon name="check" /></span>
       <h2 style={{ margin: 0 }}>Your profile is live</h2>
-      <p style={{ margin: 0 }}><span className={`badge ${tier === 'C' ? 'warn' : 'green'}`}>Tier {tier}</span>{' '}
-        <span className="muted small">{trust?.tierLabel ?? 'Discovery'}</span></p>
+      <p style={{ margin: 0 }}><TrustLight tier={tier} /></p>
       <ul className="assurance compact">{can[tier].map((t) => <li key={t}><Icon name="check" /><span>{t}</span></li>)}</ul>
       <div className="row" style={{ justifyContent: 'center' }}>
         <Link className="btn btn-primary" to="/app/professional">Go to Dashboard</Link>
@@ -1178,7 +1179,7 @@ function PublishStep({ profile, onSaved }: StepProps) {
             </button>
           </div>
           <p className="muted small" style={{ marginTop: 12 }}>
-            New profiles appear as <strong>Tier C · Unverified (Discovery Only)</strong> until identity is verified.{' '}
+            New profiles show a <strong>Red trust light · Not verified yet</strong> until identity is verified.{' '}
             <Link to="/app/professional/verification">Start verification</Link>
           </p>
         </>
@@ -1203,10 +1204,10 @@ function VerificationStep({ profile, next }: StepProps) {
   )
   return (
     <>
-      <p className="muted small">Verification raises your Trust Tier. You can publish now as Tier C and verify at any time.</p>
+      <p className="muted small">Verification moves your trust light from Red to Amber to Green. You can publish now and verify at any time.</p>
       {trust && (
         <ul className="checklist">
-          <li><span><strong>Your tier</strong></span><span className={`badge ${trust.tier === 'C' ? 'warn' : 'green'}`}>Tier {trust.tier} · {trust.tierLabel}</span></li>
+          <li><span><strong>Your trust light</strong></span><TrustLight tier={trust.tier} /></li>
           {row('email', 'Email confirmed', user?.emailConfirmed ? <span className="badge green">Confirmed</span>
             : <span className="row" style={{ gap: 6 }}><span className="badge warn">Not yet</span><ResendConfirmation /></span>)}
           {DIMENSIONS.map((d) => {
@@ -1304,7 +1305,7 @@ export function ProfileSetupPage() {
   )
 }
 
-/** Right-hand checklist and Trust Tier preview: what is done, what is left, and the tier it leads to. Collapses on
+/** Right-hand checklist and trust light preview: what is done, what is left, and the tier it leads to. Collapses on
     small screens (open by default on wide ones). */
 function OnboardingChecklist({ profile }: { profile: Profile }) {
   const [readiness, setReadiness] = useState<Readiness | null>(null)
@@ -1329,9 +1330,9 @@ function OnboardingChecklist({ profile }: { profile: Profile }) {
           </li>)}
         </ul>}
         {trust && <div style={{ marginTop: 12 }}>
-          <p className="small" style={{ margin: 0 }}><strong>Trust Tier preview</strong></p>
-          <p className="small" style={{ margin: '4px 0' }}><span className={`badge ${trust.tier === 'C' ? 'warn' : 'green'}`}>Now: Tier {trust.tier}</span>
-            {upcoming && <> → <span className="badge">Next: Tier {upcoming.tier}</span></>}</p>
+          <p className="small" style={{ margin: 0 }}><strong>Trust light preview</strong></p>
+          <p className="small" style={{ margin: '4px 0' }}><TrustLight tier={trust.tier} prefix="Now:" compact />
+            {upcoming && <> → <TrustLight tier={upcoming.tier} prefix="Next:" compact /></>}</p>
           <p className="muted small" style={{ margin: 0 }}>{upcoming ? upcoming.needs : 'Fully verified: eligible for enterprise and regulated work.'}</p>
           {readiness?.canPublish && profile.status !== 'PUBLISHED' && <p className="small" style={{ margin: '6px 0 0' }}>
             Everything required is done: <Link to="/app/professional/profile?step=publish">publish your profile</Link>.</p>}

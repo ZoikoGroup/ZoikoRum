@@ -34,7 +34,7 @@ async def on_verification_lapsed(session: AsyncSession, event: EventEnvelope) ->
 
 @subscribe(E.TRUST_TIER_CHANGED, consumer="firm.recheck_offerings_on_tier")
 async def on_tier_changed(session: AsyncSession, event: EventEnvelope) -> None:
-    """A delivering member's Trust Tier changed: published regulated offerings must still have a licensed member."""
+    """A delivering member's trust light changed: published regulated offerings must still have a licensed member."""
     from zoikorum.domains.professional import facade as professional_facade
 
     pro = await professional_facade.get_professional(session, uuid.UUID(str(event.payload["professionalId"])))

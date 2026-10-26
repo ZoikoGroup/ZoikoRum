@@ -24,10 +24,10 @@ class SpecializationInfo:
     group_slug: str
     category_slug: str
     requires_credential: bool  # e.g. CPA-style licensed work
-    regulated: bool  # regulated work => Tier A typically required by policy
+    regulated: bool  # regulated work => tier A typically required by policy
     deliverable_templates: tuple[str, ...]
     credential_hints: tuple[str, ...]  # e.g. ("CPA", "CA", "ACCA")
-    requires_insurance: bool = False  # Tier A needs verified professional indemnity insurance
+    requires_insurance: bool = False  # tier A needs verified professional indemnity insurance
 
 
 @dataclass(frozen=True)

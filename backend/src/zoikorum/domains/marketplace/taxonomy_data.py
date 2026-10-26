@@ -18,7 +18,7 @@ _NS = uuid.UUID("5b1f0f6e-6a52-4e83-9d6f-2f6e7c1a9a01")
 
 # Specializations flagged (Onboarding s.12, Policy "Regulated Engagement Profile"):
 #   C = requires a validated credential before the claim is displayed as verified work
-#   R = regulated work (enterprise policies typically require Tier A); professional indemnity insurance required
+#   R = regulated work (enterprise policies typically require tier A); professional indemnity insurance required
 FINANCE_ACCOUNTING = {
     "name": "Finance & Accounting",
     "credential_hints": ["CPA", "CA", "ACCA", "CMA", "CFA", "CIA", "CGMA", "CFE"],

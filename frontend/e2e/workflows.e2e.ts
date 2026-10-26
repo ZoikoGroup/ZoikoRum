@@ -97,10 +97,10 @@ test('dialogs work from the keyboard: focus moves in, stays in, Escape closes, f
   const { account: buyer } = await buyerWithOrganisation('Lennox Keys')
   await signIn(page, buyer.email)
   await page.goto('/app/find?sort=verified')  // the guides show once a search is under way
-  const opener = page.getByRole('button', { name: /Understanding Trust Tiers/ })
+  const opener = page.getByRole('button', { name: /Understanding trust lights/ })
   await opener.focus()
   await page.keyboard.press('Enter')
-  const dialog = page.getByRole('dialog', { name: 'Understanding Trust Tiers' })
+  const dialog = page.getByRole('dialog', { name: 'Understanding trust lights' })
   await expect(dialog).toBeVisible()
   await expect(dialog.getByRole('button', { name: 'Close' })).toBeFocused()
   for (let i = 0; i < 5; i++) {
@@ -179,7 +179,7 @@ test('an organisation sets up its first policy from a template and reviews it be
   await expect(page.getByRole('heading', { name: 'Set up your first policy' })).toBeVisible()
   await page.getByRole('button', { name: 'Use this template' }).nth(2).click()  // Cross-border
   await expect(page.getByRole('heading', { name: 'Cross-border policy' })).toBeVisible()
-  await expect(page.getByLabel('Minimum trust tier')).toHaveValue('B')
+  await expect(page.getByLabel('Minimum trust light')).toHaveValue('B')
   await expect(page.getByText('Professional in another country is yes')).toBeVisible()  // the template's rule, in words
   await expect(page.getByText('Before you activate')).toBeVisible()
   await page.getByRole('tab', { name: 'Dashboard' }).click()

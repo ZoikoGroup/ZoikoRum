@@ -71,11 +71,11 @@ const PAGES: Record<string, Page> = {
     title: 'Trust & Safety Charter',
     intro: 'Trust is not assumed. It is demonstrated, verified and maintained. This charter is a binding commitment on how trust, safety and governance work on Zoikorum.',
     sections: [
-      { heading: 'Trust Tiers', points: [
-        'Tier A, fully verified: identity verified, credentials validated where they apply, jurisdiction eligibility confirmed, enhanced checks where required. Eligible for all engagements.',
-        'Tier B, verified identity: identity verified; credentials may be partial or not required. Eligible for standard engagements.',
-        'Tier C, discovery: the profile is visible; engagement eligibility is limited while verification is in progress.',
-        'Tiers are enforced by the system, not cosmetic, and every tier explains why it was given.'] },
+      { heading: 'Trust lights', points: [
+        'Green, fully verified: identity verified, credentials validated where they apply, jurisdiction eligibility confirmed, enhanced checks where required. Eligible for all engagements.',
+        'Amber, identity verified: identity verified; credentials may be partial or not required. Eligible for standard engagements.',
+        'Red, not verified yet: the profile is visible; engagement eligibility is limited while verification is in progress.',
+        'Trust lights are enforced by the system, not cosmetic, and every light explains why it was given.'] },
       { heading: 'Verification', points: [
         'Verification is evidence-based, carried out by a verification partner or a compliance reviewer, and a negative partner result always goes to a person.',
         'Credentials, insurance and jurisdiction rights are monitored continuously; when one lapses, eligibility changes at once and cannot be hidden.'] },

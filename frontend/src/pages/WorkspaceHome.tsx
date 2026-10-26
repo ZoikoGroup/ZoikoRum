@@ -155,7 +155,7 @@ export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
   actions.unshift(...problems, ...buyerRequestActions(requests, now))
   const drafts = requests.filter((r) => r.status === 'DRAFT')
   if (drafts.length > 0) actions.push({ title: 'Finish your draft request', detail: drafts[0].service, priority: 'Medium', to: `/app/requests/${drafts[0].id}`, icon: 'request' })
-  if (!listsLoading && saved.length === 0) actions.push({ title: 'Find and save professionals', detail: 'Build a shortlist by specialization and Trust Tier', priority: 'Low', to: '/app/find', icon: 'search' })
+  if (!listsLoading && saved.length === 0) actions.push({ title: 'Find and save professionals', detail: 'Build a shortlist by specialization and trust light', priority: 'Low', to: '/app/find', icon: 'search' })
   const urgent = actions.filter((a) => a.priority !== 'Low')
   const money = contracts.map(engagementMoney)
   const shownContracts = contracts.filter((c) => engTab === 'all' || engBucket(c) === engTab)

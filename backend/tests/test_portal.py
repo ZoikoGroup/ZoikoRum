@@ -18,6 +18,11 @@ async def test_account_settings_profile_is_encrypted_and_validated(client, make_
         stored = await s.scalar(text("SELECT phone_enc FROM identity.identities WHERE id = :i"), {"i": u.id})
     assert stored and "2025550187" not in stored  # encrypted at rest
     assert (await client.patch("/v1/me", headers=u.h, json={"phone": "12345"})).status_code == 422
+    # Spaces, dashes and brackets are fine (the hint shows "+44 20 7946 0958"); the number is stored without them.
+    assert (await client.patch("/v1/me", headers=u.h, json={"phone": "+44 20 7946 0958"})).json()["phone"] == "+442079460958"
+    assert (await client.patch("/v1/me", headers=u.h, json={"phone": "+91-98765-43210"})).json()["phone"] == "+919876543210"
+    no_code = await client.patch("/v1/me", headers=u.h, json={"phone": "98765 43210"})
+    assert no_code.status_code == 422 and "country code" in no_code.text
     r = await client.patch("/v1/me", headers=u.h, json={"timeZone": "Mars/Olympus"})
     assert r.status_code == 422 and r.json()["code"] == "INVALID_TIME_ZONE"
     assert (await client.patch("/v1/me", headers=u.h, json={"phone": ""})).json()["phone"] is None

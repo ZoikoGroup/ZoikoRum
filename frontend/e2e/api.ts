@@ -52,7 +52,7 @@ export async function eventually<T>(check: () => Promise<T | null | undefined | 
   }
 }
 
-/** A published professional with a verified identity (Tier B), ready to answer requests. */
+/** A published professional with a verified identity (tier B, Amber light), ready to answer requests. */
 export async function verifiedProfessional(name: string) {
   const a = await signUp(name, 'PROFESSIONAL', 'IN')
   const pro = await call(a, 'POST', '/v1/professionals', {})
@@ -73,7 +73,7 @@ export async function verifiedProfessional(name: string) {
   await eventually(async () => {
     const trust = await a.api.get(`/v1/trust/professionals/${pro.id}`, { headers: { Authorization: `Bearer ${a.token}` } })
     return trust.ok() && (await trust.json()).tier === 'B'
-  }, 'Tier B')
+  }, 'Amber trust light (tier B)')
   return { account: a, pro }
 }
 

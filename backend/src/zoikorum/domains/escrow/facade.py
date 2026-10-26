@@ -223,3 +223,31 @@ async def refund_kpis(session: AsyncSession, since, until) -> dict:
         r["refundsPer100Payments"] = round(100 * r["refunds"] / r["payments"], 1) if r["payments"] else None
     rows = sorted(out.values(), key=lambda r: r["currency"])
     return {"payments": sum(r["payments"] for r in rows), "refunds": sum(r["refunds"] for r in rows), "byCurrency": rows}
+
+
+@dataclass(frozen=True)
+class ReleaseTrail:
+    """One release and the money behind it, for a professional's payout statement."""
+    release_id: uuid.UUID
+    milestone_id: uuid.UUID
+    gross_minor: int
+    fee_minor: int
+    net_minor: int
+    fee_bps: int
+    currency: str
+    released_at: datetime
+    funded_minor: int | None  # this milestone's share of the buyer's funding
+    funded_at: datetime | None  # when the buyer's payment for this milestone was captured into escrow
+
+
+async def release_trail(session: AsyncSession, release_id: uuid.UUID) -> ReleaseTrail | None:
+    from zoikorum.domains.escrow.models import Funding, Release
+
+    r = await session.get(Release, release_id)
+    if r is None:
+        return None
+    x = await session.scalar(select(Allocation).where(Allocation.milestone_id == r.milestone_id))
+    funding = await session.get(Funding, x.funding_id) if x is not None and x.funding_id else None
+    funded_at = (funding.captured_at if funding else None) or (x.funded_at if x else None)
+    return ReleaseTrail(r.id, r.milestone_id, r.gross_minor, r.fee_minor, r.net_minor, r.fee_bps, r.currency, r.created_at,
+                        x.amount_minor if x is not None and funded_at else None, funded_at)

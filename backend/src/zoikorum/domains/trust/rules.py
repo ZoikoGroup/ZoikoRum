@@ -1,9 +1,10 @@
 """Deterministic, explainable trust rules (Trust & Safety Charter, Onboarding doc).
 
 Pure functions: no I/O, so every tier decision can be unit-tested and explained.
-Tier C: default (Discovery only).
-Tier B: identity VERIFIED, restrictions screening CLEAR (baseline eligibility), no engagement suspension.
-Tier A: Tier B + credentials VALIDATED for every credential-required specialization + jurisdiction
+Tier codes stay A/B/C internally; people see them as trust lights (zoikorum.shared.trust_light).
+C (Red, not verified yet): default (discovery only).
+B (Amber, identity verified): identity VERIFIED, restrictions screening CLEAR (baseline eligibility), no engagement suspension.
+A (Green, fully verified): B + credentials VALIDATED for every credential-required specialization + jurisdiction
         ELIGIBLE + insurance VERIFIED when a specialization requires it.
 """
 
@@ -11,8 +12,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from zoikorum.shared.trust_light import light
+
 OPEN = ("PENDING", "IN_REVIEW", "NEEDS_INFO")
-TIER_LABEL = {"A": "Fully Verified Professional", "B": "Verified Identity", "C": "Unverified (Discovery Only)"}
+TIER_LABEL = {t: light(t) for t in ("A", "B", "C")}  # shown to people: "Green (fully verified)"...
 
 
 @dataclass(frozen=True)
@@ -122,11 +125,11 @@ def evaluate(f: Facts) -> Evaluation:
     elif not tier_b_gaps:
         tier = "B"
         why.append("Identity is verified and restrictions screening is clear.")
-        why.extend(f"For Tier A: {g[0].lower()}{g[1:]}." for g in tier_a_gaps)
+        why.extend(f"For Green (fully verified): {g[0].lower()}{g[1:]}." for g in tier_a_gaps)
     else:
         tier = "C"
-        why.append("Profiles start in Tier C (Discovery Only) until identity is verified.")
-        why.extend(f"For Tier B: {g[0].lower()}{g[1:]}." for g in tier_b_gaps)
+        why.append("Profiles start at Red (not verified yet) and can be found in search until identity is verified.")
+        why.extend(f"For Amber (identity verified): {g[0].lower()}{g[1:]}." for g in tier_b_gaps)
 
     score, score_why = _score(d)
     return Evaluation(tier=tier, score=score, dimensions=d, explanation=tuple(why + score_why))
