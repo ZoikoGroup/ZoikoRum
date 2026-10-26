@@ -6,7 +6,7 @@ firm service). Policy payment rules, exception roles and regional contract varia
 policy.versions.settings JSON and need no schema change.
 
 Revision ID: a6b7c8d9e0f1
-Revises: a1c2e3f4a5b6
+Revises: f5a6b7c8d9e0
 Create Date: 2026-10-23 10:00:00
 """
 from __future__ import annotations
@@ -17,7 +17,7 @@ from sqlalchemy.dialects import postgresql
 
 
 revision = 'a6b7c8d9e0f1'
-down_revision = 'a1c2e3f4a5b6'
+down_revision = 'f5a6b7c8d9e0'
 branch_labels = None
 depends_on = None
 

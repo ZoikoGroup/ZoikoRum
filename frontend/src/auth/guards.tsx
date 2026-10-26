@@ -11,10 +11,11 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   if (loading) return <div className="page-loading" aria-busy="true">Loading…</div>
   if (!user) {
     const staffArea = isStaffPath(location.pathname)
-    // Keep the whole destination (query and hash too, e.g. /app/requests/new?pro=...) so sign-in lands exactly there.
+    // Keep the whole destination (query and hash too, e.g. /app/requests/new?pro=...) so sign-in, or sign-up from the
+    // sign-in page, lands exactly there. It travels in navigation state, not the address, so signing out on purpose
+    // (which navigates to a plain /login afterwards) does not send the next person back to the last page.
     const from = location.pathname + location.search + location.hash
-    const next = safeNextPath(from)
-    return <Navigate to={`${staffArea ? '/staff/login' : '/login'}${next ? `?next=${encodeURIComponent(next)}` : ''}`} replace state={{ from }} />
+    return <Navigate to={staffArea ? '/staff/login' : '/login'} replace state={{ from: safeNextPath(from) ?? undefined }} />
   }
   if (user.status === 'SUSPENDED' && location.pathname !== '/app/safety') return <Navigate to="/app/safety" replace />
   if (user.status !== 'SUSPENDED' && user.mfaRequired && location.pathname !== '/app/security') {

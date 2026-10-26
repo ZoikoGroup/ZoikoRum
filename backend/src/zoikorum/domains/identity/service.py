@@ -131,6 +131,7 @@ async def _start_session(
         user_agent=(user_agent or "")[:500],
         audience=audience,
         idp=idp,
+        created_at=now,  # the domain clock: idle timeouts and maximum session age are measured from it
     )
     session.add(sess)
     await session.flush()

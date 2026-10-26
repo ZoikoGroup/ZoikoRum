@@ -29,6 +29,7 @@ interface Form {
   desiredStartDate: string; estimatedDuration: Duration; deliveryMode: 'REMOTE' | 'ONSITE' | 'HYBRID'; location: string
   budgetOn: boolean; budgetMin: string; budgetMax: string; currency: string; ndaRequired: boolean; attachments: Upload[]
   deliverables: string[]; dependencies: Dependency[]; pricingPreferences: PricingPreference[]; paymentCadence: PaymentCadence | ''
+  successDefinition: string; successMeasures: string[]  // "What does done look like" / "How will it be measured" (optional)
   acknowledged: boolean
 }
 
@@ -51,8 +52,10 @@ export default function RequestWizard() {
     service: '', engagementType: 'PROJECT', businessContext: '', objective: '', details: '', desiredStartDate: '',
     estimatedDuration: 'THREE_SIX_WEEKS', deliveryMode: 'REMOTE', location: '', budgetOn: false, budgetMin: '', budgetMax: '',
     currency: 'USD', ndaRequired: false, attachments: [], deliverables: [], dependencies: [], pricingPreferences: [], paymentCadence: '',
-    acknowledged: false,
+    successDefinition: '', successMeasures: [], acknowledged: false,
   })
+  const [measure, setMeasure] = useState('')
+  const measures = f.successMeasures ?? []  // drafts saved before this field existed have none
   const [templates, setTemplates] = useState<string[]>([])
   const [custom, setCustom] = useState('')
   const set = <K extends keyof Form>(k: K, v: Form[K]) => { setTouched(true); setF((x) => ({ ...x, [k]: v })) }
@@ -86,6 +89,7 @@ export default function RequestWizard() {
         budgetMax: previous.budget ? String(previous.budget.maxMinor / 100) : '', currency: previous.budget?.currency ?? x.currency,
         deliverables: previous.deliverables, dependencies: previous.dependencies, pricingPreferences: previous.pricingPreferences,
         paymentCadence: previous.paymentCadence ?? '',
+        successDefinition: previous.successCriteria?.definition ?? '', successMeasures: previous.successCriteria?.measures ?? [],
       } : {
         ...x,
         service: x.service || offering?.title || first?.specializations[0]?.name || first?.headline || '',
@@ -166,7 +170,8 @@ export default function RequestWizard() {
         budget: f.budgetOn ? { minMinor: f.budgetMin ? toMinor(f.budgetMin) : null, maxMinor: toMinor(f.budgetMax), currency: f.currency } : null,
         ndaRequired: f.ndaRequired, attachments: f.attachments, deliverables: f.deliverables,
         customDeliverables: f.deliverables.filter((d) => !templates.includes(d)), dependencies: f.dependencies,
-        pricingPreferences: f.pricingPreferences, paymentCadence: f.paymentCadence || null, acknowledged: f.acknowledged, draft,
+        pricingPreferences: f.pricingPreferences, paymentCadence: f.paymentCadence || null,
+        successDefinition: (f.successDefinition ?? '').trim() || null, successMeasures: measures, acknowledged: f.acknowledged, draft,
       })
       clearDraft(draftKey)
       if (draft) navigate(`/app/requests/${result[0].id}`)
@@ -252,8 +257,20 @@ export default function RequestWizard() {
               </div>
               <p className="muted small" style={{ margin: '4px 0 0' }}>Suggestions come from the professional's services. Your own deliverables are marked
                 so the professional confirms what you mean in the proposal.</p></div>
-            <Field label="Details" id="w-details" hint={`${f.details.length}/1200 · What does “done” look like? How will success be measured? What will you provide?`}>
+            <Field label="Details" id="w-details" hint={`${f.details.length}/1200 · Context, constraints and what you will provide.`}>
               <textarea id="w-details" className="input" rows={6} maxLength={1200} value={f.details} onChange={(e) => set('details', e.target.value)} /></Field>
+            <Field label="What does done look like? (optional)" id="w-done" hint={`${(f.successDefinition ?? '').length}/1000 · e.g. “Year-end accounts signed off by the auditors.”`}>
+              <textarea id="w-done" className="input" rows={2} maxLength={1000} value={f.successDefinition ?? ''} onChange={(e) => set('successDefinition', e.target.value)} /></Field>
+            <div className="field"><span className="label">How will it be measured? (optional, up to 10)</span>
+              {measures.length > 0 && <ul className="why" style={{ margin: '0 0 6px' }}>{measures.map((m) => <li key={m}>{m}{' '}
+                <button type="button" className="link-button" aria-label={`Remove ${m}`} onClick={() => set('successMeasures', measures.filter((x) => x !== m))}>Remove</button></li>)}</ul>}
+              <div className="row" style={{ alignItems: 'center' }}>
+                <input className="input" style={{ flex: 1 }} aria-label="Success measure" placeholder="e.g. No audit adjustments above USD 5,000" maxLength={300}
+                  value={measure} onChange={(e) => setMeasure(e.target.value)} />
+                <button type="button" className="btn btn-secondary btn-sm" disabled={measure.trim().length < 2 || measures.length >= 10}
+                  onClick={() => { set('successMeasures', [...new Set([...measures, measure.trim()])]); setMeasure('') }}>Add measure</button>
+              </div>
+              <p className="muted small" style={{ margin: '4px 0 0' }}>Carried into every proposal and into the contract's scope.</p></div>
             <div className="row">
               <Field label="Desired start date" id="w-start"><input id="w-start" type="date" className="input" min={today()} value={f.desiredStartDate} onChange={(e) => set('desiredStartDate', e.target.value)} /></Field>
               <Field label="Estimated duration" id="w-dur"><select id="w-dur" className="input" value={f.estimatedDuration} onChange={(e) => set('estimatedDuration', e.target.value as Duration)}>
@@ -320,6 +337,8 @@ export default function RequestWizard() {
             {review('Scope & timeline', 1, <p className="small" style={{ whiteSpace: 'pre-wrap' }}>
               {f.deliverables.length > 0 && <>Deliverables: {f.deliverables.join(' · ')}<br /></>}
               {f.details || <span className="muted">No extra details</span>}<br />
+              {(f.successDefinition ?? '').trim() && <>Done looks like: {f.successDefinition}<br /></>}
+              {measures.length > 0 && <>Measured by: {measures.join(' · ')}<br /></>}
               Start {f.desiredStartDate} · {DURATION_LABEL[f.estimatedDuration]} · {LABEL[f.deliveryMode]}{f.location ? ` (${f.location})` : ''}
               {f.attachments.length > 0 && <><br />{f.attachments.length} attachment{f.attachments.length > 1 ? 's' : ''}</>}</p>)}
             {review('Commercial preferences', 2, <p className="small">{f.budgetOn && f.budgetMax ? budgetText({ minMinor: f.budgetMin ? toMinor(f.budgetMin) : null, maxMinor: toMinor(f.budgetMax), currency: f.currency }) : 'Open to proposal'}

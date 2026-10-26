@@ -51,7 +51,7 @@ async def test_idle_timeout_and_max_age_end_member_sessions(client, make_user, d
     assert login.status_code == 200, login.text
     admin.access, admin.refresh_token = login.json()["tokens"]["accessToken"], login.json()["tokens"]["refreshToken"]
     t = datetime.now(timezone.utc)
-    for i in range(1, 7):
+    for i in range(1, 10):
         clock.set_now(t + timedelta(minutes=9 * i))
         r = await _refresh(client, admin)
         if r.status_code != 200:

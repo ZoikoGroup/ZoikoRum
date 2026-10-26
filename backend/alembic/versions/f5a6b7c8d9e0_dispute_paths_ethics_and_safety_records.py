@@ -10,7 +10,7 @@ law enforcement / regulator referrals, Legal only), conflict_declarations (staff
 and fraud_alerts (third-party fraud alerts, advisory).
 
 Revision ID: f5a6b7c8d9e0
-Revises: a1c2e3f4a5b6
+Revises: e4f5a6b7c8d9
 Create Date: 2026-10-23 10:00:00
 """
 from __future__ import annotations
@@ -21,7 +21,7 @@ from sqlalchemy.dialects import postgresql
 
 
 revision = 'f5a6b7c8d9e0'
-down_revision = 'a1c2e3f4a5b6'
+down_revision = 'e4f5a6b7c8d9'
 branch_labels = None
 depends_on = None
 

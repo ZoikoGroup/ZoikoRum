@@ -8,7 +8,7 @@ when and by whom it was confirmed); allocations remember when a release waiting 
 (release_approval_due_at). The new terminal allocation state EXPIRED and account status EXPIRED need no schema change.
 
 Revision ID: e4f5a6b7c8d9
-Revises: a1c2e3f4a5b6
+Revises: d3e4f5a6b7c8
 Create Date: 2026-10-23 10:00:00
 """
 from __future__ import annotations
@@ -19,7 +19,7 @@ from sqlalchemy.dialects import postgresql
 
 
 revision = 'e4f5a6b7c8d9'
-down_revision = 'a1c2e3f4a5b6'
+down_revision = 'd3e4f5a6b7c8'
 branch_labels = None
 depends_on = None
 

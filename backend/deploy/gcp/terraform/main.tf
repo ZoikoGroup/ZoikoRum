@@ -328,7 +328,7 @@ resource "google_compute_backend_service" "web" {
   health_checks         = [google_compute_health_check.web[each.key].id]
   backend { group = google_compute_instance_group.app.self_link }
   log_config { enable = true }
-  security_policy = var.cloud_armor_enabled ? google_compute_security_policy.edge[0].id : null
+  security_policy = var.cloud_armor_enabled ? google_compute_security_policy.edge[0].self_link : null
   # Coarse client location for the advisory sign-in risk signals (identity/risk.py): country and city latitude/longitude.
   # The load balancer sets these itself, replacing anything a client sends.
   custom_request_headers = ["X-Client-Geo-Country: {client_region}", "X-Client-Geo-Lat-Long: {client_city_lat_long}"]

@@ -19,8 +19,8 @@ test('a signed-out request to a professional lands on the request after sign-in'
 test('a deep link while signed out keeps its query through sign-up', async ({ page }) => {
   const { pro } = await verifiedProfessional('Ira Deeplink')
   await page.goto(`/app/requests/new?pro=${pro.id}`)
-  await expect(page).toHaveURL(/\/login\?next=%2Fapp%2Frequests%2Fnew%3Fpro%3D/)
-  await page.getByRole('link', { name: 'Create an account' }).click()
+  await expect(page).toHaveURL(/\/login$/)
+  await page.getByRole('link', { name: 'Create an account' }).click()  // carries the full destination on to sign-up
   await expect(page).toHaveURL(/\/join\?next=/)
   await page.getByLabel('Full name').fill('Nia Newbuyer')
   await page.getByLabel('Work email').fill(`nia-${Date.now()}@example.com`)

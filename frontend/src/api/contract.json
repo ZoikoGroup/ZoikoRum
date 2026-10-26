@@ -1713,6 +1713,15 @@
   "total",
   "validUntil"
  ],
+ "ProposalReadinessOut": [
+  "auditRecord",
+  "auditRecordNote",
+  "contractReady",
+  "contractReadyNote",
+  "disputeResolution",
+  "paymentProtection",
+  "paymentProtectionNote"
+ ],
  "ProtectionIn": [
   "approverIdentityId",
   "disputeHoldAcknowledged",
@@ -1820,15 +1829,6 @@
  ],
  "ReadIn": [
   "throughSequence"
- ],
- "Readiness": [
-  "auditRecord",
-  "auditRecordNote",
-  "contractReady",
-  "contractReadyNote",
-  "disputeResolution",
-  "paymentProtection",
-  "paymentProtectionNote"
  ],
  "ReadinessItem": [
   "done",

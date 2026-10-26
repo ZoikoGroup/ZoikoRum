@@ -3,15 +3,16 @@ import { useTwoStepReady } from '../auth/useTwoStep'
 import { EngagementReview } from '../components/EngagementReview'
 import { AIAssistance } from '../components/AIAssistance'
 import { Link, useParams } from 'react-router-dom'
-import { CONTRACT_STATUS, contractApi, MILESTONE_STATUS, type PolicyState, type ActivityEntry, type ChangeOrder, type Contract, type ContractMilestone,
+import { CONTRACT_STAGE, contractApi, MILESTONE_STATUS, stageOf, type PolicyState, type ActivityEntry, type ChangeOrder, type Contract, type ContractMilestone,
   type EngagementFile, type Verdict } from '../api/contracts'
 import { DeliveryForm, ReviewPanel, SubmissionView } from '../components/Delivery'
 import { disputableMilestones, disputeApi, OPEN_PHASES, paymentStuck, releaseAfterWindow, type Dispute } from '../api/disputes'
 import { escrowApi, type Escrow } from '../api/escrow'
 import { MeetingsPanel, TasksPanel } from '../components/Collaboration'
 import { RaiseDisputeDialog } from './Disputes'
-import { FundDialog, PaymentsPanel } from '../components/EscrowPanels'
-import { formatMoney, orgApi } from '../api/orgs'
+import { FundDialog, PaymentProtectionSetup, PaymentsPanel } from '../components/EscrowPanels'
+import { formatMoney } from '../api/orgs'
+import { SCOPE_CHANGE_LABEL, type ScopeChangeKind } from '../api/proposals'
 import { LABEL } from '../api/professional'
 import { FileLink } from '../components/FileLink'
 import { messagingApi, type ConversationMessage } from '../api/messaging'
@@ -36,11 +37,13 @@ const progress = (c: Contract) => {
 export function EngagementsPage({ side }: { side: Side }) {
   const [list, setList] = useState<Contract[] | null>(null)
   const [error, setError] = useState<unknown>(null)
-  const [tab, setTab] = useState<'all' | 'signing' | 'active' | 'completed'>('all')
+  const [tab, setTab] = useState<'all' | 'signing' | 'protection' | 'active' | 'completed'>('all')
   useEffect(() => { contractApi.list(side).then(setList).catch(setError) }, [side])
   const rows = list ?? []
-  const of = (t: string) => rows.filter((c) => t === 'all' || (t === 'signing' ? c.status === 'PENDING_SIGNATURE' : t === 'active' ? c.status === 'ACTIVE' : c.status === 'COMPLETED'))
-  const activeValue = formatCurrencies(rows.filter((c) => c.status === 'ACTIVE').map(c => c.total))
+  // "Active" means funded and under way; a signed engagement waits for payment protection (its first funding) first.
+  const of = (t: string) => rows.filter((c) => t === 'all' || (t === 'signing' ? c.status === 'PENDING_SIGNATURE'
+    : t === 'protection' ? stageOf(c) === 'AWAITING_PAYMENT_PROTECTION' : t === 'active' ? stageOf(c) === 'ACTIVE' : c.status === 'COMPLETED'))
+  const activeValue = formatCurrencies(rows.filter((c) => stageOf(c) === 'ACTIVE').map(c => c.total))
   const other = (c: Contract) => c.parties.find((p) => p.role !== (side === 'buyer' ? 'BUYER' : 'PROFESSIONAL'))
 
   return (
@@ -50,14 +53,15 @@ export function EngagementsPage({ side }: { side: Side }) {
         actions={side === 'buyer' ? <Link className="btn btn-primary" to="/app/find"><Icon name="search" /> Find a Professional</Link> : undefined} />
       <ErrorAlert error={error} />
       <div className="stat-row four">
-        <StatCard icon="contract" tone="amber" value={list ? of('signing').length : '…'} label="Awaiting signatures" sub="Sign to activate" />
+        <StatCard icon="contract" tone="amber" value={list ? of('signing').length + of('protection').length : '…'} label="Awaiting signatures or protection"
+          sub={list && of('protection').length ? `${of('protection').length} awaiting payment protection` : 'Sign, then fund to activate'} />
         <StatCard icon="briefcase" tone="green" value={list ? of('active').length : '…'} label="Active" sub="In progress" />
         <StatCard icon="check" tone="blue" value={list ? of('completed').length : '…'} label="Completed" sub="All milestones accepted" />
         <StatCard icon="lock" tone="violet" value={list ? activeValue : '…'} label="Active value" sub="Totals by currency" />
       </div>
       <section className="card panel">
         <Tabs tabs={[{ key: 'all', label: 'All', count: rows.length }, { key: 'signing', label: 'Awaiting signatures', count: of('signing').length },
-          { key: 'active', label: 'Active', count: of('active').length }, { key: 'completed', label: 'Completed', count: of('completed').length }]}
+          { key: 'protection', label: 'Awaiting payment protection', count: of('protection').length }, { key: 'active', label: 'Active', count: of('active').length }, { key: 'completed', label: 'Completed', count: of('completed').length }]}
           value={tab} onChange={setTab} />
         {list && of(tab).length === 0 ? (
           <EmptyTable columns={['Engagement', side === 'buyer' ? 'Professional' : 'Buyer', 'Value', 'Status', 'Progress', 'Next action']}>
@@ -74,7 +78,7 @@ export function EngagementsPage({ side }: { side: Side }) {
                   <td><Link to={`${base(side)}/${c.id}`}><strong>{c.title}</strong></Link><div className="muted small">{c.reference}</div></td>
                   <td className="small">{other(c)?.name}</td>
                   <td><strong>{formatMoney(c.total)}</strong></td>
-                  <td><span className={`badge ${CONTRACT_STATUS[c.status].tone}`}>{CONTRACT_STATUS[c.status].label}</span></td>
+                  <td><span className={`badge ${CONTRACT_STAGE[stageOf(c)].tone}`}>{CONTRACT_STAGE[stageOf(c)].label}</span></td>
                   <td><div className="bar" title={`${pr.done} of ${pr.total} milestones accepted`}><span style={{ width: `${pr.pct}%` }} /></div>
                     <span className="muted small">{pr.done}/{pr.total} milestones</span></td>
                   <td className="small">{c.canSign ? <Link className="btn btn-primary btn-sm" to={`${base(side)}/${c.id}`}>Sign</Link> : c.nextAction}</td>
@@ -129,7 +133,9 @@ export function EngagementDetail({ side }: { side: Side }) {
   }
 
   if (!c) return error ? <ErrorAlert error={error} /> : <Loading />
-  const st = CONTRACT_STATUS[c.status]
+  const stage = stageOf(c)
+  const st = CONTRACT_STAGE[stage]
+  const awaitingProtection = stage === 'AWAITING_PAYMENT_PROTECTION'
   const signed = new Set(c.signatures.filter((s) => s.contractVersion === c.contractVersion).map((s) => s.party))
   const pr = progress(c)
   const act = async (fn: () => Promise<Contract>, msg: string) => {
@@ -154,11 +160,13 @@ export function EngagementDetail({ side }: { side: Side }) {
             <div className="small">{x.nextStep}</div></div>
           <Link className="btn btn-secondary" to={`/app/disputes/${x.id}`}>Open dispute</Link></div>))}
 
-      <div className={`attention-banner ${c.status === 'ACTIVE' || c.status === 'COMPLETED' ? 'ok' : ''}`}>
+      <div className={`attention-banner ${stage === 'ACTIVE' || c.status === 'COMPLETED' ? 'ok' : ''}`}>
         <span className={`kpi-icon ${c.canSign ? 'amber' : 'green'}`}><Icon name={c.canSign ? 'contract' : 'check'} /></span>
         <div><strong>{c.nextAction}</strong>
           {c.status === 'PENDING_SIGNATURE' && <div className="muted small">Sign by {fmtDate(c.signatureDeadline)}. The buyer signs first; the professional countersigns.</div>}
-          {c.status === 'ACTIVE' && <div className="muted small">Activated {fmtDate(c.activatedAt)} · {pr.done} of {pr.total} milestones accepted</div>}</div>
+          {awaitingProtection && <div className="muted small">Signed {fmtDate(c.activatedAt)}. The engagement becomes active once the first funding is
+            held in escrow{side === 'professional' ? ': do not start work before then.' : '.'}</div>}
+          {stage === 'ACTIVE' && <div className="muted small">Activated {fmtDate(c.activatedAt)} · {pr.done} of {pr.total} milestones accepted</div>}</div>
         {c.canSign && <button className="btn btn-primary" onClick={() => setTab('agreement')}>Review &amp; sign</button>}
       </div>
 
@@ -170,8 +178,10 @@ export function EngagementDetail({ side }: { side: Side }) {
         }) }}
         onWithdraw={() => act(() => contractApi.withdrawTermination(c.id), 'Request withdrawn. The engagement continues.')} />}
 
-      {c.status === 'ACTIVE' && escrow && escrow.allocations.length > 0 && escrow.allocations.every((x) => x.state === 'UNFUNDED') &&
-        <ActivationPanel c={c} escrow={escrow} side={side} onFund={(ids) => setFundFor(ids)} />}
+      {awaitingProtection && escrow && escrow.allocations.length > 0 && <div id="payment-protection">
+        <PaymentProtectionSetup c={c} escrow={escrow} side={side} onSaved={(e) => { setEscrow(e); setNotice('Payment protection saved. Fund to activate the engagement.') }}
+          onFund={(ids) => setFundFor(ids)} /></div>}
+      {stage === 'ACTIVE' && pr.done === 0 && <ActivationPanel c={c} side={side} />}
 
       {c.status === 'COMPLETED' && <EngagementReview contractId={c.id} canReview={side === 'buyer'} reference={c.reference}
         professionalName={c.parties.find((p) => p.role === 'PROFESSIONAL')?.name} organizationName={c.parties.find((p) => p.role === 'BUYER')?.name} />}
@@ -187,6 +197,7 @@ export function EngagementDetail({ side }: { side: Side }) {
               <div className="panel-head"><h2>Key terms</h2></div>
               <dl className="facts">
                 <dt>Objective</dt><dd>{c.terms.objective}</dd>
+                {c.terms.successCriteria && <><dt>Success criteria</dt><dd><SuccessCriteriaView criteria={c.terms.successCriteria} /></dd></>}
                 <dt>Engagement</dt><dd>{LABEL[c.engagementType] ?? c.engagementType}{c.pricingModel ? ` · ${LABEL[c.pricingModel] ?? c.pricingModel}` : ''}</dd>
                 <dt>Timeline</dt><dd>{fmtDate(c.terms.startDate)} – {fmtDate(c.terms.endDate)}</dd>
                 <dt>Total</dt><dd>{formatMoney(c.total)} · accepted so far {formatMoney(c.acceptedAmount)}</dd>
@@ -229,8 +240,16 @@ export function EngagementDetail({ side }: { side: Side }) {
                 <button className="btn btn-secondary btn-sm" onClick={() => contractApi.documentPdf(c.id)
                   .then((b) => saveBlob(`${c.reference}-v${c.contractVersion}.pdf`, b)).catch(setError)}>
                   <Icon name="download" /> Download PDF</button></span></div>
+            <h3>Parties</h3>
+            <ul className="pro-list">{c.parties.map((p) => (
+              <li key={p.role}><Icon name={p.role === 'BUYER' ? 'building' : 'user'} /><span><strong>{p.name}</strong>
+                <span className="muted small"> · {p.role === 'BUYER' ? 'Buyer' : 'Professional'}{p.detail ? ` · ${p.detail}` : ''}</span></span>
+                <span className={`badge ${signed.has(p.role) ? 'green' : ''}`}>{signed.has(p.role) ? 'Signed' : 'Not signed'}</span></li>))}</ul>
             <h3>Deliverables &amp; acceptance criteria</h3>
             <ul className="why">{c.terms.deliverables.map((d) => <li key={d.key}><strong>{d.title}:</strong> {d.acceptanceCriteria}</li>)}</ul>
+            {c.terms.successCriteria && <><h3>Success criteria</h3><SuccessCriteriaView criteria={c.terms.successCriteria} /></>}
+            {(c.terms.scopeChanges ?? []).length > 0 && <><h3>Agreed scope changes</h3>
+              <ul className="why">{c.terms.scopeChanges!.map((x, i) => <li key={i}><strong>{SCOPE_CHANGE_LABEL[x.kind as ScopeChangeKind] ?? x.kind}{x.target ? ` (${x.target})` : ''}:</strong> {x.proposed}</li>)}</ul></>}
             <h3>Payment schedule</h3>
             <table className="data"><thead><tr><th>#</th><th>Milestone</th><th>Due</th><th>Amount</th></tr></thead>
               <tbody>{c.milestones.map((m) => <tr key={m.id}><td>M{m.sequence}</td><td>{m.title}</td><td className="small">{fmtDate(m.dueDate)}</td><td>{formatMoney(m.amount)}</td></tr>)}</tbody></table>
@@ -269,12 +288,20 @@ export function EngagementDetail({ side }: { side: Side }) {
                   onClick={() => { setError(null); setNotice(null); run(async () => {
                     // Errors propagate so the step-up dialog can ask for a code and retry.
                     setC(await contractApi.sign(c.id, c.termsHash))
-                    setNotice(side === 'buyer' ? 'Signed. The professional will be asked to countersign.' : 'Countersigned. The engagement is now active.')
+                    setNotice(side === 'buyer' ? 'Signed. The professional will be asked to countersign.'
+                      : 'Countersigned. The buyer now sets up payment protection; do not start work until the first milestone is funded.')
                   }) }}>
                   {side === 'buyer' ? 'Sign contract' : 'Countersign contract'}</button>
                 <p className="muted small" style={{ margin: '8px 0 0' }}>{user?.mfaBypass ? 'Development mode: no authenticator code is asked.' : "You'll be asked to confirm with your authenticator app or a passkey."}</p>
               </> : <div className="tip" style={{ marginTop: 12 }}><Icon name="lock" /><span>Signing needs two-step verification: an authenticator
                 app or a passkey. <Link to="/app/security">Set one up</Link>, then come back to sign.</span></div>)}
+              {awaitingProtection && <div className="protect-note" style={{ marginTop: 12 }}><Icon name="check" /><div>
+                <strong>Both parties have signed.</strong>
+                <div className="small">{side === 'buyer' ? 'Next: choose how payments are protected and released, then fund.'
+                  : 'Next: the buyer sets up payment protection and funds the first milestone. Do not start work before then.'}</div>
+                {side === 'buyer' && <button className="btn btn-primary" style={{ marginTop: 8 }} onClick={() => {
+                  setTab('overview'); setTimeout(() => document.getElementById('payment-protection')?.scrollIntoView({ behavior: 'smooth' }), 0)
+                }}>Continue to payment protection setup</button>}</div></div>}
             </section>
           </aside>
         </div>
@@ -687,36 +714,31 @@ function section(doc: string | null, title: string): string | null {
   return next < 0 ? rest : rest.slice(0, next)
 }
 
-/** Right after both signatures: what was agreed, what is protected, and the one next step (fund the first milestone). */
-function ActivationPanel({ c, escrow, side, onFund }: { c: Contract; escrow: Escrow; side: Side; onFund: (ids: string[]) => void }) {
-  const [approvers, setApprovers] = useState<string[] | null>(null)
-  useEffect(() => {
-    if (side !== 'buyer') return
-    orgApi.members(c.organizationId).then((ms) => setApprovers(ms.filter((m) => m.roles.includes('APPROVER')).map((m) => m.displayName)))
-      .catch(() => setApprovers([]))
-  }, [c.organizationId, side])
-  const first = [...escrow.allocations].sort((a, b) => a.sequence - b.sequence)[0]
+function SuccessCriteriaView({ criteria }: { criteria: { definition: string | null; measures: string[] } }) {
+  return <>{criteria.definition && <p className="small" style={{ margin: '0 0 4px' }}><strong>Done looks like:</strong> {criteria.definition}</p>}
+    {criteria.measures.length > 0 && <ul className="why" style={{ margin: 0 }}>{criteria.measures.map((m) => <li key={m}>Measured by: {m}</li>)}</ul>}</>
+}
+
+/** Once the first funding is held (the engagement is active): what was agreed, the next milestone and its due date, and
+    where to go next. Shown until the first milestone is accepted. */
+function ActivationPanel({ c, side }: { c: Contract; side: Side }) {
+  const next = [...c.milestones].sort((a, b) => a.sequence - b.sequence).find((m) => !['ACCEPTED', 'CANCELLED'].includes(m.status))
   return (
     <section className="card panel activation-panel">
-      <div className="panel-head"><h2>Engagement activated</h2><code>{c.reference}</code></div>
+      <div className="panel-head"><h2>Engagement active</h2><code>{c.reference}</code></div>
       <div className="row" style={{ alignItems: 'flex-start', gap: 24 }}>
         <dl className="facts" style={{ flex: 1 }}>
-          <dt>Next milestone</dt><dd>M{first.sequence} {first.title} · <strong>{formatMoney(first.amount)}</strong></dd>
-          <dt>Payment protection</dt><dd>Each milestone is paid into escrow before work starts and released only when the buyer accepts it.</dd>
-          <dt>Who releases payment</dt><dd>{side === 'buyer'
-            ? (approvers && approvers.length ? `You accept the work; ${approvers.join(', ')} approve${approvers.length > 1 ? '' : 's'} releases where your policy asks for it.`
-              : 'You accept the work; your organisation’s policy decides if an approver must also agree.')
-            : 'The buyer accepts each milestone; their organisation’s approvers may need to agree.'}</dd>
+          {next && <><dt>Next milestone</dt><dd>M{next.sequence} {next.title} · <strong>{formatMoney(next.amount)}</strong>
+            {' '}<span className={`badge ${MILESTONE_STATUS[next.status].tone}`}>{MILESTONE_STATUS[next.status].label}</span></dd>
+            <dt>Due</dt><dd>{next.dueDate ? fmtDate(next.dueDate) : 'No date set'}</dd></>}
+          <dt>Payment protection</dt><dd>Funded milestones are held in escrow and released only when the buyer accepts the work.</dd>
           <dt>If something goes wrong</dt><dd>Raise a dispute: the milestone’s money stays frozen until it is resolved.</dd>
         </dl>
-        <div style={{ minWidth: 220 }}>
+        <div style={{ minWidth: 220, display: 'grid', gap: 8 }}>
           {side === 'buyer' ? <>
-            <button className="btn btn-primary btn-lg" style={{ width: '100%' }} disabled={!escrow.canFund} onClick={() => onFund([first.milestoneId])}>
-              <Icon name="lock" /> Fund M{first.sequence} and start</button>
-            <p className="muted small">The professional starts once it is funded.</p>
-            <Link className="btn btn-ghost btn-sm" to="/app/organisation?tab=members">Invite a colleague</Link>
-          </> : <p className="small"><strong>Waiting for the buyer to fund M{first.sequence}.</strong> Do not start work before it is funded;
-            you will be told as soon as it is.</p>}
+            <Link className="btn btn-primary" to="/app/buyer">Go to buyer dashboard</Link>
+            <Link className="btn btn-secondary" to="/app/find">Request additional proposals</Link>
+          </> : <p className="small" style={{ margin: 0 }}><strong>Funds are secured.</strong> You can start work on the funded milestone.</p>}
           <Link className="btn btn-ghost btn-sm" to={`/app/messages?contextType=CONTRACT&contextId=${c.id}`}><Icon name="message" /> Messages</Link>
         </div>
       </div>
@@ -752,18 +774,39 @@ function MessagesPreview({ c }: { c: Contract }) {
 }
 
 /** Every file of the engagement in one list: request, proposal, delivered work, messages, dispute evidence. */
+/** Files with the same name and source are versions of one document: newest first, earlier versions on request. */
+function fileVersions(files: EngagementFile[]): EngagementFile[][] {
+  const groups = new Map<string, EngagementFile[]>()
+  for (const f of files) {
+    const key = `${f.source}::${f.name.toLowerCase()}`
+    groups.set(key, [...(groups.get(key) ?? []), f])
+  }
+  const when = (f: EngagementFile) => (f.uploadedAt ? new Date(f.uploadedAt).getTime() : 0)
+  return [...groups.values()].map((g) => [...g].sort((a, b) => when(b) - when(a)))
+}
+
 function FilesPanel({ c, onError }: { c: Contract; onError: (e: unknown) => void }) {
   const [files, setFiles] = useState<EngagementFile[] | null>(null)
   useEffect(() => { contractApi.files(c.id).then(setFiles).catch(onError) }, [c.id, onError])
+  const groups = fileVersions(files ?? [])
   return (
     <section className="card panel">
-      <div className="panel-head"><h2>Files</h2><span className="muted small">{files?.length ?? 0} file(s)</span></div>
+      <div className="panel-head"><h2>Files</h2><span className="muted small">{groups.length} document(s) · {files?.length ?? 0} version(s)</span></div>
+      <div className="tip" style={{ marginBottom: 12 }}><Icon name="lock" /><span><strong>Who can open these:</strong> members of the buyer organisation
+        and the professional on this engagement. Zoikorum staff open them only to handle a dispute or a support request you raise. Every opening is
+        recorded in the audit log, and each version keeps its fingerprint so a copy can be checked.</span></div>
       {files && files.length === 0 ? <p className="muted">No files yet.</p> : (
         <table className="data"><thead><tr><th>File</th><th>From</th><th>Added</th><th>Fingerprint (SHA-256)</th></tr></thead>
-          <tbody>{(files ?? []).map((f) => <tr key={f.url}>
-            <td><FileLink file={{ name: f.name, hasFile: true }} url={f.url} /><div className="muted small">{(f.size / 1024).toFixed(0)} KB</div></td>
-            <td className="small">{f.source}</td><td className="small">{f.uploadedAt ? new Date(f.uploadedAt).toLocaleString() : '—'}</td>
-            <td><code className="small">{f.sha256.slice(0, 16)}…</code></td></tr>)}</tbody></table>
+          <tbody>{groups.map(([latest, ...earlier]) => <tr key={latest.url}>
+            <td><FileLink file={{ name: latest.name, hasFile: true }} url={latest.url} />
+              <div className="muted small">{(latest.size / 1024).toFixed(0)} KB{earlier.length > 0 ? ` · version ${earlier.length + 1} (latest)` : ''}</div>
+              {earlier.length > 0 && <details className="small"><summary>Version history ({earlier.length} earlier)</summary>
+                <ol className="why" style={{ margin: '4px 0 0' }}>{earlier.map((f, i) => <li key={f.url}>
+                  <FileLink file={{ name: `Version ${earlier.length - i}`, hasFile: true }} url={f.url} />
+                  {' '}<span className="muted">{f.uploadedAt ? new Date(f.uploadedAt).toLocaleString() : '—'} · <code>{f.sha256.slice(0, 12)}…</code></span></li>)}</ol>
+              </details>}</td>
+            <td className="small">{latest.source}</td><td className="small">{latest.uploadedAt ? new Date(latest.uploadedAt).toLocaleString() : '—'}</td>
+            <td><code className="small">{latest.sha256.slice(0, 16)}…</code></td></tr>)}</tbody></table>
       )}
     </section>
   )

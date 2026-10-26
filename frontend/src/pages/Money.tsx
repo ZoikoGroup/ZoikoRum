@@ -14,6 +14,7 @@ import { COUNTRIES } from './Join'
 import { csv, downloadFile, saveBlob } from '../lib/exports'
 import { formatCurrencies } from '../lib/money'
 import { PaymentsOverview } from '../components/PaymentsOverview'
+import { ApprovalCountdown } from '../components/EscrowPanels'
 
 /* Money screens (Step 8): the professional's Earnings (payout account + payouts) and the customer's Payments
    & Protection (escrow across engagements, charges, invoices). Test mode: a fake payment provider, no real money. */
@@ -220,10 +221,16 @@ export function CustomerPaymentsPage() {
           <EmptyTable columns={['Engagement', 'Total', 'In escrow', 'Released', 'Not funded', 'Status']}>
             <strong>Nothing in escrow yet.</strong> After both parties sign a contract, fund its milestones from the engagement.</EmptyTable>
         ) : (
-          <table className="data"><thead><tr><th>Engagement</th><th>Total</th><th>In escrow</th><th>Released</th><th>Not funded</th><th>Status</th></tr></thead>
+          <table className="data"><thead><tr><th>Engagement</th><th>Total</th><th>In escrow</th><th>Released</th><th>Not funded</th><th>Status</th><th>Release receipts</th></tr></thead>
             <tbody>{escrows.map((e) => <tr key={e.id}><td><Link to={`/app/engagements/${e.contractId}`}><strong>{title(e.contractId)}</strong></Link></td>
               <td>{formatMoney(e.total)}</td><td>{formatMoney(e.held)}</td><td>{formatMoney({ amountMinor: e.released.amountMinor + e.fees.amountMinor, currency: e.currency })}</td>
-              <td>{formatMoney(e.unfunded)}</td><td className="small">{e.status.replace(/_/g, ' ').toLowerCase()}</td></tr>)}</tbody></table>
+              <td>{formatMoney(e.unfunded)}</td><td className="small">{e.status.replace(/_/g, ' ').toLowerCase()}
+                {e.allocations.filter((x) => x.state === 'RELEASE_PENDING_APPROVAL' && x.releaseApprovalDueAt).map((x) => <div key={x.milestoneId}>
+                  M{x.sequence}: <ApprovalCountdown due={x.releaseApprovalDueAt!} /></div>)}</td>
+              <td className="small">{e.allocations.filter((x) => x.releaseId).map((x) => <div key={x.milestoneId}>
+                <button className="link-button" onClick={() => escrowApi.releaseReceipt(x.releaseId!).then((b) => saveBlob(`${x.releaseReference}.pdf`, b)).catch(setError)}>
+                  <Icon name="download" /> M{x.sequence} {x.releaseReference}</button></div>)}
+                {!e.allocations.some((x) => x.releaseId) && '—'}</td></tr>)}</tbody></table>
         ))}
         {tab === 'transactions' && (charges.length === 0 ? (
           <EmptyTable columns={['Date', 'Engagement', 'Amount', 'Method', 'Status']}><strong>No payments yet.</strong></EmptyTable>

@@ -126,10 +126,12 @@ async def test_search_filters_for_credentials_currencies_and_enterprise_history(
     assert found == ["Ada"] and body["items"][0]["currencies"] == ["EUR", "USD"]
     assert body["facets"]["multiCurrency"] == [{"value": "true", "label": "true", "count": 1}]
 
-    # Verified credentials: any of several (multi-select). Names are written straight into the projection here.
+    # Verified credentials: any of several (multi-select). Names are written straight into the projection here, after
+    # every pending event has rebuilt it (a later rebuild would overwrite them).
+    await drain()
     async with sf() as s, s.begin():
-        await s.execute(text("UPDATE search.professional_documents SET verified_credentials = '{CPA}' WHERE display_name = 'Ada'"))
-        await s.execute(text("UPDATE search.professional_documents SET verified_credentials = '{ACCA}' WHERE display_name = 'Bob'"))
+        await s.execute(text("UPDATE search.professional_documents SET verified_credentials = '{CPA}', updated_at = now() WHERE display_name = 'Ada'"))
+        await s.execute(text("UPDATE search.professional_documents SET verified_credentials = '{ACCA}', updated_at = now() WHERE display_name = 'Bob'"))
     search_service._cache.clear()
     assert (await names(credentials="CPA"))[0] == ["Ada"]
     assert (await names(credentials="CPA,ACCA"))[0] == ["Ada", "Bob"]
@@ -137,8 +139,9 @@ async def test_search_filters_for_credentials_currencies_and_enterprise_history(
     assert {f["value"] for f in (await names())[1]["facets"]["credential"]} == {"CPA", "ACCA"}
 
     assert (await names(priorEnterprise="true"))[0] == []
+    await drain()
     async with sf() as s, s.begin():
-        await s.execute(text("UPDATE search.professional_documents SET enterprise_engagements = 2 WHERE display_name = 'Bob'"))
+        await s.execute(text("UPDATE search.professional_documents SET enterprise_engagements = 2, updated_at = now() WHERE display_name = 'Bob'"))
     search_service._cache.clear()
     found, body = await names(priorEnterprise="true")
     assert found == ["Bob"] and body["items"][0]["enterpriseEngagements"] == 2

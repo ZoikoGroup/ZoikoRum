@@ -8,7 +8,7 @@ New tables: org_session_policies, scim_groups, sign_in_signals.
 Escrow: ledger_snapshots (periodic per-account balances and integrity checks; the ledger itself is unchanged).
 
 Revision ID: b7c8d9e0f1a2
-Revises: a1c2e3f4a5b6
+Revises: a6b7c8d9e0f1
 Create Date: 2026-10-23 10:00:00
 """
 from __future__ import annotations
@@ -19,7 +19,7 @@ from sqlalchemy.dialects import postgresql
 
 
 revision = 'b7c8d9e0f1a2'
-down_revision = 'a1c2e3f4a5b6'
+down_revision = 'a6b7c8d9e0f1'
 branch_labels = None
 depends_on = None
 
