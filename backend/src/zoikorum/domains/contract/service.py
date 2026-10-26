@@ -638,7 +638,7 @@ def awaiting_payment_protection(c: Contract, ms: list[Milestone]) -> bool:
     """Signed, but the first required funding is not in place yet: no milestone has ever started (work starts only when its
     money is held in escrow). The contract status stays ACTIVE (escrow funds only an active contract); this is the stage
     people see instead of "Active"."""
-    return (c.status == "ACTIVE" and c.activated_at is not None and not any(m.started_at for m in ms)
+    return (c.status == "ACTIVE" and getattr(c, "activated_at", None) is not None and not any(getattr(m, "started_at", None) for m in ms)
             and any(m.status == "PENDING_FUNDING" for m in ms))
 
 
