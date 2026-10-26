@@ -203,6 +203,8 @@ async def funding_expiry(session: AsyncSession, payload: dict) -> None:
     contract = await contract_facade.get_contract(session, a.contract_id)
     if contract is None or contract.status != FUNDABLE_CONTRACT:
         return  # ended, disputed or being amended: nothing to expire
+    if any(m.status not in ("PENDING_FUNDING", "CANCELLED") for m in contract.milestones):
+        return  # funded at some point after all (or work started): not "never funded"
     expired = [x for x in allocs if x.state == "UNFUNDED"]
     if not expired:
         return
