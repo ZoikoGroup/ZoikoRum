@@ -281,6 +281,9 @@ class ContractOut(BaseModel):
     engagementType: str
     pricingModel: str | None
     status: str
+    # What people see: AWAITING_SIGNATURES | AWAITING_PAYMENT_PROTECTION (signed, first funding not in place yet; status
+    # stays ACTIVE) | ACTIVE | DISPUTED | COMPLETED | TERMINATED.
+    stage: str = ""
     pendingChangeOrderId: uuid.UUID | None
     total: MoneyDTO
     termsHash: str
@@ -315,6 +318,7 @@ class ContractSummaryOut(BaseModel):
     role: Literal["buyer", "professional"]
     contracts: dict[str, int]  # by contract status
     milestones: dict[str, int]  # by milestone status
+    awaitingPaymentProtection: int = 0  # of the ACTIVE ones: signed, first funding not in place yet
 
 
 # ---- Staff admin console ------------------------------------------------------------------------------------------

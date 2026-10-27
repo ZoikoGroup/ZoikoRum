@@ -114,7 +114,7 @@ async def get_offering(session: AsyncSession, offering_id: uuid.UUID) -> Offerin
 
 
 async def list_offerings(session: AsyncSession, professional_id: uuid.UUID, active_only: bool = True) -> list[OfferingSummary]:
-    stmt = select(Offering).where(Offering.professional_id == professional_id).order_by(Offering.created_at)
+    stmt = select(Offering).where(Offering.professional_id == professional_id, Offering.status != "DELETED").order_by(Offering.created_at)
     if active_only:
         stmt = stmt.where(Offering.status == "ACTIVE")
     return [_offering(o) for o in (await session.scalars(stmt)).all()]
@@ -192,3 +192,28 @@ async def staff_search_professionals(session: AsyncSession, term: str, exact_id:
     rows = (await session.scalars(select(Professional).where(or_(*match)).order_by(Professional.display_name, Professional.id).limit(limit))).all()
     return [{"id": p.id, "identityId": p.identity_id, "displayName": p.display_name, "headline": p.headline, "status": p.status}
             for p in rows]
+
+
+# ---- Platform KPIs and funnels (admin/kpis.py, analytics) -------------------------------------------------------------
+
+async def publish_times(session: AsyncSession, since, until) -> list[tuple[uuid.UUID, datetime, datetime]]:
+    """Profiles first published in the period: (identity id, profile created at, published at)."""
+    rows = (await session.execute(select(Professional.identity_id, Professional.created_at, Professional.published_at).where(
+        Professional.published_at >= since, Professional.published_at < until))).all()
+    return [(i, c, p) for i, c, p in rows]
+
+
+async def enterprise_cycle(session: AsyncSession, since, until) -> dict:
+    """Enterprise Ready onboarding: applications decided in the period, how many were approved, the median days from
+    application to decision, and how many wait now."""
+    from statistics import median
+
+    from sqlalchemy import func
+
+    rows = (await session.execute(select(Professional.enterprise_applied_at, Professional.enterprise_decided_at, Professional.enterprise_status)
+                                  .where(Professional.enterprise_decided_at >= since, Professional.enterprise_decided_at < until,
+                                         Professional.enterprise_applied_at.is_not(None)))).all()
+    days = [(d - a).total_seconds() / 86400 for a, d, _ in rows]
+    pending = await session.scalar(select(func.count()).select_from(Professional).where(Professional.enterprise_status == "PENDING")) or 0
+    return {"decided": len(rows), "approved": sum(1 for *_, s in rows if s == "READY"), "pendingNow": pending,
+            "medianDaysToDecision": round(median(days), 1) if days else None}

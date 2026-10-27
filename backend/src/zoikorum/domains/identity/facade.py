@@ -221,3 +221,10 @@ async def staff_with_roles(session: AsyncSession, roles: frozenset[str] | set[st
     rows = (await session.scalars(select(Identity).where(or_(*(literal(r) == any_(Identity.platform_roles) for r in sorted(roles))),
                                                          Identity.status == "ACTIVE").order_by(Identity.display_name).limit(500))).all()
     return [(_summary(i), frozenset(i.platform_roles)) for i in rows]
+
+
+async def created_at_many(session: AsyncSession, ids: list[uuid.UUID]) -> dict[uuid.UUID, datetime]:
+    """When each account was created (sign-up time), for onboarding cycle-time reports. Nothing else about the person."""
+    if not ids:
+        return {}
+    return dict((await session.execute(select(Identity.id, Identity.created_at).where(Identity.id.in_(ids)))).all())

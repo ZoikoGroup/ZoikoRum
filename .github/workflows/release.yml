@@ -16,7 +16,7 @@ on:
 
 permissions:
   contents: read
-  id-token: write  # Workload Identity Federation
+  id-token: write  # Workload Identity Federation, and keyless image signing (Sigstore cosign, GitHub OIDC)
 
 concurrency:
   group: release-production
@@ -58,7 +58,17 @@ jobs:
           gcloud auth configure-docker "${REGISTRY%%/*}" --quiet
           for image in zoikorum-backend zoikorum-web zoikorum-web-staff; do docker push "$REGISTRY/$image:$VERSION"; done
 
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Sign images (keyless; the signature names this workflow and repository)
+        run: |
+          for image in zoikorum-backend zoikorum-web zoikorum-web-staff; do
+            digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$REGISTRY/$image:$VERSION")"
+            cosign sign --yes "$digest"
+            cosign verify "$digest"               --certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/release.yml@${{ github.ref }}"               --certificate-oidc-issuer https://token.actions.githubusercontent.com >/dev/null
+          done
+
       - name: Deploy on the VM (secrets from Secret Manager, settings check, migrations, restart)
         run: |
           gcloud compute ssh "${{ vars.GCP_VM }}" --zone "${{ vars.GCP_ZONE }}" --project "${{ vars.GCP_PROJECT }}" --tunnel-through-iap \
-            --command "cd /opt/zoikorum && sudo ZK_RELEASE=$VERSION ZK_REGISTRY=$REGISTRY/ ./backend/deploy/gcp/deploy.sh"
+            --command "cd /opt/zoikorum && sudo ZK_RELEASE=$VERSION ZK_REGISTRY=$REGISTRY/ ZK_COSIGN_REPOSITORY=${{ github.repository }} ./backend/deploy/gcp/deploy.sh"

@@ -53,7 +53,7 @@ async def test_fund_hold_release_invoice_and_payout(client, make_user, drain, sf
     a1 = esc["allocations"][0]
     assert a1["state"] == "RELEASED" and a1["fee"]["amountMinor"] == 100_000 and a1["released"]["amountMinor"] == 900_000  # 10% fee
     assert esc["status"] == "PARTIALLY_RELEASED" and esc["held"]["amountMinor"] == 0 and esc["fees"]["amountMinor"] == 100_000
-    ledger = (await client.get(f"{E}/{esc['id']}/ledger", headers=pro_user.h)).json()
+    ledger = (await client.get(f"{E}/{esc['id']}/ledger", headers=pro_user.h)).json()["items"]
     assert {(x["entryType"], x["ledgerAccount"]) for x in ledger} == {
         ("BUYER_FUNDING", "BUYER_CLEARING"), ("ESCROW_HOLD", "ESCROW_HELD"), ("ESCROW_RELEASE", "ESCROW_HELD"),
         ("ESCROW_RELEASE", "PRO_PAYABLE"), ("PLATFORM_FEE", "PLATFORM_REVENUE")}

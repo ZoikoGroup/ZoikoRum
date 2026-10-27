@@ -5,6 +5,7 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.domains.escrow import service
+from zoikorum.domains.escrow import snapshots  # noqa: F401 - registers the daily ledger snapshot timer and its gauges
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import EventEnvelope, subscribe
 from zoikorum.shared.relay import on_timer
@@ -13,6 +14,17 @@ from zoikorum.shared.relay import on_timer
 @on_timer(service.TIMER_FUNDING_CHECK)
 async def on_funding_check(session: AsyncSession, key: str, payload: dict) -> None:
     await service.funding_check(session, payload)
+
+
+@on_timer(service.TIMER_FUNDING_EXPIRY)
+async def on_funding_expiry(session: AsyncSession, key: str, payload: dict) -> None:
+    await service.funding_expiry(session, payload)
+
+
+@subscribe(E.APPROVAL_REQUIRED, consumer="escrow.release_approval_sla")
+@subscribe(E.APPROVAL_ESCALATED, consumer="escrow.release_approval_sla_escalated")
+async def on_release_approval_due(session: AsyncSession, event: EventEnvelope) -> None:
+    await service.release_approval_due(session, event.payload)
 
 
 @subscribe(E.CONTRACT_ACTIVATED, consumer="escrow.open_account")

@@ -64,6 +64,8 @@ class ProfessionalDocument(Base, UUIDPk, Timestamps):
     offering_titles: Mapped[list[str]] = mapped_column(ARRAY(String(150)), nullable=False, default=list)
     starting_price_minor: Mapped[int | None] = mapped_column(BigInteger)
     price_currency: Mapped[str | None] = mapped_column(String(3))
+    # Every currency the professional prices in (active offerings and the indicative rate): "accepts multiple currencies".
+    currencies: Mapped[list[str]] = mapped_column(ARRAY(String(3)), nullable=False, default=list, server_default="{}")
     bio_excerpt: Mapped[str | None] = mapped_column(Text)
     photo_url: Mapped[str | None] = mapped_column(String(200))
 
@@ -76,6 +78,8 @@ class ProfessionalDocument(Base, UUIDPk, Timestamps):
     review_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     review_average: Mapped[float | None] = mapped_column(Float)
     response_median_hours: Mapped[float | None] = mapped_column(Float)  # time to a proposal or a decline
+    # Completed engagements with enterprise buyer organisations (contract + buyer facades): "prior enterprise engagements".
+    enterprise_engagements: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     # The firm the professional practises under (from the firm facade); a suspended firm is not shown.
     firm_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
     firm_name: Mapped[str | None] = mapped_column(String(200))

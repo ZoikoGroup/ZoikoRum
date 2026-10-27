@@ -200,3 +200,54 @@ async def money_by_contract(session: AsyncSession, contract_ids: list[uuid.UUID]
     rows = (await session.execute(select(EscrowAccount.contract_id, EscrowAccount.funded_minor, EscrowAccount.released_minor)
                                   .where(EscrowAccount.contract_id.in_(contract_ids)))).all()
     return {cid: {"funded": funded, "released": released} for cid, funded, released in rows}
+
+
+async def refund_kpis(session: AsyncSession, since, until) -> dict:
+    """Payments captured and refunds to buyers in the period, per currency (counts may be totalled, amounts never are)."""
+    from sqlalchemy import func
+
+    from zoikorum.domains.escrow.models import Funding, LedgerEntry
+
+    out: dict[str, dict] = {}
+
+    def row(ccy: str) -> dict:
+        return out.setdefault(ccy, {"currency": ccy, "payments": 0, "refunds": 0, "refundedMinor": 0})
+    for ccy, n in (await session.execute(select(Funding.currency, func.count()).where(
+            Funding.status == "CAPTURED", Funding.captured_at >= since, Funding.captured_at < until).group_by(Funding.currency))).all():
+        row(ccy)["payments"] = n
+    for ccy, n, total in (await session.execute(select(LedgerEntry.currency, func.count(), func.sum(LedgerEntry.credit_minor)).where(
+            LedgerEntry.entry_type == "REFUND", LedgerEntry.ledger_account == "BUYER_REFUND_PAYABLE",
+            LedgerEntry.created_at >= since, LedgerEntry.created_at < until).group_by(LedgerEntry.currency))).all():
+        row(ccy)["refunds"], row(ccy)["refundedMinor"] = n, int(total or 0)
+    for r in out.values():
+        r["refundsPer100Payments"] = round(100 * r["refunds"] / r["payments"], 1) if r["payments"] else None
+    rows = sorted(out.values(), key=lambda r: r["currency"])
+    return {"payments": sum(r["payments"] for r in rows), "refunds": sum(r["refunds"] for r in rows), "byCurrency": rows}
+
+
+@dataclass(frozen=True)
+class ReleaseTrail:
+    """One release and the money behind it, for a professional's payout statement."""
+    release_id: uuid.UUID
+    milestone_id: uuid.UUID
+    gross_minor: int
+    fee_minor: int
+    net_minor: int
+    fee_bps: int
+    currency: str
+    released_at: datetime
+    funded_minor: int | None  # this milestone's share of the buyer's funding
+    funded_at: datetime | None  # when the buyer's payment for this milestone was captured into escrow
+
+
+async def release_trail(session: AsyncSession, release_id: uuid.UUID) -> ReleaseTrail | None:
+    from zoikorum.domains.escrow.models import Funding, Release
+
+    r = await session.get(Release, release_id)
+    if r is None:
+        return None
+    x = await session.scalar(select(Allocation).where(Allocation.milestone_id == r.milestone_id))
+    funding = await session.get(Funding, x.funding_id) if x is not None and x.funding_id else None
+    funded_at = (funding.captured_at if funding else None) or (x.funded_at if x else None)
+    return ReleaseTrail(r.id, r.milestone_id, r.gross_minor, r.fee_minor, r.net_minor, r.fee_bps, r.currency, r.created_at,
+                        x.amount_minor if x is not None and funded_at else None, funded_at)

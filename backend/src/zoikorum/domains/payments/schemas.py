@@ -40,6 +40,77 @@ class PayoutOut(BaseModel):
     createdAt: datetime
 
 
+class PayoutStepOut(BaseModel):
+    key: Literal["FUNDED", "ACCEPTED", "INITIATED", "IN_TRANSIT", "COMPLETED"]
+    label: str
+    state: Literal["DONE", "CURRENT", "UPCOMING", "FAILED"]
+    at: datetime | None  # when it happened (None while upcoming, or when not recorded)
+    note: str | None = None
+
+
+class PayoutTransactionOut(BaseModel):
+    kind: Literal["MILESTONE_INVOICE", "ESCROW_FUNDED", "ESCROW_RELEASE", "PAYOUT"]
+    at: datetime
+    description: str
+    reference: str | None
+    amount: MoneyDTO
+    status: str
+
+
+class PayoutEngagementOut(BaseModel):
+    contractId: uuid.UUID
+    reference: str  # ZK-ENG-...
+    title: str  # the service bought
+    milestoneId: uuid.UUID | None
+    milestoneTitle: str | None
+    milestoneSequence: int | None
+    specialization: str | None
+    engagementType: str
+    pricingModel: str | None
+    workStart: date | None
+    workEnd: date | None
+    acceptedAt: datetime | None
+    clientInvoiceNumber: str | None
+
+
+class PayoutClientOut(BaseModel):
+    """The buyer organisation only: never a person's email or phone."""
+    name: str
+    country: str | None
+
+
+class PayoutDestinationOut(BaseModel):
+    provider: str  # payment partner holding the account
+    label: str  # e.g. "Bank account •••• 4321"
+    last4: str
+    currency: str
+    country: str
+    accountType: str | None = None  # not recorded yet
+
+
+class PayoutStatementOut(BaseModel):
+    id: uuid.UUID
+    reference: str  # ZK-PAY-...
+    status: str  # QUEUED | INITIATED | SETTLED | FAILED
+    statusLabel: Literal["Processing", "In transit", "Paid", "Failed"]
+    createdAt: datetime
+    initiatedAt: datetime | None
+    expectedAt: datetime | None
+    settledAt: datetime | None
+    failureMessage: str | None
+    delayReason: str | None
+    transferReference: str | None  # shown on the bank statement, once the transfer is sent
+    gross: MoneyDTO
+    fee: MoneyDTO
+    feeBps: int
+    net: MoneyDTO
+    engagement: PayoutEngagementOut
+    client: PayoutClientOut
+    steps: list[PayoutStepOut]
+    transactions: list[PayoutTransactionOut]
+    destination: PayoutDestinationOut | None
+
+
 class EarningsOut(BaseModel):
     payoutAccount: PayoutAccountOut | None
     payouts: list[PayoutOut]

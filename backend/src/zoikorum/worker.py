@@ -41,6 +41,12 @@ async def _bootstrap_timers() -> None:
         from zoikorum.domains.notification import service as notifications  # daily at 06:00 UTC: email digests
 
         await notifications.bootstrap_digests(s)
+        from zoikorum.domains.escrow import snapshots as escrow_snapshots  # daily at 03:30 UTC: ledger snapshots + checks
+
+        await escrow_snapshots.bootstrap(s)
+        from zoikorum.shared import retention  # daily at 05:00 UTC: evidence retention (reports only until switched on)
+
+        await retention.bootstrap(s)
 
 
 async def run(poll_seconds: float = 0.5) -> None:

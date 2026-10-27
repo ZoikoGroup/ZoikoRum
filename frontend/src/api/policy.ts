@@ -14,9 +14,28 @@ export interface PolicyDashboard {
   exceptions: { requested: number; granted: number; denied: number; emergency: number; rate: number | null }
   spendHeldBack: { currency: string; amountMinor: number }[]; topReasons: { code: string; count: number }[]
 }
+/** Procurement setup wizard progress; needsPolicySetup: no policy profile yet ("Define your policy"). */
+export interface PolicySetup {
+  orgId: string; needsPolicySetup: boolean; hasProfile: boolean; hasActivePolicy: boolean; engagements: number; firstEngagement: boolean
+  complete: boolean; steps: { key: 'ORGANISATION' | 'POLICY' | 'APPROVERS' | 'BUDGETS'; label: string; done: boolean }[]
+  facts: { orgType?: string; basicsComplete?: boolean; members?: number; roles?: Record<string, number>; businessUnits?: number; costCenters?: number; budgetedCostCenters?: number; legalEntities?: number }
+}
+/** Live policy indicators of one engagement (GET /v1/policy/engagement-indicators). */
+export interface EngagementIndicator {
+  contractId: string; policyVersion: string; riskLevel: 'LOW' | 'MEDIUM' | 'HIGH'; riskReasons: string[]
+  exception: { flag: boolean; open: number; granted: number; latestStatus: string | null; emergency: boolean }
+  approvals: {
+    total: number; pending: number; granted: number; denied: number; expired: number
+    current: { id: string; action: string; subjectType: string; status: string; stepsDone: number; stepsRequired: number; nextRole: string | null; deadline: string } | null
+  }
+}
 export const policyApi = {
+  setup: (orgId: string) => api<PolicySetup>('/v1/policy/setup', { query: { orgId } }),
+  /** Up to 100 contracts of the organisation; others are left out. */
+  indicators: (orgId: string, contractIds: string[]) =>
+    api<{ items: EngagementIndicator[] }>(`/v1/policy/engagement-indicators?orgId=${orgId}${contractIds.map((c) => `&contractIds=${c}`).join('')}`),
   profiles: (orgId: string, cursor?: string) => api<Page<PolicyProfile>>(`/v1/policy/profiles?orgId=${orgId}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`),
-  create: (body: { orgId: string; name: string; description: string; template: string; businessUnitIds?: string[]; riskLevel?: string }) => api<PolicyProfile>('/v1/policy/profiles', { headers: { 'Idempotency-Key': crypto.randomUUID() }, method: 'POST', body }),
+  create: (body: { orgId: string; name: string; description: string; template: string; businessUnitIds?: string[]; riskLevel?: string; settings?: Record<string, unknown> }) => api<PolicyProfile>('/v1/policy/profiles', { headers: { 'Idempotency-Key': crypto.randomUUID() }, method: 'POST', body }),
   dryRun: (body: { orgId: string; action: string; subjectType: string; subjectId: string; attributes: Record<string, unknown>; previewProfileId: string }) => api<{ decision: string; reasons: { message: string }[] }>('/v1/policy/dry-run', { headers: { 'Idempotency-Key': crypto.randomUUID() }, method: 'POST', body }),
   save: (id: string, version: number, settings: Record<string, unknown>, rules: PolicyRule[]) => api<PolicyProfile>(`/v1/policy/profiles/${id}/draft`, { headers: { 'Idempotency-Key': crypto.randomUUID() }, method: 'PUT', body: { version, settings, rules } }),
   draft: (id: string) => api<PolicyProfile>(`/v1/policy/profiles/${id}/draft`, { headers: { 'Idempotency-Key': crypto.randomUUID() }, method: 'POST' }),

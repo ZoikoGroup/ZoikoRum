@@ -22,7 +22,7 @@ from zoikorum.domains.identity.models import DataRequest, Identity
 from zoikorum.domains.identity.schemas import DataRequestOut
 from zoikorum.shared import clock, privacy
 from zoikorum.shared.auth import Actor
-from zoikorum.shared.errors import Conflict, NotFound
+from zoikorum.shared.errors import Conflict, NotFound, ServiceUnavailable
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_audit, record_event
 from zoikorum.shared.relay import cancel_timer, schedule_timer
@@ -121,7 +121,17 @@ async def build_export(session: AsyncSession, request_id: uuid.UUID) -> None:
             "keptByLaw": privacy.retention_notes(),
             "data": await privacy.export_all(session, r.identity_id)}
     key = f"privacy/{r.identity_id}/{r.id}.json"
-    get_storage().put(key, json.dumps(body, indent=2, ensure_ascii=False, default=str).encode())
+    try:
+        get_storage().put(key, json.dumps(body, indent=2, ensure_ascii=False, default=str).encode())
+    except ServiceUnavailable as exc:
+        if exc.code != "INTEGRATION_NOT_CONFIGURED":
+            raise  # a passing outage: the worker retries
+        # File storage is not set up on this server: retrying cannot help. Say so instead of "Preparing" forever;
+        # the person can ask again once storage is configured.
+        r.status, r.completed_at = "FAILED", now
+        record_audit(session, "identity.data_export.failed", object_type="DataRequest", object_id=r.id,
+                     details={"reason": exc.code})
+        return
     r.export_key, r.status, r.completed_at = key, "COMPLETED", now
     r.expires_at = now + timedelta(days=get_settings().data_export_days)
     _evt(session, E.DATA_REQUEST_COMPLETED, r, expiresAt=r.expires_at)

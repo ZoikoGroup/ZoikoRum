@@ -20,6 +20,8 @@ export interface SearchResult {
   whyThisResult: string[]
   regulatedPreview?: boolean
   enterpriseReady?: boolean
+  enterpriseEngagements?: number  // completed engagements for enterprise buyers
+  currencies?: string[]  // currencies the professional prices in
   firm?: { id: string; name: string; verified: boolean } | null  // the firm they practise under
   dimensions: Record<string, string>
   languages: string[]
@@ -39,7 +41,8 @@ export interface SearchResponse { total: number; items: SearchResult[]; facets: 
 export type SearchQuery = Partial<Record<
   'q' | 'category' | 'spec' | 'specMatch' | 'tier' | 'verified' | 'engagementType' | 'delivery' | 'availability' |
   'pricingModel' | 'credential' | 'jurisdiction' | 'experience' | 'publishedAfter' | 'sort' | 'limit' | 'offset' |
-  'industry' | 'crossBorder' | 'enterpriseReady' | 'budgetMaxMinor' | 'budgetCurrency' | 'language', string>>
+  'industry' | 'crossBorder' | 'enterpriseReady' | 'budgetMaxMinor' | 'budgetCurrency' | 'language' |
+  'credentials' | 'priorEnterprise' | 'multiCurrency', string>>
 export interface Suggestions { specializations: { slug: string; name: string }[]; professionals: { id: string; name: string; headline: string | null }[] }
 
 /** Filters suggested from the buyer's own words ("Describe what you need"), with one reason per filter. */

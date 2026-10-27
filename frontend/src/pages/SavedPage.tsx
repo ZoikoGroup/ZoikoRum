@@ -4,6 +4,7 @@ import { LABEL } from '../api/professional'
 import { savedApi, type SavedProfessional } from '../api/saved'
 import { useAuth } from '../auth/AuthContext'
 import { ErrorAlert, Loading } from '../components/ui'
+import { TrustLight } from '../components/TrustLight'
 
 /** Saved-ids for pages that show many professionals; null until known (or when the viewer cannot save). */
 // eslint-disable-next-line react-refresh/only-export-components
@@ -51,14 +52,14 @@ export function SavedPage() {
           <p className="muted" style={{ margin: 0 }}>Nothing saved yet. Use ☆ Save on a profile or search result.</p>
         ) : (
           <table className="data">
-            <thead><tr><th>Professional</th><th>Specialization</th><th>Trust Tier</th><th>Availability</th><th>Saved</th><th><span className="sr-only">Actions</span></th></tr></thead>
+            <thead><tr><th>Professional</th><th>Specialization</th><th>Trust light</th><th>Availability</th><th>Saved</th><th><span className="sr-only">Actions</span></th></tr></thead>
             <tbody>{items.map((s) => (
               <tr key={s.professionalId}>
                 <td>{s.available ? <Link to={`/professionals/${s.professionalId}`}><strong>{s.displayName}</strong></Link>
                   : <><strong>{s.displayName}</strong> <span className="badge warn">No longer listed</span></>}
                   {s.headline && <div className="muted small">{s.headline}</div>}</td>
                 <td>{s.primarySpecialization ?? '—'}</td>
-                <td><span className={`badge ${s.tier === 'C' ? 'warn' : 'green'}`}>Tier {s.tier}</span></td>
+                <td><TrustLight tier={s.tier} /></td>
                 <td>{LABEL[s.availability] ?? s.availability}</td>
                 <td>{new Date(s.savedAt).toLocaleDateString()}</td>
                 <td style={{ textAlign: 'right' }}><button className="btn btn-ghost btn-sm" onClick={() => remove(s.professionalId)}>Remove</button></td>

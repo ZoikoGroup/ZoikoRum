@@ -9,6 +9,8 @@ import { COUNTRIES } from './Join'
 import { countryName } from './ProfessionalPages'
 import { SaveButton, useSavedIds } from './SavedPage'
 import { SearchBox } from '../components/SearchBox'
+import { TrustLight } from '../components/TrustLight'
+import { lightColor, lightName } from '../lib/trustLight'
 
 const PAGE = 20
 const SORTS: [string, string][] = [
@@ -35,9 +37,9 @@ export function ResultCard({ r, saved, onToggle }: { r: SearchResult; saved?: bo
             {' · '}{LABEL[r.availability] ?? r.availability}</div>
         </div>
         <div className="result-side">
-          <span className={`badge ${r.tier === 'C' ? 'warn' : 'green'}`}>Tier {r.tier} · {r.tierLabel}</span>
+          <TrustLight tier={r.tier} />
           {r.enterpriseReady && <span className="badge green">Enterprise Ready</span>}
-          {r.regulatedPreview && <span className="badge warn" title="Regulated work (audit, tax filing, regulatory reporting) needs Tier A">Preview for regulated work</span>}
+          {r.regulatedPreview && <span className="badge warn" title="Regulated work (audit, tax filing, regulatory reporting) needs a Green trust light (fully verified)">Preview for regulated work</span>}
           {onToggle && <SaveButton id={r.professionalId} saved={!!saved} onToggle={onToggle} />}
         </div>
       </div>
@@ -89,6 +91,7 @@ export default function BrowseProfessionals() {
     set(name, (list.includes(value) ? list.filter((v) => v !== value) : [...list, value]).join(','))
   }
   const inList = (name: string, value: string) => (params.get(name) ?? '').split(',').includes(value)
+  const list = (name: string) => (params.get(name) ?? '').split(',').filter(Boolean)
   async function more() {
     const next = offset + PAGE
     const r = await searchApi.professionals({ ...Object.fromEntries(params), limit: String(PAGE), offset: String(next) })
@@ -101,25 +104,18 @@ export default function BrowseProfessionals() {
       <SiteHeader />
       <main className="profile-wrap">
         <div className="page-head"><div><h1>Browse verified professionals</h1>
-          <p className="muted" style={{ margin: 0 }}>Every result shows its Trust Tier and why it matched. Ranking can't be bought.</p></div></div>
+          <p className="muted" style={{ margin: 0 }}>Every result shows its trust light and why it matched. Ranking can't be bought.</p></div></div>
         <SearchBox value={q} onChange={setQ} onSearch={(v) => set('q', v || null)}
-          onPickSpecialization={(slug) => set('spec', slug)} placeholder="Try “fractional CFO”, “transfer pricing” or “SOX”" />
+          onPickSpecialization={(slug) => { if (!inList('spec', slug)) toggleList('spec', slug) }} placeholder="Try “fractional CFO”, “transfer pricing” or “SOX”" />
         <div className="browse">
           <aside className="card panel filters" aria-label="Filters">
-            <label className="filter-label" htmlFor="f-spec">Specialization</label>
-            <select id="f-spec" className="input" value={params.get('spec') ?? ''} onChange={(e) => set('spec', e.target.value || null)}>
-              <option value="">Any</option>
-              {groups.map((g) => (
-                <optgroup key={g.slug} label={g.name}>
-                  {g.specializations.map((s) => <option key={s.slug} value={s.slug}>{s.name}</option>)}
-                </optgroup>
-              ))}
-            </select>
+            <SpecializationNavigator groups={groups} selected={list('spec')} onToggle={(slug) => toggleList('spec', slug)}
+              facets={data?.facets} />
 
-            <div className="filter-label">Trust Tier</div>
+            <div className="filter-label">Trust light</div>
             {['A', 'B', 'C'].map((t) => (
               <label key={t} className="checkbox small"><input type="checkbox" checked={inList('tier', t)} onChange={() => toggleList('tier', t)} />
-                <span>Tier {t}<FacetCount facets={data?.facets} name="tier" value={t} /></span></label>
+                <span><span className="light-dot" style={{ background: lightColor(t), marginRight: 6 }} aria-hidden />{lightName(t)}<FacetCount facets={data?.facets} name="tier" value={t} /></span></label>
             ))}
 
             <div className="filter-label">Verification</div>
@@ -127,6 +123,8 @@ export default function BrowseProfessionals() {
               <label key={v} className="checkbox small"><input type="checkbox" checked={inList('verified', v)} onChange={() => toggleList('verified', v)} />
                 <span>{label}</span></label>
             ))}
+
+            <ProcurementFilters params={params} facets={data?.facets} set={set} toggleList={toggleList} />
 
             {([['engagementType', 'Engagement', ['ADVISORY', 'PROJECT', 'RETAINER', 'FRACTIONAL']],
               ['delivery', 'Delivery', ['REMOTE', 'ONSITE', 'HYBRID']],
@@ -158,6 +156,7 @@ export default function BrowseProfessionals() {
                 </select>
               </label>
             </div>
+            <SelectedPills params={params} groups={groups} toggleList={toggleList} set={set} />
             <ErrorAlert error={error} />
             {data && data.total === 0 && (
               <section className="card panel"><p className="muted" style={{ margin: 0 }}>
@@ -172,5 +171,89 @@ export default function BrowseProfessionals() {
         </div>
       </main>
     </>
+  )
+}
+
+type Group = TaxonomyCategory['groups'][number]
+
+/** Multi-select specialization navigator: checkbox per specialization, grouped and collapsible, with a quick filter. */
+export function SpecializationNavigator({ groups, selected, onToggle, facets }: {
+  groups: Group[]; selected: string[]; onToggle: (slug: string) => void; facets?: Record<string, Facet[]>
+}) {
+  const [term, setTerm] = useState('')
+  const t = term.trim().toLowerCase()
+  const shown = groups.map((g) => ({ g, specs: g.specializations.filter((s) => !t || `${s.name} ${g.name}`.toLowerCase().includes(t)) }))
+    .filter((x) => x.specs.length > 0)
+  return (
+    <div className="spec-nav">
+      <div className="filter-label">Specializations {selected.length > 0 && <span className="muted small">({selected.length} selected)</span>}</div>
+      <input className="input" aria-label="Filter specializations" placeholder="Filter the list" value={term} onChange={(e) => setTerm(e.target.value)} />
+      {shown.map(({ g, specs }) => (
+        <details key={g.slug} open={!!t || specs.some((s) => selected.includes(s.slug)) || groups.length <= 3}>
+          <summary className="small"><strong>{g.name}</strong></summary>
+          <fieldset><legend className="sr-only">{g.name}</legend>
+            {specs.map((s) => (
+              <label key={s.slug} className="checkbox small"><input type="checkbox" checked={selected.includes(s.slug)} onChange={() => onToggle(s.slug)} />
+                <span>{s.name}<FacetCount facets={facets} name="specialization" value={s.slug} /></span></label>
+            ))}
+          </fieldset>
+        </details>
+      ))}
+      {shown.length === 0 && <p className="muted small">Nothing matches “{term}”.</p>}
+    </div>
+  )
+}
+
+/** Enterprise and procurement filters, all derived from verified platform data. */
+export function ProcurementFilters({ params, facets, set, toggleList }: {
+  params: URLSearchParams; facets?: Record<string, Facet[]>
+  set: (name: string, value: string | null) => void; toggleList: (name: string, value: string) => void
+}) {
+  const on = (name: string) => params.get(name) === 'true'
+  const creds = (params.get('credentials') ?? '').split(',').filter(Boolean)
+  const options = [...new Set([...(facets?.credential ?? []).map((f) => f.value), ...creds])]
+  const flags: [string, string, string][] = [
+    ['enterpriseReady', 'Security-review ready', 'Enterprise Ready: security practice attested and reviewed by Zoikorum compliance'],
+    ['priorEnterprise', 'Prior enterprise engagements', 'Has completed at least one engagement for an enterprise buyer on Zoikorum'],
+    ['multiCurrency', 'Accepts multiple currencies', 'Prices services in more than one currency'],
+  ]
+  return (
+    <>
+      <div className="filter-label">Enterprise &amp; procurement</div>
+      <label className="checkbox small"><input type="checkbox" checked={(params.get('verified') ?? '').split(',').includes('insurance')}
+        onChange={() => toggleList('verified', 'insurance')} /><span>Insurance verified<FacetCount facets={facets} name="insurance" value="true" /></span></label>
+      {flags.map(([name, label, title]) => (
+        <label key={name} className="checkbox small" title={title}><input type="checkbox" checked={on(name)} onChange={() => set(name, on(name) ? null : 'true')} />
+          <span>{label}<FacetCount facets={facets} name={name} value="true" /></span></label>
+      ))}
+      {options.length > 0 && <>
+        <div className="filter-label">Verified credentials</div>
+        {options.map((c) => (
+          <label key={c} className="checkbox small"><input type="checkbox" checked={creds.includes(c)} onChange={() => toggleList('credentials', c)} />
+            <span>{c}<FacetCount facets={facets} name="credential" value={c} /></span></label>
+        ))}
+      </>}
+    </>
+  )
+}
+
+const FLAG_LABEL: Record<string, string> = { enterpriseReady: 'Security-review ready', priorEnterprise: 'Prior enterprise engagements', multiCurrency: 'Multiple currencies' }
+
+/** Selected specializations and procurement filters as removable pills above the results. */
+export function SelectedPills({ params, groups, toggleList, set }: {
+  params: URLSearchParams; groups: Group[]
+  toggleList: (name: string, value: string) => void; set: (name: string, value: string | null) => void
+}) {
+  const names = Object.fromEntries(groups.flatMap((g) => g.specializations.map((s) => [s.slug, s.name])))
+  const specs = (params.get('spec') ?? '').split(',').filter(Boolean)
+  const creds = (params.get('credentials') ?? '').split(',').filter(Boolean)
+  const flags = Object.keys(FLAG_LABEL).filter((f) => params.get(f) === 'true')
+  if (!specs.length && !creds.length && !flags.length) return null
+  return (
+    <div className="filter-pills chips" aria-label="Selected filters" style={{ marginBottom: 10 }}>
+      {specs.map((s) => <button key={s} type="button" className="pill" aria-label={`Remove ${names[s] ?? s}`} onClick={() => toggleList('spec', s)}>{names[s] ?? s} ×</button>)}
+      {creds.map((c) => <button key={c} type="button" className="pill" aria-label={`Remove ${c}`} onClick={() => toggleList('credentials', c)}>{c} ×</button>)}
+      {flags.map((f) => <button key={f} type="button" className="pill" aria-label={`Remove ${FLAG_LABEL[f]}`} onClick={() => set(f, null)}>{FLAG_LABEL[f]} ×</button>)}
+    </div>
   )
 }

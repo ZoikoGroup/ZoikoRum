@@ -34,7 +34,7 @@ interface Case {
 const noticeFields = ['whatHappened', 'whyItHappened', 'whatChanged', 'whatYouCanDo', 'whatHappensNext', 'howToGetHelp']
 const actions: Record<number, string[]> = {
   1: ['WARNING'],
-  2: ['VISIBILITY_REDUCTION', 'DISPUTE_ACCESS_RESTRICTION'],
+  2: ['VISIBILITY_REDUCTION', 'DISPUTE_ACCESS_RESTRICTION', 'MANDATORY_REMEDIATION'],
   3: ['ENGAGEMENT_SUSPENSION', 'CREDENTIAL_ENFORCEMENT', 'VERIFICATION_RESET'],
   4: ['SUSPEND_ACCOUNT', 'OFFBOARD'],
 }
@@ -240,6 +240,7 @@ export function SafetyPage({ operator = false }: { operator?: boolean }) {
                     act(`/v1/admin/enforcement-cases/${c.id}/assess`, {
                       level: Number(d.get('level')),
                       reasonCode: d.get('reasonCode'),
+                      userImpact: d.get('userImpact'),
                     })
                   }}
                   style={{ marginTop: 14, background: 'var(--zk-bg-soft)', padding: 12, borderRadius: 'var(--radius-sm)' }}
@@ -257,6 +258,10 @@ export function SafetyPage({ operator = false }: { operator?: boolean }) {
                       <label htmlFor="operations-reasonCode">Reason Code</label>
                       <input id="operations-reasonCode" className="input" name="reasonCode" required minLength={3} placeholder="Reason code" />
                     </div>
+                  </div>
+                  <div className="field">
+                    <label htmlFor="operations-userImpact">User impact (who is affected and how)</label>
+                    <textarea id="operations-userImpact" className="input" name="userImpact" required minLength={10} maxLength={2000} rows={2} />
                   </div>
                   <button className="btn btn-secondary btn-sm" disabled={busy}>Record Assessment</button>
                 </form>
@@ -299,7 +304,7 @@ export function SafetyPage({ operator = false }: { operator?: boolean }) {
                       </div>
                     ))}
                   </div>
-                  {c.level === 2 && <div className="field"><label htmlFor={`remediation-${c.id}`}>Remediation the person must complete (one per line, optional)</label>
+                  {c.level === 2 && <div className="field"><label htmlFor={`remediation-${c.id}`}>Remediation the person must complete (one per line; required for Mandatory remediation)</label>
                     <textarea id={`remediation-${c.id}`} className="input" name="remediation" rows={2} /></div>}
                   <button className="btn btn-primary btn-sm" disabled={busy}>Propose Action with Notice</button>
                 </form>

@@ -15,7 +15,14 @@ export type EvidenceType = 'CONTRACT_SCOPE' | 'MILESTONE_DEFINITION' | 'DELIVERA
 
 export interface Allocation { milestoneId: string; sequence: number; title: string; release: Money; refund: Money; milestoneOutcome: string }
 export interface RawAllocation { milestoneId: string; releaseMinor: number; refundMinor: number; milestoneOutcome?: string }
-export interface Resolution { outcome: DisputeOutcome; allocations: RawAllocation[]; summary: string; citations: string[]; acceptedBy?: string[]; rejectedBy?: string[] }
+export interface Resolution { outcome: DisputeOutcome; allocations: RawAllocation[]; summary: string; citations: string[]; acceptedBy?: string[]; rejectedBy?: string[]
+  binding?: boolean; challengeEndsAt?: string; setAside?: boolean }
+export type DecisionPath = 'DIRECT' | 'MEDIATION' | 'PLATFORM' | 'ARBITRATION' | 'ENTERPRISE_ADMIN'
+export type AgreementKind = 'BINDING_RECOMMENDATION' | 'ENTERPRISE_ADMIN'
+/** A binding recommendation or enterprise admin decision waiting out its challenge period. */
+export interface ProvisionalDecision { path: 'MEDIATION' | 'ENTERPRISE_ADMIN'; outcome: DisputeOutcome; allocations: RawAllocation[]; summary: string
+  citations: string[]; decidedBy: string; issuedAt: string; challengeEndsAt: string; appealed: boolean; appealedBy?: string }
+export interface AccountRestriction { party: 'BUYER' | 'PROFESSIONAL'; reason: string }
 
 export interface Dispute {
   id: string
@@ -36,8 +43,9 @@ export interface Dispute {
   mediatorAssigned: boolean
   recommendation: Resolution | null
   pendingDecision: (Resolution & { proposedBy: string }) | null
-  decision: { plainSummary: string; outcome: DisputeOutcome; allocations: RawAllocation[]; decisionPath: 'DIRECT' | 'MEDIATION' | 'PLATFORM' | 'ARBITRATION'
-    evidenceReferences: string[]; policyCitations: string[]; appealEligible: boolean; appealNote: string } | null
+  decision: { plainSummary: string; outcome: DisputeOutcome; allocations: RawAllocation[]; decisionPath: DecisionPath
+    evidenceReferences: string[]; policyCitations: string[]; appealEligible: boolean; appealNote: string; binding?: boolean
+    accountRestriction?: AccountRestriction & { enforcementCaseId: string } } | null
   decidedAt: string | null
   closedAt: string | null
   evidence: { id: string; party: string; evidenceType: EvidenceType; description: string; items: StoredFile[]; submittedAt: string }[]
@@ -54,9 +62,25 @@ export interface Dispute {
   retentionBasis?: string | null
   legalHold?: boolean
   arbitration?: { forum: string; reason: string; referredAt: string; awardReference?: string; recordedAt?: string } | null
+  agreements?: Partial<Record<AgreementKind, string[]>>
+  bindingRecommendation?: boolean
+  enterpriseAdminPath?: boolean
+  enterpriseEngagement?: boolean
+  canDecideAsEnterpriseAdmin?: boolean
+  provisionalDecision?: ProvisionalDecision | null
   nextStep: string
   createdAt: string
 }
+
+export interface DisputeDashboard {
+  total: number; open: number; decided: number; closed: number
+  medianDaysToResolution: number | null; averageDaysToResolution: number | null
+  byCategory: Record<string, number>; byOutcome: Record<string, number>; byDecisionPath: Record<string, number>
+  frozen: { currency: string; amountMinor: number; cases: number }[]
+  repeatProfessionals: { professionalId: string; name: string; disputes: number; open: number; engagements: number; categories: string[]; lastOpenedAt: string }[]
+  recent: { id: string; reference: string; status: DisputeStatus; category: DisputeCategory; openedAt: string; decidedAt: string | null; disputed: Money }[]
+}
+export interface ReportSubscription { frequency: 'WEEKLY' | 'MONTHLY'; nextRunAt: string; lastSentAt: string | null }
 
 const D = '/v1/disputes'
 const idem = () => ({ 'Idempotency-Key': crypto.randomUUID() })
@@ -83,19 +107,31 @@ export const disputeApi = {
     api<Dispute>(`${D}/${id}/recommendation`, { method: 'POST', body }),
   answerRecommendation: (id: string, accept: boolean) =>
     api<Dispute>(`${D}/${id}/recommendation/${accept ? 'accept' : 'reject'}`, { method: 'POST', headers: accept ? idem() : undefined }),
-  proposeDecision: (id: string, body: { outcome: DisputeOutcome; allocations: RawAllocation[]; summary: string; citations: string[]; extendDays?: number | null }) =>
+  proposeDecision: (id: string, body: { outcome: DisputeOutcome; allocations: RawAllocation[]; summary: string; citations: string[]; extendDays?: number | null
+    accountRestriction?: AccountRestriction | null }) =>
     api<Dispute>(`${D}/${id}/decision`, { method: 'POST', body }),
   approveDecision: (id: string) => api<Dispute>(`${D}/${id}/decision/approve`, { method: 'POST', headers: idem() }),
   legalHold: (id: string, hold: boolean, reason: string) => api<Dispute>(`${D}/${id}/legal-hold`, { method: 'POST', body: { hold, reason } }),
   referToArbitration: (id: string, forum: string, reason: string) =>
     api<Dispute>(`${D}/${id}/arbitration`, { method: 'POST', body: { forum, reason } }),
-  recordAward: (id: string, body: { outcome: DisputeOutcome; allocations: RawAllocation[]; summary: string; citations: string[]; awardReference: string }) =>
+  recordAward: (id: string, body: { outcome: DisputeOutcome; allocations: RawAllocation[]; summary: string; citations: string[]; awardReference: string
+    accountRestriction?: AccountRestriction | null }) =>
     api<Dispute>(`${D}/${id}/arbitration/award`, { method: 'POST', body, headers: idem() }),
   importMessages: (id: string) => api<Dispute>(`${D}/${id}/evidence/messages`, { method: 'POST' }),
   record: (id: string, format: 'pdf' | 'json') => api<Blob>(`${D}/${id}/record`, { query: { format }, blob: true }),
   cooldown: (id: string) => api<Dispute>(`${D}/${id}/cooldown`, { method: 'POST' }),
   clarify: (id: string, to: 'BUYER' | 'PROFESSIONAL', question: string) =>
     api<Dispute>(`${D}/${id}/clarification`, { method: 'POST', body: { to, question } }),
+  setAgreement: (id: string, kind: AgreementKind, consent: boolean) =>
+    api<Dispute>(`${D}/${id}/agreements`, { method: 'POST', body: { kind, consent } }),
+  enterpriseDecision: (id: string, body: { outcome: DisputeOutcome; allocations: RawAllocation[]; summary: string; citations: string[]; extendDays?: number | null }) =>
+    api<Dispute>(`${D}/${id}/enterprise-decision`, { method: 'POST', body, headers: idem() }),
+  dashboard: (orgId: string) => api<DisputeDashboard>(`${D}/dashboard`, { query: { orgId } }),
+  reportSubscription: (orgId: string) => api<ReportSubscription | null>(`${D}/reports/subscription`, { query: { orgId } }),
+  setReportSubscription: (orgId: string, frequency: 'WEEKLY' | 'MONTHLY' | null) =>
+    api<ReportSubscription | null>(`${D}/reports/subscription`, { method: 'PUT', body: { orgId, frequency } }),
+  exportReport: (orgId: string, from?: string, to?: string) =>
+    api<Blob>(`${D}/reports/export`, { query: { orgId, ...(from ? { from } : {}), ...(to ? { to } : {}) }, blob: true }),
 }
 
 export const CATEGORIES: [DisputeCategory, string][] = [

@@ -3,7 +3,8 @@ import { Link } from 'react-router-dom'
 import { savedApi, type SavedProfessional } from '../../api/saved'
 import { DIMENSION_VALUE, DIMENSIONS } from '../../api/verification'
 import { Avatar, Icon } from '../../components/dashboard'
-import { PortalHeader, SidePanel, StatCard, TierBadge } from '../../components/portal'
+import { PortalHeader, SidePanel, StatCard } from '../../components/portal'
+import { TrustLight } from '../../components/TrustLight'
 import { ErrorAlert } from '../../components/ui'
 
 const good = (p: SavedProfessional, key: string) => DIMENSION_VALUE[p.dimensions[key]]?.good ?? false
@@ -30,7 +31,7 @@ export default function CustomerVerification() {
         <StatCard icon="bookmark" tone="blue" value={saved ? list.length : '…'} label="On your shortlist" sub="Saved professionals" to="/app/saved" />
         <StatCard icon="user" tone="green" value={saved ? count('identity') : '…'} label="Identity verified" sub="Government ID and liveness" />
         <StatCard icon="shield" tone="violet" value={saved ? count('credentials') : '…'} label="Credentials validated" sub="Licences and qualifications" />
-        <StatCard icon="star" tone="amber" value={saved ? tierA : '…'} label="Tier A" sub="Fully verified and eligible" />
+        <StatCard icon="star" tone="amber" value={saved ? tierA : '…'} label="Green light" sub="Fully verified and eligible" />
       </div>
 
       <div className="home-grid wide">
@@ -43,12 +44,12 @@ export default function CustomerVerification() {
           ) : (
             <div className="compare-scroll">
               <table className="data">
-                <thead><tr><th>Professional</th><th>Tier</th>{DIMENSIONS.map((d) => <th key={d.key}>{d.label}</th>)}<th>Last checked</th></tr></thead>
+                <thead><tr><th>Professional</th><th>Trust light</th>{DIMENSIONS.map((d) => <th key={d.key}>{d.label}</th>)}<th>Last checked</th></tr></thead>
                 <tbody>{list.map((p) => (
                   <tr key={p.professionalId}>
                     <td><div className="name-row"><Avatar name={p.displayName} photoUrl={p.photoUrl} size={32} />
                       <Link to={`/professionals/${p.professionalId}`}><strong>{p.displayName}</strong></Link></div></td>
-                    <td><TierBadge tier={p.tier} /></td>
+                    <td><TrustLight tier={p.tier} /></td>
                     {DIMENSIONS.map((d) => {
                       const v = DIMENSION_VALUE[p.dimensions[d.key]] ?? { label: 'Not verified', good: false }
                       return <td key={d.key}><span className={`badge ${v.good ? 'green' : ''}`}>{v.label}</span></td>
@@ -73,11 +74,11 @@ export default function CustomerVerification() {
               <li><Icon name="lock" /><span><strong>Insurance</strong> — professional indemnity cover is in force.</span></li>
             </ul>
           </SidePanel>
-          <SidePanel title="Trust Tiers">
+          <SidePanel title="Trust lights">
             <ul className="assurance compact">
-              <li><Icon name="check" /><span><strong>Tier A</strong> — identity, credentials and eligibility all verified.</span></li>
-              <li><Icon name="check" /><span><strong>Tier B</strong> — identity verified and restrictions clear.</span></li>
-              <li><Icon name="clock" /><span><strong>Tier C</strong> — verification not yet complete.</span></li>
+              <li><Icon name="check" /><span><strong>Green</strong> (fully verified) — identity, credentials and eligibility all verified.</span></li>
+              <li><Icon name="check" /><span><strong>Amber</strong> (identity verified) — identity verified and restrictions clear.</span></li>
+              <li><Icon name="clock" /><span><strong>Red</strong> (not verified yet) — verification not yet complete.</span></li>
             </ul>
           </SidePanel>
           <SidePanel title="Your organisation">

@@ -121,6 +121,29 @@ async def member_roles_by_identity(session: AsyncSession, org_id: uuid.UUID) -> 
     return {i: set(r) for i, r in rows}
 
 
+async def setup_facts(session: AsyncSession, org_id: uuid.UUID) -> dict:
+    """What an enterprise admin has set up so far (procurement setup wizard): organisation basics, members by role,
+    business units, cost centres (and how many carry a quarterly budget), legal entities."""
+    from sqlalchemy import func
+
+    o = await session.get(Organization, org_id)
+    if o is None:
+        return {}
+    roles: dict[str, int] = {}
+    members = await member_roles_by_identity(session, org_id)
+    for held in members.values():
+        for r in held:
+            roles[r] = roles.get(r, 0) + 1
+    centres, budgeted = (await session.execute(select(func.count(), func.count(CostCenter.quarterly_budget_minor)).where(
+        CostCenter.organization_id == org_id))).one()
+    return {"orgType": o.org_type, "basicsComplete": bool(o.industry and o.time_zone),
+            "members": len(members), "roles": roles,
+            "businessUnits": await session.scalar(select(func.count()).select_from(BusinessUnit).where(BusinessUnit.organization_id == org_id)) or 0,
+            "costCenters": centres or 0, "budgetedCostCenters": budgeted or 0,
+            "legalEntities": await session.scalar(select(func.count()).select_from(LegalEntity).where(
+                LegalEntity.organization_id == org_id, LegalEntity.status == "ACTIVE")) or 0}
+
+
 async def business_unit_names(session: AsyncSession, org_id: uuid.UUID) -> dict[uuid.UUID, str]:
     return dict((await session.execute(select(BusinessUnit.id, BusinessUnit.name).where(BusinessUnit.organization_id == org_id))).all())
 

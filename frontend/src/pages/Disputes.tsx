@@ -5,9 +5,10 @@ import type { Escrow } from '../api/escrow'
 import {
   CATEGORIES, CATEGORY_LABEL, disputableMilestones, disputeApi, disputeFileUrl, EVIDENCE_TYPES, OPEN_PHASES, OUTCOME_LABEL, OUTCOMES,
   paymentStuck, PHASE, releaseAfterWindow,
-  type Dispute, type DisputeCategory, type DisputeOutcome, type EvidenceType, type RawAllocation,
+  type AccountRestriction, type AgreementKind, type Dispute, type DisputeCategory, type DisputeDashboard, type DisputeOutcome, type EvidenceType,
+  type RawAllocation, type ReportSubscription,
 } from '../api/disputes'
-import { formatMoney } from '../api/orgs'
+import { formatMoney, orgApi, type Organization } from '../api/orgs'
 import { DOC_ACCEPT, toUpload, type Upload } from '../api/files'
 import { FileLinks } from '../components/FileLink'
 import { useAuth } from '../auth/AuthContext'
@@ -118,6 +119,7 @@ export function DisputesPage({ role }: { role: 'buyer' | 'professional' | 'opera
         <StatCard icon="check" tone="green" value={list ? rows.filter((d) => d.status === 'CLOSED').length : '…'} label="Closed" sub="Decided and executed" />
         <StatCard icon="lock" tone="blue" value={list ? formatCurrencies(open.map(d => d.disputed)) : '…'} label="Frozen" sub="Across open disputes, by currency" />
       </div>
+      {role === 'buyer' && <OrgDisputeDashboard />}
       <section className="card panel">
         {list && rows.length === 0 ? (
           <EmptyTable columns={['Dispute', 'Engagement', 'Category', 'Phase', 'Amount', 'Opened']}>
@@ -237,7 +239,14 @@ export function DisputeDetail() {
             }}>{d.legalHold ? 'Lift legal hold' : 'Place legal hold'}</button>}
           </section>}
           {d.viewerRole === 'MEDIATOR' && <AIAssistance purpose="dispute-summary" subjectId={d.id} />}
-          {d.decision?.decisionPath === 'PLATFORM' && <DisputeAppealPanel caseId={d.id} canFile={party} canReview={can('disputes.adjudicate')} />}
+          {d.provisionalDecision && <ProvisionalCard d={d} />}
+          {(d.decision?.decisionPath === 'PLATFORM' || d.provisionalDecision || (d.decision?.binding && d.decision.decisionPath !== 'DIRECT')) &&
+            <DisputeAppealPanel caseId={d.id} canFile={party && (!d.provisionalDecision || !d.provisionalDecision.appealed)} canReview={can('disputes.adjudicate')} />}
+          {party && (d.status === 'EVIDENCE_COLLECTION' || d.status === 'DIRECT_RESOLUTION' || d.status === 'MEDIATION') && !d.arbitration &&
+            <DecisionPathsPanel d={d} busy={busy} onSet={(kind, consent) => act(() => disputeApi.setAgreement(d.id, kind, consent),
+              consent ? 'Your agreement is recorded. It applies once both parties agree.' : 'Your agreement was withdrawn.')} />}
+          {d.canDecideAsEnterpriseAdmin && <EnterpriseDecisionPanel d={d} busy={busy}
+            onDecide={(body) => stepUp(() => disputeApi.enterpriseDecision(d.id, body), 'Decision issued. It takes effect after the challenge period unless a party appeals.')} />}
 
           {(d.mediationRequired || d.legalReviewRequired) && d.status !== 'DECIDED' && d.status !== 'ENFORCED' && d.status !== 'CLOSED' &&
             <div className="tip"><Icon name="shield" /><span>The buyer organisation's policy applies to this dispute:
@@ -252,7 +261,7 @@ export function DisputeDetail() {
             onAnswer={(accept) => act(() => disputeApi.answerRecommendation(d.id, accept), accept ? 'You accepted the recommendation.' : 'You declined the recommendation.')}
             onAssignSelf={() => user && stepUp(() => disputeApi.assignMediator(d.id, user.id), 'You are the mediator for this case.')}
             onRecommend={(body) => stepUp(() => disputeApi.recommend(d.id, body), 'Recommendation issued to both parties.')}
-            onDecide={(body) => stepUp(() => disputeApi.proposeDecision(d.id, body), 'Platform decision proposed; a Legal reviewer must approve it.')}
+            onDecide={(body, restriction) => stepUp(() => disputeApi.proposeDecision(d.id, { ...body, accountRestriction: restriction }), 'Platform decision proposed; a Legal reviewer must approve it.')}
             onApprove={() => stepUp(() => disputeApi.approveDecision(d.id), 'Decision approved and issued.')}
             canApprove={can('disputes.adjudicate')} isMediatorRole={can('disputes.mediate')} />}
 
@@ -275,7 +284,7 @@ export function DisputeDetail() {
           </SidePanel>
           <SidePanel title="Rules">
             <ul className="assurance compact">{['Funds stay frozen until a decision is executed', 'No direct messaging during a dispute',
-              'Evidence is fingerprinted and cannot be edited', 'A mediator recommendation binds only if both accept',
+              'Evidence is fingerprinted and cannot be edited', 'A mediator recommendation binds only if both accept, or both agreed in advance',
               'Platform decisions need two different reviewers', 'AI never decides'].map((t) => <li key={t}><Icon name="check" /><span>{t}</span></li>)}</ul>
           </SidePanel>
         </aside>
@@ -289,8 +298,12 @@ function DecisionCard({ d }: { d: Dispute }) {
   const ms = (mid: string) => d.milestones.find((m) => m.id === mid)
   return (
     <section className="card panel decision-card">
-      <div className="panel-head"><h2>Decision</h2><span className="badge green">{{ DIRECT: 'Agreed by both parties', MEDIATION: 'Mediated agreement', PLATFORM: 'Platform decision', ARBITRATION: 'Arbitration award' }[dec.decisionPath]}</span></div>
+      <div className="panel-head"><h2>Decision</h2><span className="badge green">{dec.decisionPath === 'MEDIATION' && dec.binding ? 'Binding mediator recommendation'
+        : { DIRECT: 'Agreed by both parties', MEDIATION: 'Mediated agreement', PLATFORM: 'Platform decision', ARBITRATION: 'Arbitration award',
+          ENTERPRISE_ADMIN: 'Enterprise admin decision' }[dec.decisionPath]}</span></div>
       <p>{dec.plainSummary}</p>
+      {dec.accountRestriction && <div className="tip"><Icon name="shield" /><span>The decision referred the {PARTY[dec.accountRestriction.party].toLowerCase()}'s
+        account to Trust &amp; Safety: {dec.accountRestriction.reason} Any restriction is decided there, with its own notice and appeal.</span></div>}
       {dec.allocations.length > 0 && <table className="data"><thead><tr><th>Milestone</th><th>Released</th><th>Refunded</th></tr></thead>
         <tbody>{dec.allocations.map((a) => <tr key={a.milestoneId}><td className="small">M{ms(a.milestoneId)?.sequence} {ms(a.milestoneId)?.title}</td>
           <td>{formatMoney({ amountMinor: a.releaseMinor, currency: d.disputed.currency })}</td><td>{formatMoney({ amountMinor: a.refundMinor, currency: d.disputed.currency })}</td></tr>)}</tbody></table>}
@@ -377,10 +390,12 @@ function ProposalsPanel({ d, busy, party, onPropose, onAnswer, onEscalate }: {
 function MediationPanel({ d, busy, party, onAnswer, onAssignSelf, onRecommend, onDecide, onApprove, canApprove, isMediatorRole }: {
   d: Dispute; busy: boolean; party: boolean; onAnswer: (accept: boolean) => void; onAssignSelf: () => void
   onRecommend: (b: { outcome: DisputeOutcome; allocations: RawAllocation[]; summary: string; citations: string[]; extendDays?: number | null }) => void
-  onDecide: (b: { outcome: DisputeOutcome; allocations: RawAllocation[]; summary: string; citations: string[]; extendDays?: number | null }) => void
+  onDecide: (b: { outcome: DisputeOutcome; allocations: RawAllocation[]; summary: string; citations: string[]; extendDays?: number | null },
+    restriction: AccountRestriction | null) => void
   onApprove: () => void; canApprove: boolean; isMediatorRole: boolean
 }) {
   const alloc = useAllocation(d)
+  const restriction = useRestriction()
   const [summary, setSummary] = useState('')
   const [citations, setCitations] = useState('')
   const r = d.recommendation
@@ -396,9 +411,11 @@ function MediationPanel({ d, busy, party, onAnswer, onAssignSelf, onRecommend, o
         <p className="small" style={{ whiteSpace: 'pre-wrap' }}>{r.summary}</p>
         {r.citations.length > 0 && <p className="muted small">Cites: {r.citations.join('; ')}</p>}
         <p className="muted small">Accepted by: {r.acceptedBy?.map((p) => PARTY[p]).join(', ') || 'nobody yet'}{r.rejectedBy?.length ? ` · Declined by: ${r.rejectedBy.map((p) => PARTY[p]).join(', ')}` : ''}</p>
-        {party && !answered && <div className="row">
+        {r.binding && <p className="small"><span className="badge warn">Binding</span> Becomes the decision on {r.challengeEndsAt ? new Date(r.challengeEndsAt).toLocaleDateString() : '—'} unless a party appeals.</p>}
+        {r.setAside && <p className="small"><span className="badge">Set aside on appeal</span></p>}
+        {party && !answered && !r.setAside && <div className="row">
           <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => onAnswer(true)}>Accept recommendation</button>
-          <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => onAnswer(false)}>Decline</button></div>}
+          {!r.binding && <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => onAnswer(false)}>Decline</button>}</div>}
       </div>}
       {d.pendingDecision && <div className="proposal-mini open">
         <strong>Platform decision awaiting approval: {OUTCOME_LABEL[d.pendingDecision.outcome]}</strong>
@@ -412,8 +429,11 @@ function MediationPanel({ d, busy, party, onAnswer, onAssignSelf, onRecommend, o
           <textarea rows={4} maxLength={2000} value={summary} onChange={(e) => setSummary(e.target.value)} /></label>
         <label className="filter-box grow" style={{ marginTop: 8 }}><span>Evidence and policy citations (one per line)</span>
           <textarea rows={3} value={citations} onChange={(e) => setCitations(e.target.value)} /></label>
-        <button className="btn btn-primary" style={{ marginTop: 10 }} disabled={busy || summary.trim().length < 20}
-          onClick={() => (r ? onDecide(body()) : onRecommend(body()))}>{r ? 'Propose decision for Legal approval' : 'Issue recommendation'}</button>
+        {r && restriction.editor}
+        {!r && d.bindingRecommendation && <p className="small warn-text">Both parties agreed in advance: this recommendation becomes the decision
+          after a 7-day challenge period unless a party appeals.</p>}
+        <button className="btn btn-primary" style={{ marginTop: 10 }} disabled={busy || summary.trim().length < 20 || !restriction.valid}
+          onClick={() => (r ? onDecide(body(), restriction.value()) : onRecommend(body()))}>{r ? 'Propose decision for Legal approval' : 'Issue recommendation'}</button>
         <p className="muted small" style={{ marginBottom: 0 }}>You will confirm with your authenticator code.</p>
       </div>}
     </section>
@@ -454,7 +474,9 @@ function DisputeTools({ d, busy, party, act }: { d: Dispute; busy: boolean; part
 
 function ArbitrationPanel({ d, busy, isLegal, onRefer, onAward }: { d: Dispute; busy: boolean; isLegal: boolean
   onRefer: (forum: string, reason: string) => void
-  onAward: (body: { outcome: DisputeOutcome; allocations: RawAllocation[]; summary: string; citations: string[]; awardReference: string }) => void }) {
+  onAward: (body: { outcome: DisputeOutcome; allocations: RawAllocation[]; summary: string; citations: string[]; awardReference: string
+    accountRestriction?: AccountRestriction | null }) => void }) {
+  const restriction = useRestriction()
   const [forum, setForum] = useState('')
   const [reason, setReason] = useState('')
   const [outcome, setOutcome] = useState<DisputeOutcome>('FULL_RELEASE')
@@ -474,8 +496,9 @@ function ArbitrationPanel({ d, busy, isLegal, onRefer, onAward }: { d: Dispute; 
           <label>Outcome<select className="input" value={outcome} onChange={(e) => setOutcome(e.target.value as DisputeOutcome)}>
             {(['FULL_RELEASE', 'FULL_REFUND', 'TERMINATION'] as DisputeOutcome[]).map((o) => <option key={o} value={o}>{OUTCOME_LABEL[o]}</option>)}</select></label>
           <label>What the award says (plain language)<textarea className="input" rows={3} value={summary} onChange={(e) => setSummary(e.target.value)} /></label>
-          <button className="btn btn-primary" disabled={busy || ref.trim().length < 3 || summary.trim().length < 20}
-            onClick={() => onAward({ outcome, allocations: [], summary, citations: [], awardReference: ref })}>Record award</button>
+          {restriction.editor}
+          <button className="btn btn-primary" disabled={busy || ref.trim().length < 3 || summary.trim().length < 20 || !restriction.valid}
+            onClick={() => onAward({ outcome, allocations: [], summary, citations: [], awardReference: ref, accountRestriction: restriction.value() })}>Record award</button>
         </div>}
       </> : <div className="form-grid">
         <p className="muted">Refer a case the platform should not decide (its size, legal complexity, or a clause naming an arbitration forum).
@@ -484,6 +507,154 @@ function ArbitrationPanel({ d, busy, isLegal, onRefer, onAward }: { d: Dispute; 
         <label>Reason<textarea className="input" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} /></label>
         <button className="btn btn-secondary" disabled={busy || forum.trim().length < 3 || reason.trim().length < 20}
           onClick={() => { if (confirm('Refer this case to external arbitration? Platform mediation stops.')) onRefer(forum, reason) }}>Refer to arbitration</button>
+      </div>}
+    </section>
+  )
+}
+
+
+/** Optional "account restriction" outcome: it hands the account to Trust & Safety (a linked case), never restricts directly. */
+function useRestriction() {
+  const [party, setParty] = useState<'' | 'BUYER' | 'PROFESSIONAL'>('')
+  const [reason, setReason] = useState('')
+  const valid = !party || reason.trim().length >= 20
+  const editor = (
+    <div className="revise-box" style={{ marginTop: 8 }}>
+      <label className="filter-box"><span>Account restriction (optional)</span>
+        <select value={party} onChange={(e) => setParty(e.target.value as '' | 'BUYER' | 'PROFESSIONAL')}>
+          <option value="">No referral</option><option value="BUYER">Refer the buyer to Trust &amp; Safety</option>
+          <option value="PROFESSIONAL">Refer the professional to Trust &amp; Safety</option></select></label>
+      {party && <label className="filter-box grow" style={{ marginTop: 6 }}><span>Why (min 20 characters)</span>
+        <textarea rows={2} maxLength={2000} value={reason} onChange={(e) => setReason(e.target.value)} /></label>}
+      <p className="muted small" style={{ marginBottom: 0 }}>Trust &amp; Safety opens a linked case and decides any restriction itself.</p>
+    </div>
+  )
+  const value = (): AccountRestriction | null => (party ? { party, reason: reason.trim() } : null)
+  return { editor, valid, value }
+}
+
+function ProvisionalCard({ d }: { d: Dispute }) {
+  const p = d.provisionalDecision!
+  return (
+    <section className="card panel decision-card">
+      <div className="panel-head"><h2>{p.path === 'MEDIATION' ? 'Binding recommendation' : 'Enterprise admin decision'}</h2>
+        <span className={`badge ${p.appealed ? '' : 'warn'}`}>{p.appealed ? 'Under appeal' : `Takes effect ${new Date(p.challengeEndsAt).toLocaleDateString()}`}</span></div>
+      <p><strong>{OUTCOME_LABEL[p.outcome]}.</strong> {p.summary}</p>
+      {p.allocations.some((a) => a.releaseMinor || a.refundMinor) && <ul className="why">{p.allocations.map((a) => {
+        const m = d.milestones.find((x) => x.id === a.milestoneId)
+        return <li key={a.milestoneId}>M{m?.sequence}: {formatMoney({ amountMinor: a.releaseMinor, currency: d.disputed.currency })} released,{' '}
+          {formatMoney({ amountMinor: a.refundMinor, currency: d.disputed.currency })} refunded</li>
+      })}</ul>}
+      <p className="muted small" style={{ marginBottom: 0 }}>Nothing moves until it takes effect. Either party may appeal before then for new
+        material evidence or a procedural error; an independent reviewer then decides whether it stands.</p>
+    </section>
+  )
+}
+
+const PATHS: { kind: AgreementKind; title: string; text: string }[] = [
+  { kind: 'BINDING_RECOMMENDATION', title: 'Binding mediator recommendation',
+    text: "The mediator's recommendation becomes the decision after a 7-day challenge period, unless either side appeals." },
+  { kind: 'ENTERPRISE_ADMIN', title: "Decision by the buyer enterprise's admin",
+    text: "An Organisation Admin of the buyer enterprise (not the person who opened the dispute) decides, equally open to appeal for 7 days." },
+]
+
+function DecisionPathsPanel({ d, busy, onSet }: { d: Dispute; busy: boolean; onSet: (kind: AgreementKind, consent: boolean) => void }) {
+  const paths = PATHS.filter((p) => p.kind === 'BINDING_RECOMMENDATION' || d.enterpriseEngagement)
+  const applies = (k: AgreementKind) => (k === 'BINDING_RECOMMENDATION' ? d.bindingRecommendation : d.enterpriseAdminPath)
+  const locked = !!d.provisionalDecision || !!d.pendingDecision
+  return (
+    <section className="card panel">
+      <div className="panel-head"><h2>Optional decision paths</h2><span className="muted small">Both parties must agree</span></div>
+      {paths.map((p) => {
+        const agreed = d.agreements?.[p.kind] ?? []
+        const mine = agreed.includes(d.viewerRole)
+        const lockedHere = locked || (p.kind === 'BINDING_RECOMMENDATION' && !!d.recommendation)
+        return (
+          <div key={p.kind} className="proposal-mini">
+            <div className="panel-head"><strong>{p.title}</strong>
+              <span className={`badge ${applies(p.kind) ? 'green' : ''}`}>{applies(p.kind) ? 'Applies' : `${agreed.length}/2 agreed`}</span></div>
+            <p className="muted small">{p.text}</p>
+            {!applies(p.kind) || mine ? !lockedHere && <button className={`btn btn-sm ${mine ? 'btn-ghost' : 'btn-secondary'}`} disabled={busy}
+              onClick={() => onSet(p.kind, !mine)}>{mine ? 'Withdraw my agreement' : 'I agree'}</button> : null}
+          </div>
+        )
+      })}
+    </section>
+  )
+}
+
+function EnterpriseDecisionPanel({ d, busy, onDecide }: { d: Dispute; busy: boolean
+  onDecide: (b: { outcome: DisputeOutcome; allocations: RawAllocation[]; summary: string; citations: string[]; extendDays?: number | null }) => void }) {
+  const alloc = useAllocation(d)
+  const [summary, setSummary] = useState('')
+  return (
+    <section className="card panel">
+      <div className="panel-head"><h2>Decide as enterprise admin</h2><span className="badge">Agreed by both parties</span></div>
+      <p className="muted small">Your decision takes effect after a 7-day challenge period unless a party appeals. Money then moves through the
+        usual escrow release and refund; you never move it directly.</p>
+      {alloc.editor}
+      <label className="filter-box grow" style={{ marginTop: 8 }}><span>Plain-language reasoning (min 20 characters)</span>
+        <textarea rows={4} maxLength={2000} value={summary} onChange={(e) => setSummary(e.target.value)} /></label>
+      <button className="btn btn-primary" style={{ marginTop: 10 }} disabled={busy || summary.trim().length < 20}
+        onClick={() => { if (confirm('Issue this decision? Both parties are notified and may appeal within 7 days.'))
+          onDecide({ outcome: alloc.outcome, allocations: alloc.build(), summary: summary.trim(), citations: [], extendDays: alloc.extra() }) }}>Issue decision</button>
+    </section>
+  )
+}
+
+/** Buyer organisation dispute dashboard: open / closed, time to resolution, repeat patterns, money frozen, scheduled reports. */
+function OrgDisputeDashboard() {
+  const [orgs, setOrgs] = useState<Organization[]>([])
+  const [orgId, setOrgId] = useState<string | null>(null)
+  const [dash, setDash] = useState<DisputeDashboard | null>(null)
+  const [sub, setSub] = useState<ReportSubscription | null | undefined>(undefined)
+  const [error, setError] = useState<unknown>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  useEffect(() => { orgApi.mine().then((os) => { setOrgs(os); setOrgId(os[0]?.id ?? null) }).catch(setError) }, [])
+  const org = orgs.find((o) => o.id === orgId)
+  const admin = !!org?.myRoles.includes('ORG_ADMIN')
+  const canExport = admin || !!org?.myRoles.includes('LEGAL_REVIEWER')
+  useEffect(() => {
+    if (!orgId) return
+    disputeApi.dashboard(orgId).then(setDash).catch(setError)
+    if (admin) disputeApi.reportSubscription(orgId).then(setSub).catch(setError)
+  }, [orgId, admin])
+  if (!orgId) return error ? <ErrorAlert error={error} /> : null
+  const label = (r: Record<string, number>) => Object.entries(r).map(([k, v]) => `${k.replaceAll('_', ' ').toLowerCase()} ${v}`).join(' · ') || '—'
+  return (
+    <section className="card panel">
+      <div className="panel-head"><h2>Organisation dashboard</h2>
+        {orgs.length > 1 && <select aria-label="Organisation" value={orgId} onChange={(e) => setOrgId(e.target.value)}>
+          {orgs.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select>}</div>
+      <ErrorAlert error={error} />
+      {notice && <div className="alert alert-success" role="status">{notice}</div>}
+      {!dash ? <Loading /> : <>
+        <dl className="facts">
+          <dt>Open / decided / closed</dt><dd>{dash.open} / {dash.decided} / {dash.closed} (of {dash.total})</dd>
+          <dt>Time to resolution</dt><dd>{dash.medianDaysToResolution == null ? '—' : `median ${dash.medianDaysToResolution} days · average ${dash.averageDaysToResolution} days`}</dd>
+          <dt>Money frozen now</dt><dd>{dash.frozen.length ? dash.frozen.map((f) => `${formatMoney({ amountMinor: f.amountMinor, currency: f.currency })} (${f.cases})`).join(', ') : 'None'}</dd>
+          <dt>By category</dt><dd className="small">{label(dash.byCategory)}</dd>
+          <dt>By outcome</dt><dd className="small">{label(dash.byOutcome)}</dd>
+          <dt>How decided</dt><dd className="small">{label(dash.byDecisionPath)}</dd>
+        </dl>
+        <h3>Repeat disputes per professional</h3>
+        {dash.repeatProfessionals.length === 0 ? <p className="muted small">No professional has more than one dispute with your organisation.</p> : (
+          <table className="data"><thead><tr><th>Professional</th><th>Disputes</th><th>Open</th><th>Engagements</th><th>Categories</th><th>Last opened</th></tr></thead>
+            <tbody>{dash.repeatProfessionals.map((p) => <tr key={p.professionalId}><td>{p.name}</td><td>{p.disputes}</td><td>{p.open}</td>
+              <td>{p.engagements}</td><td className="small">{p.categories.map((c) => CATEGORY_LABEL[c as DisputeCategory] ?? c).join(', ')}</td>
+              <td className="small">{new Date(p.lastOpenedAt).toLocaleDateString()}</td></tr>)}</tbody></table>)}
+      </>}
+      {(admin || canExport) && <div className="row" style={{ marginTop: 12, alignItems: 'flex-end' }}>
+        {admin && <label className="filter-box"><span>Scheduled report (CSV link by notification)</span>
+          <select value={sub === undefined ? '' : sub?.frequency ?? 'OFF'} disabled={sub === undefined} onChange={async (e) => {
+            const v = e.target.value === 'OFF' ? null : (e.target.value as 'WEEKLY' | 'MONTHLY')
+            setError(null); setNotice(null)
+            try { setSub(await disputeApi.setReportSubscription(orgId, v)); setNotice(v ? `You will receive a ${v.toLowerCase()} dispute report.` : 'Scheduled reports stopped.') }
+            catch (err) { setError(err) }
+          }}><option value="OFF">Off</option><option value="WEEKLY">Weekly (Mondays)</option><option value="MONTHLY">Monthly (the 1st)</option></select></label>}
+        {sub && <span className="muted small">Next: {new Date(sub.nextRunAt).toLocaleDateString()}{sub.lastSentAt ? ` · last sent ${new Date(sub.lastSentAt).toLocaleDateString()}` : ''}</span>}
+        {canExport && <button className="btn btn-secondary btn-sm" onClick={() => disputeApi.exportReport(orgId)
+          .then((b) => saveBlob('disputes-last-30-days.csv', b)).catch(setError)}><Icon name="download" /> Export last 30 days (CSV)</button>}
       </div>}
     </section>
   )

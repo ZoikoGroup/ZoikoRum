@@ -58,6 +58,10 @@ class ProposalRequest(Base, UUIDPk, Timestamps, Versioned):
     deliverables: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)  # titles, from templates or custom
     custom_deliverables: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)  # the buyer's own wording: flagged
     dependencies: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)  # BUYER_DATA | THIRD_PARTY_ACCESS | INTERNAL_APPROVALS
+    # Structured success criteria (Request wireframe): "What does done look like" and "How will it be measured". Optional;
+    # carried into every proposal and into the contract scope.
+    success_definition: Mapped[str | None] = mapped_column(String(1000))
+    success_measures: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
     pricing_preferences: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)  # HOURLY | FIXED | RETAINER | OPEN
     payment_cadence: Mapped[str | None] = mapped_column(String(20))  # MILESTONE | MONTHLY | COMPLETION
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="DRAFT")
@@ -86,7 +90,11 @@ class Proposal(Base, UUIDPk, Timestamps, Versioned):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="DRAFT")
     summary: Mapped[str] = mapped_column(String(500), nullable=False, default="")
     scope_alignment: Mapped[str] = mapped_column(String(20), nullable=False, default="CONFIRMED")  # CONFIRMED | ADJUSTED
-    scope_notes: Mapped[str | None] = mapped_column(String(1000))
+    scope_notes: Mapped[str | None] = mapped_column(String(1000))  # optional free-text context for the scope changes
+    # Tracked scope suggestions (Engagement wireframe): [{id, kind, target, proposed, reason, status, decidedAt, decidedBy,
+    # note}], kind ADD_DELIVERABLE | REMOVE_DELIVERABLE | MODIFY_DELIVERABLE | TIMELINE | BUDGET; the buyer accepts or
+    # rejects each one (PENDING -> ACCEPTED | REJECTED); accepted ones become part of the agreed scope.
+    scope_changes: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
     deliverables: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     milestones: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
     # Optional attachments (RFP flow s.8: "portfolio items or supporting docs"): stored files, at most 3.

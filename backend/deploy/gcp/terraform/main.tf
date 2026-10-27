@@ -9,7 +9,7 @@ locals {
   services = [
     "artifactregistry.googleapis.com", "cloudkms.googleapis.com", "compute.googleapis.com", "iam.googleapis.com",
     "iamcredentials.googleapis.com", "iap.googleapis.com", "secretmanager.googleapis.com", "servicenetworking.googleapis.com",
-    "sqladmin.googleapis.com", "storage.googleapis.com", "sts.googleapis.com",
+    "sqladmin.googleapis.com", "storage.googleapis.com", "storagetransfer.googleapis.com", "sts.googleapis.com",
   ]
 }
 
@@ -328,6 +328,10 @@ resource "google_compute_backend_service" "web" {
   health_checks         = [google_compute_health_check.web[each.key].id]
   backend { group = google_compute_instance_group.app.self_link }
   log_config { enable = true }
+  security_policy = var.cloud_armor_enabled ? google_compute_security_policy.edge[0].self_link : null
+  # Coarse client location for the advisory sign-in risk signals (identity/risk.py): country and city latitude/longitude.
+  # The load balancer sets these itself, replacing anything a client sends.
+  custom_request_headers = ["X-Client-Geo-Country: {client_region}", "X-Client-Geo-Lat-Long: {client_city_lat_long}"]
   dynamic "iap" { # the staff app: only the accounts in staff_members get through
     for_each = each.key == "staff" ? [1] : []
     content { enabled = true }

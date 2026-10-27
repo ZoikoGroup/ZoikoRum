@@ -78,10 +78,11 @@ EVENT_TITLES = {
     E.DISPUTE_RECOMMENDATION_ISSUED: 'Mediator recommendation available', E.DISPUTE_RESOLVED: 'Dispute decision issued',
     E.DISPUTE_CLOSED: 'Dispute closed', E.DISPUTE_APPEALED: 'Dispute appeal filed', E.DISPUTE_APPEAL_DECIDED: 'Dispute appeal reviewed',
     E.ENFORCEMENT_ACTION_APPLIED: 'Account safety decision', E.ENFORCEMENT_ACTION_REVERSED: 'Restriction reversed',
-    E.ENFORCEMENT_APPEAL_DECIDED: 'Safety appeal decided',
+    E.ENFORCEMENT_APPEAL_DECIDED: 'Safety appeal decided', E.ENFORCEMENT_CASE_CLOSED: 'A safety review closed with no action',
     E.SAVED_PROFESSIONAL_AVAILABLE: 'A saved professional is available', E.SAVED_SEARCH_MATCHES: 'New matches for your saved search',
     E.DISPUTE_CLARIFICATION_REQUESTED: 'The mediator has a question',
     E.DISPUTE_REFERRED_TO_ARBITRATION: 'Dispute referred to external arbitration',
+    E.DISPUTE_PROVISIONAL_DECISION_ISSUED: 'Dispute decision issued: open to appeal', E.DISPUTE_REPORT_READY: 'Your dispute report is ready',
     E.SESSION_CREATED: 'New sign-in to your account', E.TRUST_TIER_NUDGE: 'Verify to work with this buyer',
     E.USER_REPORT_SUBMITTED: 'Report received', E.USER_REPORT_CLOSED: 'Your report was reviewed',
     E.SUPPORT_REQUEST_ANSWERED: 'Support replied to your request', E.SUPPORT_REQUEST_RESOLVED: 'Your support request was resolved',
@@ -162,6 +163,8 @@ def target_url(event, recipient, professional_identity):
         return '/app/help?request=' + str(p.get('requestId') or '')
     if domain_of(event.eventType) == 'policy':
         return '/app/policies?orgId=' + str(p.get('organizationId') or event.tenantId or '')
+    if event.eventType == E.DISPUTE_REPORT_READY:
+        return '/app/disputes?view=dashboard'
     if dispute_id := p.get('disputeId'):
         return f'/app/disputes/{dispute_id}'
     if contract_id := p.get('contractId'):

@@ -223,6 +223,38 @@ async def test_verified_needs_a_document_and_provider_fail_goes_to_a_person(clie
     assert insurance["status"] == "IN_REVIEW"  # never rejected without a person
 
 
+async def test_provider_pass_never_approves_a_credential_on_its_own(client, make_user, drain, monkeypatch):
+    """Ethics code / regulator: no automated credential approval. A provider PASS verifies identity and screening
+    (sampled for a second look); on a credential, jurisdiction or insurance check it is evidence for an officer."""
+    from zoikorum.domains.verification import service as verification_service
+
+    class Passing:
+        async def check(self, verification_type, details):
+            return "PASS"
+
+    monkeypatch.setattr(verification_service, "get_provider", lambda: Passing())
+    u, pro = await new_pro(client, make_user, drain)
+    start = lambda vtype, **kw: client.post("/v1/verification/cases", headers=u.h, json={
+        "verificationType": vtype, "subjectType": "PROFESSIONAL", "subjectId": pro["id"], **kw})
+    assert (await start("IDENTITY")).json()["status"] == "VERIFIED"
+    insurance = (await start("INSURANCE")).json()
+    jurisdiction = (await start("JURISDICTION", jurisdiction="GB")).json()
+    await client.post("/v1/professionals/me/credentials", headers=u.h, json={
+        "credentialType": "LICENSE", "name": "CPA", "issuingBody": "Texas State Board", "registrationNumber": "TX-1",
+        "jurisdiction": "US"})
+    await drain()
+    credential = await case_of(client, u, pro, "CREDENTIAL")
+    assert {c["status"] for c in (insurance, jurisdiction, credential)} == {"IN_REVIEW"}
+
+    o = await officer(make_user)
+    queue = {row["id"]: row for row in (await client.get("/v1/verification/review-queue", headers=o.h)).json()["items"]}
+    assert all(queue[c["id"]]["providerResult"] == "PASS" for c in (insurance, jurisdiction, credential))  # kept as evidence
+    await client.post(f"/v1/verification/cases/{credential['id']}/evidence", headers=u.h, json=DOC)
+    r = await client.post(f"/v1/verification/cases/{credential['id']}/decision", headers=o.h,
+                          json={"decision": "VERIFIED", "reasonCode": "REGISTRY_MATCH"})
+    assert r.status_code == 200 and r.json()["status"] == "VERIFIED"
+
+
 async def test_screening_flag_is_private_and_hides_the_profile(client, make_user, drain, sf):
     from test_search import publish
 

@@ -20,7 +20,8 @@ SCHEMA = "escrow"
 
 
 class EscrowAccount(Base, UUIDPk, Timestamps, Versioned):
-    """UNFUNDED -> FUNDED -> PARTIALLY_RELEASED -> FULLY_RELEASED (DISPUTED / REFUNDED / CLOSED arrive with disputes)."""
+    """UNFUNDED -> FUNDED -> PARTIALLY_RELEASED -> FULLY_RELEASED (DISPUTED / REFUNDED / CLOSED arrive with disputes);
+    UNFUNDED -> EXPIRED when nothing was funded within the funding window."""
 
     __tablename__ = "accounts"
     __table_args__ = {"schema": SCHEMA}
@@ -43,10 +44,19 @@ class EscrowAccount(Base, UUIDPk, Timestamps, Versioned):
     auto_fund_enabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Platform fee fixed when the contract activates, so a later fee change never alters a signed engagement.
     fee_bps: Mapped[int | None] = mapped_column(Integer)
+    # Payment protection setup (after both signatures, before the first funding): how money is released (MILESTONE: each
+    # milestone funded and released on its acceptance; RETAINER: each cycle the same way; FIXED: the whole fee funded at
+    # once, released milestone by milestone on acceptance), who approves releases, and the buyer's confirmation that
+    # a dispute freezes the affected money. Escrow itself is mandatory whatever is chosen.
+    release_model: Mapped[str | None] = mapped_column(String(20))
+    release_approver_identity_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
+    protection_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    protection_confirmed_by: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
 
 
 class Allocation(Base, UUIDPk, Timestamps, Versioned):
-    """UNFUNDED -> FUNDING -> HELD -> RELEASED (ON_HOLD / REFUNDED arrive with disputes). FUNDING -> UNFUNDED on payment failure."""
+    """UNFUNDED -> FUNDING -> HELD -> RELEASED (ON_HOLD / REFUNDED arrive with disputes). FUNDING -> UNFUNDED on payment failure.
+    UNFUNDED -> EXPIRED (terminal) when the engagement was never funded within the funding window."""
 
     __tablename__ = "allocations"
     __table_args__ = {"schema": SCHEMA}
@@ -63,6 +73,8 @@ class Allocation(Base, UUIDPk, Timestamps, Versioned):
     refunded_minor: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     funded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # While RELEASE_PENDING_APPROVAL: when the buyer organisation's approval is due (from the policy approval request).
+    release_approval_due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Funding(Base, UUIDPk, Timestamps):
@@ -114,3 +126,20 @@ class LedgerEntry(Base, UUIDPk, CreatedAt):
     reference_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     milestone_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True))
     memo: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+
+
+class LedgerSnapshot(Base, UUIDPk, CreatedAt):
+    """Periodic balance snapshot of one escrow account (escrow/snapshots.py): per-ledger-account balances through the
+    newest ledger line it covers, checked against the account's own figures. Balance reads start from the latest
+    snapshot and add only the lines after it."""
+
+    __tablename__ = "ledger_snapshots"
+    __table_args__ = (Index("ix_ledger_snapshots_account", "account_id", "created_at"), {"schema": SCHEMA})
+
+    account_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.accounts.id"), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    through_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # newest line included
+    entry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    balances: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)  # {ledger account: credits - debits}
+    status: Mapped[str] = mapped_column(String(10), nullable=False, default="OK")  # OK | MISMATCH
+    problems: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)

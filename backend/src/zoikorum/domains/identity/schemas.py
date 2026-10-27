@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import re
+
 import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, EmailStr, Field, model_validator
+from pydantic import field_validator, BaseModel, EmailStr, Field, model_validator
 
 AccountType = Literal["BUYER", "PROFESSIONAL", "FIRM", "ENTERPRISE"]
 Dashboard = Literal["buyer", "professional", "firm", "enterprise", "ops"]
@@ -162,6 +164,10 @@ class RecoveryCodesOut(BaseModel):
     recoveryCodes: list[str]  # shown once: keep them somewhere safe
 
 
+class MfaVerifyOut(RecoveryCodesOut):
+    tokens: TokenPair | None = None  # this sign-in, now a two-step session (set when two-step was just turned on)
+
+
 class MfaResetIn(BaseModel):
     reason: str = Field(min_length=10, max_length=500)  # how the person's identity was confirmed
 
@@ -173,7 +179,17 @@ class MfaEnrollOut(BaseModel):
 
 class MePatch(BaseModel):
     displayName: str | None = Field(default=None, min_length=1, max_length=200)
-    phone: str | None = Field(default=None, pattern=r"^(\+[1-9]\d{6,14})?$")  # E.164; "" clears it
+    phone: str | None = Field(default=None, max_length=32)  # E.164 after removing spaces and dashes; "" clears it
+
+    @field_validator("phone")
+    @classmethod
+    def _phone(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        cleaned = re.sub(r"[\s().-]", "", v)  # people type "+44 20 7946 0958" or "+91-98765-43210"
+        if cleaned and not re.fullmatch(r"\+[1-9]\d{6,14}", cleaned):
+            raise ValueError("Enter the number with + and the country code, for example +44 20 7946 0958 or +91 98765 43210")
+        return cleaned
     language: Literal["en", "en-GB", "en-US", "es", "fr", "de", "hi"] | None = None
     timeZone: str | None = Field(default=None, max_length=64)
 
@@ -193,7 +209,7 @@ class DataRequestIn(BaseModel):
 class DataRequestOut(BaseModel):
     id: uuid.UUID
     requestType: str
-    status: str  # RECEIVED | COMPLETED | SCHEDULED | BLOCKED | CANCELLED
+    status: str  # RECEIVED | COMPLETED | FAILED | SCHEDULED | BLOCKED | CANCELLED
     createdAt: datetime
     completedAt: datetime | None
     scheduledFor: datetime | None = None  # erasure date (cancellable until then)

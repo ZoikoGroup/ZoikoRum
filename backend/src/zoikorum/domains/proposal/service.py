@@ -4,7 +4,7 @@ Zoikorum is not a job board (Homepage wireframe): a buyer sends a structured req
 (one, or several to compare), and each answers with a structured proposal or declines with a reason.
 
 Until the policy domain exists, the platform baseline applies (BUILD_SPEC s.policy): restricted professionals cannot
-be engaged, and Tier C professionals cannot submit or have a proposal accepted. An accepting member's own spend limit
+be engaged, and tier C professionals cannot submit or have a proposal accepted. An accepting member's own spend limit
 is respected; organisation approval workflows arrive with the policy domain.
 """
 
@@ -26,8 +26,9 @@ from zoikorum.domains.policy import facade as policy_facade
 from zoikorum.domains.professional import facade as professional_facade
 from zoikorum.domains.proposal.models import Proposal, ProposalRequest
 from zoikorum.domains.proposal.schemas import (
-    Budget, CancelIn, DeclineIn, Delta, ProfessionalBrief, ProposalAttachmentsIn, ProposalBrief, ProposalIn, ProposalOut, RejectIn,
-    RequestIn, RequestOut, RequestSummaryOut, RevisionIn,
+    Budget, CancelIn, DeclineIn, Delta, ProfessionalBrief, ProposalAttachmentsIn, ProposalBrief, ProposalIn, ProposalOut,
+    ProposalReadinessOut, RejectIn, RequestIn, RequestOut, RequestSummaryOut, RevisionIn, ScopeChangeIn, ScopeDecisionIn,
+    SuccessCriteria,
 )
 from zoikorum.domains.trust import facade as trust_facade
 from zoikorum.shared import clock, fx
@@ -38,6 +39,7 @@ from zoikorum.shared.events import record_audit, record_event
 from zoikorum.shared.http import expect_version, page_of, paginate
 from zoikorum.shared.money import MoneyDTO
 from zoikorum.shared.relay import cancel_timer, schedule_timer
+from zoikorum.shared.trust_light import light
 from zoikorum.shared.state_machine import StateMachine
 from zoikorum.shared.uploads import file_out, find_file, read_file, store_uploads
 
@@ -191,7 +193,7 @@ async def nudge_verification(professional_id: uuid.UUID, identity_id: uuid.UUID,
         record_event(s, E.TRUST_TIER_NUDGE, aggregate_type="Professional", aggregate_id=professional_id,
                      payload={"identityId": identity_id, "professionalId": professional_id, "requiredTier": needed,
                               "requestId": request_id, "audience": "PROFESSIONAL",
-                              "message": f"This buyer needs Trust Tier {needed} before a proposal can be sent. Complete the "
+                              "message": f"This buyer needs the {light(needed)} trust light before a proposal can be sent. Complete the "
                                          "missing checks under Verification; your proposal stays saved as a draft."})
 
 
@@ -199,19 +201,19 @@ def _check_tier(trust: trust_facade.TrustSnapshot, who: str) -> None:
     if _restricted(trust):
         raise PolicyBlocked(f"{who} cannot be engaged while a restriction is under review", code="POLICY_BLOCKED_RESTRICTIONS")
     if trust.tier == "C":
-        raise PolicyBlocked(f"{who} must reach Trust Tier B (verified identity) before a proposal can be sent or accepted",
+        raise PolicyBlocked(f"{who} must reach Amber (identity verified) before a proposal can be sent or accepted",
                             code="POLICY_BLOCKED_MINIMUM_TRUST_TIER")
 
 
 async def _check_regulated(session: AsyncSession, r, trust: trust_facade.TrustSnapshot, who: str) -> None:
-    """Regulated work (audit, tax filing, regulatory reporting...) needs Trust Tier A, whatever the buyer's own policy says."""
+    """Regulated work (audit, tax filing, regulatory reporting...) needs tier A (Green light), whatever the buyer's own policy says."""
     from zoikorum.domains.marketplace import facade as marketplace_facade
 
     if not r.specialization or trust.tier == "A":
         return
     info = (await marketplace_facade.get_specializations(session, [r.specialization])).get(r.specialization)
     if info and info.regulated:
-        raise PolicyBlocked(f"{who} must reach Trust Tier A before taking regulated work ({info.name})",
+        raise PolicyBlocked(f"{who} must reach Green (fully verified) before taking regulated work ({info.name})",
                             code="POLICY_BLOCKED_MINIMUM_TRUST_TIER")
 
 
@@ -225,6 +227,10 @@ def _budget(r: ProposalRequest) -> Budget | None:
     if r.budget_max_minor is None or r.budget_currency is None:
         return None
     return Budget(minMinor=r.budget_min_minor, maxMinor=r.budget_max_minor, currency=r.budget_currency)
+
+
+def _success(r: ProposalRequest) -> SuccessCriteria:
+    return SuccessCriteria(definition=r.success_definition, measures=list(r.success_measures or []))
 
 
 def _total(p: Proposal) -> MoneyDTO:
@@ -285,6 +291,7 @@ async def _requests_out(session: AsyncSession, actor: Actor, rows: list[Proposal
             groupSize=sizes.get(r.group_id, 1), deliverables=[] if hidden else r.deliverables,
             customDeliverables=[] if hidden else (r.custom_deliverables or []), dependencies=[] if hidden else r.dependencies,
             pricingPreferences=r.pricing_preferences, paymentCadence=r.payment_cadence,
+            successCriteria=SuccessCriteria() if hidden else _success(r),
             jurisdictionConflict=_conflict(served.get(r.professional_id, set()), orgs.get(r.organization_id)),
             viewerRole=role, createdAt=r.created_at, version=r.version,
         ))
@@ -314,10 +321,46 @@ def _deltas(r: ProposalRequest, p: Proposal) -> list[Delta]:
         lo, hi = DURATION_DAYS[r.estimated_duration]
         s = "WITHIN" if lo <= days <= hi else "BELOW" if days < lo else "ABOVE"
         out.append(Delta(field="duration", label="Duration", requested=DURATION_LABEL[r.estimated_duration], proposed=f"{days} days", status=s))
-    out.append(Delta(field="scope", label="Scope", requested="As requested",
-                     proposed="Adjusted" + (f": {p.scope_notes}" if p.scope_notes else "") if p.scope_alignment == "ADJUSTED" else "Confirmed",
-                     status="CHANGED" if p.scope_alignment == "ADJUSTED" else "MATCH"))
+    changes = p.scope_changes or []
+    if changes:
+        counts = {s: sum(1 for c in changes if c.get("status") == s) for s in ("ACCEPTED", "PENDING", "REJECTED")}
+        parts = [f"{n} {s.lower()}" for s, n in counts.items() if n]
+        proposed = f"{len(changes)} suggested change{'s' if len(changes) > 1 else ''} ({', '.join(parts)})"
+    else:
+        proposed = ("Adjusted" + (f": {p.scope_notes}" if p.scope_notes else "")) if p.scope_alignment == "ADJUSTED" else "Confirmed"
+    out.append(Delta(field="scope", label="Scope", requested="As requested", proposed=proposed,
+                     status="CHANGED" if p.scope_alignment == "ADJUSTED" or changes else "MATCH"))
     return out
+
+
+def _pending_changes(p: Proposal) -> int:
+    return sum(1 for c in p.scope_changes or [] if c.get("status") == "PENDING")
+
+
+def _readiness(p: Proposal, conflict: bool) -> ProposalReadinessOut:
+    """Governance signals for the buyer's proposal card: can a contract be generated, is payment protected, is it on record."""
+    pending, missing = _pending_changes(p), _completeness(p)
+    if _expired(p):
+        ready, note = False, "This proposal has expired"
+    elif conflict:
+        ready, note = False, "The professional does not serve your country, so no contract can be agreed"
+    elif p.status == "REVISION_REQUESTED":
+        ready, note = False, "Waiting for the revised proposal"
+    elif pending:
+        ready, note = False, f"Decide the {pending} suggested scope change{'s' if pending > 1 else ''} first"
+    elif missing:
+        ready, note = False, "Incomplete: " + "; ".join(missing)
+    else:
+        ready, note = True, "Complete terms: the contract is generated from them when you accept"
+    n = len(p.milestones or [])
+    protected = n > 0 and p.total_minor > 0
+    return ProposalReadinessOut(
+        contractReady=ready, contractReadyNote=note, paymentProtection=protected,
+        paymentProtectionNote=(f"{n} milestone{'s' if n > 1 else ''}, each funded into escrow before work starts and released "
+                               "only when you accept it") if protected else "No priced milestones yet",
+        auditRecord=p.submitted_at is not None,
+        auditRecordNote="The submitted terms are on the audit record; accepting fingerprints them into the contract"
+        if p.submitted_at else "Not submitted yet")
 
 
 async def _proposals_out(session: AsyncSession, rows: list[Proposal]) -> list[ProposalOut]:
@@ -325,6 +368,13 @@ async def _proposals_out(session: AsyncSession, rows: list[Proposal]) -> list[Pr
         return []
     briefs = await _briefs(session, list({p.professional_id for p in rows}))
     reqs = {r.id: r for r in (await session.scalars(select(ProposalRequest).where(ProposalRequest.id.in_([p.request_id for p in rows])))).all()}
+    pros = await professional_facade.get_professionals(session, list({p.professional_id for p in rows}))
+    orgs = {oid: await buyer_facade.get_organization(session, oid) for oid in {p.organization_id for p in rows}}
+
+    def conflict(p: Proposal) -> bool:
+        pro = pros.get(p.professional_id)
+        return _conflict(set(pro.jurisdictions_served) if pro else set(), orgs.get(p.organization_id))
+
     return [ProposalOut(
         id=p.id, requestId=p.request_id, groupId=reqs[p.request_id].group_id, organizationId=p.organization_id,
         professional=briefs[p.professional_id], status="EXPIRED" if _expired(p) else p.status, summary=p.summary,
@@ -333,6 +383,7 @@ async def _proposals_out(session: AsyncSession, rows: list[Proposal]) -> list[Pr
         exclusions=p.exclusions, validUntil=p.valid_until, expired=_expired(p), revisionRequests=p.revision_requests,
         revisionCount=p.revision_count, submittedAt=p.submitted_at, decidedAt=p.decided_at, reasonCode=p.reason_code,
         reasonNote=p.reason_note, termsHash=p.terms_hash, deltas=_deltas(reqs[p.request_id], p),
+        scopeChanges=p.scope_changes or [], successCriteria=_success(reqs[p.request_id]), readiness=_readiness(p, conflict(p)),
         attachments=[file_out(a) for a in p.attachments or []],
         createdAt=p.created_at, updatedAt=p.updated_at, version=p.version,
     ) for p in rows]
@@ -416,6 +467,7 @@ async def create_requests(session: AsyncSession, actor: Actor, body: RequestIn) 
             deliverables=body.deliverables, custom_deliverables=body.customDeliverables, dependencies=list(body.dependencies),
             pricing_preferences=list(body.pricingPreferences),
             payment_cadence=body.paymentCadence,
+            success_definition=body.successDefinition, success_measures=list(body.successMeasures),
             status="DRAFT" if body.draft else "OPEN", sent_at=None if body.draft else now,
         )
         session.add(r)
@@ -587,9 +639,27 @@ async def decline_request(session: AsyncSession, actor: Actor, request_id: uuid.
     return (await _requests_out(session, actor, [r], viewer="PROFESSIONAL"))[0]
 
 
+def _merge_scope_changes(old: list[dict], new: list[ScopeChangeIn]) -> list[dict]:
+    """The professional's suggestions as now written. An unchanged suggestion keeps the buyer's decision; a new or
+    reworded one waits for a decision again."""
+    known = {(c["kind"], c.get("target"), c["proposed"]): c for c in old or []}
+    out, seen = [], set()
+    for ch in new:
+        key = (ch.kind, ch.target, ch.proposed)
+        if key in seen:
+            continue
+        seen.add(key)
+        prev = known.get(key)
+        out.append({**prev, "reason": ch.reason} if prev else {
+            "id": uuid.uuid4().hex[:12], "kind": ch.kind, "target": ch.target, "proposed": ch.proposed, "reason": ch.reason,
+            "status": "PENDING", "decidedAt": None, "decidedBy": None, "note": None})
+    return out
+
+
 def _apply(p: Proposal, body: ProposalIn) -> None:
     p.summary = body.summary.strip()
-    p.scope_alignment = body.scopeAlignment
+    p.scope_changes = _merge_scope_changes(p.scope_changes, body.scopeChanges)
+    p.scope_alignment = "ADJUSTED" if p.scope_changes else body.scopeAlignment
     p.scope_notes = (body.scopeNotes or "").strip() or None
     p.deliverables = [d.model_dump() for d in body.deliverables]
     p.milestones = [m.model_dump(mode="json") for m in body.milestones]
@@ -687,7 +757,7 @@ async def submit_proposal(session: AsyncSession, actor: Actor, proposal_id: uuid
             extra={"proposal.termsDigest": hashlib.sha256(json.dumps(_terms(r, p), sort_keys=True, default=str).encode()).hexdigest()}))
     except PolicyBlocked as blocked:
         if blocked.code == "POLICY_BLOCKED_MINIMUM_TRUST_TIER":
-            needed = "A" if "Tier A" in blocked.detail else "B"
+            needed = "A" if "Green" in blocked.detail else "B"
             await nudge_verification(p.professional_id, actor.identity_id, needed, r.id)
         raise
     revised = p.status == "REVISION_REQUESTED"
@@ -773,10 +843,31 @@ async def reject_proposal(session: AsyncSession, actor: Actor, proposal_id: uuid
     return (await _proposals_out(session, [p]))[0]
 
 
+_CHANGE_LABEL = {"ADD_DELIVERABLE": "Add deliverable", "REMOVE_DELIVERABLE": "Remove deliverable",
+                 "MODIFY_DELIVERABLE": "Modify deliverable", "TIMELINE": "Timeline", "BUDGET": "Budget"}
+
+
+def _agreed_changes(p: Proposal) -> list[dict]:
+    return [{"kind": c["kind"], "target": c.get("target"), "proposed": c["proposed"], "reason": c.get("reason")}
+            for c in p.scope_changes or [] if c.get("status") == "ACCEPTED"]
+
+
 def _terms(r: ProposalRequest, p: Proposal) -> dict:
+    agreed = _agreed_changes(p)
+    scope = r.details + (f"\n\nProfessional's scope notes: {p.scope_notes}" if p.scope_notes else "")
+    if agreed:
+        scope += "\n\nAgreed scope changes:\n" + "\n".join(
+            f"- {_CHANGE_LABEL.get(c['kind'], c['kind'])}" + (f" ({c['target']})" if c["target"] else "") + f": {c['proposed']}"
+            for c in agreed)
+    extra: dict = {}
+    if r.success_definition or r.success_measures:
+        extra["successCriteria"] = {"definition": r.success_definition, "measures": list(r.success_measures or [])}
+    if agreed:
+        extra["scopeChanges"] = agreed
     return {
+        **extra,
         "objective": r.objective,
-        "scope": r.details + (f"\n\nProfessional's scope notes: {p.scope_notes}" if p.scope_notes else ""),
+        "scope": scope,
         "deliverables": p.deliverables,
         "milestones": [{"sequence": i + 1, "title": m["title"], "description": m.get("description", ""),
                         "amountMinor": m["amountMinor"], "dueDate": m.get("dueDate"), "deliverableKeys": m["deliverableKeys"]}
@@ -798,6 +889,9 @@ async def accept_proposal(session: AsyncSession, actor: Actor, proposal_id: uuid
         raise Conflict("This proposal is already decided", code="PROPOSAL_DECIDED")
     if _expired(p):
         raise Conflict("This proposal has expired and can no longer be accepted", code="PROPOSAL_EXPIRED")
+    if pending := _pending_changes(p):
+        raise Conflict(f"Accept or reject the {pending} suggested scope change{'s' if pending > 1 else ''} before accepting the "
+                       "proposal", code="SCOPE_CHANGES_PENDING")
     _check_tier(await trust_facade.get_trust(session, p.professional_id), "This professional")
     await _check_regulated(session, await _request(session, p.request_id), await trust_facade.get_trust(session, p.professional_id),
                            "This professional")
@@ -866,6 +960,29 @@ async def accept_proposal(session: AsyncSession, actor: Actor, proposal_id: uuid
         if sp and sp.status in ("DRAFT", *LIVE_PROPOSAL):
             await _end_proposal(session, sp, "REJECTED", "ANOTHER_PROPOSAL_ACCEPTED", actor)
         _close_request(s, "CANCELLED" if s.status == "DRAFT" else "CLOSED", "ANOTHER_PROPOSAL_ACCEPTED")
+    await session.flush()
+    return (await _proposals_out(session, [p]))[0]
+
+
+async def decide_scope_change(session: AsyncSession, actor: Actor, proposal_id: uuid.UUID, change_id: str,
+                              body: ScopeDecisionIn) -> ProposalOut:
+    """Buyer: accept or reject one suggested scope change. Accepted ones become part of the agreed scope (and of the
+    contract); a rejected one does not, and the buyer can ask for a revision. Audited."""
+    p, _ = await _buyer_proposal(session, actor, proposal_id)
+    if p.status not in ("SUBMITTED", "UNDER_REVIEW") or _expired(p):
+        raise Conflict("Scope changes are decided while the proposal waits for your decision", code="PROPOSAL_NOT_OPEN")
+    changes = [dict(c) for c in p.scope_changes or []]
+    target = next((c for c in changes if c["id"] == change_id), None)
+    if target is None:
+        raise NotFound("Scope change not found")
+    if target["status"] != "PENDING":
+        raise Conflict("This scope change has already been decided", code="SCOPE_CHANGE_DECIDED")
+    target.update(status="ACCEPTED" if body.accept else "REJECTED", decidedAt=clock.now().isoformat(),
+                  decidedBy=str(actor.identity_id), note=(body.note or "").strip() or None)
+    p.scope_changes = changes
+    record_audit(session, "proposal.scope_change." + ("accepted" if body.accept else "rejected"), object_type="Proposal",
+                 object_id=p.id, tenant_id=p.organization_id,
+                 details={"changeId": change_id, "kind": target["kind"], "target": target.get("target"), "proposed": target["proposed"]})
     await session.flush()
     return (await _proposals_out(session, [p]))[0]
 

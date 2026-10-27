@@ -119,6 +119,20 @@ export interface PublicFirm {
   id: string; name: string; legalName: string; hqCountry: string; sizeBand: string | null; primaryCategory: string | null
   website: string | null; verified: boolean; hasVerifiedRepresentative: boolean; verifiedCredentials: string[]
   professionals: { professionalId: string; displayName: string; headline: string | null; photoUrl: string | null; tier: string }[]
+  offerings?: FirmOffering[]
+}
+
+/** A service the firm publishes, delivered by named member professionals. Regulated specializations publish only with
+    a verified firm, a verified representative and a verified, licensed delivering member. */
+export interface FirmOffering {
+  id: string; firmId: string; title: string; summary: string; specialization: string; specializationName: string | null
+  regulated: boolean; engagementTypes: string[]; pricingModel: string; startingPriceMinor: number | null; currency: string | null
+  deliveredBy: { professionalId: string; displayName: string; tier: string; licensed: boolean }[]
+  status: 'DRAFT' | 'PUBLISHED' | 'UNPUBLISHED'; publishedAt: string | null; unpublishedReason: string | null; version: number; createdAt: string
+}
+export interface FirmOfferingInput {
+  title: string; summary: string; specialization: string; engagementTypes: string[]; pricingModel: string
+  startingPriceMinor: number | null; currency: string | null; deliveredBy: string[]
 }
 
 export interface FirmMember { identityId: string; email: string; displayName: string; roles: FirmRole[]; joinedAt: string }
@@ -177,6 +191,13 @@ export const firmApi = {
   decline: (invId: string) => api<void>(`${F}/invitations/${invId}/decline`, { method: 'POST' }),
   overview: (id: string) => api<FirmOverview>(`${F}/${id}/overview`),
   publicFirm: (id: string) => api<PublicFirm>(`${F}/${id}/public`),
+  offerings: (id: string) => api<FirmOffering[]>(`${F}/${id}/offerings`),
+  createOffering: (id: string, body: FirmOfferingInput) => api<FirmOffering>(`${F}/${id}/offerings`, { method: 'POST', body }),
+  updateOffering: (id: string, offeringId: string, body: Partial<FirmOfferingInput>) =>
+    api<FirmOffering>(`${F}/${id}/offerings/${offeringId}`, { method: 'PATCH', body }),
+  publishOffering: (id: string, offeringId: string) => api<FirmOffering>(`${F}/${id}/offerings/${offeringId}/publish`, { method: 'POST' }),
+  unpublishOffering: (id: string, offeringId: string, reason?: string) =>
+    api<FirmOffering>(`${F}/${id}/offerings/${offeringId}/unpublish`, { method: 'POST', body: { reason: reason ?? null } }),
 }
 
 export function formatMoney(m: Money | null | undefined): string {

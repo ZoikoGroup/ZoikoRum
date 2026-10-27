@@ -5,7 +5,8 @@ import { formatMoney, orgApi, type Organization } from '../api/orgs'
 import { taxonomyApi, type TaxonomySpecialization } from '../api/professional'
 import { DURATION_LABEL, DURATIONS, MAX_REQUEST_PROFESSIONALS, type Duration } from '../api/proposals'
 import { Avatar, Icon } from '../components/dashboard'
-import { PortalHeader, TierBadge } from '../components/portal'
+import { PortalHeader } from '../components/portal'
+import { TrustLight } from '../components/TrustLight'
 import { ErrorAlert, Loading } from '../components/ui'
 import { countryName } from './ProfessionalPages'
 
@@ -114,7 +115,7 @@ function BuyerBrief({ b, onClose }: { b: OpenBrief; onClose: () => void }) {
             <input type="checkbox" aria-label={`Choose ${i.professional.displayName}`} checked={picked.includes(i.professional.id)}
               disabled={!picked.includes(i.professional.id) && picked.length >= MAX_REQUEST_PROFESSIONALS} onChange={() => toggle(i.professional.id)} />
             <Avatar name={i.professional.displayName} photoUrl={i.professional.photoUrl} size={36} />
-            <span><Link to={`/professionals/${i.professional.id}`}><strong>{i.professional.displayName}</strong></Link> <TierBadge tier={i.professional.tier} /><br />
+            <span><Link to={`/professionals/${i.professional.id}`}><strong>{i.professional.displayName}</strong></Link> <TrustLight tier={i.professional.tier} /><br />
               <span className="muted small">{i.professional.headline}</span>
               {i.note && <><br /><span className="small">“{i.note}”</span></>}</span>
           </li>))}</ul>

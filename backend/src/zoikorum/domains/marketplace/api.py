@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, Request, status
 from pydantic import BaseModel
 
 from zoikorum.domains.marketplace import service
@@ -11,8 +11,9 @@ from zoikorum.domains.marketplace.schemas import (
     SavedSearchOut,
     CollectionIn, CollectionItemsIn, CollectionOut, CompareItem, SavedOut, SaveIn, SpecializationAdminOut, SpecializationIn,
     SpecializationPatch, SuggestIn, SuggestionDecisionIn, SuggestionIn, SuggestionOut, SuggestOut,
+    ProcurementRequestIn, ProcurementRequestOut, ReferralIn, ReferralOut,
 )
-from zoikorum.shared.auth import CurrentActor
+from zoikorum.shared.auth import CurrentActor, OptionalActor
 from zoikorum.shared.db import DbSession
 from zoikorum.shared.http import Page, enforce_budget
 
@@ -21,8 +22,10 @@ router = APIRouter(tags=["marketplace"])
 
 @router.get("/v1/taxonomy")
 async def taxonomy(session: DbSession) -> dict:
-    """Public: the full capability taxonomy (category -> groups -> specializations)."""
-    return {"categories": await service.tree(session)}
+    """Public: the full capability taxonomy (category -> groups -> specializations). Served from the read cache
+    (shared/cache.py), dropped whenever the taxonomy changes."""
+    from zoikorum.shared import cache
+    return {"categories": await cache.cached(cache.TAXONOMY, "tree", lambda: service.tree(session))}
 
 
 @router.post("/v1/taxonomy/suggest", response_model=SuggestOut)
@@ -180,3 +183,52 @@ async def pricing_estimate(actor: CurrentActor, session: DbSession, specializati
     from zoikorum.domains.marketplace import pricing
 
     return await pricing.estimate(session, specialization, currency, engagementType)
+
+
+# ---- Referral codes and procurement-pack / security-review requests ---------------------------------------------------
+
+@router.post("/v1/referrals", response_model=ReferralOut, status_code=status.HTTP_201_CREATED)
+async def record_referral(body: ReferralIn, actor: CurrentActor, session: DbSession):
+    """The optional referral or invite code typed on the sign-up page, stored once against the new account."""
+    from zoikorum.domains.marketplace import leads
+    return await leads.record_referral(session, actor, body)
+
+
+@router.get("/v1/referrals/mine", response_model=ReferralOut | None)
+async def my_referral(actor: CurrentActor, session: DbSession):
+    from zoikorum.domains.marketplace import leads
+    return await leads.my_referral(session, actor)
+
+
+PROCUREMENT_LIMIT = (3, 3)  # requests per minute, burst: a public form, so a tight budget per caller
+
+
+@router.post("/v1/procurement-requests", response_model=ProcurementRequestOut, status_code=status.HTTP_201_CREATED)
+async def open_procurement_request(body: ProcurementRequestIn, request: Request, session: DbSession, actor: OptionalActor):
+    """Public: ask for a professional's procurement pack or a security review. Creates a lead the Zoikorum team answers
+    by email; nothing is sent to the professional automatically. Rate-limited per caller."""
+    from zoikorum.config import get_settings
+    from zoikorum.domains.marketplace import leads
+    from zoikorum.shared import ratelimit
+    from zoikorum.shared.errors import RateLimited
+    from zoikorum.shared.http import caller_key
+
+    if get_settings().rate_limit_enabled:
+        caller = ":".join(caller_key(request))
+        if not await ratelimit.get_buckets().take(ratelimit.bucket_key("procurement", caller), *PROCUREMENT_LIMIT):
+            raise RateLimited("Too many requests. Please wait a minute and try again.")
+    if body.website:  # filled by a bot: accept quietly, store nothing
+        import uuid as _uuid
+
+        from zoikorum.shared import clock
+        return ProcurementRequestOut(id=_uuid.uuid4(), reference="ZK-PRC-" + _uuid.uuid4().hex[:8].upper(), kind=body.kind,
+                                     professionalId=body.professionalId, status="NEW", createdAt=clock.now())
+    return await leads.open_procurement_request(session, actor, body)
+
+
+@router.get("/v1/admin/procurement-requests", response_model=list[ProcurementRequestOut])
+async def list_procurement_requests(actor: CurrentActor, session: DbSession, status: str | None = Query(default=None, pattern="^(NEW|CONTACTED|CLOSED)$")):
+    """Staff (support): procurement-pack and security-review requests, newest first."""
+    from zoikorum.domains.marketplace import leads
+    return await leads.list_procurement_requests(session, actor, status)
+

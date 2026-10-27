@@ -37,7 +37,7 @@ class TrustSnapshot:
 
 
 async def get_trust(session: AsyncSession, professional_id: uuid.UUID) -> TrustSnapshot:
-    """Never None: an unknown professional is Tier C with score 0."""
+    """Never None: an unknown professional is tier C with score 0."""
     return (await get_trust_many(session, [professional_id]))[professional_id]
 
 
@@ -77,11 +77,20 @@ DEFAULT_DIMENSIONS = {"identity": "NONE", "credentials": "NONE", "jurisdiction":
 
 
 async def tiers_and_dimensions(session: AsyncSession, ids: list[uuid.UUID]) -> dict[uuid.UUID, tuple[str, dict[str, str]]]:
-    """Per professional: (tier, dimensions). A professional not yet assessed is Tier C with nothing verified."""
-    rows = dict((await session.execute(select(TrustProfile.professional_id, TrustProfile).where(
-        TrustProfile.professional_id.in_(ids)))).all()) if ids else {}
-    return {pid: (rows[pid].tier, {**DEFAULT_DIMENSIONS, **rows[pid].dimensions}) if pid in rows else ("C", dict(DEFAULT_DIMENSIONS))
-            for pid in ids}
+    """Per professional: (tier, dimensions). A professional not yet assessed is tier C with nothing verified. Display
+    reads only (staff console): served from the read cache, dropped on every trust change. Decisions (payouts, policy)
+    use get_trust, which always reads the database."""
+    from zoikorum.shared import cache
+
+    async def load(keys: list[str]) -> dict[str, list]:
+        wanted = [uuid.UUID(k) for k in keys]
+        rows = dict((await session.execute(select(TrustProfile.professional_id, TrustProfile).where(
+            TrustProfile.professional_id.in_(wanted)))).all())
+        return {str(pid): [rows[pid].tier, {**DEFAULT_DIMENSIONS, **rows[pid].dimensions}] if pid in rows
+                else ["C", dict(DEFAULT_DIMENSIONS)] for pid in wanted}
+
+    found = await cache.cached_many(cache.TRUST_TIERS, [str(i) for i in ids], load)
+    return {pid: (found[str(pid)][0], dict(found[str(pid)][1])) for pid in ids}
 
 
 async def professionals_in_tiers(session: AsyncSession, tiers: tuple[str, ...]) -> list[uuid.UUID]:
@@ -90,10 +99,41 @@ async def professionals_in_tiers(session: AsyncSession, tiers: tuple[str, ...]) 
 
 
 async def admin_counts(session: AsyncSession) -> dict[str, int]:
-    """Professionals in Tier A and Tier B, and those whose identity is verified."""
+    """Professionals in tier A (Green) and tier B (Amber), and those whose identity is verified."""
     from sqlalchemy import func
 
     tiers = dict((await session.execute(select(TrustProfile.tier, func.count()).group_by(TrustProfile.tier))).all())
     verified = await session.scalar(select(func.count()).select_from(TrustProfile).where(
         TrustProfile.dimensions["identity"].astext == "VERIFIED")) or 0
     return {"A": tiers.get("A", 0), "B": tiers.get("B", 0), "identityVerified": verified}
+
+
+async def tier_trend(session: AsyncSession, since, until, points: int = 60) -> list[dict]:
+    """Professionals per tier at the end of each interval of the period, rebuilt from the tier history (board brief:
+    trust-tier trend). Only professionals with a tier record so far are counted; a professional is in the tier they
+    moved from until their first recorded move."""
+    from datetime import timedelta
+
+    from zoikorum.domains.trust.models import TierHistory
+
+    rows = (await session.execute(select(TierHistory.professional_id, TierHistory.from_tier, TierHistory.to_tier, TierHistory.created_at)
+                                  .where(TierHistory.created_at < until).order_by(TierHistory.created_at, TierHistory.id))).all()
+    if not rows:
+        return []
+    start = max(since, rows[0][3].replace(hour=0, minute=0, second=0, microsecond=0))
+    step = timedelta(days=max(1, -(-(until - start).days // points)))
+    state: dict = {}
+    out, i, edge = [], 0, start + step
+    while True:
+        edge = min(edge, until)
+        while i < len(rows) and rows[i][3] < edge:
+            pid, _, to_tier, _ = rows[i]
+            state[pid] = to_tier
+            i += 1
+        counts = {"A": 0, "B": 0, "C": 0}
+        for tier in state.values():
+            counts[tier] = counts.get(tier, 0) + 1
+        out.append({"date": edge.isoformat(), **counts})
+        if edge >= until:
+            return out
+        edge += step

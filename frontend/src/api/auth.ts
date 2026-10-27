@@ -90,7 +90,7 @@ export const authApi = {
     api<void>('/v1/auth/password/reset', { method: 'POST', body: { token, newPassword }, auth: false }),
   enrollMfa: () => api<{ secret: string; otpauthUri: string }>('/v1/auth/mfa/enroll', { method: 'POST' }),
   /** Turns two-step verification on; returns one-time recovery codes, shown only this once. */
-  verifyMfa: (totpCode: string) => api<{ recoveryCodes: string[] }>('/v1/auth/mfa/verify', { method: 'POST', body: { totpCode } }),
+  verifyMfa: (totpCode: string) => api<{ recoveryCodes: string[]; tokens: TokenPair | null }>('/v1/auth/mfa/verify', { method: 'POST', body: { totpCode } }),
   newRecoveryCodes: () => api<{ recoveryCodes: string[] }>('/v1/auth/mfa/recovery-codes', { method: 'POST' }),
   resetMfa: (id: string, reason: string) => api<User>(`/v1/admin/identities/${id}/mfa-reset`, { method: 'POST', body: { reason } }),
   stepUp: (totpCode: string) => api<TokenPair>('/v1/auth/step-up', { method: 'POST', body: { totpCode } }),

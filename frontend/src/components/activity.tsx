@@ -1,5 +1,6 @@
 import type { AuditRecord } from '../api/audit'
 import { ORG_ROLE_INFO, type OrgRole } from '../api/orgs'
+import { lightName } from '../lib/trustLight'
 
 /* Audit-ledger records in plain language, for "Recent activity" panels. */
 
@@ -40,7 +41,7 @@ export function describe(r: AuditRecord): string | null {
     case 'verification.case.failed': return `Not verified: ${d.label}`
     case 'verification.case.needs_info': return `More information requested: ${d.label}`
     case 'verification.case.revoked': return `Verification revoked: ${d.label}`
-    case 'trust.profile.tier_changed': return `Trust Tier changed ${d.fromTier} → ${d.toTier}`
+    case 'trust.profile.tier_changed': return `Trust light changed ${lightName(String(d.fromTier))} → ${lightName(String(d.toTier))}`
     case 'marketplace.listing.bookmarked': return 'A professional was saved'
     default: {
       const text = key.split('.').slice(-2).map((p) => p.replace(/_/g, ' ')).join(': ')

@@ -37,7 +37,11 @@ async def create_profile(body: ProfileIn, actor: CurrentActor, session: DbSessio
 
 @router.get("/profiles/{profile_id}")
 async def profile(profile_id: uuid.UUID, actor: CurrentActor, session: DbSession):
-    return await service.profile_out(session, await service.get_profile(session, actor, profile_id))
+    from zoikorum.shared import cache
+    p = await service.get_profile(session, actor, profile_id)  # access is checked on every read, cached or not
+    # Keyed by the profile's version too: any change to the profile is a new key, even before the event drops the rest.
+    return await cache.cached(cache.POLICY_PROFILES, f"{p.id}:{p.version}:{p.updated_at.isoformat() if p.updated_at else ''}",
+                              lambda: service.profile_out(session, p))
 
 
 @router.put("/profiles/{profile_id}/draft")
@@ -149,3 +153,54 @@ async def policy_dashboard(orgId: uuid.UUID, actor: CurrentActor, session: DbSes
 
     await service.require_member(session, actor, orgId)
     return await insights.dashboard(session, orgId, max(1, min(days, 365)))
+
+
+@router.get("/dashboard/profiles")
+async def policy_dashboard_by_profile(orgId: uuid.UUID, actor: CurrentActor, session: DbSession, days: int = 30) -> dict:
+    """Per policy profile: evaluations, engagements and spend exposure per currency, exceptions, approvals and the
+    approval step that holds things up."""
+    from zoikorum.domains.policy import insights
+
+    await service.require_member(session, actor, orgId)
+    return await insights.by_profile(session, orgId, max(1, min(days, 365)))
+
+
+@router.get("/dashboard/profiles.csv")
+async def policy_dashboard_by_profile_csv(orgId: uuid.UUID, actor: CurrentActor, session: DbSession, days: int = 30):
+    """The per-profile breakdown as CSV (amounts in minor units, one entry per currency, never converted)."""
+    import csv
+    import io
+
+    from fastapi import Response
+
+    from zoikorum.domains.policy import insights
+
+    await service.require_member(session, actor, orgId)
+    days = max(1, min(days, 365))
+    rows = insights.csv_rows(await insights.by_profile(session, orgId, days))
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=insights.CSV_FIELDS)
+    writer.writeheader()
+    writer.writerows(rows)
+    record_audit(session, "policy.dashboard.exported", object_type="Organization", object_id=orgId, tenant_id=orgId,
+                 details={"format": "csv", "rows": len(rows), "days": days})
+    return Response(buf.getvalue().encode(), media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="zoikorum-policy-profiles-{days}d.csv"'})
+
+
+@router.get("/setup")
+async def setup_status(orgId: uuid.UUID, actor: CurrentActor, session: DbSession) -> dict:
+    """Procurement setup wizard progress, and ``needsPolicySetup`` (no policy profile yet: prompt "Define your policy")."""
+    return await service.setup_status(session, actor, orgId)
+
+
+@router.get("/engagement-indicators")
+async def engagement_indicators(orgId: uuid.UUID, actor: CurrentActor, session: DbSession,
+                                contractIds: list[uuid.UUID] = Query([], max_length=100)) -> dict:
+    """Live policy indicators for the organisation's engagements: risk level (with reasons), whether an exception is open
+    or in force, and the progress of the current approval chain. Contracts of other organisations are left out."""
+    from zoikorum.domains.policy import indicators
+
+    await service.require_member(session, actor, orgId)
+    found = await indicators.for_contracts(session, orgId, contractIds)
+    return {"items": [found[c] for c in dict.fromkeys(contractIds) if c in found]}

@@ -188,10 +188,10 @@ class Actor:
 def decode_access_token(token: str) -> Actor:
     s = get_settings()
     try:
-        claims = jwt.decode(
+        from zoikorum.shared import signing_keys
+
+        claims = signing_keys.decode(
             token,
-            s.jwt_secret,
-            algorithms=["HS256"],
             issuer=s.jwt_issuer,
             options={"require": ["exp", "sub", "iat"]},
             leeway=5,

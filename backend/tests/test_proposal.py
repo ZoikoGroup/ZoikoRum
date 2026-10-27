@@ -277,7 +277,7 @@ async def test_a_professional_blocked_by_tier_is_told_what_to_verify(client, mak
     assert (await client.post(f"{P}/{p['id']}/submit", headers=c_user.idem())).status_code == 403
     await drain()
     notes = [n for n in (await client.get("/v1/notifications", headers=c_user.h)).json()["items"] if n["title"] == "Verify to work with this buyer"]
-    assert len(notes) == 1 and "Trust Tier B" in notes[0]["body"] and "Verification" in notes[0]["body"]
+    assert len(notes) == 1 and "Amber (identity verified) trust light" in notes[0]["body"] and "Verification" in notes[0]["body"]
     assert not [n for n in (await client.get("/v1/notifications", headers=buyer.h)).json()["items"] if n["title"] == "Verify to work with this buyer"]
 
 

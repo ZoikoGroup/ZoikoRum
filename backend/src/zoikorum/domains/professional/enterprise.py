@@ -1,6 +1,6 @@
 """Enterprise readiness (Professional profile: Enterprise Ready designation and Enterprise Signals).
 
-A professional applies once the automatic requirements are met (Tier A, two-step sign-in, insurance checked) and they
+A professional applies once the automatic requirements are met (Green trust light, two-step sign-in, insurance checked) and they
 attest to basic security practice. A compliance officer approves or declines; nothing is granted automatically. The
 designation shows only while the requirements still hold, so a lapsed check removes it without anyone acting.
 """
@@ -38,7 +38,7 @@ async def _requirements(session: AsyncSession, pro: Professional) -> list[dict]:
     trust = await trust_facade.get_trust(session, pro.id)
     insurance = trust.dimensions.get("insurance")
     return [
-        {"key": "tierA", "label": "Trust Tier A (identity, credentials, right to practise and screening verified)", "met": trust.tier == "A"},
+        {"key": "tierA", "label": "Green trust light (identity, credentials, right to practise and screening verified)", "met": trust.tier == "A"},
         {"key": "twoStep", "label": "Two-step sign-in on your account (authenticator app or passkey)",
          "met": await identity_facade.two_step_enabled(session, pro.identity_id)},
         {"key": "insurance", "label": "Professional indemnity insurance verified", "met": insurance in ("VERIFIED", "NOT_REQUIRED")},
@@ -133,7 +133,7 @@ async def signals(session: AsyncSession, pro: Professional) -> dict:
     requirements = await _requirements(session, pro)
     ready = pro.enterprise_status == "READY" and all(r["met"] for r in requirements)
     met = {r["key"] for r in requirements if r["met"]}
-    items = [label for key, label in (("tierA", "Fully verified (Tier A)"), ("twoStep", "Two-step sign-in"),
+    items = [label for key, label in (("tierA", "Fully verified (Green)"), ("twoStep", "Two-step sign-in"),
                                       ("insurance", "Indemnity insurance checked")) if key in met]
     if pro.regulated_data_attested_at:
         items.append("Handles regulated data (attested)")

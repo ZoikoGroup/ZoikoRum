@@ -14,7 +14,7 @@ async def test_apply_review_and_show_enterprise_ready(client, make_user, drain):
     assert status["status"] == "NONE" and not all(r["met"] for r in status["requirements"])
     attest = {"attestation": {i["key"]: True for i in status["attestationItems"]}}
     r = await client.post(f"{ME}/apply", headers=u.h, json=attest)
-    assert r.json()["code"] == "ENTERPRISE_REQUIREMENTS_NOT_MET" and "Tier A" in r.json()["detail"]
+    assert r.json()["code"] == "ENTERPRISE_REQUIREMENTS_NOT_MET" and "Green trust light" in r.json()["detail"]
 
     await verify(client, make_user, u, pro, "IDENTITY")
     await verify(client, make_user, u, pro, "JURISDICTION", jurisdiction="US")

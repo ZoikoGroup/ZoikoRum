@@ -21,6 +21,8 @@ dependencies = [
     "redis>=5,<7",  # shared rate limits across API processes (ZK_REDIS_URL)
     "prometheus-client>=0.20",  # GET /metrics (shared/metrics.py)
     "webauthn>=2.5,<3",  # passkeys (identity/passkeys.py)
+    "signxml>=5.2,<6",  # SAML 2.0 response signatures (identity/saml.py); pure Python on lxml + cryptography wheels
+    "lxml>=6.1",
 ]
 
 [project.optional-dependencies]

@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from zoikorum.domains.proposal import briefs, service
 from zoikorum.domains.proposal.schemas import (
     ProposalAttachmentsIn,
-    CancelIn, DeclineIn, ProposalIn, ProposalOut, RejectIn, RequestIn, RequestOut, RequestSummaryOut, RevisionIn,
+    CancelIn, DeclineIn, ProposalIn, ProposalOut, RejectIn, RequestIn, RequestOut, RequestSummaryOut, RevisionIn, ScopeDecisionIn,
 )
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
@@ -163,6 +163,12 @@ async def withdraw(proposal_id: uuid.UUID, actor: CurrentActor, session: DbSessi
 @router.post(f"{P}/{{proposal_id}}/request-revision", response_model=ProposalOut)
 async def request_revision(proposal_id: uuid.UUID, body: RevisionIn, actor: CurrentActor, session: DbSession):
     return await service.request_revision(session, actor, proposal_id, body)
+
+
+@router.post(f"{P}/{{proposal_id}}/scope-changes/{{change_id}}/decide", response_model=ProposalOut)
+async def decide_scope_change(proposal_id: uuid.UUID, change_id: str, body: ScopeDecisionIn, actor: CurrentActor, session: DbSession):
+    """Buyer: accept or reject one of the professional's suggested scope changes (accepted ones join the agreed scope)."""
+    return await service.decide_scope_change(session, actor, proposal_id, change_id, body)
 
 
 @router.post(f"{P}/{{proposal_id}}/reject", response_model=ProposalOut)

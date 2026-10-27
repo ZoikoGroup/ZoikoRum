@@ -1,7 +1,7 @@
 from __future__ import annotations
 import uuid
-from datetime import datetime
-from sqlalchemy import Boolean, DateTime, Integer, String, UniqueConstraint
+from datetime import date, datetime
+from sqlalchemy import Boolean, Date, DateTime, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from zoikorum.shared.db import Base, UUIDPk, Timestamps, Versioned
@@ -31,6 +31,54 @@ class EnforcementCase(Base, UUIDPk, Timestamps, Versioned):
     appeal: Mapped[dict | None] = mapped_column(JSONB)
     # Level 2 mandatory remediation: [{task, done, doneAt, note, confirmedBy, confirmedAt}] (Governance playbook s.6)
     remediation: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
+    # How the person (and anyone relying on them) is affected by the case, recorded at assessment (Ethics: user impact)
+    user_impact: Mapped[str | None] = mapped_column(String(2000))
+    # Level 3+ post-review before the case is concluded: {rootCause, uxImpact, policyUpdates, by, at}
+    post_review: Mapped[dict | None] = mapped_column(JSONB)
+    concluded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class EnforcementReferral(Base, UUIDPk, Timestamps):
+    """Level 4: a referral to law enforcement or a regulator. Legal records it with its sign-off; only Legal reads it."""
+    __tablename__ = "enforcement_referrals"
+    __table_args__ = {"schema": "admin"}
+    case_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    agency: Mapped[str] = mapped_column(String(200), nullable=False)
+    agency_reference: Mapped[str] = mapped_column(String(200), nullable=False)
+    referred_on: Mapped[date] = mapped_column(Date, nullable=False)
+    legal_signoff_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    legal_signoff_note: Mapped[str] = mapped_column(String(2000), nullable=False)
+
+
+class ConflictDeclaration(Base, UUIDPk, Timestamps):
+    """Staff ethics register: a declared conflict of interest with a person, professional or organisation
+    (kind DECLARATION), or a recusal from one case (kind RECUSAL). Either one blocks that staff member from
+    being assigned to, or deciding, matching work. Withdrawn, never deleted."""
+    __tablename__ = "conflict_declarations"
+    __table_args__ = {"schema": "admin"}
+    identity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)  # DECLARATION | RECUSAL
+    subject_type: Mapped[str | None] = mapped_column(String(30))  # IDENTITY | PROFESSIONAL | ORGANIZATION
+    subject_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), index=True)
+    case_kind: Mapped[str | None] = mapped_column(String(30))  # DISPUTE | ENFORCEMENT_CASE (recusals)
+    case_id: Mapped[str | None] = mapped_column(String(80))
+    reason: Mapped[str] = mapped_column(String(2000), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="ACTIVE")  # ACTIVE | WITHDRAWN
+    withdrawn_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class FraudAlert(Base, UUIDPk, Timestamps):
+    """A third-party fraud alert received on the signed intake endpoint. Advisory: it opens a Level 0 review case."""
+    __tablename__ = "fraud_alerts"
+    __table_args__ = (UniqueConstraint("provider", "external_id", name="uq_fraud_alert_provider_external"), {"schema": "admin"})
+    provider: Mapped[str] = mapped_column(String(60), nullable=False)
+    external_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    subject_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    subject_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    reason_code: Mapped[str] = mapped_column(String(100), nullable=False)
+    score: Mapped[int | None] = mapped_column(Integer)
+    details: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    case_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
 
 
 class UserReport(Base, UUIDPk, Timestamps):
@@ -82,6 +130,8 @@ class Incident(Base, UUIDPk, Timestamps):
     mitigated_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))  # who set MITIGATING
     recovery_note: Mapped[str | None] = mapped_column(String(2000))  # recovery verification (mitigation is not recovery)
     recovery_verified_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    ux_impact: Mapped[str | None] = mapped_column(String(4000))  # post-incident review: how people were affected
+    policy_updates: Mapped[str | None] = mapped_column(String(4000))  # post-incident review: policy changes proposed
 
 
 class FeatureSwitch(Base, UUIDPk, Timestamps):

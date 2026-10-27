@@ -11,6 +11,7 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from zoikorum.domains.identity import privacy_requests, service
+from zoikorum.domains.identity import retention_sources  # noqa: F401 - data exports for the evidence retention job
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import EventEnvelope, subscribe
 from zoikorum.shared.relay import on_timer

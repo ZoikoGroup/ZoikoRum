@@ -1,7 +1,8 @@
 """FastAPI application factory for the Zoikorum modular monolith.
 
 Each domain in ``zoikorum.domains.DOMAINS`` contributes:
-  * ``api.router``  - mounted on the app (and ``api.admin_router``, staff routes outside the domain's URL prefix)
+  * ``api.router``  - mounted on the app (and ``api.admin_router``, staff routes outside the domain's URL prefix, and
+    ``api.root_router``, public routes outside /v1 such as /.well-known/jwks.json)
   * ``handlers``    - imported so its @subscribe / @on_timer registrations run
   * ``models``      - imported so its tables join the shared metadata
 """
@@ -20,7 +21,9 @@ from fastapi.responses import JSONResponse, Response
 from zoikorum.config import get_settings
 from zoikorum.domains import DOMAINS
 from zoikorum.shared import http, observability
+from zoikorum.shared import cache  # noqa: F401 - registers read-cache invalidation on change events
 from zoikorum.shared import housekeeping  # noqa: F401 - registers the daily clean-up timer
+from zoikorum.shared import retention  # noqa: F401 - registers the daily evidence retention job
 from zoikorum.shared import platform_models  # noqa: F401 - registers platform tables
 from zoikorum.shared.db import dispose_engine
 
@@ -108,7 +111,7 @@ def create_app() -> FastAPI:
     app.state.api_key_budget = api_key_budget
     for d in load_domains():
         api = _maybe_import(f"zoikorum.domains.{d}.api")
-        for name in ("router", "admin_router"):
+        for name in ("router", "admin_router", "root_router"):
             if api is not None and hasattr(api, name):
                 app.include_router(getattr(api, name))
 

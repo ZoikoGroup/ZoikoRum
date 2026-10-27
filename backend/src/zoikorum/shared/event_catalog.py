@@ -75,6 +75,8 @@ class E:
     FIRM_MEMBER_ROLES_CHANGED = _t("firm", "firm", "member_roles_changed")
     FIRM_INVITATION_REVOKED = _t("firm", "firm", "invitation_revoked")
     FIRM_PROFILE_UPDATED = _t("firm", "firm", "profile_updated")
+    FIRM_OFFERING_PUBLISHED = _t("firm", "offering", "published")  # regulated offerings: a verified licensed member delivers
+    FIRM_OFFERING_UNPUBLISHED = _t("firm", "offering", "unpublished")
 
     # ---- Professional --------------------------------------------------------
     PROFESSIONAL_REGISTERED = _t("professional", "professional", "registered")
@@ -178,6 +180,7 @@ class E:
     ESCROW_REFUNDED = _t("escrow", "account", "refunded")
     ESCROW_RESOLUTION_EXECUTED = _t("escrow", "account", "resolution_executed")
     ESCROW_FUNDING_REVERSED = _t("escrow", "account", "funding_reversed")  # a chargeback took held money back
+    ESCROW_FUNDING_EXPIRED = _t("escrow", "account", "funding_expired")  # never funded within the window: allocations EXPIRED
 
     # ---- Payments (financial) ------------------------------------------------
     PAYMENT_INTENT_CREATED = _t("payments", "payment_intent", "created")
@@ -283,6 +286,8 @@ class E:
     DISPUTE_CLARIFICATION_REQUESTED = _t("dispute", "case", "clarification_requested")
     DISPUTE_REFERRED_TO_ARBITRATION = _t("dispute", "case", "referred_to_arbitration")
     DISPUTE_PATTERN_FLAGGED = _t("dispute", "case", "pattern_flagged")
+    DISPUTE_PROVISIONAL_DECISION_ISSUED = _t("dispute", "case", "provisional_decision_issued")  # binding recommendation / enterprise admin decision
+    DISPUTE_REPORT_READY = _t("dispute", "report", "ready")  # scheduled dispute report for an organisation admin
     DISPUTE_RETENTION_DUE = _t("dispute", "case", "retention_due")  # Legal reviews the closed record  # advisory: repeated disputes decided against the opener
     SUPPORT_REQUEST_OPENED = _t("support", "request", "opened")
     SUPPORT_REQUEST_ANSWERED = _t("support", "request", "answered")  # staff replied: the person is told

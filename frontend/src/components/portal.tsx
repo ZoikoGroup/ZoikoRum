@@ -78,11 +78,6 @@ export function VerifyChips({ dimensions, compact }: { dimensions: Record<string
   )
 }
 
-export function TierBadge({ tier }: { tier: string }) {
-  const label = { A: 'Fully Verified', B: 'Verified Identity', C: 'Unverified' }[tier] ?? ''
-  return <span className={`badge ${tier === 'C' ? 'warn' : 'green'}`}>Tier {tier} · {label}</span>
-}
-
 /** Side panel shown on list pages (management designs: right-hand detail / help column). */
 export function SidePanel({ title, children, action }: { title: string; children: ReactNode; action?: ReactNode }) {
   return (

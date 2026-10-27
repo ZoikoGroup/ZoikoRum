@@ -23,7 +23,7 @@ export interface SupportRequest {
 }
 
 export const SUPPORT_TOPICS: [SupportTopic, string][] = [
-  ['ACCOUNT', 'My account or signing in'], ['VERIFICATION', 'Verification and Trust Tier'], ['REQUESTS_PROPOSALS', 'Requests and proposals'],
+  ['ACCOUNT', 'My account or signing in'], ['VERIFICATION', 'Verification and trust lights'], ['REQUESTS_PROPOSALS', 'Requests and proposals'],
   ['ENGAGEMENT', 'An engagement or contract'], ['PAYMENTS', 'Payments, payouts or refunds'], ['DISPUTE', 'A dispute'],
   ['TECHNICAL', 'Something is not working'], ['OTHER', 'Something else'],
 ]

@@ -88,7 +88,7 @@ function AccountForm({ me, onSaved }: { me: ProfileDetails; onSaved: (p: Profile
         <Field label="Full name" id="s-name"><input id="s-name" className="input" value={f.displayName} onChange={(e) => setF({ ...f, displayName: e.target.value })} required /></Field>
         <Field label="Email" id="s-email" hint="Contact support to change the email you sign in with.">
           <input id="s-email" className="input" value={me.email} disabled /></Field>
-        <Field label="Phone (optional)" id="s-phone" hint="International format, e.g. +44 20 7946 0958. Stored encrypted.">
+        <Field label="Phone (optional)" id="s-phone" hint="Start with + and the country code, e.g. +44 20 7946 0958 or +91 98765 43210. Spaces are fine. Stored encrypted.">
           <input id="s-phone" className="input" type="tel" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} placeholder="+44…" /></Field>
         <button className="btn btn-primary">Save changes</button>
       </form>
@@ -172,6 +172,7 @@ function NotificationsTab({ onSaved }: { onSaved: () => void }) {
 const REQUEST_STATUS: Record<string, { label: string; tone: string }> = {
   RECEIVED: { label: 'Preparing', tone: '' }, COMPLETED: { label: 'Done', tone: 'green' },
   SCHEDULED: { label: 'Scheduled', tone: 'warn' }, BLOCKED: { label: 'On hold', tone: 'warn' }, CANCELLED: { label: 'Cancelled', tone: '' },
+  FAILED: { label: 'Could not prepare: please try again later', tone: 'red' },
 }
 const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' }) : '—')
 
@@ -184,6 +185,13 @@ function PrivacyTab({ onNotice }: { onNotice: (m: string) => void }) {
   useEffect(() => { load() }, [load])
   const pending = (t: string, statuses: string[]) => requests?.find((r) => r.requestType === t && statuses.includes(r.status))
   const copy = pending('ACCESS', ['RECEIVED'])
+  // The copy is built in the background: check again until it is ready (or could not be prepared), for up to 5 minutes.
+  useEffect(() => {
+    if (!copy) return
+    const started = Date.now()
+    const timer = window.setInterval(() => { if (Date.now() - started < 300_000) load(); else window.clearInterval(timer) }, 4000)
+    return () => window.clearInterval(timer)
+  }, [copy?.id, load])
   const deletion = pending('ERASURE', ['SCHEDULED'])
   const kept = requests?.find((r) => r.requestType === 'ERASURE')?.retained
 

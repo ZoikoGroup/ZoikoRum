@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Response
 
 from zoikorum.domains.escrow import service
 from zoikorum.domains.escrow.schemas import (
-    AdminEscrowRowOut, AdminEscrowSummaryOut, AutoFundingIn, BulkFundIn, EscrowOut, FundIn, LedgerLineOut,
+    AdminEscrowRowOut, AdminEscrowSummaryOut, AutoFundingIn, BulkFundIn, EscrowOut, FundIn, LedgerLineOut, ProtectionIn,
 )
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
@@ -29,6 +29,14 @@ async def bulk_fund(body: BulkFundIn, actor: CurrentActor, session: DbSession, i
     return await idem.run(session, actor, lambda: service.bulk_fund(session, actor, body))
 
 
+@router.get("/releases/{release_id}/receipt")
+async def release_receipt(release_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> Response:
+    """The receipt for one release as a PDF (both parties; gross, platform fee, net). Audited."""
+    data, name = await service.release_receipt_pdf(session, actor, release_id)
+    return Response(data, media_type="application/pdf", headers={
+        "Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
+
+
 @router.get("/by-contract/{contract_id}", response_model=EscrowOut)
 async def by_contract(contract_id: uuid.UUID, actor: CurrentActor, session: DbSession):
     return await service.get_by_contract(session, actor, contract_id)
@@ -39,9 +47,17 @@ async def get_account(account_id: uuid.UUID, actor: CurrentActor, session: DbSes
     return await service.get_account(session, actor, account_id)
 
 
-@router.get("/{account_id}/ledger", response_model=list[LedgerLineOut])
-async def ledger(account_id: uuid.UUID, actor: CurrentActor, session: DbSession):
-    return await service.ledger(session, actor, account_id)
+@router.get("/{account_id}/ledger", response_model=Page[LedgerLineOut])
+async def ledger(account_id: uuid.UUID, actor: CurrentActor, session: DbSession, cursor: str | None = None,
+                 limit: int | None = Query(default=None, ge=1, le=100)):
+    """Ledger lines, oldest first, one page at a time (follow nextCursor; 100 per page by default)."""
+    return await service.ledger(session, actor, account_id, cursor, limit)
+
+
+@router.put("/{account_id}/protection", response_model=EscrowOut)
+async def set_protection(account_id: uuid.UUID, body: ProtectionIn, actor: CurrentActor, session: DbSession):
+    """Buyer, after both signatures and before the first funding: release model, release approver, dispute-hold confirmation."""
+    return await service.set_protection(session, actor, account_id, body)
 
 
 @router.post("/{account_id}/fund", response_model=EscrowOut)
@@ -71,3 +87,19 @@ async def admin_escrow(actor: CurrentActor, session: DbSession, status_: str | N
 @admin_router.get("/summary", response_model=AdminEscrowSummaryOut)
 async def admin_escrow_summary(actor: CurrentActor, session: DbSession):
     return await service.admin_escrow_summary(session, actor)
+
+
+# ---- Ledger snapshots (escrow/snapshots.py): Financial Operations, read-only ---------------------------------------------
+
+@admin_router.get("/{account_id}/ledger-snapshot")
+async def admin_ledger_snapshot(account_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> dict:
+    """The latest ledger snapshot of this escrow with its integrity checks, and the balances now (snapshot plus later lines)."""
+    from zoikorum.domains.escrow import snapshots
+    return await snapshots.latest_for(session, actor, account_id)
+
+
+@admin_router.post("/{account_id}/ledger-snapshot")
+async def admin_take_ledger_snapshot(account_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> dict:
+    """Take a snapshot now and check the ledger (never changes the ledger or the account)."""
+    from zoikorum.domains.escrow import snapshots
+    return await snapshots.check_now(session, actor, account_id)

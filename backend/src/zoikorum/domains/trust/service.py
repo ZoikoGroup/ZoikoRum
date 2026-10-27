@@ -95,6 +95,8 @@ async def recompute(session: AsyncSession, prof: TrustProfile, source_event_type
     prof.recomputed_at = clock.now()
     if changed:
         _evt(session, E.TRUST_SCORE_RECOMPUTED, prof, score=score, tier=result.tier, dimensions=result.dimensions)
+        from zoikorum.shared import cache
+        await cache.invalidate(cache.TRUST_TIERS)  # this process at once; others on the event
     if result.tier != old_tier:
         reasons = list(result.explanation)
         session.add(TierHistory(professional_id=prof.professional_id, from_tier=old_tier, to_tier=result.tier,

@@ -429,3 +429,8 @@ from zoikorum.domains.admin.search import router as admin_router  # noqa: E402,F
 from zoikorum.domains.admin.assignments import router as _assignments_router  # noqa: E402
 
 router.include_router(_assignments_router)
+
+# Conflicts of interest, Level 4 referrals, fraud-alert intake and Level 3+ post-reviews (admin/governance.py).
+from zoikorum.domains.admin.governance import router as _governance_router  # noqa: E402
+
+router.include_router(_governance_router)

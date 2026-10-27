@@ -136,3 +136,37 @@ async def staff_search_disputes(session: AsyncSession, term: str, exact_id: uuid
     rows = (await session.scalars(select(DisputeCase).where(or_(*match)).order_by(DisputeCase.created_at.desc(), DisputeCase.id).limit(limit))).all()
     return [{"id": d.id, "reference": d.reference, "contractReference": d.contract_reference, "summary": d.summary,
              "category": d.category, "status": d.status} for d in rows]
+
+
+async def quality_kpis(session: AsyncSession, since, until) -> dict:
+    """Dispute process quality for cases opened in the period (Dispute Resolution KPIs): escalation to mediation,
+    evidence completed by both parties, appeals against decisions, and organisations or professionals with repeat disputes."""
+    from sqlalchemy import func
+
+    from zoikorum.domains.dispute.models import DisputeAppeal
+
+    cases = (await session.execute(select(DisputeCase.organization_id, DisputeCase.professional_id, DisputeCase.escalated_at,
+                                          DisputeCase.evidence_complete).where(DisputeCase.created_at >= since, DisputeCase.created_at < until))).all()
+    opened = len(cases)
+    escalated = sum(1 for c in cases if c.escalated_at is not None)
+    complete = sum(1 for c in cases if {"BUYER", "PROFESSIONAL"} <= set(c.evidence_complete or []))
+    decided = await session.scalar(select(func.count()).select_from(DisputeCase).where(
+        DisputeCase.decided_at >= since, DisputeCase.decided_at < until)) or 0
+    appeals = await session.scalar(select(func.count()).select_from(DisputeAppeal).where(
+        DisputeAppeal.created_at >= since, DisputeAppeal.created_at < until)) or 0
+
+    async def repeats(column, ids) -> int:
+        if not ids:
+            return 0
+        return await session.scalar(select(func.count()).select_from(
+            select(column).where(column.in_(ids), DisputeCase.created_at < until).group_by(column)
+            .having(func.count() >= 2).subquery())) or 0
+    orgs, pros = {c.organization_id for c in cases}, {c.professional_id for c in cases}
+
+    def pct(part, whole):
+        return round(100 * part / whole, 1) if whole else None
+    return {"opened": opened, "escalated": escalated, "escalationRatePct": pct(escalated, opened),
+            "evidenceCompleteBothParties": complete, "evidenceCompletenessPct": pct(complete, opened),
+            "appealsFiled": appeals, "appealRatePct": pct(appeals, decided),
+            "organisationsWithDisputes": len(orgs), "repeatOrganisations": await repeats(DisputeCase.organization_id, orgs),
+            "professionalsWithDisputes": len(pros), "repeatProfessionals": await repeats(DisputeCase.professional_id, pros)}

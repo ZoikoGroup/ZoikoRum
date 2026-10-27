@@ -4,6 +4,8 @@ import {
   type BusinessUnit, type CostCenter, type Invitation, type Organization, type OrgMember, type OrgRole,
 } from '../api/orgs'
 import { ErrorAlert, Field, useDialog, useStepUp, Loading } from '../components/ui'
+import { ApiError } from '../api/client'
+import { policyApi, type PolicySetup } from '../api/policy'
 
 const CURRENCIES = ['USD', 'GBP', 'EUR', 'INR', 'CAD', 'AUD', 'SGD', 'AED']
 
@@ -330,6 +332,7 @@ export function EnterpriseStructurePage() {
         <p className="muted" style={{ margin: 0 }}>{org.name} · Business units and cost centers used for spend control.</p></div></div>
       <ErrorAlert error={error} />
       {modal}
+      <DefinePolicyPrompt org={org} onChanged={load} />
       <section className="card panel">
         <h2>Business units</h2>
         {units.length === 0 ? <p className="muted">No business units yet.</p> : (
@@ -388,6 +391,199 @@ export function EnterpriseStructurePage() {
         )}
       </section>
     </>
+  )
+}
+
+const WIZARD_TEMPLATES: [string, string, string][] = [
+  ['ENTERPRISE_STANDARD', 'Enterprise standard', 'Verified identity; an approver signs off each payment release.'],
+  ['REGULATED', 'Regulated work', 'Green trust light only (fully verified), all checks complete; finance and a budget owner approve releases.'],
+  ['CROSS_BORDER', 'Cross-border', 'Right to practise and screening verified; Legal approves engagements abroad.'],
+  ['GROWTH_ADVISORY', 'Growth advisory', 'Verified identity; an approver only for engagements above 25,000.'],
+]
+const WIZARD_STEPS = ['Organisation basics', 'Policy template', 'Approvers', 'Budgets and cost centres', 'Review']
+const WIZARD_TIME_ZONES = ['UTC', 'Europe/London', 'Europe/Berlin', 'America/New_York', 'America/Chicago', 'America/Los_Angeles',
+  'Asia/Kolkata', 'Asia/Singapore', 'Asia/Dubai', 'Australia/Sydney', 'Africa/Johannesburg']
+const APPROVER_ROLES: OrgRole[] = ['APPROVER', 'BUDGET_OWNER', 'LEGAL_REVIEWER', 'EXCEPTION_AUTHORITY']
+
+/** Procurement setup wizard for enterprise admins (first run): organisation basics, a policy from a template,
+    approvers, budgets and cost centres, then a review of what is in place. Each step saves on its own. */
+export function ProcurementSetupWizard({ org, onClose, onChanged }: { org: Organization; onClose?: () => void; onChanged?: () => void }) {
+  const [step, setStep] = useState(0)
+  const [error, setError] = useState<unknown>(null)
+  const [busy, setBusy] = useState(false)
+  const [setup, setSetup] = useState<PolicySetup | null>(null)
+  const [current, setCurrent] = useState(org)
+  const [basics, setBasics] = useState({ industry: org.industry ?? '', timeZone: org.timeZone ?? 'UTC' })
+  const [template, setTemplate] = useState('ENTERPRISE_STANDARD')
+  const [policyName, setPolicyName] = useState('Procurement policy')
+  const [invite, setInvite] = useState<{ email: string; roles: OrgRole[] }>({ email: '', roles: ['APPROVER'] })
+  const [invited, setInvited] = useState<string[]>([])
+  const [cc, setCc] = useState({ name: '', code: '', amount: '', currency: 'USD' })
+  const [notice, setNotice] = useState<string | null>(null)
+  const { run, modal } = useStepUp(setError)
+
+  const refresh = useCallback(async () => { setSetup(await policyApi.setup(org.id)) }, [org.id])
+  useEffect(() => { refresh().catch(setError) }, [refresh])
+
+  async function save(work: () => Promise<unknown>, message: string, next = true) {
+    setBusy(true)
+    setError(null)
+    setNotice(null)
+    try {
+      await work()
+      await refresh()
+      onChanged?.()
+      setNotice(message)
+      if (next) setStep((s) => Math.min(s + 1, WIZARD_STEPS.length - 1))
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'STEP_UP_REQUIRED') throw err
+      setError(err)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const roles = setup?.facts.roles ?? {}
+
+  function saveBasics(e: FormEvent) {
+    e.preventDefault()
+    save(async () => setCurrent(await orgApi.update(org.id, current.version, basics)), 'Organisation details saved.')
+  }
+  function createPolicy() {
+    run(() => save(async () => {
+      const created = await policyApi.create({ orgId: org.id, name: policyName.trim(), description: 'Created in procurement setup', template })
+      await policyApi.activate(created.id)
+    }, 'Policy created and active.'))
+  }
+  function sendInvite(e: FormEvent) {
+    e.preventDefault()
+    const email = invite.email.trim()
+    save(async () => {
+      await orgApi.invite(org.id, { email, roles: invite.roles })
+      setInvited((list) => [...list, email])
+      setInvite({ email: '', roles: ['APPROVER'] })
+    }, 'Invitation sent.', false)
+  }
+  function addCentre(e: FormEvent) {
+    e.preventDefault()
+    save(async () => {
+      await orgApi.createCostCenter(org.id, { name: cc.name.trim(), code: cc.code.trim(),
+        quarterlyBudget: cc.amount ? { amountMinor: toMinor(cc.amount), currency: cc.currency } : null })
+      setCc({ name: '', code: '', amount: '', currency: cc.currency })
+    }, 'Cost centre added.', false)
+  }
+
+  return (
+    <section className="card panel" aria-label="Procurement setup">
+      <div className="panel-head"><h2>Set up procurement</h2>
+        {onClose && <button type="button" className="btn btn-ghost btn-sm" onClick={onClose}>Close</button>}</div>
+      <ol className="badges" style={{ listStyle: 'none', padding: 0, margin: '0 0 12px' }}>
+        {WIZARD_STEPS.map((label, i) => (
+          <li key={label}><button type="button" className={`badge ${i === step ? 'green' : ''}`} aria-current={i === step ? 'step' : undefined}
+            onClick={() => setStep(i)}>{i + 1}. {label}</button></li>))}
+      </ol>
+      <ErrorAlert error={error} />
+      {modal}
+      {notice && <div className="alert alert-success" role="status">{notice}</div>}
+
+      {step === 0 && (
+        <form onSubmit={saveBasics}>
+          <p className="muted small">{current.name} · {current.country}. Approvers see these details when they decide.</p>
+          <div className="row">
+            <Field label="Industry" id="wiz-industry"><input id="wiz-industry" className="input" value={basics.industry} maxLength={80}
+              onChange={(e) => setBasics({ ...basics, industry: e.target.value })} placeholder="e.g. Financial Services" /></Field>
+            <Field label="Time zone" id="wiz-tz"><select id="wiz-tz" className="input" value={basics.timeZone}
+              onChange={(e) => setBasics({ ...basics, timeZone: e.target.value })}>{WIZARD_TIME_ZONES.map((t) => <option key={t}>{t}</option>)}</select></Field>
+          </div>
+          <button className="btn btn-primary" disabled={busy || !basics.industry.trim()}>Save and continue</button>
+        </form>
+      )}
+
+      {step === 1 && (setup?.hasActivePolicy ? (
+        <div>
+          <p className="small ok-text">A policy is active. You can refine it on the Policies page.</p>
+          <button type="button" className="btn btn-secondary" onClick={() => setStep(2)}>Continue</button>
+        </div>
+      ) : (
+        <div>
+          <p className="muted small">Start from a template; you can adjust every rule later. It applies to new engagements only.</p>
+          <div className="stat-row four" role="radiogroup" aria-label="Policy template">{WIZARD_TEMPLATES.map(([key, name, text]) => (
+            <label key={key} className="card panel" style={{ cursor: 'pointer', borderColor: template === key ? 'var(--zk-green)' : undefined }}>
+              <input type="radio" name="wiz-template" value={key} checked={template === key} onChange={() => setTemplate(key)} /> <strong>{name}</strong>
+              <span className="small muted" style={{ display: 'block' }}>{text}</span></label>))}</div>
+          <Field label="Policy name" id="wiz-policy-name"><input id="wiz-policy-name" className="input" value={policyName} maxLength={80}
+            onChange={(e) => setPolicyName(e.target.value)} /></Field>
+          <button type="button" className="btn btn-primary" disabled={busy || policyName.trim().length < 2} onClick={createPolicy}>Create and activate</button>
+          <p className="small muted">Activating asks for two-step confirmation.</p>
+        </div>
+      ))}
+
+      {step === 2 && (
+        <form onSubmit={sendInvite}>
+          <p className="muted small">Approvers sign off engagements and releases; an Exception Authority decides policy exceptions. Nobody approves their own request.</p>
+          <ul className="checklist small">
+            {APPROVER_ROLES.map((r) => (
+              <li key={r}><span>{ORG_ROLE_INFO[r].label}</span><span className={`badge ${roles[r] ? 'green' : 'warn'}`}>{roles[r] ?? 0} people</span></li>))}
+          </ul>
+          <Field label="Invite by email" id="wiz-invite"><input id="wiz-invite" className="input" type="email" value={invite.email}
+            onChange={(e) => setInvite({ ...invite, email: e.target.value })} placeholder="name@company.com" /></Field>
+          <p id="wiz-roles" className="small" style={{ margin: '8px 0 4px' }}>Roles</p>
+          <RolePicker value={invite.roles} onChange={(r) => setInvite({ ...invite, roles: r })} labelledBy="wiz-roles" />
+          {invited.length > 0 && <p className="small muted">Invited: {invited.join(', ')}</p>}
+          <div className="row" style={{ marginTop: 8 }}>
+            <button className="btn btn-secondary" disabled={busy || !invite.email.includes('@') || invite.roles.length === 0}>Send invitation</button>
+            <button type="button" className="btn btn-primary" onClick={() => setStep(3)}>Continue</button>
+          </div>
+        </form>
+      )}
+
+      {step === 3 && (
+        <form onSubmit={addCentre}>
+          <p className="muted small">Requests are charged to a cost centre; a quarterly budget sends anything above it to an Exception Authority.
+            {setup ? ` ${setup.facts.costCenters ?? 0} cost centres so far.` : ''}</p>
+          <div className="row">
+            <Field label="Name" id="wiz-cc-name"><input id="wiz-cc-name" className="input" value={cc.name} onChange={(e) => setCc({ ...cc, name: e.target.value })} /></Field>
+            <Field label="Code" id="wiz-cc-code" hint="Letters, numbers, - . _"><input id="wiz-cc-code" className="input" value={cc.code} onChange={(e) => setCc({ ...cc, code: e.target.value })} /></Field>
+          </div>
+          <div className="field" style={{ maxWidth: 360 }}>
+            <label htmlFor="wiz-cc-budget">Quarterly budget (optional)</label>
+            <SpendLimitInput id="wiz-cc-budget" amount={cc.amount} currency={cc.currency} onAmount={(v) => setCc({ ...cc, amount: v })} onCurrency={(v) => setCc({ ...cc, currency: v })} />
+          </div>
+          <div className="row" style={{ marginTop: 8 }}>
+            <button className="btn btn-secondary" disabled={busy || !cc.name.trim() || !cc.code.trim()}>Add cost centre</button>
+            <button type="button" className="btn btn-primary" onClick={() => setStep(4)}>Continue</button>
+          </div>
+        </form>
+      )}
+
+      {step === 4 && (
+        <div>
+          {!setup ? <Loading /> : (
+            <ul className="checklist">{setup.steps.map((s) => (
+              <li key={s.key}><span>{s.label}</span><span className={`badge ${s.done ? 'green' : 'warn'}`}>{s.done ? 'done' : 'to do'}</span></li>))}</ul>)}
+          <p className="small muted">{setup?.complete ? 'Procurement is set up. New engagements follow your policy.'
+            : 'You can come back to any step. Until a policy is active, the platform baseline applies: escrow before work and verified professionals.'}</p>
+          {onClose && <button type="button" className="btn btn-primary" onClick={onClose}>Finish</button>}
+        </div>
+      )}
+    </section>
+  )
+}
+
+/** "Define your policy": shown to enterprise admins while the organisation has no policy profile (needsPolicySetup). */
+export function DefinePolicyPrompt({ org, onChanged }: { org: Organization; onChanged?: () => void }) {
+  const [setup, setSetup] = useState<PolicySetup | null>(null)
+  const [open, setOpen] = useState(false)
+  const load = useCallback(() => { policyApi.setup(org.id).then(setSetup).catch(() => setSetup(null)) }, [org.id])
+  useEffect(() => { load() }, [load])
+  if (!setup?.needsPolicySetup || !org.myRoles.includes('ORG_ADMIN')) return null
+  if (open) return <ProcurementSetupWizard org={org} onClose={() => { setOpen(false); load() }} onChanged={onChanged} />
+  return (
+    <div className="alert alert-info" role="status" style={{ marginBottom: 16 }}>
+      <strong>Define your policy.</strong> {setup.firstEngagement ? 'Before your first engagement, decide' : 'Decide'} who can be
+      engaged, who approves, and your budgets. Until then the platform baseline applies.{' '}
+      <button type="button" className="btn btn-primary btn-sm" onClick={() => setOpen(true)}>Set up procurement</button>
+    </div>
   )
 }
 

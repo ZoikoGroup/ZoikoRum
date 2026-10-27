@@ -109,7 +109,7 @@ async def test_chargeback_on_held_money_unfunds_the_milestone(client, make_user,
     assert (await client.post(f"/v1/milestones/{m1}/submit", headers=pro_user.h, json={"note": "x"})).json()["code"] == "NOT_FUNDED"
     charges = (await client.get("/v1/payments/charges", headers=buyer.h, params={"organizationId": c["organizationId"]})).json()["items"]
     assert charges[0]["status"] == "CHARGED_BACK" and charges[0]["chargedBackAt"]
-    ledger = (await client.get(f"{E}/{esc['id']}/ledger", headers=buyer.h)).json()
+    ledger = (await client.get(f"{E}/{esc['id']}/ledger", headers=buyer.h)).json()["items"]
     assert {(x["entryType"], x["ledgerAccount"]) for x in ledger if x["entryType"] == "CHARGEBACK"} == {
         ("CHARGEBACK", "ESCROW_HELD"), ("CHARGEBACK", "CHARGEBACK_REVERSAL")}
     await balanced(sf)
@@ -132,7 +132,7 @@ async def test_chargeback_after_release_is_booked_as_a_platform_loss(client, mak
     await drain()
     esc = await escrow_of(client, buyer, c)
     assert esc["allocations"][0]["state"] == "RELEASED"  # the professional keeps what was released
-    ledger = (await client.get(f"{E}/{esc['id']}/ledger", headers=buyer.h)).json()
+    ledger = (await client.get(f"{E}/{esc['id']}/ledger", headers=buyer.h)).json()["items"]
     loss = [x for x in ledger if x["ledgerAccount"] == "PLATFORM_CHARGEBACK_LOSS"]
     assert len(loss) == 1 and loss[0]["debit"]["amountMinor"] == 1_000_000
     await balanced(sf)

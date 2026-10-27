@@ -38,6 +38,23 @@ def _clean_deliverables(items: list[str]) -> list[str]:
     return out
 
 
+def _clean_measures(items: list[str]) -> list[str]:
+    out = []
+    for m in items:
+        m = m.strip()
+        if not 2 <= len(m) <= 300:
+            raise ValueError("each success measure is 2-300 characters")
+        if m not in out:
+            out.append(m)
+    return out
+
+
+class SuccessCriteria(BaseModel):
+    """What the buyer said success looks like (Request wireframe), carried into proposals and the contract scope."""
+    definition: str | None = None  # "What does done look like"
+    measures: list[str] = []  # "How will it be measured"
+
+
 class RequestIn(BaseModel):
     organizationId: uuid.UUID
     costCenterId: uuid.UUID | None = None
@@ -62,6 +79,8 @@ class RequestIn(BaseModel):
     dependencies: list[Literal["BUYER_DATA", "THIRD_PARTY_ACCESS", "INTERNAL_APPROVALS"]] = Field(default_factory=list, max_length=3)
     pricingPreferences: list[Literal["HOURLY", "FIXED", "RETAINER", "OPEN"]] = Field(default_factory=list, max_length=4)
     paymentCadence: Literal["MILESTONE", "MONTHLY", "COMPLETION"] | None = None
+    successDefinition: str | None = Field(default=None, max_length=1000)  # "What does done look like" (optional)
+    successMeasures: list[str] = Field(default_factory=list, max_length=10)  # "How will it be measured" (optional)
     acknowledged: bool = False  # "Zoikorum facilitates the engagement but does not provide professional services"
     draft: bool = False
 
@@ -69,6 +88,8 @@ class RequestIn(BaseModel):
     def _rules(self):
         self.deliverables = _clean_deliverables(self.deliverables)
         self.customDeliverables = [d for d in _clean_deliverables(self.customDeliverables) if d in self.deliverables]
+        self.successMeasures = _clean_measures(self.successMeasures)
+        self.successDefinition = (self.successDefinition or "").strip() or None
         if len(set(self.professionalIds)) != len(self.professionalIds):
             raise ValueError("each professional can be chosen once")
         if len(self.professionalIds) > (most := get_settings().max_professionals_per_request):
@@ -146,6 +167,7 @@ class RequestOut(BaseModel):
     dependencies: list[str]
     pricingPreferences: list[str]
     paymentCadence: str | None
+    successCriteria: SuccessCriteria = SuccessCriteria()  # hidden with the details until the NDA is accepted
     jurisdictionConflict: bool  # the professional does not serve the buyer's country (block before agreement)
     viewerRole: Literal["BUYER", "PROFESSIONAL", "OPERATOR"]
     createdAt: datetime
@@ -180,12 +202,62 @@ class RevisionChange(BaseModel):
     requested: str = Field(min_length=2, max_length=500)
 
 
+ScopeChangeKind = Literal["ADD_DELIVERABLE", "REMOVE_DELIVERABLE", "MODIFY_DELIVERABLE", "TIMELINE", "BUDGET"]
+
+
+class ScopeChangeIn(BaseModel):
+    """One suggested change to what the buyer asked for. target: the requested deliverable it removes or modifies."""
+    kind: ScopeChangeKind
+    target: str | None = Field(default=None, max_length=200)
+    proposed: str = Field(min_length=2, max_length=500)
+    reason: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def _target(self):
+        self.target = (self.target or "").strip() or None
+        self.proposed = self.proposed.strip()
+        self.reason = (self.reason or "").strip() or None
+        if self.kind in ("REMOVE_DELIVERABLE", "MODIFY_DELIVERABLE") and not self.target:
+            raise ValueError("say which requested deliverable the change removes or modifies")
+        if len(self.proposed) < 2:
+            raise ValueError("describe the proposed change")
+        return self
+
+
+class ScopeChangeOut(BaseModel):
+    id: str
+    kind: ScopeChangeKind
+    target: str | None
+    proposed: str
+    reason: str | None
+    status: Literal["PENDING", "ACCEPTED", "REJECTED"]
+    decidedAt: datetime | None = None
+    note: str | None = None  # the buyer's note with the decision
+
+
+class ScopeDecisionIn(BaseModel):
+    accept: bool
+    note: str | None = Field(default=None, max_length=500)
+
+
+class ProposalReadinessOut(BaseModel):
+    """Governance signals on a proposal card (buyer side)."""
+    contractReady: bool  # complete terms, no undecided scope change, no jurisdiction conflict: a contract can be generated
+    contractReadyNote: str
+    paymentProtection: bool  # every payment is a milestone funded into escrow before work starts
+    paymentProtectionNote: str
+    auditRecord: bool  # the submitted terms are recorded and fingerprinted
+    auditRecordNote: str
+    disputeResolution: bool = True  # Zoikorum's dispute process applies to every engagement
+
+
 class ProposalIn(BaseModel):
     """Drafts may be incomplete; submitting checks completeness (at least one deliverable and a price)."""
 
     summary: str = Field(default="", max_length=500)
     scopeAlignment: Literal["CONFIRMED", "ADJUSTED"] = "CONFIRMED"
-    scopeNotes: str | None = Field(default=None, max_length=1000)
+    scopeNotes: str | None = Field(default=None, max_length=1000)  # optional context for the structured changes
+    scopeChanges: list[ScopeChangeIn] = Field(default_factory=list, max_length=15)
     deliverables: list[Deliverable] = Field(default_factory=list, max_length=20)
     milestones: list[Milestone] = Field(default_factory=list, max_length=20)
     pricingModel: Literal["HOURLY", "FIXED", "RETAINER"] = "FIXED"
@@ -268,6 +340,9 @@ class ProposalOut(BaseModel):
     reasonNote: str | None
     termsHash: str | None
     deltas: list[Delta]
+    scopeChanges: list[ScopeChangeOut] = []
+    successCriteria: SuccessCriteria = SuccessCriteria()  # from the request
+    readiness: ProposalReadinessOut | None = None
     attachments: list[StoredFileOut] = []  # proposalAttachments: portfolio items / supporting docs
     createdAt: datetime
     updatedAt: datetime

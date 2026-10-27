@@ -156,6 +156,13 @@ async def pause_offering(offering_id: uuid.UUID, actor: CurrentActor, session: D
     return await service.set_offering_status(session, actor, offering_id, "PAUSED")
 
 
+@router.delete("/me/offerings/{offering_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_offering(offering_id: uuid.UUID, actor: CurrentActor, session: DbSession) -> Response:
+    """Delete an offering (any state). It disappears from the profile and search; past requests keep their record."""
+    await service.delete_offering(session, actor, offering_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.get("/{professional_id}", response_model=PublicProfileOut)
 async def public_profile(professional_id: uuid.UUID, actor: OptionalActor, session: DbSession):
     """Public profile. Works without signing in."""

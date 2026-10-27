@@ -5,6 +5,10 @@
     python -m zoikorum.cli schema-doc          # regenerate docs/DATABASE_SCHEMA.md from the models
     python -m zoikorum.cli reconcile --day 2026-10-06   # payments reconciliation for one UTC day (default: yesterday)
     python -m zoikorum.cli check-config [--connect]   # is this environment's configuration complete? (no values printed)
+    python -m zoikorum.cli retention-report    # evidence due for removal under ZK_RETENTION_RULES (changes nothing)
+    python -m zoikorum.cli retention-purge --apply   # remove it now (never files under legal hold)
+    python -m zoikorum.cli escrow-snapshots    # ledger snapshot + integrity check of every escrow account
+    python -m zoikorum.cli new-jwt-key         # an RSA key for ZK_JWT_SIGNING=rs256 (ZK_JWT_PRIVATE_KEYS)
 
 The first Platform Admin can only be created here (never over HTTP). The password
 is read from a prompt or ZK_ADMIN_PASSWORD - never pass it as an argument.
@@ -115,6 +119,31 @@ async def _rotate_field_keys() -> None:
             print(f"{table}.{column}: {changed} re-encrypted, {len(rows) - changed} already on key {target}")
 
 
+async def _retention(apply: bool) -> None:
+    from zoikorum.shared import retention
+
+    load_domains()
+    ctx = context.ExecutionContext(correlation_id=context.new_correlation_id(), actor_id="cli", actor_type="operator")
+    with context.use_context(ctx):
+        async with session_factory()() as s, s.begin():
+            result = await retention.purge(s, dry_run=not apply)
+    await dispose_engine()
+    print(json.dumps(result, indent=2, default=str))
+
+
+async def _escrow_snapshots() -> None:
+    from zoikorum.domains.escrow import snapshots
+
+    load_domains()
+    ctx = context.ExecutionContext(correlation_id=context.new_correlation_id(), actor_id="cli", actor_type="operator")
+    with context.use_context(ctx):
+        result = await snapshots.take_all(session_factory())
+    await dispose_engine()
+    print(f"Escrow ledger snapshots: {result['OK']} OK, {result['MISMATCH']} MISMATCH")
+    if result["MISMATCH"]:
+        raise SystemExit(1)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="zoikorum")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -138,7 +167,22 @@ def main() -> None:
     dg.add_argument("--role", help="the app user (default ZK_DB_APP_ROLE)")
     cc = sub.add_parser("check-config", help="report missing or unreachable services for this environment")
     cc.add_argument("--connect", action="store_true", help="also try the database, Redis, S3 and the email server")
+    sub.add_parser("retention-report", help="evidence due for removal under ZK_RETENTION_RULES (dry run: changes nothing)")
+    rp = sub.add_parser("retention-purge", help="remove evidence whose retention ended (never under legal hold)")
+    rp.add_argument("--apply", action="store_true", help="really remove; without it this is the same as retention-report")
+    sub.add_parser("escrow-snapshots", help="take a ledger snapshot of every escrow account and check the ledger")
+    sub.add_parser("new-jwt-key", help="make an RSA signing key for ZK_JWT_SIGNING=rs256 (prints the private key: store it as a secret)")
     args = parser.parse_args()
+    if args.cmd in ("retention-report", "retention-purge"):
+        asyncio.run(_retention(args.cmd == "retention-purge" and args.apply))
+    if args.cmd == "escrow-snapshots":
+        asyncio.run(_escrow_snapshots())
+    if args.cmd == "new-jwt-key":
+        from zoikorum.shared.signing_keys import new_key_pem
+
+        kid, pem = new_key_pem()
+        print("Store as a secret. Add to ZK_JWT_PRIVATE_KEYS (keep existing keys), then set ZK_JWT_ACTIVE_KID to use it:")
+        print(json.dumps({kid: pem}))
     if args.cmd == "check-config":
         from zoikorum.config_check import run
 

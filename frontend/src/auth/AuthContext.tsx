@@ -60,6 +60,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const stepUp = useCallback(async (code: string) => {
     tokens.set(await authApi.stepUp(code))
+    window.dispatchEvent(new Event('zk:session-upgraded'))  // staff capabilities need the stronger session
   }, [])
 
   const refreshClaims = useCallback(async (ready?: (u: User) => boolean) => {

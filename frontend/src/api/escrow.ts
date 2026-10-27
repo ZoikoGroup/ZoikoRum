@@ -6,12 +6,26 @@ import type { Money } from './orgs'
    the professional minus the platform fee. Only provider tokens are used: no card or bank numbers are stored. */
 
 export type AllocationState = 'UNFUNDED' | 'FUNDING' | 'HELD' | 'ON_HOLD' | 'RELEASE_PENDING_APPROVAL' | 'RELEASED' | 'PARTIALLY_RELEASED' | 'REFUNDED'
+  | 'CANCELLED' | 'EXPIRED'
+export type ReleaseModel = 'MILESTONE' | 'RETAINER' | 'FIXED'
+export const RELEASE_MODELS: [ReleaseModel, string, string][] = [
+  ['MILESTONE', 'Milestone release', 'Fund each milestone before its work starts; each is released when you accept it.'],
+  ['FIXED', 'Fixed release', 'Fund the whole fee at once; it is still released milestone by milestone, on your acceptance.'],
+  ['RETAINER', 'Retainer release', 'Fund each cycle before it starts; each is released when you accept that cycle.'],
+]
+export interface Protection {
+  releaseModel: ReleaseModel | null; approverIdentityId: string | null; approverName: string | null; confirmedAt: string | null
+  explanation: string; disputeHold: string; firstFunding: string[]
+}
+export interface Screening { status: 'CLEAR' | 'PENDING' | 'FLAGGED' | 'NOT_SCREENED'; message: string | null }
 
 export interface Escrow {
   autoFundingEnabledAt?: string | null
+  protection?: Protection | null
+  buyerScreening?: Screening | null  // buyer side only: FLAGGED blocks funding, PENDING warns
   id: string
   contractId: string
-  status: 'UNFUNDED' | 'FUNDED' | 'PARTIALLY_RELEASED' | 'FULLY_RELEASED' | 'DISPUTED' | 'REFUNDED' | 'CLOSED'
+  status: 'UNFUNDED' | 'FUNDED' | 'PARTIALLY_RELEASED' | 'FULLY_RELEASED' | 'DISPUTED' | 'REFUNDED' | 'CLOSED' | 'EXPIRED'
   currency: string
   total: Money
   funded: Money
@@ -21,7 +35,8 @@ export interface Escrow {
   refunded: Money
   unfunded: Money
   feeBps: number
-  allocations: { milestoneId: string; sequence: number; title: string; amount: Money; state: AllocationState; released: Money; fee: Money; fundedAt: string | null; releasedAt: string | null; releaseReference?: string | null }[]
+  allocations: { milestoneId: string; sequence: number; title: string; amount: Money; state: AllocationState; released: Money; fee: Money; fundedAt: string | null; releasedAt: string | null; releaseReference?: string | null
+    releaseId?: string | null; releaseApprovalDueAt?: string | null }[]
   fundings: { id: string; amount: Money; milestoneIds: string[]; status: 'REQUESTED' | 'CAPTURED' | 'FAILED'; failureMessage: string | null; createdAt: string; capturedAt: string | null }[]
   viewerRole: 'BUYER' | 'PROFESSIONAL' | 'OPERATOR'
   canFund: boolean
@@ -34,6 +49,25 @@ export interface LedgerLine {
 
 export interface Payout { id: string; contractId: string; milestoneId: string | null; gross: Money; fee: Money; net: Money; status: 'QUEUED' | 'INITIATED' | 'SETTLED' | 'FAILED'; failureMessage: string | null
   expectedAt: string | null; delayReason: string | null; settledAt: string | null; createdAt: string }
+/** GET /v1/payments/payouts/{id}: one payout in full for the professional it was paid to. The client is the buyer
+    organisation only (name and country), never a person's contact details; the destination is masked. */
+export interface PayoutStatement {
+  id: string; reference: string; status: Payout['status']; statusLabel: 'Processing' | 'In transit' | 'Paid' | 'Failed'
+  createdAt: string; initiatedAt: string | null; expectedAt: string | null; settledAt: string | null
+  failureMessage: string | null; delayReason: string | null; transferReference: string | null
+  gross: Money; fee: Money; feeBps: number; net: Money
+  engagement: {
+    contractId: string; reference: string; title: string; milestoneId: string | null; milestoneTitle: string | null
+    milestoneSequence: number | null; specialization: string | null; engagementType: string; pricingModel: string | null
+    workStart: string | null; workEnd: string | null; acceptedAt: string | null; clientInvoiceNumber: string | null
+  }
+  client: { name: string; country: string | null }
+  steps: { key: 'FUNDED' | 'ACCEPTED' | 'INITIATED' | 'IN_TRANSIT' | 'COMPLETED'; label: string
+    state: 'DONE' | 'CURRENT' | 'UPCOMING' | 'FAILED'; at: string | null; note: string | null }[]
+  transactions: { kind: 'MILESTONE_INVOICE' | 'ESCROW_FUNDED' | 'ESCROW_RELEASE' | 'PAYOUT'; at: string; description: string
+    reference: string | null; amount: Money; status: string }[]
+  destination: { provider: string; label: string; last4: string; currency: string; country: string; accountType: string | null } | null
+}
 export interface Earnings {
   payoutAccount: { holderName: string; country: string; currency: string; label: string; status: string; createdAt: string } | null
   payouts: Payout[]
@@ -70,7 +104,13 @@ export interface PaymentsOverview {
 
 export const escrowApi = {
   byContract: (contractId: string) => api<Escrow>(`/v1/escrow/by-contract/${contractId}`),
-  ledger: (id: string) => api<LedgerLine[]>(`/v1/escrow/${id}/ledger`),
+  /** One page of ledger lines, oldest first; pass the previous page's nextCursor for the next one. */
+  ledger: (id: string, cursor?: string | null) =>
+    api<{ items: LedgerLine[]; nextCursor: string | null }>(`/v1/escrow/${id}/ledger`, { query: cursor ? { cursor } : {} }),
+  setProtection: (id: string, body: { releaseModel: ReleaseModel; approverIdentityId?: string | null; disputeHoldAcknowledged: boolean }) =>
+    api<Escrow>(`/v1/escrow/${id}/protection`, { method: 'PUT', body }),
+  /** The receipt for one release as a PDF (audited). */
+  releaseReceipt: (releaseId: string) => api<Blob>(`/v1/escrow/releases/${releaseId}/receipt`, { blob: true }),
   fund: (id: string, body: { milestoneIds?: string[]; all?: boolean; paymentMethodToken: string }) =>
     api<Escrow>(`/v1/escrow/${id}/fund`, { method: 'POST', body, headers: idem() }),
   autoFunding: (id: string, paymentMethodToken: string | null) =>
@@ -91,6 +131,7 @@ export const paymentsApi = {
   invoices: (organizationId: string) => allPages<Invoice>('/v1/payments/invoices', { organizationId }),
   /** The invoice as a PDF (members of the buyer organisation; audited). */
   invoicePdf: (id: string) => api<Blob>(`/v1/payments/invoices/${id}/pdf`, { blob: true }),
+  payoutStatement: (id: string) => api<PayoutStatement>(`/v1/payments/payouts/${id}`),
   payoutPdf: (id: string) => api<Blob>(`/v1/payments/payouts/${id}/pdf`, { blob: true }),
   charges: (organizationId: string) => allPages<Charge>('/v1/payments/charges', { organizationId }),
   refunds: (organizationId: string) => allPages<Refund>('/v1/payments/refunds', { organizationId }),
@@ -117,6 +158,7 @@ export const ALLOCATION_STATE: Record<AllocationState, { label: string; tone: ''
   UNFUNDED: { label: 'Not funded', tone: '' }, FUNDING: { label: 'Payment processing', tone: 'warn' }, HELD: { label: 'Held in escrow', tone: 'green' },
   ON_HOLD: { label: 'Frozen (dispute)', tone: 'warn' }, RELEASE_PENDING_APPROVAL: { label: 'Release awaiting approval', tone: 'warn' },
   RELEASED: { label: 'Released', tone: 'green' }, PARTIALLY_RELEASED: { label: 'Partly released', tone: 'warn' }, REFUNDED: { label: 'Refunded', tone: '' },
+  CANCELLED: { label: 'Cancelled', tone: '' }, EXPIRED: { label: 'Expired (never funded)', tone: '' },
 }
 export const PAYOUT_STATUS: Record<Payout['status'], { label: string; tone: '' | 'green' | 'warn' }> = {
   QUEUED: { label: 'Waiting for payout account', tone: 'warn' }, INITIATED: { label: 'Sending', tone: 'warn' },

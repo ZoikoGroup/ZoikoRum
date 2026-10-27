@@ -15,14 +15,14 @@ import {
 import { Icon } from '../../components/dashboard'
 import { ErrorAlert, Loading } from '../../components/ui'
 import { downloadFile } from '../../lib/exports'
-import { fillDaily, type Kpis, type MarketplaceHealth, type WorkerBacklog } from './Analytics'
+import { fillDaily, hoursText, loadFunnels, pctText, type Funnels, type Kpis, type MarketplaceHealth, type WorkerBacklog } from './Analytics'
 import { PriorityPill, STREAM_LABEL, useWorkItems, type Workstream } from './WorkQueue'
+import { lightColor, lightName } from '../../lib/trustLight'
 
 /* Command Center: the staff home. Platform counts, the period's activity, risk and money figures, the latest audit-ledger
    activity, the top of the person's work queue and system health. Every figure is live and role-scoped: cards whose
    source the person's roles cannot read are left out. */
 
-const TIER_COLORS: Record<string, string> = { A: '#12b76a', B: '#2f80ed', C: '#9b8afb' }
 const PERIODS: [string, string][] = [['7', 'Last 7 days'], ['30', 'Last 30 days'], ['90', 'Last 90 days']]
 const DAY = 86_400_000
 
@@ -65,6 +65,7 @@ export default function CommandCenter() {
   const [kpis, setKpis] = useState<Kpis | null>(null)
   const [prev, setPrev] = useState<Kpis | null>(null)
   const [health, setHealth] = useState<MarketplaceHealth | null>(null)
+  const [funnels, setFunnels] = useState<Funnels | null>(null)
   const [activity, setActivity] = useState<AuditRecord[] | null>(null)
   const [ops, setOps] = useState<OpsItem[] | null>(null)
   const [worker, setWorker] = useState<WorkerBacklog | null>(null)
@@ -86,6 +87,7 @@ export default function CommandCenter() {
     setSpan({ since: new Date(to.getTime() - (n - 1) * DAY).toISOString().slice(0, 10), until: to.toISOString().slice(0, 10) })
     adminApi.overview().then(setOverview).catch(setError)
     api<MarketplaceHealth>('/v1/analytics/marketplace-health', { query: range }).then(setHealth).catch(setError)
+    loadFunnels(range).then(setFunnels)
     if (canKpis) {
       api<Kpis>('/v1/admin/kpis', { query: range }).then(setKpis).catch(setError)
       api<Kpis>('/v1/admin/kpis', { query: { from: before.toISOString(), to: from.toISOString() } }).then(setPrev).catch(() => setPrev(null))
@@ -137,7 +139,7 @@ export default function CommandCenter() {
 
   function exportJson() {
     downloadFile(`zoikorum-command-center-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify({
-      exportedAt: new Date().toISOString(), period: periodLabel, overview, kpis, previousPeriodKpis: prev, marketplaceHealth: health,
+      exportedAt: new Date().toISOString(), period: periodLabel, overview, kpis, previousPeriodKpis: prev, marketplaceHealth: health, funnels,
       recentActivity: rows.map(({ r, text }) => ({ at: r.occurredAt, event: text, objectType: r.objectType, objectId: r.objectId })),
       workQueue: items.map(({ facts: _facts, ...i }) => i), paymentExceptions: openOps, worker, apiUp, checkedAt,
     }, null, 2), 'application/json')
@@ -163,7 +165,7 @@ export default function CommandCenter() {
           sub={o ? `${o.accounts.buyers} buyers · ${o.accounts.enterprise} enterprise · ${o.accounts.firmAdmins} firm admins` : ' '}
           to={has('accounts.read') ? '/platform-admin/accounts-organizations' : undefined} />
         <AdminKpi icon="user" tone="violet" label="Verified professionals" value={k ? k.board.verifiedSupply.toLocaleString() : health ? ((health.trustTierDistribution.A ?? 0) + (health.trustTierDistribution.B ?? 0)).toLocaleString() : '—'}
-          sub={o ? `Tier A + B · ${o.professionalProfiles.published} of ${o.professionalProfiles.total} profiles published` : 'Tier A + B'} />
+          sub={o ? `Green + Amber · ${o.professionalProfiles.published} of ${o.professionalProfiles.total} profiles published` : 'Green + Amber'} />
         {k ? <>
           <AdminKpi icon="building" tone="blue" label="Active buyer organisations" value={k.board.activeBuyerOrganisations.toLocaleString()}
             sub={delta(k.board.activeBuyerOrganisations, prev?.board.activeBuyerOrganisations, n) ?? periodLabel} />
@@ -190,9 +192,9 @@ export default function CommandCenter() {
             {health.searches ? ` (${Math.round((health.zeroResultSearches / health.searches) * 100)}% with no results)` : ''} · proposal → contract{' '}
             {health.proposalContractConversionBps == null ? '—' : `${(health.proposalContractConversionBps / 100).toFixed(1)}%`} · disputes opened / resolved {health.disputesOpened} / {health.disputesResolved}</p>}
         </Panel>
-        <Panel title="Professionals by trust tier" meta="Current snapshot">
-          {!health ? <Loading lines={3} /> : tiered ? <Donut segments={tiers.map(([t, x]) => ({ label: `Tier ${t}`, value: x, color: TIER_COLORS[t] }))}
-            center={tiered.toLocaleString()} caption="with a tier" /> : <p className="muted small">No tiers assigned yet.</p>}
+        <Panel title="Professionals by trust light" meta="Current snapshot">
+          {!health ? <Loading lines={3} /> : tiered ? <Donut segments={tiers.map(([t, x]) => ({ label: lightName(t), value: x, color: lightColor(t) }))}
+            center={tiered.toLocaleString()} caption="with a light" /> : <p className="muted small">No trust lights assigned yet.</p>}
         </Panel>
       </PanelRow>
 
@@ -223,6 +225,24 @@ export default function CommandCenter() {
             </Panel>
           )}
         </PanelRow>
+      )}
+
+      {(funnels || k) && (
+        <Panel title="Funnels & flow" meta={periodLabel} action={<Link className="small" to="/platform-admin/analytics-insights">Details</Link>}>
+          <div className="adm-mini-stats">
+            {funnels && <MiniStat icon="user" tone="violet" label="Onboarding completion" value={pctText(funnels.onboarding.completionRatePct)}
+              sub={`Median sign-up → published ${hoursText(funnels.onboarding.medianHoursSignupToPublish)}`} />}
+            {funnels && <MiniStat icon="proposal" tone="amber" label="Requests abandoned" value={pctText(funnels.request.abandonmentRatePct)}
+              sub={`${funnels.request.visitsAbandoned} of ${funnels.request.visitsStarted} visits`} />}
+            {k?.payments.acceptance && <MiniStat icon="clock" tone="blue" label="Submit → acceptance" value={hoursText(k.payments.acceptance.medianHoursSubmitToAccept)}
+              sub={`Median · ${k.payments.acceptance.milestonesAccepted} accepted`} />}
+            {k && k.payments.refundsPer100Payments !== undefined && <MiniStat icon="wallet" tone="amber" label="Refunds per 100 payments" value={k.payments.refundsPer100Payments ?? '—'}
+              sub={`Disputes per 100 payments ${k.payments.disputesPer100Payments ?? '—'}`} />}
+            {k?.payments.approvals && <MiniStat icon="alert" tone={k.payments.approvals.pendingNow ? 'amber' : 'green'} label="Approval bottleneck"
+              value={k.payments.approvals.bottleneck ? hoursText(k.payments.approvals.bottleneck.medianHoursWait) : '—'}
+              sub={k.payments.approvals.bottleneck ? `Step ${k.payments.approvals.bottleneck.step} · ${label(k.payments.approvals.bottleneck.role)} · ${k.payments.approvals.pendingNow} pending` : 'No approvals in period'} />}
+          </div>
+        </Panel>
       )}
 
       <PanelRow>

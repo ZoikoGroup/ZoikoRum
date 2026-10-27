@@ -6,8 +6,10 @@ import { formatMoney } from '../api/orgs'
 import { CURRENCIES, LABEL, proApi, toMinor, type Offering } from '../api/professional'
 import {
   attachmentUrl, budgetText, proposalFileUrl, CADENCES, DECLINE_REASONS, DEPENDENCIES, DURATION_LABEL, PRICING_PREFS, PROPOSAL_STATUS, proposalApi, requestStatus,
-  type DeclineReason, type Deliverable, type Proposal, type ProposalInput, type ProposalRequest,
+  SCOPE_CHANGE_KINDS, SCOPE_CHANGE_LABEL, type DeclineReason, type Deliverable, type Proposal, type ProposalInput, type ProposalRequest,
+  type ScopeChangeInput, type ScopeChangeKind,
 } from '../api/proposals'
+import { AttachmentList, SuccessCriteriaFacts } from './customer/CustomerRequests'
 import { Avatar, Icon } from '../components/dashboard'
 import { EmptyTable, PortalHeader, SidePanel, StatCard, Tabs } from '../components/portal'
 import { FileLink } from '../components/FileLink'
@@ -117,7 +119,7 @@ export function ProfessionalRequestsPage() {
 }
 
 const EMPTY = (currency: string): ProposalInput => ({
-  summary: '', scopeAlignment: 'CONFIRMED', scopeNotes: null,
+  summary: '', scopeAlignment: 'CONFIRMED', scopeNotes: null, scopeChanges: [],
   deliverables: [{ key: 'd1', title: '', description: '', acceptanceCriteria: '' }],
   milestones: [{ title: '', description: '', amountMinor: 0, dueDate: null, deliverableKeys: ['d1'] }],
   pricingModel: 'FIXED', currency, startDate: null, endDate: null, assumptions: [], exclusions: [], validUntil: plusDays(14),
@@ -136,7 +138,9 @@ const fromOffering = (o: Offering, current: ProposalInput): ProposalInput => {
 }
 
 const fromProposal = (p: Proposal): ProposalInput => ({
-  summary: p.summary, scopeAlignment: p.scopeAlignment, scopeNotes: p.scopeNotes, deliverables: p.deliverables, milestones: p.milestones,
+  summary: p.summary, scopeAlignment: p.scopeAlignment, scopeNotes: p.scopeNotes,
+  scopeChanges: (p.scopeChanges ?? []).map(({ kind, target, proposed, reason }) => ({ kind, target, proposed, reason })),
+  deliverables: p.deliverables, milestones: p.milestones,
   pricingModel: p.pricingModel, currency: p.currency || p.total.currency || 'USD', startDate: p.startDate, endDate: p.endDate, assumptions: p.assumptions,
   exclusions: p.exclusions, validUntil: p.validUntil,
 })
@@ -200,8 +204,13 @@ export function ProfessionalRequestDetail() {
       if (m.amountMinor <= 0) problems.push(`Milestone ${i + 1}: add an amount`)
       if (m.deliverableKeys.length === 0) problems.push(`Milestone ${i + 1}: tick the deliverable(s) it delivers`)
     })
+    const scopeChanges = form.scopeAlignment === 'ADJUSTED' ? (form.scopeChanges ?? []).filter((c) => c.proposed.trim() || c.target) : []
+    scopeChanges.forEach((c, i) => {
+      if (c.proposed.trim().length < 2) problems.push(`Scope change ${i + 1}: describe the change you propose`)
+      if ((c.kind === 'REMOVE_DELIVERABLE' || c.kind === 'MODIFY_DELIVERABLE') && !c.target) problems.push(`Scope change ${i + 1}: choose the requested deliverable it affects`)
+    })
     if (problems.length) throw new Error(`Please fix: ${problems.join(' · ')}`)
-    return { ...form, deliverables, milestones }
+    return { ...form, deliverables, milestones, scopeChanges: scopeChanges.map((c) => ({ ...c, proposed: c.proposed.trim(), reason: c.reason?.trim() || null })) }
   }
   const total = form.milestones.reduce((s, _, i) => s + (amounts[i] ? toMinor(amounts[i]) : 0), 0)
 
@@ -232,6 +241,10 @@ export function ProfessionalRequestDetail() {
   const nextKey = () => `d${Math.max(0, ...form.deliverables.map((d) => Number(d.key.slice(1)) || 0)) + 1}`
   const setDeliverable = (i: number, patch: Partial<Deliverable>) => set('deliverables', form.deliverables.map((d, j) => (j === i ? { ...d, ...patch } : d)))
   const lastRevision = proposal?.revisionRequests[proposal.revisionRequests.length - 1]
+  const changes = form.scopeChanges ?? []
+  const setChange = (i: number, patch: Partial<ScopeChangeInput>) => set('scopeChanges', changes.map((c, j) => (j === i ? { ...c, ...patch } : c)))
+  /** The buyer's decision on a suggestion already sent (unchanged suggestions keep it). */
+  const decided = (c: ScopeChangeInput) => proposal?.scopeChanges?.find((x) => x.kind === c.kind && x.target === (c.target || null) && x.proposed === c.proposed.trim())
 
   return (
     <>
@@ -278,8 +291,36 @@ export function ProfessionalRequestDetail() {
                   <label className={`choice ${form.scopeAlignment === 'CONFIRMED' ? 'on' : ''}`}><input type="radio" checked={form.scopeAlignment === 'CONFIRMED'} onChange={() => set('scopeAlignment', 'CONFIRMED')} /><strong>Confirm the scope as requested</strong></label>
                   <label className={`choice ${form.scopeAlignment === 'ADJUSTED' ? 'on' : ''}`}><input type="radio" checked={form.scopeAlignment === 'ADJUSTED'} onChange={() => set('scopeAlignment', 'ADJUSTED')} /><strong>Propose changes</strong></label>
                 </div>
-                {form.scopeAlignment === 'ADJUSTED' && <textarea className="input" rows={2} maxLength={1000} aria-label="Scope changes" placeholder="What you would change, and why"
-                  value={form.scopeNotes ?? ''} onChange={(e) => set('scopeNotes', e.target.value)} style={{ marginTop: 8 }} />}</div>
+                {form.scopeAlignment === 'ADJUSTED' && <div className="revise-box" style={{ marginTop: 8 }}>
+                  <p className="muted small" style={{ marginTop: 0 }}>Suggest each change on its own line. The buyer accepts or rejects each one; accepted
+                    changes become part of the agreed scope and the contract.</p>
+                  {changes.map((c, i) => { const d = decided(c); return (
+                    <div key={i} className="builder-row">
+                      <span className="n">{i + 1}</span>
+                      <div className="builder-fields">
+                        <div className="row">
+                          <select className="input" aria-label="Kind of change" value={c.kind} onChange={(e) => setChange(i, { kind: e.target.value as ScopeChangeKind,
+                            target: ['REMOVE_DELIVERABLE', 'MODIFY_DELIVERABLE'].includes(e.target.value) ? c.target : null })}>
+                            {SCOPE_CHANGE_KINDS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+                          {(c.kind === 'REMOVE_DELIVERABLE' || c.kind === 'MODIFY_DELIVERABLE') &&
+                            <select className="input" aria-label="Requested deliverable" value={c.target ?? ''} onChange={(e) => setChange(i, { target: e.target.value || null })}>
+                              <option value="">Which requested deliverable?</option>{req.deliverables.map((x) => <option key={x} value={x}>{x}</option>)}</select>}
+                          {d && <span className={`badge ${d.status === 'ACCEPTED' ? 'green' : d.status === 'PENDING' ? 'warn' : ''}`}>
+                            {d.status === 'ACCEPTED' ? 'Accepted by the buyer' : d.status === 'PENDING' ? 'Waiting for the buyer' : 'Rejected by the buyer'}</span>}
+                        </div>
+                        <input className="input" aria-label="Proposed change" maxLength={500} placeholder={c.kind === 'TIMELINE' ? 'e.g. Start two weeks later, on 1 March'
+                          : c.kind === 'BUDGET' ? 'e.g. USD 18,000 instead of up to USD 15,000' : 'What you propose instead'}
+                          value={c.proposed} onChange={(e) => setChange(i, { proposed: e.target.value })} />
+                        <input className="input" aria-label="Reason (optional)" maxLength={500} placeholder="Why (optional)" value={c.reason ?? ''}
+                          onChange={(e) => setChange(i, { reason: e.target.value || null })} />
+                      </div>
+                      <button className="icon-btn" aria-label="Remove scope change" onClick={() => set('scopeChanges', changes.filter((_, j) => j !== i))}>×</button>
+                    </div>) })}
+                  {changes.length < 15 && <button className="btn btn-ghost btn-sm" onClick={() => set('scopeChanges', [...changes,
+                    { kind: 'ADD_DELIVERABLE', target: null, proposed: '', reason: null }])}><Icon name="plus" /> Suggest a change</button>}
+                  <textarea className="input" rows={2} maxLength={1000} aria-label="Context for the buyer (optional)" placeholder="Optional context for the buyer"
+                    value={form.scopeNotes ?? ''} onChange={(e) => set('scopeNotes', e.target.value || null)} style={{ marginTop: 8 }} />
+                </div>}</div>
 
               <h3>Deliverables</h3>
               {form.deliverables.map((d, i) => (
@@ -362,6 +403,8 @@ export function ProfessionalRequestDetail() {
               <ul className="assurance compact governance-note">
                 <li><Icon name="contract" /><span>The contract will be generated from the accepted proposal.</span></li>
                 <li><Icon name="lock" /><span>The buyer funds each milestone into escrow; you are paid when they accept the work.</span></li>
+                <li><Icon name="shield" /><span>Dispute resolution available: if you disagree about the work or a payment, Zoikorum's dispute
+                  process decides, and the money stays frozen in escrow meanwhile.</span></li>
               </ul>
               <div className="wizard-nav">
                 <div style={{ flex: 1 }} />
@@ -418,12 +461,13 @@ export function ProfessionalRequestDetail() {
                 {req.customDeliverables?.includes(d) && <span className="badge warn" style={{ marginLeft: 6 }} title="Written by the buyer, not from a service template">Buyer's own wording: confirm what is meant</span>}</li>)}</ul></>}
             {!req.detailsHidden && req.dependencies.length > 0 && <p className="muted small" style={{ marginTop: 8 }}>
               Depends on: {req.dependencies.map((d) => DEPENDENCIES.find(([v]) => v === d)?.[1]).join(', ')}</p>}
+            {!req.detailsHidden && <SuccessCriteriaFacts criteria={req.successCriteria} />}
             {!req.detailsHidden && req.details && <p className="small" style={{ whiteSpace: 'pre-wrap', marginTop: 12 }}>{req.details}</p>}
-            {req.attachments.length > 0 && <ul className="pro-list">{req.attachments.map((a) => <li key={a.sha256}><Icon name="request" /><span className="small"><FileLink file={a} url={attachmentUrl(req.id, a.sha256)} /></span><span /></li>)}</ul>}
+            {req.attachments.length > 0 && <AttachmentList files={req.attachments} url={(a) => attachmentUrl(req.id, a.sha256)} />}
           </SidePanel>
           <SidePanel title="Good proposals">
             <ul className="assurance compact">{['Map every deliverable to a milestone', 'Write acceptance criteria the buyer can check',
-              'Say what is excluded, to avoid scope creep', 'You need Trust Tier B or higher to submit'].map((t) => <li key={t}><Icon name="check" /><span>{t}</span></li>)}</ul>
+              'Say what is excluded, to avoid scope creep', 'You need an Amber or Green trust light to submit'].map((t) => <li key={t}><Icon name="check" /><span>{t}</span></li>)}</ul>
           </SidePanel>
         </aside>
       </div>
@@ -437,6 +481,10 @@ function SentProposal({ p, busy, onWithdraw }: { p: Proposal; busy: boolean; onW
     <section className="card panel">
       <div className="panel-head"><h2>Your proposal</h2><span className={`badge ${st.tone}`}>{st.label}</span></div>
       <p>{p.summary}</p>
+      {(p.scopeChanges ?? []).length > 0 && <ul className="checklist">{p.scopeChanges!.map((c) => <li key={c.id}>
+        <span><strong>{SCOPE_CHANGE_LABEL[c.kind]}{c.target ? ` · ${c.target}` : ''}:</strong> {c.proposed}{c.note && <span className="muted small"> · buyer: {c.note}</span>}</span>
+        <span className={`badge ${c.status === 'ACCEPTED' ? 'green' : c.status === 'PENDING' ? 'warn' : ''}`}>
+          {c.status === 'ACCEPTED' ? 'Accepted' : c.status === 'PENDING' ? 'Waiting for the buyer' : 'Rejected'}</span></li>)}</ul>}
       <table className="data"><thead><tr><th>Milestone</th><th>Due</th><th>Amount</th></tr></thead>
         <tbody>{p.milestones.map((m, i) => <tr key={i}><td>{m.title}</td><td className="small">{fmtDate(m.dueDate)}</td>
           <td>{formatMoney({ amountMinor: m.amountMinor, currency: p.currency })}</td></tr>)}</tbody></table>

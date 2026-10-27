@@ -9,13 +9,16 @@ import { DescribeNeed } from '../../components/DescribeNeed'
 import { EducationCards } from '../../components/Explainers'
 import { QuickView } from '../../components/QuickView'
 import { Avatar, Icon } from '../../components/dashboard'
-import { PortalHeader, TierBadge, VerifyChips } from '../../components/portal'
+import { PortalHeader, VerifyChips } from '../../components/portal'
+import { TrustLight } from '../../components/TrustLight'
 import { ErrorAlert } from '../../components/ui'
 import { COUNTRIES } from '../Join'
 import { countryName } from '../ProfessionalPages'
 import { useSavedIds } from '../SavedPage'
 import { savedApi } from '../../api/saved'
 import { SearchBox } from '../../components/SearchBox'
+import { ProcurementFilters } from '../BrowseProfessionals'
+import { lightColor, lightName } from '../../lib/trustLight'
 
 const INDUSTRIES = ['Professional Services', 'Financial Services', 'Technology', 'Healthcare', 'Manufacturing', 'Retail & Consumer',
   'Energy & Utilities', 'Public Sector', 'Education', 'Real Estate', 'Other']
@@ -38,7 +41,7 @@ const readView = (): 'list' | 'grid' => { try { return localStorage.getItem(VIEW
 function unmet(r: SearchResult, params: URLSearchParams): string[] {
   const list = (k: string) => (params.get(k) ?? '').split(',').filter(Boolean)
   const out: string[] = []
-  if (list('tier').length && !list('tier').includes(r.tier)) out.push(`Tier ${r.tier}`)
+  if (list('tier').length && !list('tier').includes(r.tier)) out.push(`${lightName(r.tier)} trust light`)
   const j = params.get('jurisdiction')
   if (j && r.servedJurisdictions.length && !r.servedJurisdictions.includes(j)) out.push(`Does not serve ${countryName(j)}`)
   for (const [k, values] of [['delivery', r.deliveryModes], ['engagementType', r.engagementTypes], ['pricingModel', r.pricingModels]] as const) {
@@ -144,12 +147,14 @@ export default function FindProfessionals() {
   // Active filter summary bar (Category doc s.4.5): every filter visible and removable on its own.
   const specName = Object.fromEntries(groups.flatMap((g) => g.specializations.map((s) => [s.slug, s.name])))
   const NAMES: Record<string, (v: string) => string> = {
-    q: (v) => `“${v}”`, spec: (v) => v.split(',').map((s) => specName[s] ?? s).join(', '), tier: (v) => `Tier ${v.replace(',', ' or ')}`,
+    q: (v) => `“${v}”`, spec: (v) => v.split(',').map((s) => specName[s] ?? s).join(', '), tier: (v) => `Trust light: ${v.split(',').map(lightName).join(' or ')}`,
     verified: (v) => `Verified: ${v.replace(/,/g, ', ')}`, jurisdiction: (v) => `Serves ${countryName(v)}`, experience: (v) => `${v} years`,
     engagementType: (v) => LABEL[v] ?? v, delivery: (v) => LABEL[v] ?? v, availability: (v) => LABEL[v] ?? v, pricingModel: (v) => LABEL[v] ?? v,
     credential: (v) => `Credential: ${v}`, industry: (v) => `Industry: ${v}`, crossBorder: () => 'Cross-border',
     budgetMaxMinor: (v) => `Up to ${formatMoney({ amountMinor: Number(v), currency: params.get('budgetCurrency') ?? 'USD' })}`,
-    language: (v) => `Speaks ${v}`, enterpriseReady: () => 'Enterprise Ready', specMatch: () => 'Match all expertise',
+    language: (v) => `Speaks ${v}`, enterpriseReady: () => 'Security-review ready', specMatch: () => 'Match all expertise',
+    credentials: (v) => `Credentials: ${v.replace(/,/g, ' or ')}`, priorEnterprise: () => 'Prior enterprise engagements',
+    multiCurrency: () => 'Multiple currencies',
   }
   const active: [string, string][] = [...params.entries()].filter(([k]) => k in NAMES).map(([k, v]) => [k, NAMES[k](v)])
   const relaxable = active.some(([k]) => !['q', 'spec'].includes(k))
@@ -170,7 +175,7 @@ export default function FindProfessionals() {
         disabled={!selected.includes(r.professionalId) && selected.length >= MAX_REQUEST_PROFESSIONALS} onChange={() => toggleSelect(r.professionalId)} />
       <span onMouseEnter={() => hoverOpen(r.professionalId)}><Avatar name={r.displayName} photoUrl={r.photoUrl} size={view === 'grid' ? 48 : 64} /></span>
       <div className="pro-main" onMouseEnter={() => hoverOpen(r.professionalId)}>
-        <div className="name-line"><Link to={`/professionals/${r.professionalId}`}><strong>{r.displayName}</strong></Link> <TierBadge tier={r.tier} />
+        <div className="name-line"><Link to={`/professionals/${r.professionalId}`}><strong>{r.displayName}</strong></Link> <TrustLight tier={r.tier} />
           {saved.canSave && saved.ids && <button className="icon-btn" aria-label={saved.ids.has(r.professionalId) ? 'Saved' : 'Save'} title={saved.ids.has(r.professionalId) ? 'Saved' : 'Save'}
             onClick={() => saved.toggle(r.professionalId).catch(setError)}><Icon name="bookmark" />{saved.ids.has(r.professionalId) ? '✓' : ''}</button>}</div>
         {r.headline && <div className="small">{r.headline}</div>}
@@ -236,7 +241,7 @@ export default function FindProfessionals() {
             </select>
           </label>
           {select('jurisdiction', 'Jurisdiction', COUNTRIES, 'Global')}
-          {select('tier', 'Verification', [['A', 'Tier A — Fully verified'], ['B', 'Tier B — Verified identity'], ['A,B', 'Tier A or B']], 'Any status')}
+          {select('tier', 'Verification', [['A', 'Green — Fully verified'], ['B', 'Amber — Identity verified'], ['A,B', 'Green or Amber']], 'Any status')}
           {select('pricingModel', 'Engagement model', PRICING, 'Any model')}
           {select('availability', 'Availability', [['NOW', 'Available now'], ['TWO_WEEKS', 'Within 2 weeks'], ['ONE_MONTH', 'Within a month']], 'Any time')}
           {select('delivery', 'Delivery', [['REMOTE', 'Remote'], ['ONSITE', 'On-site'], ['HYBRID', 'Hybrid']], 'Any')}
@@ -257,10 +262,10 @@ export default function FindProfessionals() {
               onChange={() => set('engagementType', t)} /><span>{LABEL[t]}</span></label>
           ))}
           {params.get('engagementType') && <button className="btn btn-ghost btn-sm" onClick={() => set('engagementType', null)}>Any engagement type</button>}
-          <div className="filter-label">Trust Tier</div>
+          <div className="filter-label">Trust light</div>
           {['A', 'B', 'C'].map((t) => (
             <label key={t} className="checkbox small"><input type="checkbox" checked={inList('tier', t)} onChange={() => toggleList('tier', t)} />
-              <span>Tier {t} <span className="muted">({data?.facets.tier?.find((f) => f.value === t)?.count ?? 0})</span></span></label>
+              <span><span className="light-dot" style={{ background: lightColor(t), marginRight: 6 }} aria-hidden />{lightName(t)} <span className="muted">({data?.facets.tier?.find((f) => f.value === t)?.count ?? 0})</span></span></label>
           ))}
           {(params.get('spec') ?? '').split(',').filter(Boolean).length > 1 && <>
             <div className="filter-label">Expertise</div>
@@ -272,8 +277,7 @@ export default function FindProfessionals() {
             <label className="filter-label" htmlFor="f-ind">Industry experience</label>
             <select id="f-ind" className="input" value={params.get('industry') ?? ''} onChange={(e) => set('industry', e.target.value || null)}>
               <option value="">Any</option>{INDUSTRIES.map((i) => <option key={i}>{i}</option>)}</select>
-            <label className="checkbox small"><input type="checkbox" checked={params.get('enterpriseReady') === 'true'}
-              onChange={(e) => set('enterpriseReady', e.target.checked ? 'true' : null)} /><span>Enterprise Ready only</span></label>
+            <ProcurementFilters params={params} facets={data?.facets} set={set} toggleList={toggleList} />
             <label className="checkbox small"><input type="checkbox" checked={params.get('crossBorder') === 'true'}
               onChange={(e) => set('crossBorder', e.target.checked ? 'true' : null)} /><span>Works across borders</span></label>
             <label className="filter-label" htmlFor="f-budget">Starting price up to</label>
@@ -308,7 +312,7 @@ export default function FindProfessionals() {
             <select value={params.get('organizationId') ?? ''} onChange={(e) => set('organizationId', e.target.value)}>
               {orgs.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select></label>}
           {data?.policy && <div className="tip" role="note" style={{ marginBottom: 12 }}><Icon name="shield" /><span>
-            <strong>{data.policy.organizationName} policy applies.</strong> Showing professionals at Tier {data.policy.minTier} or above
+            <strong>{data.policy.organizationName} policy applies.</strong> Showing professionals with a {lightName(data.policy.minTier)} trust light or better
             {data.policy.requiredDimensions.length > 0 && ` with ${data.policy.requiredDimensions.join(', ')} verified`}
             {data.policy.jurisdictions && ` serving ${data.policy.jurisdictions.join(', ')}`}.
             {data.policy.hidden > 0 && ` ${data.policy.hidden} other professional${data.policy.hidden === 1 ? '' : 's'} matching your search ${data.policy.hidden === 1 ? 'is' : 'are'} not shown.`}

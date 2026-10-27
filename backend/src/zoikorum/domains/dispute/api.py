@@ -3,10 +3,15 @@ from __future__ import annotations
 import uuid
 from typing import Literal
 
+from datetime import datetime
+
 from fastapi import APIRouter, Query, Response, status
 
 from zoikorum.domains.dispute import service
-from zoikorum.domains.dispute.schemas import AppealIn, AppealDecisionIn, LegalHoldIn, ArbitrationAwardIn, ArbitrationReferIn, AssignIn, DisputeIn, DisputeOut, EvidenceIn, RecommendationIn, ResolutionIn, ClarificationIn
+from zoikorum.domains.dispute.schemas import (
+    AgreementIn, AppealIn, AppealDecisionIn, LegalHoldIn, ArbitrationAwardIn, ArbitrationReferIn, AssignIn, ClarificationIn, DecisionIn, DisputeIn,
+    DisputeOut, EvidenceIn, RecommendationIn, ReportSubscriptionIn, ResolutionIn,
+)
 from zoikorum.shared.auth import CurrentActor
 from zoikorum.shared.db import DbSession
 from zoikorum.shared.http import Page
@@ -35,6 +40,36 @@ async def decide_appeal(case_id: uuid.UUID, body: AppealDecisionIn, actor: Curre
 @router.get(f"{D}/{{case_id}}/appeal/files/{{sha256}}")
 async def appeal_file(case_id: uuid.UUID, sha256: str, actor: CurrentActor, session: DbSession):
     return file_response(*await service.appeal_file(session, actor, case_id, sha256))
+
+
+@router.get(f"{D}/dashboard")
+async def dashboard(orgId: uuid.UUID, actor: CurrentActor, session: DbSession) -> dict:
+    """Members of a buyer organisation: open and closed disputes, time to resolution, repeat disputes per professional
+    and money frozen per currency."""
+    return await service.dashboard(session, actor, orgId)
+
+
+@router.get(f"{D}/reports/subscription")
+async def report_subscription(orgId: uuid.UUID, actor: CurrentActor, session: DbSession) -> dict | None:
+    """Organisation Admin: my scheduled dispute report, or null when I have not opted in."""
+    from zoikorum.domains.dispute import reports
+    return await reports.get_subscription(session, actor, orgId)
+
+
+@router.put(f"{D}/reports/subscription")
+async def set_report_subscription(body: ReportSubscriptionIn, actor: CurrentActor, session: DbSession) -> dict | None:
+    """Organisation Admin: opt in to a weekly or monthly dispute report (notified with a CSV link), or stop it (null)."""
+    from zoikorum.domains.dispute import reports
+    return await reports.set_subscription(session, actor, body.orgId, body.frequency)
+
+
+@router.get(f"{D}/reports/export")
+async def export_report(orgId: uuid.UUID, actor: CurrentActor, session: DbSession, since: datetime | None = Query(None, alias="from"),
+                        until: datetime | None = Query(None, alias="to")) -> Response:
+    """Organisation Admin or Legal Reviewer: the organisation's disputes for a period (default the last 30 days) as CSV."""
+    from zoikorum.domains.dispute import reports
+    data, name = await reports.export_csv(session, actor, orgId, since, until)
+    return Response(data, media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
 
 
 @router.post(D, response_model=DisputeOut, status_code=status.HTTP_201_CREATED)
@@ -112,7 +147,7 @@ async def reject_recommendation(case_id: uuid.UUID, actor: CurrentActor, session
 
 
 @router.post(f"{D}/{{case_id}}/decision", response_model=DisputeOut)
-async def propose_decision(case_id: uuid.UUID, body: RecommendationIn, actor: CurrentActor, session: DbSession):
+async def propose_decision(case_id: uuid.UUID, body: DecisionIn, actor: CurrentActor, session: DbSession):
     """Mediator proposes a platform decision; a second reviewer with the Legal role must approve it."""
     return await service.propose_decision(session, actor, case_id, body)
 
@@ -171,3 +206,17 @@ async def legal_hold(case_id: uuid.UUID, body: LegalHoldIn, actor: CurrentActor,
 async def retention_queue(actor: CurrentActor, session: DbSession) -> list[dict]:
     """Legal: closed dispute records due for a retention review, and records on legal hold."""
     return await service.retention_queue(session, actor)
+
+
+@router.post(f"{D}/{{case_id}}/agreements", response_model=DisputeOut)
+async def set_agreement(case_id: uuid.UUID, body: AgreementIn, actor: CurrentActor, session: DbSession):
+    """A party agrees to (or withdraws from) an opt-in decision path: a binding mediator recommendation, or a decision by
+    the buyer enterprise's admin. It applies only once both parties agree, and cannot change after it is used."""
+    return await service.set_agreement(session, actor, case_id, body.kind, body.consent)
+
+
+@router.post(f"{D}/{{case_id}}/enterprise-decision", response_model=DisputeOut)
+async def enterprise_decision(case_id: uuid.UUID, body: RecommendationIn, actor: CurrentActor, session: DbSession, idem: IdempotencyKey):
+    """Organisation Admin of the buyer enterprise (agreed path, never the person who opened the dispute): issue a decision.
+    It takes effect after a 7-day challenge period unless a party appeals; money moves only when it does."""
+    return await idem.run(session, actor, lambda: service.decide_as_enterprise_admin(session, actor, case_id, body))

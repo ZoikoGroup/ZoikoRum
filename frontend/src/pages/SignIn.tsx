@@ -8,6 +8,7 @@ import { passkeyCancelled, passkeysSupported, signWithPasskey } from '../lib/pas
 import { PORTAL, signInHref } from '../portal'
 import { SsoSignInOptions } from '../components/SingleSignOn'
 import { dashboardPath } from '../staffRoutes'
+import { safeNextPath } from '../auth/guards'
 
 /** Two sign-in pages: /login for customers, professionals, firms and enterprise teams, and /staff/login for Zoikorum
     staff. The server holds each account to its own page; the backend says which dashboard to open. */
@@ -17,7 +18,9 @@ export default function SignIn({ staff = false }: { staff?: boolean }) {
   const location = useLocation()
   const [params] = useSearchParams()
   const from = params.get('next') || (location.state as { from?: string } | null)?.from
-  const safeNext = from && /^\/(app|invite|platform-admin)(\/|\?|$)/.test(from) ? from : null
+  const safeNext = safeNextPath(from)
+  // Carried to the sign-up page too, so a new account lands on the same page (e.g. a request to one professional).
+  const joinNext = safeNext ? `next=${encodeURIComponent(safeNext)}` : ''
 
   const [email, setEmail] = useState((location.state as { email?: string } | null)?.email ?? params.get('email') ?? '')
   const [password, setPassword] = useState('')
@@ -142,8 +145,8 @@ export default function SignIn({ staff = false }: { staff?: boolean }) {
       ) : <>
         <div className="divider">New to Zoikorum?</div>
         <div className="row">
-          <Link className="btn btn-secondary" style={{ flex: 1 }} to="/join">Create an account</Link>
-          <Link className="btn btn-secondary" style={{ flex: 1 }} to="/join?type=PROFESSIONAL">Join as a Professional</Link>
+          <Link className="btn btn-secondary" style={{ flex: 1 }} to={joinNext ? `/join?${joinNext}` : '/join'}>Create an account</Link>
+          <Link className="btn btn-secondary" style={{ flex: 1 }} to={`/join?type=PROFESSIONAL${joinNext ? `&${joinNext}` : ''}`}>Join as a Professional</Link>
         </div>
         {PORTAL === 'both' && <p className="auth-foot small">Zoikorum staff? <Link to="/staff/login">Staff sign-in</Link></p>}
       </>}

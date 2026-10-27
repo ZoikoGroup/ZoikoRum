@@ -65,9 +65,11 @@ PROFILE_STATES = StateMachine("Professional", {
     "SUSPENDED": {"DRAFT", "PUBLISHED", "UNPUBLISHED"},  # reinstatement (enforcement reversal)
 })
 OFFERING_STATES = StateMachine("Offering", {
-    "DRAFT": {"ACTIVE"},
-    "ACTIVE": {"PAUSED"},
-    "PAUSED": {"ACTIVE"},  # paused != deleted
+    "DRAFT": {"ACTIVE", "DELETED"},
+    "ACTIVE": {"PAUSED", "DELETED"},
+    "PAUSED": {"ACTIVE", "DELETED"},  # paused != deleted
+    "DELETED": set(),
+    # Deleted offerings stay as a row (requests that named them keep their history) but are gone for everyone.
 })
 
 log = logging.getLogger("zoikorum.professional")
@@ -143,7 +145,7 @@ async def _mine(session: AsyncSession, actor: Actor, lock: bool = False) -> Prof
 
 async def _offering(session: AsyncSession, pro: Professional, offering_id: uuid.UUID, lock: bool = False) -> Offering:
     o = await session.get(Offering, offering_id, with_for_update=lock)
-    if o is None or o.professional_id != pro.id:
+    if o is None or o.professional_id != pro.id or o.status == "DELETED":
         raise NotFound("Offering not found")
     return o
 
@@ -183,7 +185,7 @@ async def _profile_out(session: AsyncSession, pro: Professional) -> ProfileOut:
         weeklyHours=pro.weekly_hours,
         temporarilyUnavailable=pro.temporarily_unavailable, servedJurisdictions=list(pro.served_jurisdictions),
         licensedJurisdictions=list(pro.licensed_jurisdictions), handlesRegulatedData=pro.regulated_data_attested_at is not None,
-        crossBorderAcknowledged=pro.cross_border_acknowledged_at is not None, publishedAt=pro.published_at,
+        onsiteRegions=list(pro.onsite_regions or []), crossBorderAcknowledged=pro.cross_border_acknowledged_at is not None, publishedAt=pro.published_at,
         version=pro.version,
     )
 
@@ -275,6 +277,13 @@ async def update_me(session: AsyncSession, actor: Actor, patch: ProfilePatch, if
         if (patch.indicativeRate.amountMinor, patch.indicativeRate.currency) != (pro.rate_minor, pro.rate_currency):
             pro.rate_minor, pro.rate_currency = patch.indicativeRate.amountMinor, patch.indicativeRate.currency
             changed.append("indicativeRate")
+    if patch.onsiteRegions is not None:
+        regions = list(dict.fromkeys(r.strip()[:100] for r in patch.onsiteRegions if r and r.strip()))
+        for r in regions:
+            check_copy("on-site region", r)
+        if regions != list(pro.onsite_regions or []):
+            pro.onsite_regions = regions
+            changed.append("onsiteRegions")
     if patch.handlesRegulatedData is not None and patch.handlesRegulatedData != (pro.regulated_data_attested_at is not None):
         pro.regulated_data_attested_at = clock.now() if patch.handlesRegulatedData else None
         changed.append("handlesRegulatedData")
@@ -542,7 +551,8 @@ async def create_offering(session: AsyncSession, actor: Actor, body: OfferingIn)
 
 async def list_offerings(session: AsyncSession, actor: Actor) -> list[OfferingOut]:
     pro = await _mine(session, actor)
-    rows = (await session.scalars(select(Offering).where(Offering.professional_id == pro.id).order_by(Offering.created_at))).all()
+    rows = (await session.scalars(select(Offering).where(Offering.professional_id == pro.id, Offering.status != "DELETED")
+                                  .order_by(Offering.created_at))).all()
     names = await _spec_names(session, sorted({o.specialization for o in rows}))
     return [_offering_out(o, names) for o in rows]
 
@@ -612,6 +622,16 @@ async def set_offering_status(session: AsyncSession, actor: Actor, offering_id: 
     return _offering_out(o, await _spec_names(session, [o.specialization]))
 
 
+async def delete_offering(session: AsyncSession, actor: Actor, offering_id: uuid.UUID) -> None:
+    """Remove an offering (e.g. a duplicate). Buyers no longer see it; requests already sent keep their record."""
+    pro = await _mine(session, actor)
+    o = await _offering(session, pro, offering_id, lock=True)
+    OFFERING_STATES.assert_can(o.status, "DELETED")
+    o.status = "DELETED"
+    _offering_evt(session, E.SERVICE_OFFERING_STATUS_CHANGED, pro, o)
+    await session.flush()
+
+
 # ---- Readiness & publishing ------------------------------------------------------
 
 async def _readiness(session: AsyncSession, pro: Professional) -> ReadinessOut:
@@ -652,7 +672,7 @@ async def readiness(session: AsyncSession, actor: Actor) -> ReadinessOut:
 
 
 async def publish(session: AsyncSession, actor: Actor) -> ProfileOut:
-    """Go live in discovery. Tier C (unverified) profiles may publish; credentials show as self-reported."""
+    """Go live in discovery. tier C (unverified) profiles may publish; credentials show as self-reported."""
     pro = await _mine(session, actor, lock=True)
     PROFILE_STATES.assert_can(pro.status, "PUBLISHED")
     ready = await _readiness(session, pro)
@@ -738,7 +758,8 @@ async def public_profile(session: AsyncSession, actor: Actor | None, professiona
         offerings=[_offering_out(o, names) for o in offerings],
         trust=PublicTrustOut(tier=trust.tier, dimensions=public_dimensions(trust.dimensions),
                              explanation=public_explanation(trust.explanation), updatedAt=trust.updated_at),
-        publishedAt=pro.published_at, isOwnProfile=own,
+        publishedAt=pro.published_at, isOwnProfile=own, onsiteRegions=list(pro.onsite_regions or []),
+        profileStatus=pro.status, underReview=bool(pro.visibility_reduced),
     )
 
 
@@ -836,7 +857,7 @@ async def admin_professionals(session: AsyncSession, actor: Actor, q: str | None
 
 
 async def admin_professional_summary(session: AsyncSession, actor: Actor) -> AdminProfessionalSummaryOut:
-    """Counts for the Professionals page cards. Tier C includes profiles not assessed yet."""
+    """Counts for the Professionals page cards. tier C includes profiles not assessed yet."""
     actor.require_capability(Cap.PROFESSIONALS_READ)
     state = await _publication(session)
     by_state = dict((await session.execute(select(state, func.count()).group_by(state))).all())

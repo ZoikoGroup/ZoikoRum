@@ -48,12 +48,12 @@ export function PlatformKpis() {
       <div className="row" style={{ alignItems: 'stretch', flexWrap: 'wrap' }}>
         <Block title="Board" rows={[['Released to professionals', money(k.board.grossReleasedByCurrency)], ['Platform fees', money(k.board.feesByCurrency)],
           ['Engagements started', k.board.engagementsStarted], ['Active buyer organisations', k.board.activeBuyerOrganisations],
-          ['Disputes per 100 engagements', k.board.disputeRatePct ?? '—'], ['Verified professionals (Tier A + B)', k.board.verifiedSupply],
+          ['Disputes per 100 engagements', k.board.disputeRatePct ?? '—'], ['Verified professionals (Green + Amber)', k.board.verifiedSupply],
           ['Serious incidents (SEV1–2)', k.board.seriousIncidents]]} />
         <Block title="Onboarding" rows={[['Profiles started', k.onboarding.profilesStarted], ['Profiles published', k.onboarding.profilesPublished],
-          ['Reached Tier B', k.trust.reachedB], ['Reached Tier A', k.trust.reachedA], ['Downgraded', k.trust.downgrades],
+          ['Reached Amber', k.trust.reachedB], ['Reached Green', k.trust.reachedA], ['Downgraded', k.trust.downgrades],
           ['Live now', k.onboarding.publishedNow], ['Enterprise Ready now', k.onboarding.enterpriseReadyNow],
-          ['Tiers now (A / B / C)', `${tiers.A ?? 0} / ${tiers.B ?? 0} / ${tiers.C ?? 0}`]]} />
+          ['Trust lights now (Green / Amber / Red)', `${tiers.A ?? 0} / ${tiers.B ?? 0} / ${tiers.C ?? 0}`]]} />
         <Block title="Engagements" rows={[['Started', k.engagements.engagementsStarted], ['Completed', k.engagements.engagementsCompleted],
           ['Running now', k.engagements.runningNow], ['Professionals engaged', k.engagements.activeProfessionals]]} />
       </div>

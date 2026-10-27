@@ -75,6 +75,7 @@ const CustomerPaymentsPage = lazy(() => import('./pages/Money').then((m) => ({ d
 const PerformanceInsights = lazy(() => import('./pages/PerformanceInsights'))
 const EnterpriseReadinessPage = lazy(() => import('./pages/EnterpriseReadiness').then((m) => ({ default: m.EnterpriseReadinessPage })))
 const EarningsPage = lazy(() => import('./pages/Money').then((m) => ({ default: m.EarningsPage })))
+const PayoutStatementPage = lazy(() => import('./pages/PayoutStatement'))
 const DisputeDetail = lazy(() => import('./pages/Disputes').then((m) => ({ default: m.DisputeDetail })))
 const DisputesPage = lazy(() => import('./pages/Disputes').then((m) => ({ default: m.DisputesPage })))
 const EngagementDetail = lazy(() => import('./pages/Engagements').then((m) => ({ default: m.EngagementDetail })))
@@ -116,6 +117,7 @@ export default function App() {
           <Route path="/invite" element={<InviteLanding />} />
           <Route path="/professionals" element={<BrowseProfessionals />} />
           <Route path="/categories/:slug" element={<CategoryPage />} />
+          <Route path="/finance-accounting" element={<Navigate to="/categories/finance-and-accounting" replace />} />
           <Route path="/professionals/:id" element={<PublicProfilePage />} />
           <Route path="/firms/:id" element={<PublicFirmPage />} />
 
@@ -153,6 +155,7 @@ export default function App() {
             <Route path="payments" element={<RequireRole any={CUSTOMER}><CustomerPaymentsPage /></RequireRole>} />
             <Route path="compare" element={<RequireRole any={CUSTOMER}><ComparePage /></RequireRole>} />
             <Route path="professional/earnings" element={<RequireRole any={['PROFESSIONAL']}><EarningsPage /></RequireRole>} />
+            <Route path="professional/earnings/payouts/:id" element={<RequireRole any={['PROFESSIONAL']}><PayoutStatementPage /></RequireRole>} />
             <Route path="professional/insights" element={<RequireRole any={['PROFESSIONAL']}><PerformanceInsights /></RequireRole>} />
             <Route path="professional/enterprise" element={<RequireRole any={['PROFESSIONAL']}><EnterpriseReadinessPage /></RequireRole>} />
             <Route path="professional/buyers" element={<RequireRole any={['PROFESSIONAL']}><SavedBuyersPage /></RequireRole>} />

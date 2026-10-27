@@ -22,10 +22,11 @@ interface Incident {
   mitigatedBy: string | null; mitigatedById: string | null; recoveryNote: string | null; recoveryVerifiedBy: string | null
   timeline: { at: string; note: string }[]; notifications: { party: string; note: string; at: string }[]
   rootCause: string | null; remediation: { task: string; done: boolean }[]; review: string | null
+  uxImpact?: string | null; policyUpdates?: string | null
   createdAt?: string; updatedAt?: string
 }
 
-const KINDS = ['SECURITY', 'DATA', 'PAYMENTS', 'OUTAGE', 'SAFETY', 'OTHER']
+const KINDS = ['SECURITY', 'DATA', 'PAYMENTS', 'OUTAGE', 'SAFETY', 'CREDENTIAL_FAILURE', 'SYSTEM_INTEGRITY', 'OTHER']
 const SEVERITIES: Severity[] = ['SEV1', 'SEV2', 'SEV3', 'SEV4']
 const STAGES = ['UNACKNOWLEDGED', 'INVESTIGATING', 'MITIGATING', 'MONITORING', 'RECOVERED', 'CLOSED'] as const
 type Stage = typeof STAGES[number]
@@ -249,7 +250,7 @@ function IncidentDetail({ i, tab, setTab, busy, stale, meId, onClose, patch }: {
   const closed = i.status === 'CLOSED'
   const needsReview = i.severity === 'SEV1' || i.severity === 'SEV2'
   const allDone = i.remediation.every((t) => t.done)
-  const blockedClose = next === 'CLOSED' && needsReview && (!i.rootCause || !i.review || !allDone)
+  const blockedClose = next === 'CLOSED' && needsReview && (!i.rootCause || !i.review || !i.uxImpact || !i.policyUpdates || !allDone)
   const verifying = next === 'RECOVERED'
   const notIndependent = verifying && !!meId && (meId === i.ownerId || meId === i.mitigatedById)
   const [recoveryNote, setRecoveryNote] = useState('')
@@ -263,7 +264,7 @@ function IncidentDetail({ i, tab, setTab, busy, stale, meId, onClose, patch }: {
     const form = e.currentTarget
     const d = new FormData(form)
     const body: Record<string, unknown> = {}
-    for (const k of ['note', 'rootCause', 'review']) if (String(d.get(k) ?? '').trim()) body[k] = String(d.get(k)).trim()
+    for (const k of ['note', 'rootCause', 'review', 'uxImpact', 'policyUpdates']) if (String(d.get(k) ?? '').trim()) body[k] = String(d.get(k)).trim()
     const task = String(d.get('task') ?? '').trim(); if (task) body.addRemediation = [task]
     const party = String(d.get('party') ?? '').trim(); if (party) body.notified = [{ party, note: String(d.get('partyNote') ?? '') }]
     const severity = String(d.get('severity') ?? ''); if (severity && severity !== i.severity) body.severity = severity
@@ -277,7 +278,7 @@ function IncidentDetail({ i, tab, setTab, busy, stale, meId, onClose, patch }: {
     INVESTIGATING: <Callout tone="red" title="Investigating — impact not yet mitigated">Record findings in the timeline and start mitigation once the cause of the impact is known.</Callout>,
     MITIGATING: <Callout tone="amber" title="Mitigation in progress — recovery not verified">Mitigation is under way. Move to monitoring once it is in place.</Callout>,
     MONITORING: <Callout tone="amber" title="Monitoring — recovery not yet verified">Mitigation is not verified recovery. Someone other than the owner{i.mitigatedBy ? ` and ${i.mitigatedBy}` : ''} must check and record how recovery was verified.</Callout>,
-    RECOVERED: <Callout tone="blue" title="Recovered — awaiting closure">{needsReview ? 'A SEV1/SEV2 incident closes only with a root cause, every remediation task done and a post-incident review.' : 'Record the review and close the incident.'}</Callout>,
+    RECOVERED: <Callout tone="blue" title="Recovered — awaiting closure">{needsReview ? 'A SEV1/SEV2 incident closes only with a root cause, every remediation task done and a post-incident review (user experience impact and policy updates proposed).' : 'Record the review and close the incident.'}</Callout>,
     CLOSED: <Callout tone="green" title="Closed">This incident is closed. Its record can no longer be changed.</Callout>,
   }[i.status as Stage] ?? <Callout tone="amber" title={label(i.status)}>Unrecognised stage.</Callout>
 
@@ -312,10 +313,13 @@ function IncidentDetail({ i, tab, setTab, busy, stale, meId, onClose, patch }: {
           { label: 'Root cause recorded', state: i.rootCause ? 'done' : 'pending', note: i.rootCause ? 'Recorded' : 'Pending' },
           { label: `Remediation tasks done (${i.remediation.filter((t) => t.done).length} of ${i.remediation.length})`, state: allDone ? 'done' : 'pending', note: allDone ? 'Recorded' : 'Pending' },
           { label: 'Post-incident review written', state: i.review ? 'done' : 'pending', note: i.review ? 'Recorded' : 'Pending' },
+          { label: 'User experience impact assessed', state: i.uxImpact ? 'done' : 'pending', note: i.uxImpact ? 'Recorded' : 'Pending' },
+          { label: 'Policy updates proposed', state: i.policyUpdates ? 'done' : 'pending', note: i.policyUpdates ? 'Recorded' : 'Pending' },
         ]} />
         {blockedClose && <p className="adm-foot-note">Closing is blocked until every item above is recorded.</p>}
         {i.rootCause && <Facts title="Root cause" rows={[['Recorded', i.rootCause]]} />}
-        {i.review && <Facts title="Post-incident review" rows={[['Recorded', i.review]]} />}
+        {(i.review || i.uxImpact || i.policyUpdates) && <Facts title="Post-incident review" rows={[['Review', i.review ?? '—'],
+          ['User experience impact', i.uxImpact ?? '—'], ['Policy updates proposed', i.policyUpdates ?? '—']]} />}
       </>}
 
       {tab === 'Timeline' && <>
@@ -352,6 +356,8 @@ function IncidentDetail({ i, tab, setTab, busy, stale, meId, onClose, patch }: {
             {SEVERITIES.map((s) => <option key={s}>{s}</option>)}</select></div>
           <div className="field"><label htmlFor={`rc-${i.id}`}>Root cause</label><textarea id={`rc-${i.id}`} name="rootCause" className="input" rows={2} maxLength={4000} defaultValue={i.rootCause ?? ''} /></div>
           <div className="field"><label htmlFor={`rv-${i.id}`}>Post-incident review</label><textarea id={`rv-${i.id}`} name="review" className="input" rows={2} maxLength={8000} defaultValue={i.review ?? ''} /></div>
+          <div className="field"><label htmlFor={`ux-${i.id}`}>User experience impact</label><textarea id={`ux-${i.id}`} name="uxImpact" className="input" rows={2} maxLength={4000} defaultValue={i.uxImpact ?? ''} /></div>
+          <div className="field"><label htmlFor={`pu-${i.id}`}>Policy updates proposed</label><textarea id={`pu-${i.id}`} name="policyUpdates" className="input" rows={2} maxLength={4000} defaultValue={i.policyUpdates ?? ''} /></div>
           {next && next !== 'RECOVERED' && <label className="checkbox"><input type="checkbox" name="advance" disabled={stale} /> <span>{STEP_ACTION[next]}{stale ? ' (refresh first)' : ''}</span></label>}
           {next === 'RECOVERED' && <p className="adm-foot-note">Recovery is verified from the Response tab with a verification note.</p>}
           <button className="btn btn-primary btn-sm" disabled={busy}>Save</button>

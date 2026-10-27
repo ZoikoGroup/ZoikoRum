@@ -5,15 +5,15 @@ import {
   AdminHeader, AdminKpi, Callout, Checklist, CountTabs, DetailPanel, Facts, FilterBar, FilterSelect, Initials, KpiStrip, ListDetail,
   Pill, StatusPill, TableFoot, label, shortDate, toneFor, useSelection, type CheckState, pickRow, useSelectedParam } from '../../components/admin'
 import { ErrorAlert } from '../../components/ui'
+import { lightText, trustLight } from '../../lib/trustLight'
 
 type Tab = '' | 'PUBLISHED' | 'IN_REVIEW' | 'DRAFT' | 'RESTRICTED'
 const stateOf = (s: string | null | undefined): CheckState => {
   const t = toneFor(s)
   return t === 'green' ? 'done' : t === 'red' ? 'missing' : 'pending'
 }
-const TIER_TONE = { A: 'green', B: 'blue', C: 'violet' } as const
 
-/** Governed directory of professional profiles. Read-only: publication and trust-tier changes come from verification
+/** Governed directory of professional profiles. Read-only: publication and trust light changes come from verification
  *  decisions, never from this list. */
 export default function ProfessionalDirectory() {
   const [summary, setSummary] = useState<AdminProfessionalSummary | null>(null)
@@ -71,13 +71,13 @@ export default function ProfessionalDirectory() {
       <FilterBar search={q} onSearch={setQ} placeholder="Search professional, specialty…">
         <input className="adm-filter" style={{ width: 130 }} aria-label="Jurisdiction (country code)" placeholder="Jurisdiction (US)" maxLength={2}
           value={country} onChange={(e) => setCountry(e.target.value)} />
-        <FilterSelect label="Trust tier" value={tier} onChange={setTier} options={[['A', 'Tier A'], ['B', 'Tier B'], ['C', 'Tier C']]} />
+        <FilterSelect label="Trust light" value={tier} onChange={setTier} options={[['A', 'Green · Fully verified'], ['B', 'Amber · Identity verified'], ['C', 'Red · Not verified yet']]} />
         <FilterSelect label="Verification" value={verif} onChange={setVerif} options={[['verified', 'Identity verified'], ['unverified', 'Identity not verified']]} />
       </FilterBar>
-      {s && <div className="adm-note">Profiles by trust tier: A {s.tiers.A} · B {s.tiers.B} · C {s.tiers.C} = {s.tiers.A + s.tiers.B + s.tiers.C}</div>}
+      {s && <div className="adm-note">Profiles by trust light: Green {s.tiers.A} · Amber {s.tiers.B} · Red {s.tiers.C} = {s.tiers.A + s.tiers.B + s.tiers.C}</div>}
       <div className="adm-table-wrap">
         <table className="data">
-          <thead><tr><th scope="col">Professional</th><th scope="col">Specialization</th><th scope="col">Jurisdiction</th><th scope="col">Verification</th><th scope="col">Trust tier</th><th scope="col">Publication</th><th scope="col">Eng.</th></tr></thead>
+          <thead><tr><th scope="col">Professional</th><th scope="col">Specialization</th><th scope="col">Jurisdiction</th><th scope="col">Verification</th><th scope="col">Trust light</th><th scope="col">Publication</th><th scope="col">Eng.</th></tr></thead>
           <tbody>
             {shown.length === 0 && <tr><td colSpan={7} className="empty-row">{loading ? 'Loading…' : 'No profiles match.'}</td></tr>}
             {shown.map((p) => (
@@ -87,7 +87,7 @@ export default function ProfessionalDirectory() {
                 <td><div className="cell-main" style={{ fontWeight: 500 }}>{p.specialization ?? '—'}</div><div className="cell-sub">{p.category ?? ''}</div></td>
                 <td>{p.country ?? '—'}</td>
                 <td><StatusPill status={p.verification.identity} /></td>
-                <td>{p.tier ? <Pill tone={TIER_TONE[p.tier]}>Tier {p.tier}</Pill> : <Pill>Unassigned</Pill>}</td>
+                <td>{p.tier ? <Pill tone={trustLight(p.tier).tone}><span className="light-dot" style={{ background: trustLight(p.tier).color, marginRight: 6 }} aria-hidden />{lightText(p.tier)}</Pill> : <Pill>Unassigned</Pill>}</td>
                 <td><StatusPill status={p.publication} /></td>
                 <td>{p.lifetimeEngagements}</td>
               </tr>))}
@@ -105,7 +105,7 @@ export default function ProfessionalDirectory() {
     <DetailPanel title={p.displayName} subtitle={p.specialization ?? p.headline ?? undefined} badge={<StatusPill status={p.publication} />}
       onClose={() => select(null)}
       footer={<Link className="btn btn-secondary btn-sm" to={`/professionals/${p.id}`} target="_blank" rel="noreferrer">View public profile ↗</Link>}>
-      <Callout tone={p.tier ? 'green' : 'amber'} title={p.tier ? `Trust tier ${p.tier}` : 'No trust tier assigned'}>
+      <Callout tone={p.tier ? trustLight(p.tier).tone : 'amber'} title={p.tier ? `Trust light: ${lightText(p.tier)}` : 'No trust light assigned'}>
         {p.publication === 'PUBLISHED' ? 'Profile is published.' : `Profile is ${label(p.publication).toLowerCase()}.`}
       </Callout>
       <Facts title="Profile governance" rows={[
@@ -128,7 +128,7 @@ export default function ProfessionalDirectory() {
   return (
     <>
       <AdminHeader crumb="People & Organizations / Governed directory" title="Professional Directory"
-        subtitle="Oversee professional profiles, trust tiers, jurisdiction eligibility and publication, without bypassing independent verification decisions." />
+        subtitle="Oversee professional profiles, trust lights, jurisdiction eligibility and publication, without bypassing independent verification decisions." />
       <ErrorAlert error={error} />
       {s && <KpiStrip>
         <AdminKpi icon="team" tone="blue" label="Total profiles" value={s.total.toLocaleString()} sub="Person accounts in the directory" />

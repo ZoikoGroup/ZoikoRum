@@ -119,6 +119,10 @@ export default function DisputeResolution() {
             { label: 'Referred to arbitration', value: rows.filter((d) => d.arbitration && OPEN_PHASES.includes(d.status)).length },
             { label: 'Platform decision awaiting Legal', value: rows.filter((d) => d.pendingDecision).length, tone: rows.some((d) => d.pendingDecision) ? 'amber' : undefined },
             { label: 'Records on legal hold', value: rows.filter((d) => d.legalHold).length },
+            { label: 'Binding / enterprise decisions in challenge period', value: rows.filter((d) => d.provisionalDecision && !d.provisionalDecision.appealed).length },
+            { label: 'Provisional decisions under appeal', value: rows.filter((d) => d.provisionalDecision?.appealed).length,
+              tone: rows.some((d) => d.provisionalDecision?.appealed) ? 'amber' : undefined },
+            { label: 'Account restrictions referred to Trust & Safety', value: rows.filter((d) => d.decision?.accountRestriction).length },
           ]} />
         </Panel>
       </PanelRow>
@@ -178,6 +182,8 @@ function DisputeSummary({ d, owner, onClose }: { d: Dispute; owner?: ReactNode; 
   if (d.recommendation) readiness.push({ label: 'Mediator recommendation', state: d.recommendation.rejectedBy?.length ? 'missing' : (d.recommendation.acceptedBy?.length ?? 0) >= 2 ? 'done' : 'pending',
     note: d.recommendation.rejectedBy?.length ? 'Declined' : `${d.recommendation.acceptedBy?.length ?? 0} of 2 accepted` })
   if (d.pendingDecision) readiness.push({ label: 'Second reviewer (Legal)', state: 'pending', note: 'Awaiting approval' })
+  if (d.provisionalDecision) readiness.push({ label: d.provisionalDecision.path === 'MEDIATION' ? 'Binding recommendation challenge period' : 'Enterprise admin decision challenge period',
+    state: 'pending', note: d.provisionalDecision.appealed ? 'Under appeal (Legal reviews)' : `Takes effect ${shortDate(d.provisionalDecision.challengeEndsAt)}` })
   if (d.decision) readiness.push({ label: 'Decision issued', state: 'done', note: d.decision.decisionPath.toLowerCase() })
   const evidenceBy = (p: string) => d.evidence.filter((e) => e.party === p).length
 

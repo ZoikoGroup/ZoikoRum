@@ -56,3 +56,14 @@ async def on_direct_window(session: AsyncSession, key: str, payload: dict) -> No
 @on_timer(service.TIMER_RETENTION)
 async def on_retention_due(session: AsyncSession, key: str, payload: dict) -> None:
     await service.retention_due(session, payload)
+
+
+@on_timer(service.TIMER_CHALLENGE)
+async def on_challenge_ended(session: AsyncSession, key: str, payload: dict) -> None:
+    await service.challenge_ended(session, payload)
+
+
+@on_timer("dispute.scheduled_report")
+async def on_scheduled_report(session: AsyncSession, key: str, payload: dict) -> None:
+    from zoikorum.domains.dispute import reports
+    await reports.report_due(session, payload)

@@ -53,3 +53,21 @@ async def request_approval(session: AsyncSession, actor, kind: str, payload: dic
     DEAD_LETTER_REPLAY_FINANCIAL, AUDIT_EXPORT."""
     from zoikorum.domains.admin import approvals
     return await approvals.request(session, actor, kind, payload, justification)
+
+
+# ---- Trust & Safety hand-offs and the staff ethics register (admin/service.py, admin/governance.py) -----------------
+
+async def open_referral_case(session: AsyncSession, subject_type: str, subject_id: uuid.UUID, source: str, summary: str,
+                             evidence_refs: list[str]) -> uuid.UUID:
+    """Opens a Level 0 Trust & Safety review for a subject (IDENTITY|PROFESSIONAL|ORGANIZATION) on behalf of another
+    workstream, e.g. a dispute decision recommending an account restriction. Returns the case id. Never restricts."""
+    from zoikorum.domains.admin import service
+    return await service.open_referral_case(session, subject_type, subject_id, source, summary, evidence_refs)
+
+
+async def declared_conflict(session: AsyncSession, identity_id: uuid.UUID, subjects: list[tuple[str, uuid.UUID]],
+                            case: tuple[str, str] | None = None) -> bool:
+    """True when this staff member declared an active conflict of interest with any of ``subjects`` ((type, id) pairs)
+    or recused themselves from ``case`` ((kind, id), e.g. ("DISPUTE", "<uuid>"))."""
+    from zoikorum.domains.admin import governance
+    return await governance.declared_conflict(session, identity_id, subjects, case)

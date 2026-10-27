@@ -64,6 +64,29 @@ class RecommendationIn(ResolutionIn):
     citations: list[str] = Field(default_factory=list, max_length=20)  # evidence and policy references
 
 
+class RestrictionReferralIn(BaseModel):
+    """Hand one party's account to Trust & Safety: it opens a linked enforcement case. The dispute never restricts anyone."""
+    party: Literal["BUYER", "PROFESSIONAL"]
+    reason: str = Field(min_length=20, max_length=2000)
+
+
+class DecisionIn(RecommendationIn):
+    accountRestriction: RestrictionReferralIn | None = None
+
+
+class AgreementIn(BaseModel):
+    """A party's consent to an opt-in decision path. BINDING_RECOMMENDATION: the mediator's recommendation becomes the
+    decision after a challenge period unless appealed. ENTERPRISE_ADMIN: an admin of the buyer enterprise decides
+    (enterprise engagements only), equally open to appeal. Both parties must agree; consent can be withdrawn until used."""
+    kind: Literal["BINDING_RECOMMENDATION", "ENTERPRISE_ADMIN"]
+    consent: bool
+
+
+class ReportSubscriptionIn(BaseModel):
+    orgId: uuid.UUID
+    frequency: Literal["WEEKLY", "MONTHLY"] | None  # None: stop the reports
+
+
 class AssignIn(BaseModel):
     mediatorIdentityId: uuid.UUID
 
@@ -149,6 +172,12 @@ class DisputeOut(BaseModel):
     retainUntil: date | None = None  # closed records are kept at least until this date
     retentionBasis: str | None = None
     legalHold: bool = False
+    agreements: dict[str, list[str]] = {}  # opt-in decision paths each party agreed to
+    bindingRecommendation: bool = False  # the mediator's recommendation will be binding (both agreed, or the pinned policy)
+    enterpriseAdminPath: bool = False  # an enterprise admin may decide (enterprise engagement, both agreed or policy)
+    enterpriseEngagement: bool = False  # the buyer organisation is an enterprise: the enterprise admin path can be offered
+    canDecideAsEnterpriseAdmin: bool = False
+    provisionalDecision: dict | None = None  # waiting out its challenge period; becomes the decision unless appealed
     nextStep: str  # plain-language "what happens next"
     createdAt: datetime
 
@@ -163,7 +192,7 @@ class ArbitrationReferIn(BaseModel):
     reason: str = Field(min_length=20, max_length=2000)
 
 
-class ArbitrationAwardIn(RecommendationIn):
+class ArbitrationAwardIn(DecisionIn):
     awardReference: str = Field(min_length=3, max_length=200)  # the arbitrator's award or case number
 
 

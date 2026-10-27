@@ -107,12 +107,19 @@ def to_out(identity: Identity, links: list[IdentityLink]) -> IdentityOut:
 
 async def _start_session(
     session: AsyncSession, identity: Identity, strength: str, user_agent: str | None,
-    family_id: uuid.UUID | None = None, auth_time=None, audience: str = "APP",
+    family_id: uuid.UUID | None = None, auth_time=None, audience: str = "APP", idp: str | None = None,
 ) -> TokenPair:
+    from zoikorum.domains.identity import risk, session_policy
+
     s = get_settings()
     now = clock.now()
     refresh, refresh_hash = tokens.new_refresh_token()
+    if family_id is not None and idp is None:  # a refresh or step-up keeps the sign-in method of the session it continues
+        idp = await session.scalar(select(Session.idp).where(Session.family_id == family_id)
+                                   .order_by(Session.created_at.desc()).limit(1))
     if family_id is None:  # a fresh sign-in (not a refresh or a step-up): tell the person if the device is new to us
+        idp = idp or ("PASSKEY" if strength == AuthStrength.PASSKEY else "PASSWORD")
+        await session_policy.check_new_sign_in(session, identity.id, idp, audience)
         await _announce_new_device(session, identity, user_agent)
     sess = Session(
         identity_id=identity.id,
@@ -123,9 +130,13 @@ async def _start_session(
         expires_at=now + timedelta(seconds=s.refresh_token_ttl_seconds),
         user_agent=(user_agent or "")[:500],
         audience=audience,
+        idp=idp,
+        created_at=now,  # the domain clock: idle timeouts and maximum session age are measured from it
     )
     session.add(sess)
     await session.flush()
+    if family_id is None:
+        await risk.assess(session, identity.id, sess.id, _device(user_agent))  # advisory signals, never blocking
     access, ttl = tokens.mint_access_token(
         identity, await _links(session, identity.id),
         session_id=sess.id, auth_strength=strength, auth_time=sess.auth_time, audience=audience,
@@ -371,6 +382,14 @@ async def refresh(session: AsyncSession, refresh_token: str, user_agent: str | N
     identity = await session.get(Identity, sess.identity_id)
     if identity is None or identity.status not in ("ACTIVE", "SUSPENDED"):
         raise Forbidden("This account is not active")
+    from zoikorum.domains.identity import session_policy
+    if broken := await session_policy.violation(session, sess, now):  # the organisation's session rules (identity/session_policy.py)
+        await session.execute(
+            update(Session).where(Session.family_id == sess.family_id, Session.revoked_at.is_(None)).values(revoked_at=now)
+        )
+        record_event(session, E.SESSION_REVOKED, aggregate_type="Session", aggregate_id=sess.id,
+                     payload={"identityId": sess.identity_id, "familyId": sess.family_id, "reason": broken[0]})
+        return LoginFailure(broken[1], broken[0])  # returned, so the revocation commits
     sess.rotated_at = now
     # Rotation keeps the original auth strength/time; step-up freshness still decays.
     return await _start_session(session, identity, sess.auth_strength, user_agent, sess.family_id, sess.auth_time, sess.audience)
@@ -411,6 +430,17 @@ async def verify_mfa(session: AsyncSession, actor: Actor, code: str) -> list[str
     identity.mfa_enabled_at = clock.now()
     _evt(session, E.MFA_ENROLLED, identity, method="TOTP")
     return _new_recovery_codes(identity)
+
+
+async def elevate_after_enrollment(session: AsyncSession, actor: Actor, user_agent: str | None) -> TokenPair:
+    """The code that just turned two-step on also proves it: start a two-step session for this sign-in (same family and
+    audience), so the person is not asked for a second code that the replay check would refuse anyway."""
+    identity = await _get_for_update(session, actor.identity_id)
+    family, audience = None, "APP"
+    if actor.session_id:
+        old = await session.get(Session, actor.session_id)
+        family, audience = (old.family_id, old.audience) if old else (None, "APP")
+    return await _start_session(session, identity, AuthStrength.MFA, user_agent, family_id=family, audience=audience)
 
 
 async def regenerate_recovery_codes(session: AsyncSession, actor: Actor) -> list[str]:
@@ -824,6 +854,16 @@ async def list_sessions(session: AsyncSession, actor: Actor) -> list[SessionOut]
         Session.expires_at > now).order_by(Session.auth_time.desc()).limit(50))).all()
     return [SessionOut(id=s.id, device=s.user_agent, authStrength=s.auth_strength, signedInAt=s.auth_time,
                        current=s.id == actor.session_id) for s in rows]
+
+
+async def sign_in_signals(session: AsyncSession, actor: Actor, identity_id: uuid.UUID | None = None) -> list[dict]:
+    """Recent sign-ins with their advisory risk signals (identity/risk.py): the person's own, or (staff with account
+    access) another account's."""
+    from zoikorum.domains.identity import risk
+
+    if identity_id is not None and identity_id != actor.identity_id:
+        actor.require_capability(Cap.ACCOUNTS_READ)
+    return await risk.recent(session, identity_id or actor.identity_id)
 
 
 async def revoke_session(session: AsyncSession, actor: Actor, session_id: uuid.UUID) -> None:

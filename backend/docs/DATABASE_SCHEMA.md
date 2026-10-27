@@ -11,27 +11,27 @@ Migrations: `backend/alembic/versions/` (`alembic upgrade head`).
 ## Contents
 
 - [platform](#schema-platform) — 5 tables
-- [identity](#schema-identity) — 11 tables
+- [identity](#schema-identity) — 14 tables
 - [buyer](#schema-buyer) — 8 tables
-- [firm](#schema-firm) — 3 tables
+- [firm](#schema-firm) — 4 tables
 - [professional](#schema-professional) — 4 tables
-- [marketplace](#schema-marketplace) — 6 tables
+- [marketplace](#schema-marketplace) — 8 tables
 - [search](#schema-search) — 1 tables
 - [proposal](#schema-proposal) — 4 tables
 - [contract](#schema-contract) — 10 tables
-- [escrow](#schema-escrow) — 5 tables
-- [payments](#schema-payments) — 8 tables
+- [escrow](#schema-escrow) — 6 tables
+- [payments](#schema-payments) — 9 tables
 - [verification](#schema-verification) — 6 tables
 - [trust](#schema-trust) — 3 tables
 - [policy](#schema-policy) — 6 tables
-- [dispute](#schema-dispute) — 5 tables
+- [dispute](#schema-dispute) — 6 tables
 - [audit](#schema-audit) — 3 tables
 - [messaging](#schema-messaging) — 6 tables
 - [notification](#schema-notification) — 6 tables
 - [ai](#schema-ai) — 3 tables
-- [admin](#schema-admin) — 5 tables
+- [admin](#schema-admin) — 10 tables
 - [analytics](#schema-analytics) — 1 tables
-- [review](#schema-review) — 1 tables
+- [review](#schema-review) — 2 tables
 - [support](#schema-support) — 2 tables
 
 <a id="schema-platform"></a>
@@ -198,6 +198,7 @@ Aggregate root: one ZoikoID per human or service actor.
 | `country` | varchar(2) | no |  |
 | `status` | varchar(20) | no |  |
 | `platform_roles` | ARRAY | no |  |
+| `platform_role_expiry` | JSONB | no |  |
 | `personas` | ARRAY | no |  |
 | `primary_persona` | varchar(30) | yes |  |
 | `signup_organization_name` | varchar(200) | yes |  |
@@ -233,6 +234,22 @@ Projection of the actor's memberships in other domains, built from their events.
 
 Unique together: (identity_id, link_type, target_id)
 
+### `identity.org_session_policies`
+
+An organisation's rules for its members' sessions (identity/session_policy.py), applied when a session refreshes. A person in several organisations gets the strictest of them.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `organization_id` | UUID | no | unique |
+| `max_session_seconds` | INTEGER | yes |  |
+| `idle_timeout_seconds` | INTEGER | yes |  |
+| `require_mfa` | BOOLEAN | no |  |
+| `allowed_idps` | ARRAY | no |  |
+| `updated_by` | UUID | no |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+
 ### `identity.passkey_challenges`
 
 A server-issued WebAuthn challenge: single use, five minutes, for one purpose (and account).
@@ -264,6 +281,22 @@ A WebAuthn credential (identity/passkeys.py). The public key only: the private k
 | `id` | UUID | no | PK |
 | `created_at` | DATETIME | no |  |
 
+### `identity.scim_groups`
+
+A SCIM 2.0 group pushed by an organisation's identity provider (identity/scim.py). Its members get the organisation role the group maps to.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `organization_id` | UUID | no | indexed |
+| `display_name` | varchar(200) | no |  |
+| `external_id` | varchar(200) | yes |  |
+| `member_ids` | ARRAY | no |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+
+Unique together: (organization_id, display_name)
+
 ### `identity.sessions`
 
 Refresh-token session. Refresh tokens rotate; reuse revokes the family.
@@ -279,12 +312,32 @@ Refresh-token session. Refresh tokens rotate; reuse revokes the family.
 | `rotated_at` | DATETIME | yes |  |
 | `revoked_at` | DATETIME | yes |  |
 | `user_agent` | varchar(500) | yes |  |
+| `audience` | varchar(10) | no |  |
+| `idp` | varchar(20) | yes |  |
+| `id` | UUID | no | PK |
+| `created_at` | DATETIME | no |  |
+
+### `identity.sign_in_signals`
+
+Advisory risk signals of one sign-in (identity/risk.py): velocity, new device, impossible travel. Never blocks.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `identity_id` | UUID | no | indexed |
+| `session_id` | UUID | yes |  |
+| `ip_hash` | varchar(64) | yes |  |
+| `country` | varchar(2) | yes |  |
+| `latitude` | FLOAT | yes |  |
+| `longitude` | FLOAT | yes |  |
+| `device` | varchar(100) | no |  |
+| `signals` | ARRAY | no |  |
+| `risk` | varchar(10) | no |  |
 | `id` | UUID | no | PK |
 | `created_at` | DATETIME | no |  |
 
 ### `identity.sso_connections`
 
-An organisation's OpenID Connect identity provider (identity/sso.py) and SCIM token (identity/scim.py).
+An organisation's identity provider, OpenID Connect or SAML 2.0 (identity/sso.py, identity/saml.py), and SCIM token (identity/scim.py).
 
 | Column | Type | Null | Keys / index |
 |---|---|---|---|
@@ -299,6 +352,11 @@ An organisation's OpenID Connect identity provider (identity/sso.py) and SCIM to
 | `enabled` | BOOLEAN | no |  |
 | `scim_token_hash` | varchar(64) | yes | unique |
 | `created_by` | UUID | no |  |
+| `protocol` | varchar(10) | no |  |
+| `saml_idp_entity_id` | varchar(500) | yes |  |
+| `saml_sso_url` | varchar(1000) | yes |  |
+| `saml_certificates` | JSONB | no |  |
+| `group_role_map` | JSONB | no |  |
 | `id` | UUID | no | PK |
 | `updated_at` | DATETIME | no |  |
 | `created_at` | DATETIME | no |  |
@@ -316,6 +374,7 @@ One sign-in attempt: its id is the OAuth state; nonce and PKCE verifier never le
 | `link_identity_id` | UUID | yes |  |
 | `expires_at` | DATETIME | no |  |
 | `used_at` | DATETIME | yes |  |
+| `assertion` | JSONB | yes |  |
 | `id` | UUID | no | PK |
 | `created_at` | DATETIME | no |  |
 
@@ -530,6 +589,32 @@ Base class used for declarative class definitions.  The :class:`_orm.Declarative
 
 Unique together: (firm_id, identity_id)
 
+### `firm.offerings`
+
+A service the firm publishes, delivered by named member professionals. Invariant (Architecture: firm): an offering in a regulated specialization is published only by a verified firm with a verified authorized representative, and at least one delivering member is a verified, licensed professional.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `firm_id` | UUID | no | FK → firm.firms.id |
+| `title` | varchar(200) | no |  |
+| `summary` | varchar(2000) | no |  |
+| `specialization` | varchar(100) | no |  |
+| `engagement_types` | JSONB | no |  |
+| `pricing_model` | varchar(20) | no |  |
+| `starting_price_minor` | BIGINT | yes |  |
+| `currency` | varchar(3) | yes |  |
+| `delivered_by` | JSONB | no |  |
+| `regulated` | BOOLEAN | no |  |
+| `status` | varchar(20) | no |  |
+| `published_at` | DATETIME | yes |  |
+| `published_by` | UUID | yes |  |
+| `unpublished_reason` | varchar(300) | yes |  |
+| `created_by` | UUID | no |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+| `version` | BIGINT | no |  |
+
 <a id="schema-professional"></a>
 ## Schema `professional`
 
@@ -612,6 +697,7 @@ Aggregate root. Lifecycle: DRAFT -> PUBLISHED <-> UNPUBLISHED; any -> SUSPENDED 
 | `licensed_jurisdictions` | ARRAY | no |  |
 | `cross_border_acknowledged_at` | DATETIME | yes |  |
 | `regulated_data_attested_at` | DATETIME | yes |  |
+| `onsite_regions` | ARRAY | no |  |
 | `enterprise_status` | varchar(20) | no |  |
 | `enterprise_attestation` | JSONB | yes |  |
 | `enterprise_applied_at` | DATETIME | yes |  |
@@ -673,6 +759,37 @@ A named group of saved professionals ("Data Privacy Project", "Q1 2027 Advisory"
 | `created_at` | DATETIME | no |  |
 
 Unique together: (identity_id, name)
+
+### `marketplace.procurement_requests`
+
+A public request for a professional's procurement pack or a security review (a sales lead for the Zoikorum team). No account is needed; the form is rate-limited per caller. NEW -> CONTACTED -> CLOSED.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `reference` | varchar(20) | no | unique |
+| `kind` | varchar(20) | no |  |
+| `professional_id` | UUID | yes | indexed |
+| `requester_identity_id` | UUID | yes |  |
+| `name` | varchar(200) | no |  |
+| `organization` | varchar(200) | no |  |
+| `email` | varchar(254) | no |  |
+| `message` | varchar(2000) | no |  |
+| `status` | varchar(20) | no |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+
+### `marketplace.referral_attributions`
+
+The referral or invite code someone entered when they joined (optional). One per account, never changed after.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `identity_id` | UUID | no |  |
+| `code` | varchar(40) | no | indexed |
+| `source` | varchar(20) | no |  |
+| `id` | UUID | no | PK |
+| `created_at` | DATETIME | no |  |
 
 ### `marketplace.saved_professionals`
 
@@ -791,6 +908,7 @@ Base class used for declarative class definitions.  The :class:`_orm.Declarative
 | `offering_titles` | ARRAY | no |  |
 | `starting_price_minor` | BIGINT | yes |  |
 | `price_currency` | varchar(3) | yes |  |
+| `currencies` | ARRAY | no |  |
 | `bio_excerpt` | TEXT | yes |  |
 | `photo_url` | varchar(200) | yes |  |
 | `published_at` | DATETIME | yes |  |
@@ -801,6 +919,10 @@ Base class used for declarative class definitions.  The :class:`_orm.Declarative
 | `review_count` | INTEGER | no |  |
 | `review_average` | FLOAT | yes |  |
 | `response_median_hours` | FLOAT | yes |  |
+| `enterprise_engagements` | INTEGER | no |  |
+| `firm_id` | UUID | yes |  |
+| `firm_name` | varchar(200) | yes |  |
+| `firm_verified` | BOOLEAN | no |  |
 | `document` | TSVECTOR | no |  |
 | `id` | UUID | no | PK |
 | `updated_at` | DATETIME | no |  |
@@ -862,6 +984,7 @@ One per request. DRAFT -> SUBMITTED -> REVISION_REQUESTED -> SUBMITTED ... -> AC
 | `summary` | varchar(500) | no |  |
 | `scope_alignment` | varchar(20) | no |  |
 | `scope_notes` | varchar(1000) | yes |  |
+| `scope_changes` | JSONB | no |  |
 | `deliverables` | JSONB | no |  |
 | `milestones` | JSONB | no |  |
 | `attachments` | JSONB | no |  |
@@ -919,6 +1042,8 @@ DRAFT -> OPEN -> PROPOSAL_RECEIVED -> CLOSED; OPEN -> DECLINED; any open state -
 | `deliverables` | JSONB | no |  |
 | `custom_deliverables` | JSONB | no |  |
 | `dependencies` | JSONB | no |  |
+| `success_definition` | varchar(1000) | yes |  |
+| `success_measures` | JSONB | no |  |
 | `pricing_preferences` | JSONB | no |  |
 | `payment_cadence` | varchar(20) | yes |  |
 | `status` | varchar(20) | no |  |
@@ -1158,7 +1283,7 @@ One side asks to end the engagement by agreement (needed while money is in escro
 
 ### `escrow.accounts`
 
-UNFUNDED -> FUNDED -> PARTIALLY_RELEASED -> FULLY_RELEASED (DISPUTED / REFUNDED / CLOSED arrive with disputes).
+UNFUNDED -> FUNDED -> PARTIALLY_RELEASED -> FULLY_RELEASED (DISPUTED / REFUNDED / CLOSED arrive with disputes); UNFUNDED -> EXPIRED when nothing was funded within the funding window.
 
 | Column | Type | Null | Keys / index |
 |---|---|---|---|
@@ -1178,6 +1303,10 @@ UNFUNDED -> FUNDED -> PARTIALLY_RELEASED -> FULLY_RELEASED (DISPUTED / REFUNDED 
 | `auto_fund_identity_id` | UUID | yes |  |
 | `auto_fund_enabled_at` | DATETIME | yes |  |
 | `fee_bps` | INTEGER | yes |  |
+| `release_model` | varchar(20) | yes |  |
+| `release_approver_identity_id` | UUID | yes |  |
+| `protection_confirmed_at` | DATETIME | yes |  |
+| `protection_confirmed_by` | UUID | yes |  |
 | `id` | UUID | no | PK |
 | `updated_at` | DATETIME | no |  |
 | `created_at` | DATETIME | no |  |
@@ -1185,7 +1314,7 @@ UNFUNDED -> FUNDED -> PARTIALLY_RELEASED -> FULLY_RELEASED (DISPUTED / REFUNDED 
 
 ### `escrow.allocations`
 
-UNFUNDED -> FUNDING -> HELD -> RELEASED (ON_HOLD / REFUNDED arrive with disputes). FUNDING -> UNFUNDED on payment failure.
+UNFUNDED -> FUNDING -> HELD -> RELEASED (ON_HOLD / REFUNDED arrive with disputes). FUNDING -> UNFUNDED on payment failure. UNFUNDED -> EXPIRED (terminal) when the engagement was never funded within the funding window.
 
 | Column | Type | Null | Keys / index |
 |---|---|---|---|
@@ -1201,6 +1330,7 @@ UNFUNDED -> FUNDING -> HELD -> RELEASED (ON_HOLD / REFUNDED arrive with disputes
 | `refunded_minor` | BIGINT | no |  |
 | `funded_at` | DATETIME | yes |  |
 | `released_at` | DATETIME | yes |  |
+| `release_approval_due_at` | DATETIME | yes |  |
 | `id` | UUID | no | PK |
 | `updated_at` | DATETIME | no |  |
 | `created_at` | DATETIME | no |  |
@@ -1242,6 +1372,22 @@ Append-only double-entry line (database trigger rejects UPDATE/DELETE).
 | `reference_id` | UUID | no |  |
 | `milestone_id` | UUID | yes |  |
 | `memo` | varchar(200) | no |  |
+| `id` | UUID | no | PK |
+| `created_at` | DATETIME | no |  |
+
+### `escrow.ledger_snapshots`
+
+Periodic balance snapshot of one escrow account (escrow/snapshots.py): per-ledger-account balances through the newest ledger line it covers, checked against the account's own figures. Balance reads start from the latest snapshot and add only the lines after it.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `account_id` | UUID | no | FK → escrow.accounts.id |
+| `currency` | varchar(3) | no |  |
+| `through_created_at` | DATETIME | yes |  |
+| `entry_count` | INTEGER | no |  |
+| `balances` | JSONB | no |  |
+| `status` | varchar(10) | no |  |
+| `problems` | JSONB | no |  |
 | `id` | UUID | no | PK |
 | `created_at` | DATETIME | no |  |
 
@@ -1384,6 +1530,32 @@ Daily reconciliation (Engineering Handbook 15.4): escrow ledger vs payments reco
 | `id` | UUID | no | PK |
 | `updated_at` | DATETIME | no |  |
 | `created_at` | DATETIME | no |  |
+
+### `payments.reconciliation_breaks`
+
+Suspense item (PAY-02): one unmatched difference a reconciliation run found, per day, check and currency. OPEN -> EVIDENCE_GATHERING -> REVIEWED -> CLOSED; a day is reported clean only while none of its breaks is unresolved. Re-running a day updates its breaks instead of adding new ones (one row per day + kind + currency).
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `batch_id` | UUID | no | indexed |
+| `day` | DATE | no | indexed |
+| `kind` | varchar(20) | no |  |
+| `currency` | varchar(3) | no |  |
+| `amount_minor` | BIGINT | no |  |
+| `references` | JSONB | no |  |
+| `status` | varchar(20) | no |  |
+| `owner_id` | UUID | yes |  |
+| `resolution_note` | varchar(2000) | yes |  |
+| `reviewed_by` | UUID | yes |  |
+| `reviewed_at` | DATETIME | yes |  |
+| `closed_by` | UUID | yes |  |
+| `closed_at` | DATETIME | yes |  |
+| `history` | JSONB | no |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+
+Unique together: (day, kind, currency)
 
 ### `payments.refunds`
 
@@ -1740,6 +1912,7 @@ Base class used for declarative class definitions.  The :class:`_orm.Declarative
 | `decision_reason` | varchar(4000) | yes |  |
 | `remediation` | varchar(4000) | yes |  |
 | `decided_at` | DATETIME | yes |  |
+| `against` | varchar(20) | no |  |
 | `id` | UUID | no | PK |
 | `updated_at` | DATETIME | no |  |
 | `created_at` | DATETIME | no |  |
@@ -1783,6 +1956,8 @@ EVIDENCE_COLLECTION -> DIRECT_RESOLUTION -> MEDIATION -> DECIDED -> ENFORCED -> 
 | `retention_basis` | varchar(200) | yes |  |
 | `legal_hold` | BOOLEAN | no |  |
 | `retention_review_due` | BOOLEAN | no |  |
+| `agreements` | JSONB | no |  |
+| `provisional_decision` | JSONB | yes |  |
 | `id` | UUID | no | PK |
 | `updated_at` | DATETIME | no |  |
 | `created_at` | DATETIME | no |  |
@@ -1802,6 +1977,24 @@ Append-only (database trigger): evidence is never edited or deleted, only added.
 | `items` | JSONB | no |  |
 | `id` | UUID | no | PK |
 | `created_at` | DATETIME | no |  |
+
+### `dispute.report_subscriptions`
+
+An organisation admin's opt-in to a scheduled dispute report (CSV), sent on a durable timer.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `organization_id` | UUID | no | indexed |
+| `identity_id` | UUID | no |  |
+| `frequency` | varchar(10) | no |  |
+| `active` | BOOLEAN | no |  |
+| `next_run_at` | DATETIME | no |  |
+| `last_sent_at` | DATETIME | yes |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+
+Unique together: (organization_id, identity_id)
 
 ### `dispute.resolution_proposals`
 
@@ -2174,6 +2367,70 @@ Base class used for declarative class definitions.  The :class:`_orm.Declarative
 <a id="schema-admin"></a>
 ## Schema `admin`
 
+### `admin.approval_requests`
+
+Maker-checker for a privileged staff action (admin/approvals.py): one person asks, a different person holding the required role approves, and only then is the action carried out. REQUESTED -> APPLIED | FAILED (approved, carried out or not) | REJECTED | EXPIRED | CANCELLED. Never edited after it is decided.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `kind` | varchar(40) | no | indexed |
+| `payload` | JSONB | no |  |
+| `summary` | varchar(300) | no |  |
+| `target_key` | varchar(200) | no | indexed |
+| `justification` | varchar(2000) | no |  |
+| `requested_by` | UUID | no | indexed |
+| `requested_at` | DATETIME | no |  |
+| `expires_at` | DATETIME | no |  |
+| `approver_roles` | JSONB | no |  |
+| `status` | varchar(20) | no | indexed |
+| `decided_by` | UUID | yes |  |
+| `decided_at` | DATETIME | yes |  |
+| `decision_note` | varchar(1000) | yes |  |
+| `applied_at` | DATETIME | yes |  |
+| `apply_error` | varchar(1000) | yes |  |
+| `result` | JSONB | yes |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+
+### `admin.case_assignments`
+
+Who owns a staff case (admin/assignments.py), for every workstream at once: one row per (kind, case id). The case stays in its own domain; this only records the operational owner and whether the case was escalated. Released cases keep their row with no owner. Every change is audited.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `kind` | varchar(40) | no |  |
+| `case_id` | varchar(80) | no |  |
+| `owner_identity_id` | UUID | yes | indexed |
+| `escalated` | BOOLEAN | no |  |
+| `escalation_reason` | varchar(1000) | yes |  |
+| `escalated_at` | DATETIME | yes |  |
+| `updated_by` | UUID | yes |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+
+Unique together: (kind, case_id)
+
+### `admin.conflict_declarations`
+
+Staff ethics register: a declared conflict of interest with a person, professional or organisation (kind DECLARATION), or a recusal from one case (kind RECUSAL). Either one blocks that staff member from being assigned to, or deciding, matching work. Withdrawn, never deleted.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `identity_id` | UUID | no | indexed |
+| `kind` | varchar(20) | no |  |
+| `subject_type` | varchar(30) | yes |  |
+| `subject_id` | UUID | yes | indexed |
+| `case_kind` | varchar(30) | yes |  |
+| `case_id` | varchar(80) | yes |  |
+| `reason` | varchar(2000) | no |  |
+| `status` | varchar(20) | no |  |
+| `withdrawn_at` | DATETIME | yes |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+
 ### `admin.enforcement_cases`
 
 Base class used for declarative class definitions.  The :class:`_orm.DeclarativeBase` allows for the creation of new declarative bases in such a way that is compatible with type checkers::       from sqlalchemy.orm import DeclarativeBase       class Base(DeclarativeBase):         pass  The above ``Base`` class is now usable as the base for new declarative mappings.  The superclass makes use of the ``__init_subclass__()`` method to set up new classes and metaclasses aren't used.  When first used, the :class:`_orm.DeclarativeBase` class instantiates a new :class:`_orm.registry` to be used with the base, assuming one was not provided explicitly. The :class:`_orm.DeclarativeBase` class supports class-level attributes which act as parameters for the construction of this registry; such as to indicate a specific :class:`_schema.MetaData` collection as well as a specific value for :paramref:`_orm.registry.type_annotation_map`::      from typing import Annotated      from sqlalchemy import BigInteger     from sqlalchemy import MetaData     from sqlalchemy import String     from sqlalchemy.orm import DeclarativeBase      bigint = Annotated[int, "bigint"]     my_metadata = MetaData()       class Base(DeclarativeBase):         metadata = my_metadata         type_annotation_map = {             str: String().with_variant(String(255), "mysql", "mariadb"),             bigint: BigInteger(),         }  Class-level attributes which may be specified include:  :param metadata: optional :class:`_schema.MetaData` collection.  If a :class:`_orm.registry` is constructed automatically, this  :class:`_schema.MetaData` collection will be used to construct it.  Otherwise, the local :class:`_schema.MetaData` collection will supersede  that used by an existing :class:`_orm.registry` passed using the  :paramref:`_orm.DeclarativeBase.registry` parameter. :param type_annotation_map: optional type annotation map that will be  passed to the :class:`_orm.registry` as  :paramref:`_orm.registry.type_annotation_map`. :param registry: supply a pre-existing :class:`_orm.registry` directly.  .. versionadded:: 2.0  Added :class:`.DeclarativeBase`, so that declarative    base classes may be constructed in such a way that is also recognized    by :pep:`484` type checkers.   As a result, :class:`.DeclarativeBase`    and other subclassing-oriented APIs should be seen as    superseding previous "class returned by a function" APIs, namely    :func:`_orm.declarative_base` and :meth:`_orm.registry.generate_base`,    where the base class returned cannot be recognized by type checkers    without using plugins.  **__init__ behavior**  In a plain Python class, the base-most ``__init__()`` method in the class hierarchy is ``object.__init__()``, which accepts no arguments. However, when the :class:`_orm.DeclarativeBase` subclass is first declared, the class is given an ``__init__()`` method that links to the :paramref:`_orm.registry.constructor` constructor function, if no ``__init__()`` method is already present; this is the usual declarative constructor that will assign keyword arguments as attributes on the instance, assuming those attributes are established at the class level (i.e. are mapped, or are linked to a descriptor). This constructor is **never accessed by a mapped class without being called explicitly via super()**, as mapped classes are themselves given an ``__init__()`` method directly which calls :paramref:`_orm.registry.constructor`, so in the default case works independently of what the base-most ``__init__()`` method does.  .. versionchanged:: 2.0.1  :class:`_orm.DeclarativeBase` has a default    constructor that links to :paramref:`_orm.registry.constructor` by    default, so that calls to ``super().__init__()`` can access this    constructor. Previously, due to an implementation mistake, this default    constructor was missing, and calling ``super().__init__()`` would invoke    ``object.__init__()``.  The :class:`_orm.DeclarativeBase` subclass may also declare an explicit ``__init__()`` method which will replace the use of the :paramref:`_orm.registry.constructor` function at this level::      class Base(DeclarativeBase):         def __init__(self, id=None):             self.id = id  Mapped classes still will not invoke this constructor implicitly; it remains only accessible by calling ``super().__init__()``::      class MyClass(Base):         def __init__(self, id=None, name=None):             self.name = name             super().__init__(id=id)  Note that this is a different behavior from what functions like the legacy :func:`_orm.declarative_base` would do; the base created by those functions would always install :paramref:`_orm.registry.constructor` for ``__init__()``.
@@ -2200,10 +2457,29 @@ Base class used for declarative class definitions.  The :class:`_orm.Declarative
 | `reversed_by` | UUID | yes |  |
 | `appeal` | JSONB | yes |  |
 | `remediation` | JSONB | no |  |
+| `user_impact` | varchar(2000) | yes |  |
+| `post_review` | JSONB | yes |  |
+| `concluded_at` | DATETIME | yes |  |
 | `id` | UUID | no | PK |
 | `updated_at` | DATETIME | no |  |
 | `created_at` | DATETIME | no |  |
 | `version` | BIGINT | no |  |
+
+### `admin.enforcement_referrals`
+
+Level 4: a referral to law enforcement or a regulator. Legal records it with its sign-off; only Legal reads it.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `case_id` | UUID | no | indexed |
+| `agency` | varchar(200) | no |  |
+| `agency_reference` | varchar(200) | no |  |
+| `referred_on` | DATE | no |  |
+| `legal_signoff_by` | UUID | no |  |
+| `legal_signoff_note` | varchar(2000) | no |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
 
 ### `admin.feature_flags`
 
@@ -2234,9 +2510,29 @@ An operational switch (admin/switches.py): while ``paused``, its kind of action 
 | `updated_at` | DATETIME | no |  |
 | `created_at` | DATETIME | no |  |
 
+### `admin.fraud_alerts`
+
+A third-party fraud alert received on the signed intake endpoint. Advisory: it opens a Level 0 review case.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `provider` | varchar(60) | no |  |
+| `external_id` | varchar(120) | no |  |
+| `subject_type` | varchar(30) | no |  |
+| `subject_id` | UUID | no | indexed |
+| `reason_code` | varchar(100) | no |  |
+| `score` | INTEGER | yes |  |
+| `details` | JSONB | no |  |
+| `case_id` | UUID | yes |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
+
+Unique together: (provider, external_id)
+
 ### `admin.incidents`
 
-Incident register (Regulator assurance s.11): what happened, severity, containment, who was notified, root cause, remediation, and the post-incident review. OPEN -> CONTAINED -> RESOLVED -> CLOSED.
+Incident register (Regulator assurance s.11): what happened, severity, containment, who was notified, root cause, remediation, and the post-incident review. UNACKNOWLEDGED -> INVESTIGATING -> MITIGATING -> MONITORING -> RECOVERED -> CLOSED; RECOVERED needs a verification note from someone other than the owner and the person who set MITIGATING.
 
 | Column | Type | Null | Keys / index |
 |---|---|---|---|
@@ -2247,7 +2543,9 @@ Incident register (Regulator assurance s.11): what happened, severity, containme
 | `status` | varchar(20) | no |  |
 | `summary` | varchar(4000) | no |  |
 | `detected_at` | DATETIME | no |  |
+| `acknowledged_at` | DATETIME | yes |  |
 | `contained_at` | DATETIME | yes |  |
+| `monitoring_at` | DATETIME | yes |  |
 | `resolved_at` | DATETIME | yes |  |
 | `closed_at` | DATETIME | yes |  |
 | `owner_id` | UUID | no |  |
@@ -2256,6 +2554,11 @@ Incident register (Regulator assurance s.11): what happened, severity, containme
 | `root_cause` | varchar(4000) | yes |  |
 | `remediation` | JSONB | no |  |
 | `review` | varchar(8000) | yes |  |
+| `mitigated_by` | UUID | yes |  |
+| `recovery_note` | varchar(2000) | yes |  |
+| `recovery_verified_by` | UUID | yes |  |
+| `ux_impact` | varchar(4000) | yes |  |
+| `policy_updates` | varchar(4000) | yes |  |
 | `id` | UUID | no | PK |
 | `updated_at` | DATETIME | no |  |
 | `created_at` | DATETIME | no |  |
@@ -2302,6 +2605,21 @@ Rebuildable reporting facts sourced exclusively from domain events.
 
 <a id="schema-review"></a>
 ## Schema `review`
+
+### `review.review_replies`
+
+The reviewed professional's public answer to a review: one per review, editable. Every version is kept in the audit ledger (review.reply.created / review.reply.edited), so an edit never hides what was said before.
+
+| Column | Type | Null | Keys / index |
+|---|---|---|---|
+| `review_id` | UUID | no | FK → review.reviews.id, unique |
+| `professional_id` | UUID | no | indexed |
+| `author_identity_id` | UUID | no |  |
+| `body` | varchar(1500) | no |  |
+| `edit_count` | INTEGER | no |  |
+| `id` | UUID | no | PK |
+| `updated_at` | DATETIME | no |  |
+| `created_at` | DATETIME | no |  |
 
 ### `review.reviews` — append-only
 

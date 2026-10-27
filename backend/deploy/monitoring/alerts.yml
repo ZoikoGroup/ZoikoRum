@@ -102,3 +102,139 @@ groups:
         annotations:
           summary: 'An incident switch ({{ $labels.__name__ }}) has been paused for more than a day'
           runbook: RUNBOOKS.md#incident-switches
+
+  # ---- Service level objectives and error budgets (Engineering Handbook 24.1) ----------------------------------------------
+  # Availability SLO per critical area: 99.9% of requests answered without a server error over 30 days (error budget
+  # 0.1%); audit 99.95%. Multi-window burn rates (Google SRE workbook): page when the budget would be gone in about two
+  # days (14.4x over 1h, confirmed over 5m) or five days (6x over 6h, confirmed over 30m); ticket when a 3-day window
+  # spends faster than the budget refills.
+  - name: zoikorum-slo
+    rules:
+      - alert: AuthErrorBudgetFastBurn
+        expr: |
+          (
+            sum(rate(zk_http_request_duration_seconds_count{route=~"/v1/auth/.*",status="5xx"}[1h]))
+              / clamp_min(sum(rate(zk_http_request_duration_seconds_count{route=~"/v1/auth/.*"}[1h])), 1e-9) > (14.4 * 0.001)
+          ) and (
+            sum(rate(zk_http_request_duration_seconds_count{route=~"/v1/auth/.*",status="5xx"}[5m]))
+              / clamp_min(sum(rate(zk_http_request_duration_seconds_count{route=~"/v1/auth/.*"}[5m])), 1e-9) > (14.4 * 0.001)
+          )
+        for: 2m
+        labels: {severity: page, slo: auth}
+        annotations:
+          summary: Sign-in is burning its 30-day error budget 14x too fast (budget gone in about 2 days)
+          runbook: RUNBOOKS.md#slo-error-budget-burn
+      - alert: AuthErrorBudgetSlowBurn
+        expr: |
+          (
+            sum(rate(zk_http_request_duration_seconds_count{route=~"/v1/auth/.*",status="5xx"}[6h]))
+              / clamp_min(sum(rate(zk_http_request_duration_seconds_count{route=~"/v1/auth/.*"}[6h])), 1e-9) > (6 * 0.001)
+          ) and (
+            sum(rate(zk_http_request_duration_seconds_count{route=~"/v1/auth/.*",status="5xx"}[30m]))
+              / clamp_min(sum(rate(zk_http_request_duration_seconds_count{route=~"/v1/auth/.*"}[30m])), 1e-9) > (6 * 0.001)
+          )
+        for: 15m
+        labels: {severity: page, slo: auth}
+        annotations:
+          summary: Sign-in is burning its error budget 6x too fast (budget gone in about 5 days)
+          runbook: RUNBOOKS.md#slo-error-budget-burn
+      - alert: AuthLatencySlo
+        expr: |
+          histogram_quantile(0.99, sum by (le) (rate(zk_http_request_duration_seconds_bucket{route=~"/v1/auth/.*"}[10m]))) > 1
+        for: 15m
+        labels: {severity: ticket, slo: auth}
+        annotations:
+          summary: Sign-in p99 is above 1 second (SLO)
+          runbook: RUNBOOKS.md#slo-error-budget-burn
+      - alert: EscrowErrorBudgetFastBurn
+        expr: |
+          (
+            sum(rate(zk_http_request_duration_seconds_count{route=~"/v1/(admin/)?escrow.*",status="5xx"}[1h]))
+              / clamp_min(sum(rate(zk_http_request_duration_seconds_count{route=~"/v1/(admin/)?escrow.*"}[1h])), 1e-9) > (14.4 * 0.001)
+          ) and (
+            sum(rate(zk_http_request_duration_seconds_count{route=~"/v1/(admin/)?escrow.*",status="5xx"}[5m]))
+              / clamp_min(sum(rate(zk_http_request_duration_seconds_count{route=~"/v1/(admin/)?escrow.*"}[5m])), 1e-9) > (14.4 * 0.001)
+          )
+        for: 2m
+        labels: {severity: page, slo: escrow, team: financial-operations}
+        annotations:
+          summary: Escrow is burning its 30-day error budget 14x too fast
+          runbook: RUNBOOKS.md#slo-error-budget-burn
+      - alert: EscrowErrorBudgetSlowBurn
+        expr: |
+          (
+            sum(rate(zk_http_request_duration_seconds_count{route=~"/v1/(admin/)?escrow.*",status="5xx"}[6h]))
+              / clamp_min(sum(rate(zk_http_request_duration_seconds_count{route=~"/v1/(admin/)?escrow.*"}[6h])), 1e-9) > (6 * 0.001)
+          ) and (
+            sum(rate(zk_http_request_duration_seconds_count{route=~"/v1/(admin/)?escrow.*",status="5xx"}[30m]))
+              / clamp_min(sum(rate(zk_http_request_duration_seconds_count{route=~"/v1/(admin/)?escrow.*"}[30m])), 1e-9) > (6 * 0.001)
+          )
+        for: 15m
+        labels: {severity: page, slo: escrow, team: financial-operations}
+        annotations:
+          summary: Escrow is burning its error budget 6x too fast
+          runbook: RUNBOOKS.md#slo-error-budget-burn
+      - alert: PaymentsErrorBudgetFastBurn
+        expr: |
+          (
+            sum(rate(zk_http_request_duration_seconds_count{route=~"/v1/(payments|payout-accounts).*",status="5xx"}[1h]))
+              / clamp_min(sum(rate(zk_http_request_duration_seconds_count{route=~"/v1/(payments|payout-accounts).*"}[1h])), 1e-9) > (14.4 * 0.001)
+          ) and (
+            sum(rate(zk_http_request_duration_seconds_count{route=~"/v1/(payments|payout-accounts).*",status="5xx"}[5m]))
+              / clamp_min(sum(rate(zk_http_request_duration_seconds_count{route=~"/v1/(payments|payout-accounts).*"}[5m])), 1e-9) > (14.4 * 0.001)
+          )
+        for: 2m
+        labels: {severity: page, slo: payments, team: financial-operations}
+        annotations:
+          summary: Payments are burning their 30-day error budget 14x too fast
+          runbook: RUNBOOKS.md#slo-error-budget-burn
+      - alert: PaymentsErrorBudgetSlowBurn
+        expr: |
+          (
+            sum(rate(zk_http_request_duration_seconds_count{route=~"/v1/(payments|payout-accounts).*",status="5xx"}[6h]))
+              / clamp_min(sum(rate(zk_http_request_duration_seconds_count{route=~"/v1/(payments|payout-accounts).*"}[6h])), 1e-9) > (6 * 0.001)
+          ) and (
+            sum(rate(zk_http_request_duration_seconds_count{route=~"/v1/(payments|payout-accounts).*",status="5xx"}[30m]))
+              / clamp_min(sum(rate(zk_http_request_duration_seconds_count{route=~"/v1/(payments|payout-accounts).*"}[30m])), 1e-9) > (6 * 0.001)
+          )
+        for: 15m
+        labels: {severity: page, slo: payments, team: financial-operations}
+        annotations:
+          summary: Payments are burning their error budget 6x too fast
+          runbook: RUNBOOKS.md#slo-error-budget-burn
+      - alert: AuditErrorBudgetFastBurn
+        expr: |
+          (
+            sum(rate(zk_http_request_duration_seconds_count{route=~"/v1/audit.*",status="5xx"}[1h]))
+              / clamp_min(sum(rate(zk_http_request_duration_seconds_count{route=~"/v1/audit.*"}[1h])), 1e-9) > (14.4 * 0.0005)
+          ) and (
+            sum(rate(zk_http_request_duration_seconds_count{route=~"/v1/audit.*",status="5xx"}[5m]))
+              / clamp_min(sum(rate(zk_http_request_duration_seconds_count{route=~"/v1/audit.*"}[5m])), 1e-9) > (14.4 * 0.0005)
+          )
+        for: 2m
+        labels: {severity: page, slo: audit}
+        annotations:
+          summary: The audit trail API is burning its 30-day error budget 14x too fast
+          runbook: RUNBOOKS.md#slo-error-budget-burn
+      - alert: ErrorBudgetSlowLeak
+        expr: |
+          sum by (area) (label_replace(rate(zk_http_request_duration_seconds_count{route=~"/v1/(auth|escrow|admin/escrow|payments|payout-accounts|audit).*",status="5xx"}[3d]), "area", "$1", "route", "/v1/(auth|escrow|admin/escrow|payments|payout-accounts|audit).*"))
+            / clamp_min(sum by (area) (label_replace(rate(zk_http_request_duration_seconds_count{route=~"/v1/(auth|escrow|admin/escrow|payments|payout-accounts|audit).*"}[3d]), "area", "$1", "route", "/v1/(auth|escrow|admin/escrow|payments|payout-accounts|audit).*")), 1e-9) > 0.001
+        for: 1h
+        labels: {severity: ticket}
+        annotations:
+          summary: '{{ $labels.area }} has spent its error budget faster than it refills over the last 3 days'
+          runbook: RUNBOOKS.md#slo-error-budget-burn
+      - alert: EscrowLedgerSnapshotMismatch
+        expr: zk_escrow_snapshot_mismatches > 0
+        labels: {severity: page, team: financial-operations}
+        annotations:
+          summary: An escrow ledger snapshot failed its integrity check (ledger and balances disagree, P0)
+          runbook: RUNBOOKS.md#escrow-ledger-snapshot-mismatch
+      - alert: EscrowLedgerSnapshotsNotRunning
+        expr: zk_escrow_snapshot_age_hours > 36
+        for: 1h
+        labels: {severity: ticket, team: financial-operations}
+        annotations:
+          summary: The daily escrow ledger snapshots have not run for more than 36 hours
+          runbook: RUNBOOKS.md#escrow-ledger-snapshot-mismatch

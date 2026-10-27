@@ -300,3 +300,18 @@ async def test_profile_photo_upload_checks_and_visibility(client, make_user, dra
     r = await client.delete(url, headers=u.h)
     assert r.json()["photoUrl"] is None
     assert (await client.get(photo_url, headers=u.h)).status_code == 404
+
+
+async def test_a_duplicate_offering_can_be_deleted(client, make_user):
+    u, _ = await new_pro(client, make_user, "dee")
+    await client.put("/v1/professionals/me/specializations", headers=u.h, json={"primary": "fractional-cfo"})
+    url = "/v1/professionals/me/offerings"
+    body = {"title": "CFO advisory", "specialization": "fractional-cfo", "engagementTypes": ["ADVISORY"], "pricingModel": "CUSTOM"}
+    keep = (await client.post(url, headers=u.h, json=body)).json()
+    dup = (await client.post(url, headers=u.h, json=body)).json()
+    assert (await client.delete(f"{url}/{dup['id']}", headers=u.h)).status_code == 204
+    assert [o["id"] for o in (await client.get(url, headers=u.h)).json()] == [keep["id"]]
+    assert (await client.get(f"{url}/{dup['id']}", headers=u.h)).status_code == 404  # gone, cannot be edited
+    assert (await client.delete(f"{url}/{dup['id']}", headers=u.h)).status_code == 404
+    other, _ = await new_pro(client, make_user, "eve")
+    assert (await client.delete(f"{url}/{keep['id']}", headers=other.h)).status_code == 404  # only your own

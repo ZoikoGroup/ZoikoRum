@@ -9,7 +9,7 @@ from zoikorum.domains.admin import facade as admin_facade
 from zoikorum.domains.admin.facade import ApprovalRequestOut
 from zoikorum.domains.payments import operations, reconciliation, service, webhooks
 from zoikorum.domains.payments.schemas import (
-    BreakAdvanceIn, ChargeOut, EarningsOut, InvoiceOut, OpsResolveIn, OpsWorklistOut, PayoutAccountIn, PayoutAccountOut, ReconcileIn,
+    BreakAdvanceIn, ChargeOut, EarningsOut, InvoiceOut, OpsResolveIn, OpsWorklistOut, PayoutAccountIn, PayoutAccountOut, PayoutStatementOut, ReconcileIn,
     ReconciliationBreakOut, ReconciliationOut, RefundOut,
 )
 from zoikorum.shared.auth import CurrentActor
@@ -21,7 +21,7 @@ router = APIRouter(tags=["payments"])
 
 @router.put("/v1/payout-accounts/me", response_model=PayoutAccountOut)
 async def set_payout_account(body: PayoutAccountIn, actor: CurrentActor, session: DbSession):
-    """Professional: where payouts go. Needs a fresh two-step confirmation and Trust Tier B."""
+    """Professional: where payouts go. Needs a fresh two-step confirmation and an Amber trust light (identity verified)."""
     return await service.set_payout_account(session, actor, body)
 
 
@@ -42,6 +42,13 @@ async def invoice_pdf(invoice_id: uuid.UUID, actor: CurrentActor, session: DbSes
     data, name = await service.invoice_pdf(session, actor, invoice_id)
     return Response(data, media_type="application/pdf", headers={
         "Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
+
+
+@router.get("/v1/payments/payouts/{payout_id}", response_model=PayoutStatementOut)
+async def payout_statement(payout_id: uuid.UUID, actor: CurrentActor, session: DbSession):
+    """Professional: the statement for one of your payouts (amounts, engagement, buyer organisation, steps, related
+    transactions, masked destination). Financial Operations staff may read any payout (audited). 404 for anyone else."""
+    return await service.payout_statement(session, actor, payout_id)
 
 
 @router.get("/v1/payments/payouts/{payout_id}/pdf")

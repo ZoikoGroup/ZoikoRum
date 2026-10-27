@@ -1,0 +1,19 @@
+# Code owners: a pull request that touches one of these paths needs an approving review from the listed owners
+# (enforced when branch protection on main turns on "Require review from Code Owners").
+#
+# REPLACE @ZoikoGroup/zoikorum-leads with the real GitHub team (or usernames) before enabling that rule: GitHub
+# ignores owners it cannot resolve, and a placeholder that does not exist means no review is required.
+#
+# Sensitive paths only: money, policy, identity and AI decisions, database migrations, sign-in and staff
+# capabilities, and the CI/deploy workflows. The last matching line wins.
+
+/backend/src/zoikorum/domains/payments/   @ZoikoGroup/zoikorum-leads
+/backend/src/zoikorum/domains/escrow/     @ZoikoGroup/zoikorum-leads
+/backend/src/zoikorum/domains/policy/     @ZoikoGroup/zoikorum-leads
+/backend/src/zoikorum/domains/identity/   @ZoikoGroup/zoikorum-leads
+/backend/src/zoikorum/domains/ai/         @ZoikoGroup/zoikorum-leads
+/backend/alembic/                         @ZoikoGroup/zoikorum-leads
+/backend/src/zoikorum/shared/auth.py         @ZoikoGroup/zoikorum-leads
+/backend/src/zoikorum/shared/capabilities.py @ZoikoGroup/zoikorum-leads
+/.github/workflows/                       @ZoikoGroup/zoikorum-leads
+/.github/CODEOWNERS                       @ZoikoGroup/zoikorum-leads

@@ -97,6 +97,9 @@ export function SiteFooter() {
           <Link to="/legal/privacy">Privacy</Link>
           <Link to="/legal/trust-and-safety">Trust &amp; Safety Charter</Link>
           <Link to="/legal/ethics">Ethics Code</Link>
+          <Link to="/legal/dispute-resolution">Dispute Resolution</Link>
+          <Link to="/legal/security">Security</Link>
+          <Link to="/legal/accessibility">Accessibility</Link>
         </nav>
         <p className="small">
           Zoikorum provides marketplace infrastructure, verification, contracting facilitation and payment protection.
@@ -108,7 +111,7 @@ export function SiteFooter() {
 }
 
 const DEFAULT_POINTS = [
-  'Verification-first onboarding with Trust Tiers A, B and C',
+  'Verification-first onboarding with Green, Amber and Red trust lights',
   'Contract-required engagements with scope versioning',
   'Escrow-protected payments released on acceptance',
   'Every action recorded in an audit-grade ledger',

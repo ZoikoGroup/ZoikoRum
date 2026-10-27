@@ -37,10 +37,11 @@ from zoikorum.shared.errors import Forbidden, ValidationFailed
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_event
 from zoikorum.shared.money import MoneyDTO
+from zoikorum.shared.trust_light import LIGHT_NAME, light
 
 EN = literal_column("'english'::regconfig")
 CANDIDATE_CAP = 500  # ranked in the application; ample for the current catalogue size
-TIER_LABEL = {"A": "Fully Verified Professional", "B": "Verified Identity", "C": "Unverified (Discovery Only)"}
+TIER_LABEL = {t: light(t) for t in ("A", "B", "C")}  # tier codes stay A/B/C; people see the trust light
 TIER_RANK = {"A": 3, "B": 2, "C": 1}
 # Dimension values that count as "verified" for the `verified=` filter and policy eligibility.
 GOOD = {"identity": ("VERIFIED",), "credentials": ("VALIDATED", "NOT_APPLICABLE"), "jurisdiction": ("ELIGIBLE",),
@@ -52,7 +53,7 @@ LABELS = {
     "ADVISORY": "Advisory", "PROJECT": "Project", "RETAINER": "Retainer", "FRACTIONAL": "Fractional",
     "REMOTE": "Remote", "ONSITE": "On-site", "HYBRID": "Hybrid", "HOURLY": "Hourly", "FIXED": "Fixed fee",
     "CUSTOM": "Quote on request", "NOW": "Available now", "TWO_WEEKS": "Within 2 weeks", "ONE_MONTH": "Within a month",
-    "NOT_SPECIFIED": "Not specified", "AT_CAPACITY": "At capacity", "A": "Tier A", "B": "Tier B", "C": "Tier C",
+    "NOT_SPECIFIED": "Not specified", "AT_CAPACITY": "At capacity", "A": "Green", "B": "Amber", "C": "Red",
 }
 
 
@@ -93,6 +94,13 @@ async def rebuild(session: AsyncSession, professional_id: uuid.UUID, occurred_at
     if firm and firm.status == "SUSPENDED":
         firm = None
     firm_name = (firm.trading_name or firm.legal_name) if firm else None
+    currencies = sorted({o.currency for o in priced if o.currency} | ({pro.indicative_rate_currency} if pro.indicative_rate_currency else set()))
+    enterprise_engagements = 0
+    for org_id, row in (await contract_facade.engagements_by_organization(session, pro.id)).items():
+        if row["completed"]:
+            org = await buyer_facade.get_organization(session, org_id)
+            if org is not None and org.org_type == "ENTERPRISE":
+                enterprise_engagements += row["completed"]
 
     text_a = " ".join(filter(None, [pro.display_name, pro.headline]))
     text_b = " ".join(names.values())
@@ -115,7 +123,7 @@ async def rebuild(session: AsyncSession, professional_id: uuid.UUID, occurred_at
         tier=trust.tier, trust_score=trust.score, dimensions=dict(trust.dimensions), verified_credentials=verified_credentials,
         verified_jurisdictions=verified_jurisdictions,
         offering_titles=[o.title for o in offerings], starting_price_minor=cheapest.starting_price_minor if cheapest else None,
-        price_currency=cheapest.currency if cheapest else None, bio_excerpt=(pro.bio or "")[:300] or None, photo_url=pro.photo_url,
+        price_currency=cheapest.currency if cheapest else None, currencies=currencies, enterprise_engagements=enterprise_engagements, bio_excerpt=(pro.bio or "")[:300] or None, photo_url=pro.photo_url,
         published_at=pro.published_at, last_event_at=occurred_at,
         completed_engagements=delivery["completed"], milestones_due=delivery["milestonesWithDueDate"],
         milestones_on_time=delivery["onTime"], review_count=reviews["reviewCount"], review_average=reviews["averageRating"],
@@ -176,6 +184,13 @@ def _conditions(p: SearchParams, tsquery) -> list:
         conds.append(Doc.availability == p.availability)
     if p.credential:
         conds.append(func.array_to_string(Doc.verified_credentials, " ").ilike(f"%{_escape_like(p.credential)}%", escape="\\"))
+    if p.credentials:
+        names = func.array_to_string(Doc.verified_credentials, " ")
+        conds.append(or_(*(names.ilike(f"%{_escape_like(c)}%", escape="\\") for c in p.credentials)))
+    if p.priorEnterprise:
+        conds.append(Doc.enterprise_engagements > 0)
+    if p.multiCurrency:
+        conds.append(func.cardinality(Doc.currencies) > 1)
     if p.experience:
         conds.append(Doc.years_experience_band == p.experience)
     if p.publishedAfter:
@@ -233,7 +248,7 @@ def _rank_and_explain(doc: Doc, rank: float, max_rank: float, p: SearchParams, n
         primary = doc.primary_specialization in matched
         why.append(f"Specializes in {', '.join(doc.specialization_names.get(s, s) for s in matched)}" + (" (primary)" if primary else ""))
     trust = {"A": 12, "B": 8, "C": 2}[doc.tier] + 8 * doc.trust_score / 100  # tier and trust score (Arch 9.4)
-    why.append(f"Tier {doc.tier}: {TIER_LABEL[doc.tier]}")
+    why.append(f"Trust light: {TIER_LABEL[doc.tier]}")
     if doc.verified_credentials:
         why.append(f"Verified credential: {doc.verified_credentials[0]}")
     availability = AVAILABILITY_POINTS.get(doc.availability, 0)
@@ -247,7 +262,7 @@ def _rank_and_explain(doc: Doc, rank: float, max_rank: float, p: SearchParams, n
             why.append(f"Serves clients in {j}")
     pricing_fit = 5 if p.pricingModel else 0
     record, record_why = track_record(doc)
-    after_tier = next(i for i, w in enumerate(why) if w.startswith("Tier ")) + 1
+    after_tier = next(i for i, w in enumerate(why) if w.startswith("Trust light: ")) + 1
     why[after_tier:after_tier] = record_why  # shown right after the tier, so the 6-reason cap keeps them
     score = relevance + trust + availability + pricing_fit + record
     if new_talent_boost and _new_talent(doc):
@@ -322,6 +337,11 @@ def _facets(docs: list[Doc]) -> dict[str, list[FacetValue]]:
         "pricingModel": count(lambda d: d.pricing_models),
         "engagementType": count(lambda d: d.engagement_types),
         "availability": count(lambda d: [d.availability]),
+        "credential": count(lambda d: d.verified_credentials)[:30],
+        "enterpriseReady": count(lambda d: ["true"] if d.enterprise_ready else []),
+        "priorEnterprise": count(lambda d: ["true"] if d.enterprise_engagements else []),
+        "multiCurrency": count(lambda d: ["true"] if len(d.currencies or []) > 1 else []),
+        "insurance": count(lambda d: ["true"] if d.dimensions.get("insurance") == "VERIFIED" else []),
     }
 
 
@@ -338,6 +358,7 @@ def _item(doc: Doc, why: list[str], regulated: set[str] = frozenset()) -> Result
         servedJurisdictions=list(doc.served_jurisdictions), licensedJurisdictions=list(doc.licensed_jurisdictions),
         dimensions={**doc.dimensions, **({"restrictions": "UNKNOWN"} if doc.dimensions.get("restrictions") not in (None, "CLEAR") else {})},
         regulatedPreview=doc.tier != "A" and bool(regulated.intersection(doc.specializations)), enterpriseReady=doc.enterprise_ready,
+        enterpriseEngagements=doc.enterprise_engagements or 0, currencies=list(doc.currencies or []),
         firm=FirmRef(id=doc.firm_id, name=doc.firm_name, verified=doc.firm_verified) if doc.firm_id and doc.firm_name else None,
     )
 
@@ -436,7 +457,7 @@ async def search(session: AsyncSession, actor: Actor | None, p: SearchParams) ->
 
 
 def _restrictive(eligibility: dict) -> bool:
-    """Whether the organisation's policy narrows results beyond what anyone may see (Tier C, no extra checks)."""
+    """Whether the organisation's policy narrows results beyond what anyone may see (Red light, no extra checks)."""
     return eligibility["minTier"] != "C" or bool(eligibility["requiredDimensions"]) or bool(eligibility.get("jurisdictions"))
 
 
@@ -505,7 +526,22 @@ async def cached_search(session: AsyncSession, actor: Actor | None, p: SearchPar
         record_event(session, E.SEARCH_PERFORMED, aggregate_type="Search", aggregate_id=uuid.uuid4(),
                      payload={"query": p.q, "filters": {}, "sort": p.sort, "total": hit[1].total, "actorId": None, "cached": True})
         return hit[1]
-    out = await search(session, actor, p)
+    # Shared read cache (shared/cache.py, Redis across servers): results and facets of signed-out searches, keyed by the
+    # same table stamp, and dropped when profiles, trust tiers or the taxonomy change.
+    import hashlib
+
+    from zoikorum.shared import cache
+    ran = []
+
+    async def run() -> dict:
+        ran.append(True)
+        return (await search(session, actor, p)).model_dump(mode="json")
+
+    out = SearchOut.model_validate(await cache.cached(cache.SEARCH_FACETS, hashlib.sha256(key.encode()).hexdigest(), run,
+                                                      ttl=CACHE_SECONDS))
+    if not ran:  # served by another server's search: still recorded for analytics
+        record_event(session, E.SEARCH_PERFORMED, aggregate_type="Search", aggregate_id=uuid.uuid4(),
+                     payload={"query": p.q, "filters": {}, "sort": p.sort, "total": out.total, "actorId": None, "cached": True})
     if len(_cache) >= CACHE_MAX:
         for k in sorted(_cache, key=lambda k: _cache[k][0])[: CACHE_MAX // 4]:
             _cache.pop(k, None)
@@ -530,6 +566,6 @@ async def top10_exposure(session: AsyncSession, new_talent_boost: bool) -> dict[
         for d in ranked:
             total += 1
             places["new to Zoikorum" if (d.completed_engagements or 0) < NEW_TALENT_MAX_COMPLETED else "established"] += 1
-            places[f"Tier {d.tier}"] += 1
+            places[f"{LIGHT_NAME[d.tier]} light"] += 1
             places[f"country {d.country}"] += 1
     return {g: n / total for g, n in places.items()} if total else {}

@@ -8,8 +8,10 @@ account. Dispute holds and refunds arrive with the dispute step; contract amendm
 
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,21 +24,25 @@ from zoikorum.domains.policy import facade as policy_facade
 from zoikorum.domains.escrow.models import Allocation, EscrowAccount, Funding, LedgerEntry, Release
 from zoikorum.domains.escrow.schemas import (
     AdminEscrowBucketOut, AdminEscrowRowOut, AdminEscrowSummaryOut, AllocationOut, BulkFundIn, EscrowOut, FundingOut, FundIn,
-    LedgerLineOut,
+    LedgerLineOut, ProtectionIn, ProtectionOut, ScreeningOut,
 )
+from zoikorum.domains.identity import facade as identity_facade
 from zoikorum.domains.professional import facade as professional_facade
-from zoikorum.shared import clock, fx
+from zoikorum.domains.verification import facade as verification_facade
+from zoikorum.shared import clock, fx, pdf
 from zoikorum.shared.auth import Actor, OrgRole
 from zoikorum.shared.capabilities import Cap
 from zoikorum.shared.errors import ValidationFailed, Conflict, DomainError, Forbidden, NotFound, PolicyBlocked
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_audit, record_event
+from zoikorum.shared.http import page_of, paginate
 from zoikorum.shared.money import Money, MoneyDTO
 from zoikorum.shared.relay import schedule_timer
 from zoikorum.shared.state_machine import StateMachine
 
 ALLOCATION_STATES = StateMachine("Allocation", {
-    "UNFUNDED": {"FUNDING", "CANCELLED"},  # CANCELLED: e.g. a retainer cycle stopped before funding
+    # CANCELLED: e.g. a retainer cycle stopped before funding; EXPIRED: never funded within the funding window (terminal)
+    "UNFUNDED": {"FUNDING", "CANCELLED", "EXPIRED"},
     "FUNDING": {"HELD", "UNFUNDED"},
     "HELD": {"RELEASED", "PARTIALLY_RELEASED", "ON_HOLD", "RELEASE_PENDING_APPROVAL", "REFUNDED", "UNFUNDED"},  # UNFUNDED: chargeback
     "ON_HOLD": {"HELD", "RELEASED", "PARTIALLY_RELEASED", "REFUNDED", "UNFUNDED"},
@@ -45,9 +51,12 @@ ALLOCATION_STATES = StateMachine("Allocation", {
     "RELEASED": set(),
     "REFUNDED": set(),
     "CANCELLED": set(),
+    "EXPIRED": set(),
 })
 FUNDERS = (OrgRole.REQUESTER, OrgRole.APPROVER, OrgRole.BUDGET_OWNER)
+RELEASE_APPROVERS = (OrgRole.REQUESTER, OrgRole.APPROVER)  # the roles that accept work (and so release it)
 TIMER_FUNDING_CHECK = "escrow.funding_check"
+TIMER_FUNDING_EXPIRY = "escrow.funding_expiry"  # nothing funded within ZK_FUNDING_EXPIRY_DAYS of activation
 FUNDING_CHECK_AFTER = timedelta(hours=1)  # longer than every consumer retry together (about 42 minutes)
 
 
@@ -109,6 +118,9 @@ async def _viewer(session: AsyncSession, actor: Actor, a: EscrowAccount) -> str:
 def _status(a: EscrowAccount, allocs: list[Allocation]) -> str:
     if any(x.state == "ON_HOLD" for x in allocs):
         return "DISPUTED"
+    if allocs and a.funded_minor == 0 and any(x.state == "EXPIRED" for x in allocs) and all(
+            x.state in ("EXPIRED", "CANCELLED") for x in allocs):
+        return "EXPIRED"
     if allocs and any(x.state == "RELEASED" for x in allocs) and all(x.state in ("RELEASED", "CANCELLED") for x in allocs):
         return "FULLY_RELEASED"
     settled = ("RELEASED", "PARTIALLY_RELEASED", "REFUNDED", "UNFUNDED", "CANCELLED")  # UNFUNDED also covers chargebacks
@@ -136,12 +148,16 @@ async def _out(session: AsyncSession, actor: Actor, a: EscrowAccount, viewer: st
     releases = {r.milestone_id: r.id for r in (await session.scalars(select(Release).where(Release.account_id == a.id))).all()}
     return EscrowOut(
         autoFundingEnabledAt=a.auto_fund_enabled_at,
+        protection=await _protection_out(session, a, allocs, waiting),
+        buyerScreening=await buyer_screening(session, a.organization_id) if viewer == "BUYER" else None,
         id=a.id, contractId=a.contract_id, status=a.status, currency=ccy, total=_m(a.total_minor, ccy), funded=_m(a.funded_minor, ccy),
         held=_m(a.held_minor, ccy), released=_m(a.released_minor, ccy), fees=_m(a.fees_minor, ccy), refunded=_m(a.refunded_minor, ccy),
         unfunded=_m(unfunded, ccy), feeBps=_fee_bps(a),
         allocations=[AllocationOut(milestoneId=x.milestone_id, sequence=x.sequence, title=x.title, amount=_m(x.amount_minor, ccy), state=x.state,
                                    released=_m(x.released_minor, ccy), fee=_m(x.fee_minor, ccy), fundedAt=x.funded_at, releasedAt=x.released_at,
-                                   releaseReference=f"ZK-REL-{releases[x.milestone_id].hex[:8].upper()}" if x.milestone_id in releases else None)
+                                   releaseReference=f"ZK-REL-{releases[x.milestone_id].hex[:8].upper()}" if x.milestone_id in releases else None,
+                                   releaseId=releases.get(x.milestone_id),
+                                   releaseApprovalDueAt=x.release_approval_due_at if x.state == "RELEASE_PENDING_APPROVAL" else None)
                      for x in allocs],
         fundings=[FundingOut(id=f.id, amount=_m(f.amount_minor, f.currency), milestoneIds=[uuid.UUID(str(i)) for i in f.milestone_ids],
                              status=f.status, failureMessage=f.failure_message, createdAt=f.created_at, capturedAt=f.captured_at)
@@ -165,6 +181,41 @@ async def open_account(session: AsyncSession, payload: dict) -> None:
     session.add_all([Allocation(account_id=a.id, milestone_id=uuid.UUID(str(m["milestoneId"])), sequence=m["sequence"], title=m["title"],
                                 amount_minor=int(m["amountMinor"]), state="UNFUNDED") for m in payload.get("milestones", [])])
     _evt(session, E.ESCROW_OPENED, a, professionalId=a.professional_id, currency=a.currency, totalMinor=a.total_minor)
+    await schedule_timer(session, TIMER_FUNDING_EXPIRY, str(a.id), clock.now() + timedelta(days=get_settings().funding_expiry_days),
+                         {"accountId": str(a.id)})
+
+
+async def funding_expiry(session: AsyncSession, payload: dict) -> None:
+    """Timer, ZK_FUNDING_EXPIRY_DAYS after activation: an engagement whose escrow was never funded expires. Every
+    allocation still unfunded ends as EXPIRED (terminal), and ESCROW_FUNDING_EXPIRED lets the contract end. Nothing was
+    paid in, so no money moves. A payment still in progress gets one more day; anything funded at all keeps the
+    engagement going. Idempotent."""
+    a = await session.get(EscrowAccount, uuid.UUID(str(payload["accountId"])), with_for_update=True)
+    if a is None or a.funded_minor > 0:
+        return
+    allocs = await _allocations(session, a.id, lock=True)
+    if any(x.state == "FUNDING" for x in allocs):
+        await schedule_timer(session, TIMER_FUNDING_EXPIRY, f"{a.id}:{int(clock.now().timestamp())}", clock.now() + timedelta(days=1),
+                             {"accountId": str(a.id)})
+        return
+    if any(x.state not in ("UNFUNDED", "CANCELLED") for x in allocs):
+        return  # funded at some point (e.g. refunded since): not "never funded"
+    contract = await contract_facade.get_contract(session, a.contract_id)
+    if contract is None or contract.status != FUNDABLE_CONTRACT:
+        return  # ended, disputed or being amended: nothing to expire
+    if any(m.status not in ("PENDING_FUNDING", "CANCELLED") for m in contract.milestones):
+        return  # funded at some point after all (or work started): not "never funded"
+    expired = [x for x in allocs if x.state == "UNFUNDED"]
+    if not expired:
+        return
+    for x in expired:
+        ALLOCATION_STATES.assert_can(x.state, "EXPIRED")
+        x.state = "EXPIRED"
+    a.status = _status(a, allocs)
+    _evt(session, E.ESCROW_FUNDING_EXPIRED, a, milestoneIds=[x.milestone_id for x in expired], days=get_settings().funding_expiry_days,
+         amountMinor=sum(x.amount_minor for x in expired), currency=a.currency)
+    record_audit(session, "escrow.funding.expired", object_type="EscrowAccount", object_id=a.id, tenant_id=a.organization_id,
+                 details={"contractId": str(a.contract_id), "allocations": len(expired)})
 
 
 async def contract_amended(session: AsyncSession, payload: dict) -> None:
@@ -215,14 +266,148 @@ async def get_by_contract(session: AsyncSession, actor: Actor, contract_id: uuid
     return await _out(session, actor, a, await _viewer(session, actor, a))
 
 
-async def ledger(session: AsyncSession, actor: Actor, account_id: uuid.UUID) -> list[LedgerLineOut]:
+async def ledger(session: AsyncSession, actor: Actor, account_id: uuid.UUID, cursor: str | None = None,
+                 limit: int | None = None) -> dict:
+    """The account's ledger lines, oldest first, one page at a time (follow nextCursor; keyset on created_at, id, so
+    nothing is ever cut off however long the ledger grows)."""
     a = await _account(session, account_id)
     await _viewer(session, actor, a)
-    rows = (await session.scalars(select(LedgerEntry).where(LedgerEntry.account_id == a.id)
-                                  .order_by(LedgerEntry.created_at, LedgerEntry.entry_group_id, LedgerEntry.debit_minor.desc()).limit(500))).all()
-    return [LedgerLineOut(id=r.id, entryGroupId=r.entry_group_id, entryType=r.entry_type, ledgerAccount=r.ledger_account,
-                          debit=_m(r.debit_minor, r.currency), credit=_m(r.credit_minor, r.currency), referenceType=r.reference_type,
-                          referenceId=r.reference_id, milestoneId=r.milestone_id, memo=r.memo, createdAt=r.created_at) for r in rows]
+    stmt, lim = paginate(select(LedgerEntry).where(LedgerEntry.account_id == a.id), LedgerEntry, cursor, limit or 100,
+                         oldest_first=True)
+    rows = list((await session.scalars(stmt)).all())
+    return page_of(rows, lim, lambda r: LedgerLineOut(
+        id=r.id, entryGroupId=r.entry_group_id, entryType=r.entry_type, ledgerAccount=r.ledger_account,
+        debit=_m(r.debit_minor, r.currency), credit=_m(r.credit_minor, r.currency), referenceType=r.reference_type,
+        referenceId=r.reference_id, milestoneId=r.milestone_id, memo=r.memo, createdAt=r.created_at))
+
+
+# ---- Payment protection setup and buyer screening --------------------------------------------------------
+
+_MODEL_TEXT = {
+    "MILESTONE": "Each milestone is paid into escrow before work on it starts and released to the professional only when "
+                 "you accept it. Fund the first milestone now; fund each later one before its work starts.",
+    "RETAINER": "Each retainer cycle is paid into escrow before it starts and released when you accept that cycle's work. "
+                "Fund the first cycle now; later cycles can be funded automatically from a saved payment method.",
+    "FIXED": "The whole fee is paid into escrow at once. It is released milestone by milestone, each only when you accept "
+             "that milestone's work.",
+}
+DISPUTE_HOLD = ("If either side raises a dispute, the money for the affected milestones is frozen in escrow: nobody can "
+                "release or refund it until the dispute is resolved through Zoikorum's dispute process.")
+
+
+async def _protection_out(session: AsyncSession, a: EscrowAccount, allocs: list[Allocation], waiting: set) -> ProtectionOut:
+    model = a.release_model
+    unfunded = [x for x in allocs if x.state == "UNFUNDED" and x.milestone_id in waiting]
+    first = [x.milestone_id for x in unfunded] if model == "FIXED" else [x.milestone_id for x in unfunded[:1]]
+    who = await identity_facade.get_identity(session, a.release_approver_identity_id) if a.release_approver_identity_id else None
+    return ProtectionOut(releaseModel=model, approverIdentityId=a.release_approver_identity_id,
+                         approverName=who.display_name if who else None, confirmedAt=a.protection_confirmed_at,
+                         explanation=_MODEL_TEXT[model or "MILESTONE"], disputeHold=DISPUTE_HOLD, firstFunding=first)
+
+
+async def buyer_screening(session: AsyncSession, org_id: uuid.UUID) -> ScreeningOut:
+    """The buyer organisation's sanctions and restrictions screening (verification checks on the ORGANIZATION). A failed
+    or revoked check, or a suspended organisation, is FLAGGED and blocks funding; a check still open is PENDING and only
+    warns; an organisation never screened is NOT_SCREENED (funding allowed, as for every buyer without a case)."""
+    org = await buyer_facade.get_organization(session, org_id)
+    if org is not None and org.status == "SUSPENDED":
+        return ScreeningOut(status="FLAGGED", message="Your organisation is suspended. Contact Zoikorum support before funding.")
+    checks = [c for c in await verification_facade.get_checks(session, "ORGANIZATION", org_id) if c.verification_type == "RESTRICTIONS"]
+    if any(c.status in ("FAILED", "REVOKED") for c in checks):
+        return ScreeningOut(status="FLAGGED", message="Your organisation's restrictions screening did not clear, so funding is "
+                                                      "blocked. Contact Zoikorum support to resolve it.")
+    if any(c.status in ("PENDING", "IN_REVIEW", "NEEDS_INFO") for c in checks):
+        return ScreeningOut(status="PENDING", message="Your organisation's restrictions screening is still in progress. You can "
+                                                      "fund, but a payment may be held for review if the screening raises a problem.")
+    if any(c.status == "VERIFIED" for c in checks):
+        return ScreeningOut(status="CLEAR", message=None)
+    return ScreeningOut(status="NOT_SCREENED", message=None)
+
+
+async def set_protection(session: AsyncSession, actor: Actor, account_id: uuid.UUID, body: ProtectionIn) -> EscrowOut:
+    """Buyer: choose how money is released (mapped onto the existing escrow mechanics), who approves releases, and confirm
+    the dispute hold. Possible until the first funding; escrow itself is always required. Audited."""
+    a = await _account(session, account_id, lock=True)
+    if await _viewer(session, actor, a) != "BUYER":
+        raise Forbidden("Only the buyer organisation sets up payment protection")
+    roles = await buyer_facade.get_member_roles(session, a.organization_id, actor.identity_id)
+    if not roles.intersection(FUNDERS):
+        raise Forbidden("Payment protection setup needs the Requester, Approver or Budget Owner role", code="ROLE_REQUIRED")
+    contract = await contract_facade.get_contract(session, a.contract_id)
+    if contract is None or contract.status != FUNDABLE_CONTRACT:
+        raise Conflict("Payment protection is set up once both parties have signed", code="CONTRACT_NOT_ACTIVE")
+    allocs = await _allocations(session, a.id, lock=True)
+    if a.funded_minor > 0 or any(x.state not in ("UNFUNDED", "CANCELLED") for x in allocs):
+        raise Conflict("Payment protection is already in place: funding has started", code="PROTECTION_LOCKED")
+    if not body.disputeHoldAcknowledged:
+        raise ValidationFailed("Confirm that a dispute freezes the affected money until it is resolved", code="DISPUTE_HOLD_ACK_REQUIRED")
+    retainer = await contract_facade.is_retainer(session, a.contract_id)
+    if retainer and body.releaseModel != "RETAINER":
+        raise ValidationFailed("A retainer is protected cycle by cycle: choose the retainer release model", code="RELEASE_MODEL_INVALID")
+    if not retainer and body.releaseModel == "RETAINER":
+        raise ValidationFailed("The retainer release model is for retainer engagements", code="RELEASE_MODEL_INVALID")
+    approver = body.approverIdentityId or actor.identity_id
+    if not (await buyer_facade.get_member_roles(session, a.organization_id, approver)).intersection(RELEASE_APPROVERS):
+        raise ValidationFailed("The release approver must be a member with the Requester or Approver role", code="APPROVER_INVALID")
+    a.release_model, a.release_approver_identity_id = body.releaseModel, approver
+    a.protection_confirmed_at, a.protection_confirmed_by = clock.now(), actor.identity_id
+    record_audit(session, "escrow.protection.configured", object_type="EscrowAccount", object_id=a.id, tenant_id=a.organization_id,
+                 details={"releaseModel": body.releaseModel, "approverIdentityId": str(approver), "disputeHoldAcknowledged": True})
+    await session.flush()
+    return await _out(session, actor, a, "BUYER")
+
+
+async def release_approval_due(session: AsyncSession, payload: dict) -> None:
+    """Consumer of APPROVAL_REQUIRED / APPROVAL_ESCALATED for a milestone release: remember when the buyer's approval is
+    due, so buyers see a live countdown (the SLA) on the waiting release."""
+    if payload.get("action") != "ESCROW_RELEASE" or payload.get("subjectType") != "Milestone" or not payload.get("deadline"):
+        return
+    x = await session.scalar(select(Allocation).where(Allocation.milestone_id == uuid.UUID(str(payload["subjectId"]))).with_for_update())
+    if x is None or x.state != "RELEASE_PENDING_APPROVAL":
+        return
+    due = payload["deadline"]
+    x.release_approval_due_at = due if isinstance(due, datetime) else datetime.fromisoformat(str(due))
+
+
+async def release_receipt_pdf(session: AsyncSession, actor: Actor, release_id: uuid.UUID) -> tuple[bytes, str]:
+    """A receipt for one release: what was released from escrow for which milestone, the platform fee and the net paid to
+    the professional. For both parties (and read-only staff). The footer carries the SHA-256 of the recorded release.
+    Audited."""
+    r = await session.get(Release, release_id)
+    if r is None:
+        raise NotFound("Release not found")
+    a = await _account(session, r.account_id)
+    viewer = await _viewer(session, actor, a)
+    x = await session.scalar(select(Allocation).where(Allocation.milestone_id == r.milestone_id))
+    contract = await contract_facade.get_contract(session, a.contract_id)
+    org = await buyer_facade.get_organization(session, a.organization_id)
+    pro = await professional_facade.get_professional(session, a.professional_id)
+    reference = f"ZK-REL-{r.id.hex[:8].upper()}"
+    refund = x.refunded_minor if x else 0
+    content = json.dumps({"releaseId": str(r.id), "milestoneId": str(r.milestone_id), "grossMinor": r.gross_minor, "feeMinor": r.fee_minor,
+                          "netMinor": r.net_minor, "refundMinor": refund, "currency": r.currency, "feeBps": r.fee_bps,
+                          "releasedAt": r.created_at.isoformat()}, sort_keys=True, separators=(",", ":"))
+    fingerprint = hashlib.sha256(content.encode()).hexdigest()
+    entity = (contract.buyer_legal_entity or {}).get("legalName") if contract else None
+    amounts = [("Released from escrow for accepted work", pdf.money(r.gross_minor, r.currency)),
+               (f"Zoikorum platform fee {r.fee_bps / 100:.2f}%", "- " + pdf.money(r.fee_minor, r.currency))]
+    sections = [pdf.Section("Parties", rows=[("Buyer", entity or (org.name if org else "—")),
+                                             ("Professional", pro.display_name if pro else "—")]),
+                pdf.Section("Work", rows=[("Engagement", contract.reference if contract else "—"),
+                                          ("Milestone", f"M{x.sequence} {x.title}" if x else "—"),
+                                          ("Released", r.created_at.strftime("%d %b %Y %H:%M UTC"))]),
+                pdf.Section("Amounts", table=amounts, total=("Net to the professional", pdf.money(r.net_minor, r.currency)))]
+    if refund:
+        sections.append(pdf.Section("Returned to the buyer", rows=[("Not released (agreed partial acceptance or decision)",
+                                                                    pdf.money(refund, r.currency))]))
+    sections.append(pdf.Section(text="The buyer paid this milestone into escrow before work started. It was released only after "
+                                     "the work was accepted (or as a dispute decision directed). Zoikorum provides the "
+                                     "marketplace and payment protection; the services were provided by the professional."))
+    doc = pdf.PdfDocument(title="Release receipt", reference=reference, issued=r.created_at, fingerprint=fingerprint,
+                          subtitle=f"For engagement {contract.reference}" if contract else None, sections=sections)
+    record_audit(session, "escrow.release.receipt_downloaded", object_type="Release", object_id=r.id, tenant_id=a.organization_id,
+                 evidence_hash=fingerprint, details={"viewer": viewer})
+    return pdf.render(doc), f"{reference}.pdf"
 
 
 # ---- Funding ------------------------------------------------------------------------------------
@@ -244,6 +429,9 @@ async def _fund_for(session: AsyncSession, identity_id: uuid.UUID, a: EscrowAcco
     roles = await buyer_facade.get_member_roles(session, a.organization_id, identity_id)
     if not roles.intersection(FUNDERS):
         raise Forbidden("Funding needs the Requester, Approver or Budget Owner role", code="ROLE_REQUIRED")
+    screening = await buyer_screening(session, a.organization_id)
+    if screening.status == "FLAGGED":
+        raise PolicyBlocked(screening.message or "Funding is blocked for your organisation", code="BUYER_SCREENING_FLAGGED")
     contract = await contract_facade.get_contract(session, a.contract_id)
     if contract is not None and await contract_facade.retainer_paused(session, a.contract_id):
         raise Conflict("This retainer is paused. Resume it to fund the next cycle.", code="RETAINER_PAUSED")
@@ -267,6 +455,10 @@ async def _fund_for(session: AsyncSession, identity_id: uuid.UUID, a: EscrowAcco
     closed = [x for x in wanted if x.milestone_id not in waiting]
     if closed:
         raise Conflict(f"M{closed[0].sequence} is no longer waiting for funding", code="MILESTONE_NOT_FUNDABLE")
+    if a.release_model == "FIXED" and a.funded_minor == 0 and all(x.state in ("UNFUNDED", "CANCELLED") for x in allocs):
+        everything = {x.milestone_id for x in allocs if x.state == "UNFUNDED" and x.milestone_id in waiting}
+        if {x.milestone_id for x in wanted} != everything:
+            raise Conflict("Fixed release: the whole fee is funded at once. Fund every milestone together.", code="FIXED_FUNDS_ALL")
     amount = sum(x.amount_minor for x in wanted)
     if a.funded_minor + amount > a.total_minor:
         raise Conflict("That would fund more than the contract total", code="OVER_FUNDING")

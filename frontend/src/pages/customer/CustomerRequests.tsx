@@ -7,18 +7,53 @@ import { LABEL } from '../../api/professional'
 import {
   MAX_REQUEST_PROFESSIONALS,
   attachmentUrl, budgetText, proposalFileUrl, CADENCES, DEPENDENCIES, DURATION_LABEL, PRICING_PREFS, PROPOSAL_STATUS, proposalApi, requestStatus, type Proposal, type ProposalRequest,
-  BUYER_DECLINE_REASONS, type BuyerDeclineReason,
+  BUYER_DECLINE_REASONS, SCOPE_CHANGE_LABEL, type BuyerDeclineReason, type ScopeChange, type SuccessCriteria,
 } from '../../api/proposals'
-import { Avatar, Icon } from '../../components/dashboard'
-import { EmptyTable, PortalHeader, SidePanel, StatCard, Tabs, TierBadge } from '../../components/portal'
+import { api } from '../../api/client'
+import type { StoredFile } from '../../api/files'
+import { Avatar, Icon, type IconName } from '../../components/dashboard'
+import { EmptyTable, PortalHeader, SidePanel, StatCard, Tabs } from '../../components/portal'
+import { TrustLight } from '../../components/TrustLight'
 import { FileLink } from '../../components/FileLink'
 import { ErrorAlert, Loading } from '../../components/ui'
 import { ApiError } from '../../api/client'
+import { lightName } from '../../lib/trustLight'
 
 /* Customer side of Step 6: requests (one requirement sent to 1–3 professionals), the proposals that come back,
    side-by-side comparison, revision requests and acceptance. */
 
 const fmtDate = (d: string | null) => (d ? new Date(d.length === 10 ? `${d}T00:00:00` : d).toLocaleDateString() : '—')
+
+/** A small preview of an image attachment (loaded with the viewer's session; opening a file is audited). */
+function Thumbnail({ file, url }: { file: StoredFile; url: string }) {
+  const [src, setSrc] = useState<string | null>(null)
+  useEffect(() => {
+    let href: string | null = null
+    let live = true
+    api<Blob>(url, { blob: true }).then((b) => { href = URL.createObjectURL(b); if (live) setSrc(href) }).catch(() => {})
+    return () => { live = false; if (href) URL.revokeObjectURL(href) }
+  }, [url])
+  return src ? <img src={src} alt={`Preview of ${file.name}`} width={56} height={56}
+    style={{ objectFit: 'cover', borderRadius: 6, border: '1px solid var(--zk-border, #e2e8f0)' }} />
+    : <span className="muted small" aria-hidden="true" style={{ width: 56, display: 'inline-block' }}>…</span>
+}
+
+/** Request or proposal attachments: images show a thumbnail; every file opens in the in-dashboard viewer. */
+export function AttachmentList({ files, url }: { files: StoredFile[]; url: (f: StoredFile) => string }) {
+  return <ul className="pro-list">{files.map((a) => {
+    const image = !!a.hasFile && !!a.contentType?.startsWith('image/')
+    return <li key={a.sha256}>{image ? <Thumbnail file={a} url={url(a)} /> : <Icon name="request" />}
+      <span className="small"><FileLink file={a} url={url(a)} /></span><span /></li>
+  })}</ul>
+}
+
+/** What the buyer said success looks like. */
+export function SuccessCriteriaFacts({ criteria }: { criteria?: SuccessCriteria }) {
+  if (!criteria || (!criteria.definition && criteria.measures.length === 0)) return null
+  return <><h3 style={{ margin: '12px 0 4px' }}>Success criteria</h3>
+    {criteria.definition && <p className="small" style={{ margin: '0 0 4px' }}><strong>Done looks like:</strong> {criteria.definition}</p>}
+    {criteria.measures.length > 0 && <ul className="why" style={{ margin: 0 }}>{criteria.measures.map((m) => <li key={m}>Measured by: {m}</li>)}</ul>}</>
+}
 
 interface Group { id: string; first: ProposalRequest; members: ProposalRequest[] }
 
@@ -156,7 +191,7 @@ export function ProposalsPage() {
               return (
                 <tr key={r.id}>
                   <td><div className="name-row"><Avatar name={r.professional.displayName} photoUrl={r.professional.photoUrl} size={32} />
-                    <span><strong>{r.professional.displayName}</strong><br /><TierBadge tier={r.professional.tier} /></span></div></td>
+                    <span><strong>{r.professional.displayName}</strong><br /><TrustLight tier={r.professional.tier} /></span></div></td>
                   <td className="small">{r.service}</td>
                   <td><strong>{formatMoney(r.proposal!.total)}</strong></td>
                   <td><span className={`badge ${st.tone}`}>{st.label}</span></td>
@@ -228,7 +263,7 @@ export function RequestDetailPage() {
       <ErrorAlert error={error} />
       {error instanceof ApiError && error.code.startsWith('POLICY_BLOCKED') && <div className="tip" style={{ marginBottom: 12 }}><Icon name="search" />
         <span>Your organisation's policy does not allow this professional for this engagement. {error.code === 'POLICY_BLOCKED_MINIMUM_TRUST_TIER'
-          ? <Link to="/app/find?tier=A">Find Tier A professionals</Link> : <Link to="/app/find">Find professionals your policy allows</Link>}
+          ? <Link to="/app/find?tier=A">Find Green (fully verified) professionals</Link> : <Link to="/app/find">Find professionals your policy allows</Link>}
           {' '}(search already hides the ones it does not allow), or ask your Exception Authority for an exception.</span></div>}
       {accepted && <div className="attention-banner ok"><span className="kpi-icon green"><Icon name="check" /></span>
         <div><strong>You accepted {accepted.professional.displayName}'s proposal ({formatMoney(accepted.total)}).</strong>
@@ -244,10 +279,12 @@ export function RequestDetailPage() {
             return p ? <ProposalCard key={m.id} p={p} busy={busy} canDecide={!accepted} best={best?.id === p.id ? best.reasons : null}
               onAccept={() => { if (confirm(`Accept ${p.professional.displayName}'s proposal for ${formatMoney(p.total)}?${group.members.length > 1 ? ' The other proposals for this request will be closed.' : ''}`)) act(() => proposalApi.accept(p.id), 'Proposal accepted.') }}
               onReject={(reason, note) => act(() => proposalApi.reject(p.id, reason, note), 'Proposal declined.')}
+              onDecideChange={(changeId, accept) => act(() => proposalApi.decideScopeChange(p.id, changeId, accept),
+                accept ? 'Scope change accepted: it becomes part of the agreed scope.' : 'Scope change rejected.')}
               onRevise={(changes, note) => act(() => proposalApi.requestRevision(p.id, changes, note), 'Revision requested. The professional has been notified.')} />
               : <section key={m.id} className="card panel waiting-card">
                 <div className="name-row"><Avatar name={m.professional.displayName} photoUrl={m.professional.photoUrl} size={44} />
-                  <span><strong>{m.professional.displayName}</strong> <TierBadge tier={m.professional.tier} /><br />
+                  <span><strong>{m.professional.displayName}</strong> <TrustLight tier={m.professional.tier} /><br />
                     <span className="muted small">{m.professional.headline}</span></span>
                   <span className={`badge ${requestStatus(m).tone}`} style={{ marginLeft: 'auto' }}>{requestStatus(m).label}</span></div>
                 {m.status === 'DECLINED' && <p className="muted small" style={{ margin: '10px 0 0' }}>Declined{m.reasonCode ? `: ${m.reasonCode.replace(/_/g, ' ').toLowerCase()}` : ''}{m.reasonNote ? ` — “${m.reasonNote}”` : ''}</p>}
@@ -280,8 +317,9 @@ export function RequestDetailPage() {
               <ul className="why" style={{ margin: 0 }}>{req.deliverables.map((d) => <li key={d}>{d}</li>)}</ul></>}
             {req.dependencies.length > 0 && <p className="muted small" style={{ marginTop: 8 }}>
               Depends on: {req.dependencies.map((d) => DEPENDENCIES.find(([v]) => v === d)?.[1]).join(', ')}</p>}
+            <SuccessCriteriaFacts criteria={req.successCriteria} />
             {req.details && <p className="small" style={{ whiteSpace: 'pre-wrap', marginTop: 12 }}>{req.details}</p>}
-            {req.attachments.length > 0 && <ul className="pro-list">{req.attachments.map((a) => <li key={a.sha256}><Icon name="request" /><span className="small"><FileLink file={a} url={attachmentUrl(req.id, a.sha256)} /></span><span /></li>)}</ul>}
+            {req.attachments.length > 0 && <AttachmentList files={req.attachments} url={(a) => attachmentUrl(req.id, a.sha256)} />}
           </SidePanel>
           <SidePanel title="After you accept">
             <ol className="side-steps">{[['Contract generated', 'From the accepted scope, milestones and price.'], ['Both parties sign', 'Terms are then locked.'],
@@ -297,7 +335,7 @@ export function RequestDetailPage() {
 function CompareProposals({ proposals }: { proposals: Proposal[] }) {
   const live = proposals.filter((p) => p.status !== 'WITHDRAWN')
   const rows: [string, (p: Proposal) => React.ReactNode][] = [
-    ['Trust Tier', (p) => <TierBadge tier={p.professional.tier} />],
+    ['Trust light', (p) => <TrustLight tier={p.professional.tier} />],
     ['Price', (p) => <strong>{formatMoney(p.total)}</strong>],
     ['Pricing model', (p) => LABEL[p.pricingModel] ?? p.pricingModel],
     ['Vs your budget', (p) => p.deltas.find((d) => d.field === 'price')?.status.toLowerCase() ?? '—'],
@@ -330,15 +368,48 @@ function bestMatch(proposals: Proposal[]): { id: string; reasons: string[] } | n
     || (sameCurrency ? a.total.amountMinor - b.total.amountMinor : 0))
   const best = ranked[0]
   const reasons = [`Matches ${fit(best)} of ${best.deltas.length} of your terms`]
-  if (open.every((p) => tierRank[best.professional.tier] >= tierRank[p.professional.tier])) reasons.push(`Trust Tier ${best.professional.tier}`)
+  if (open.every((p) => tierRank[best.professional.tier] >= tierRank[p.professional.tier])) reasons.push(`${lightName(best.professional.tier)} trust light`)
   if (sameCurrency && open.every((p) => best.total.amountMinor <= p.total.amountMinor)) reasons.push('Lowest price')
   return { id: best.id, reasons }
 }
 
-function ProposalCard({ p, busy, canDecide, best, onAccept, onReject, onRevise }: {
+/** Governance signals on a proposal card: contract-ready, payment protection, audit record (and dispute resolution). */
+function ReadinessIcons({ p }: { p: Proposal }) {
+  const r = p.readiness
+  if (!r) return null
+  const items: [boolean, IconName, string, string][] = [
+    [r.contractReady, 'contract', 'Contract-ready', r.contractReadyNote],
+    [r.paymentProtection, 'lock', 'Payment protection', r.paymentProtectionNote],
+    [r.auditRecord, 'clock', 'Audit record', r.auditRecordNote],
+    [r.disputeResolution, 'shield', 'Dispute resolution', 'Zoikorum’s dispute process applies; disputed money stays frozen until it is resolved'],
+  ]
+  return <ul className="governance-strip" aria-label="Readiness" style={{ listStyle: 'none', margin: '10px 0', padding: 0 }}>{items.map(([ok, icon, label, note]) => (
+    <li key={label} title={note} style={{ opacity: ok ? 1 : 0.6 }}><Icon name={ok ? icon : 'help'} /> {label}{ok ? '' : ' (not yet)'}
+      <span className="sr-only">: {note}</span></li>))}</ul>
+}
+
+/** The professional's suggested scope changes, each accepted or rejected by the buyer. */
+function ScopeChanges({ changes, decidable, busy, onDecide }: { changes: ScopeChange[]; decidable: boolean; busy: boolean
+  onDecide?: (id: string, accept: boolean) => void }) {
+  if (changes.length === 0) return null
+  return <div className="revise-box"><strong className="small">Suggested scope changes</strong>
+    <ul className="checklist" style={{ margin: '6px 0 0' }}>{changes.map((c) => <li key={c.id}>
+      <span><strong>{SCOPE_CHANGE_LABEL[c.kind]}{c.target ? ` · ${c.target}` : ''}:</strong> {c.proposed}
+        {c.reason && <><br /><span className="muted small">Why: {c.reason}</span></>}
+        {c.note && <><br /><span className="muted small">Your note: {c.note}</span></>}</span>
+      {c.status === 'PENDING' && decidable && onDecide ? <span className="row" style={{ flexWrap: 'nowrap' }}>
+        <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => onDecide(c.id, true)}>Accept</button>
+        <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => onDecide(c.id, false)}>Reject</button></span>
+        : <span className={`badge ${c.status === 'ACCEPTED' ? 'green' : c.status === 'PENDING' ? 'warn' : ''}`}>
+          {c.status === 'ACCEPTED' ? 'Accepted' : c.status === 'PENDING' ? 'Waiting for decision' : 'Rejected'}</span>}
+    </li>)}</ul></div>
+}
+
+function ProposalCard({ p, busy, canDecide, best, onAccept, onReject, onRevise, onDecideChange }: {
   p: Proposal; busy: boolean; canDecide: boolean; best: string[] | null; onAccept: () => void
   onReject: (reason: BuyerDeclineReason, note?: string) => void
   onRevise: (changes: { field: string; requested: string }[], note?: string) => void
+  onDecideChange?: (changeId: string, accept: boolean) => void
 }) {
   const [open, setOpen] = useState(false)
   const [declining, setDeclining] = useState(false)
@@ -349,15 +420,18 @@ function ProposalCard({ p, busy, canDecide, best, onAccept, onReject, onRevise }
   const [text, setText] = useState('')
   const st = PROPOSAL_STATUS[p.status]
   const decidable = canDecide && ['SUBMITTED', 'UNDER_REVIEW'].includes(p.status) && !p.expired
+  const pendingChanges = (p.scopeChanges ?? []).filter((c) => c.status === 'PENDING').length
   return (
     <section className="card panel proposal-card">
       <div className="name-row"><Avatar name={p.professional.displayName} photoUrl={p.professional.photoUrl} size={44} />
-        <span><strong>{p.professional.displayName}</strong> <TierBadge tier={p.professional.tier} /><br /><span className="muted small">{p.professional.headline}</span></span>
+        <span><strong>{p.professional.displayName}</strong> <TrustLight tier={p.professional.tier} /><br /><span className="muted small">{p.professional.headline}</span></span>
         <span style={{ marginLeft: 'auto', textAlign: 'right' }}><strong className="big-price">{formatMoney(p.total)}</strong><br />
           <span className={`badge ${st.tone}`}>{st.label}</span></span></div>
       {best && <p className="best-match" title={best.join(' · ')}><span className="badge green">Best match</span>
         <span className="small">Why this proposal matches: {best.join(' · ')}</span></p>}
+      <ReadinessIcons p={p} />
       <p style={{ margin: '14px 0 10px' }}>{p.summary}</p>
+      <ScopeChanges changes={p.scopeChanges ?? []} decidable={decidable} busy={busy} onDecide={onDecideChange} />
       <div className="delta-row">{p.deltas.map((d) => (
         <span key={d.field} className={`delta ${['MATCH', 'WITHIN'].includes(d.status) ? 'ok' : 'diff'}`} title={`You asked: ${d.requested}`}>
           {d.label}: <strong>{d.proposed}</strong></span>))}</div>
@@ -370,12 +444,13 @@ function ProposalCard({ p, busy, canDecide, best, onAccept, onReject, onRevise }
         <h3 style={{ marginTop: 16 }}>Acceptance criteria</h3>
         <ul className="why">{p.deliverables.map((d) => <li key={d.key}><strong>{d.title}:</strong> {d.acceptanceCriteria}</li>)}</ul>
         {p.scopeNotes && <><h3>Scope notes</h3><p className="small">{p.scopeNotes}</p></>}
+        <SuccessCriteriaFacts criteria={p.successCriteria} />
         <div className="row" style={{ alignItems: 'flex-start' }}>
           {p.assumptions.length > 0 && <div style={{ flex: 1 }}><h3>Assumptions</h3><ul className="why">{p.assumptions.map((a) => <li key={a}>{a}</li>)}</ul></div>}
           {p.exclusions.length > 0 && <div style={{ flex: 1 }}><h3>Exclusions</h3><ul className="why">{p.exclusions.map((a) => <li key={a}>{a}</li>)}</ul></div>}
         </div>
         {(p.attachments ?? []).length > 0 && <><h3>Attachments</h3>
-          <ul className="pro-list">{(p.attachments ?? []).map((a) => <li key={a.sha256}><Icon name="request" /><span className="small"><FileLink file={a} url={proposalFileUrl(p.id, a.sha256)} /></span><span /></li>)}</ul></>}
+          <AttachmentList files={p.attachments ?? []} url={(a) => proposalFileUrl(p.id, a.sha256)} /></>}
         {p.revisionRequests.length > 0 && <p className="muted small">You requested {p.revisionRequests.length} revision{p.revisionRequests.length > 1 ? 's' : ''}; this is the latest version.</p>}
       </div>}
       {revising && <div className="revise-box">
@@ -405,7 +480,8 @@ function ProposalCard({ p, busy, canDecide, best, onAccept, onReject, onRevise }
         {decidable && <>
           <button className="btn btn-secondary btn-sm" disabled={busy} onClick={() => setRevising(true)}>Request revision</button>
           <button className="btn btn-ghost btn-sm danger-text" disabled={busy} onClick={() => setDeclining(true)}>Decline</button>
-          <button className="btn btn-primary" disabled={busy} onClick={onAccept}>Accept proposal</button>
+          <button className="btn btn-primary" disabled={busy || pendingChanges > 0} title={pendingChanges ? 'Accept or reject each suggested scope change first' : undefined}
+            onClick={onAccept}>Accept proposal</button>
         </>}
         {p.expired && <span className="muted small">This proposal expired on {fmtDate(p.validUntil)}.</span>}
       </div>
@@ -440,7 +516,7 @@ function NextMatches({ req, asked }: { req: ProposalRequest; asked: string[] }) 
           <p className="muted small" style={{ marginTop: 0 }}>None of the professionals you asked can take this on. These ones offer the same expertise and serve your country:</p>
           <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 12px' }}>{matches.map((r) => (
             <li key={r.professionalId} className="name-row" style={{ marginBottom: 8 }}><Avatar name={r.displayName} photoUrl={r.photoUrl} size={36} />
-              <span><Link to={`/professionals/${r.professionalId}`}><strong>{r.displayName}</strong></Link> <TierBadge tier={r.tier} /><br />
+              <span><Link to={`/professionals/${r.professionalId}`}><strong>{r.displayName}</strong></Link> <TrustLight tier={r.tier} /><br />
                 <span className="muted small">{r.headline}</span></span></li>))}</ul>
           <Link className="btn btn-primary" to={`/app/requests/new?${matches.map((r) => `pro=${r.professionalId}`).join('&')}&from=${req.id}`}>
             Send this request to {matches.length === 1 ? 'them' : `these ${matches.length}`}</Link>

@@ -149,3 +149,23 @@ def test_every_area_with_personal_data_is_registered():
     assert {p.domain for p in privacy.registered()} >= {
         "identity", "professional", "buyer", "firm", "proposal", "contract", "dispute", "payments",
         "messaging", "notification", "marketplace", "review", "verification"}
+
+
+async def test_data_copy_says_failed_when_file_storage_is_not_set_up(client, make_user, drain, monkeypatch):
+    """Without a storage bucket the copy cannot be saved: it says so, instead of showing "Preparing" forever."""
+    from zoikorum.domains.identity import privacy_requests
+    from zoikorum.shared.errors import ServiceUnavailable
+
+    class NoBucket:
+        def put(self, *a, **k):
+            raise ServiceUnavailable("Cloud storage bucket is not configured", code="INTEGRATION_NOT_CONFIGURED")
+
+    u, _ = await professional(client, make_user, drain, name="nobucket")
+    monkeypatch.setattr(privacy_requests, "get_storage", lambda: NoBucket())
+    req = (await client.post(R, headers=u.h, json={"requestType": "ACCESS"})).json()
+    await drain()
+    failed = (await client.get(R, headers=u.h)).json()[0]
+    assert failed["id"] == req["id"] and failed["status"] == "FAILED" and failed["downloadable"] is False
+    monkeypatch.undo()
+    again = (await client.post(R, headers=u.h, json={"requestType": "ACCESS"})).json()  # can ask again later
+    assert again["id"] != req["id"] and again["status"] == "RECEIVED"

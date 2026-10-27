@@ -14,10 +14,12 @@ from zoikorum.domains.admin import facade as admin_facade
 from zoikorum.domains.contract import facade as contract_facade
 from zoikorum.domains.escrow import facade as escrow_facade
 from zoikorum.domains.firm import facade as firm_facade
-from zoikorum.domains.firm.models import Firm, FirmInvitation, FirmMember
-from zoikorum.domains.firm.schemas import (FirmInvitationOut, FirmMemberOut, FirmOut, FirmOverviewOut, FirmPatch, FirmProfessionalWork,
-                                           MoneyTotal, FirmPageMember, FirmPageOut, RepresentativeOut)
+from zoikorum.domains.firm.models import Firm, FirmInvitation, FirmMember, FirmOffering
+from zoikorum.domains.firm.schemas import (FirmInvitationOut, FirmMemberOut, FirmOfferingIn, FirmOfferingOut, FirmOfferingPatch, FirmOut,
+                                           FirmOverviewOut, FirmPatch, FirmProfessionalWork, MoneyTotal, FirmPageMember, FirmPageOut,
+                                           OfferingMemberOut, RepresentativeOut)
 from zoikorum.domains.identity import facade as identity_facade
+from zoikorum.domains.marketplace import facade as marketplace_facade
 from zoikorum.domains.professional import facade as professional_facade
 from zoikorum.domains.proposal import facade as proposal_facade
 from zoikorum.domains.trust import facade as trust_facade
@@ -25,7 +27,7 @@ from zoikorum.domains.verification import facade as verification_facade
 from zoikorum.shared import clock
 from zoikorum.shared.auth import Actor, AuthStrength, FirmRole
 from zoikorum.shared.crypto import sha256_hex
-from zoikorum.shared.errors import Conflict, Forbidden, NotFound, StepUpRequired, VersionConflict
+from zoikorum.shared.errors import Conflict, Forbidden, NotFound, PolicyBlocked, StepUpRequired, ValidationFailed, VersionConflict
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_event
 
@@ -167,7 +169,7 @@ async def public_firm(session: AsyncSession, firm_id: uuid.UUID) -> FirmPageOut:
         sizeBand=firm.size_band, primaryCategory=firm.primary_category, website=firm.website,
         verified=firm.status == "VERIFIED", hasVerifiedRepresentative=bool(summary and summary.has_verified_representative),
         verifiedCredentials=sorted(c.label for c in checks if c.status == "VERIFIED" and c.verification_type != "FIRM_REGISTRATION"),
-        professionals=members)
+        professionals=members, offerings=await published_offerings(session, firm.id))
 
 
 async def my_firms(session: AsyncSession, actor: Actor) -> list[FirmOut]:
@@ -253,6 +255,8 @@ async def remove_member(session: AsyncSession, actor: Actor, firm_id: uuid.UUID,
         raise Conflict("A firm must keep at least one Firm Admin", code="LAST_ADMIN")
     m.status = "REMOVED"
     _evt(session, E.FIRM_MEMBER_REMOVED, firm, identityId=identity_id, removedBy=actor.identity_id)
+    await session.flush()
+    await recheck_offerings(session, firm_id)
 
 
 # ---- Invitations -----------------------------------------------------------
@@ -360,3 +364,173 @@ async def decline_invitation(session: AsyncSession, actor: Actor, invitation_id:
     inv = await _load_for_response(session, actor, token=None, invitation_id=invitation_id)
     inv.status = "DECLINED"
     inv.responded_at = clock.now()
+
+
+# ---- Firm-level offerings ---------------------------------------------------
+# A firm publishes services delivered by its own members. Invariant: an offering in a regulated specialization is
+# published only by a verified firm with a verified authorized representative, and at least one delivering member is a
+# verified, licensed professional (identity verified, credentials validated, tier A (Green light), licensed somewhere, and the
+# specialization on their profile). Checked at publish and on every change, and again when the firm's people change.
+
+def licensed_member(pro, trust, specialization: str) -> bool:
+    """A delivering member who counts for regulated work."""
+    dims = trust.dimensions if trust else {}
+    return bool(pro.status != "SUSPENDED" and trust and trust.tier == "A" and dims.get("identity") == "VERIFIED"
+                and dims.get("credentials") == "VALIDATED" and pro.licensed_jurisdictions and specialization in pro.specializations)
+
+
+async def _members_of(session: AsyncSession, firm_id: uuid.UUID) -> dict:
+    """The firm's professionals whose people are still active members (a removed member stops counting at once)."""
+    active = set((await session.scalars(select(FirmMember.identity_id).where(
+        FirmMember.firm_id == firm_id, FirmMember.status == "ACTIVE"))).all())
+    return {p.id: p for p in await professional_facade.list_by_firm(session, firm_id) if p.identity_id in active}
+
+
+async def _offering_out(session: AsyncSession, o: FirmOffering, members: dict | None = None) -> FirmOfferingOut:
+    members = members if members is not None else await _members_of(session, o.firm_id)
+    ids = [uuid.UUID(i) for i in o.delivered_by]
+    trust = await trust_facade.get_trust_many(session, [i for i in ids if i in members])
+    spec = (await marketplace_facade.get_specializations(session, [o.specialization])).get(o.specialization)
+    return FirmOfferingOut(
+        id=o.id, firmId=o.firm_id, title=o.title, summary=o.summary, specialization=o.specialization,
+        specializationName=spec.name if spec else None, regulated=o.regulated, engagementTypes=list(o.engagement_types),
+        pricingModel=o.pricing_model, startingPriceMinor=o.starting_price_minor, currency=o.currency,
+        deliveredBy=[OfferingMemberOut(professionalId=i, displayName=members[i].display_name,
+                                       tier=trust[i].tier if i in trust else "C",
+                                       licensed=licensed_member(members[i], trust.get(i), o.specialization))
+                     for i in ids if i in members],
+        status=o.status, publishedAt=o.published_at, unpublishedReason=o.unpublished_reason, version=o.version,
+        createdAt=o.created_at)
+
+
+async def _offering(session: AsyncSession, firm_id: uuid.UUID, offering_id: uuid.UUID, lock: bool = False) -> FirmOffering:
+    o = await session.get(FirmOffering, offering_id, with_for_update=lock)
+    if o is None or o.firm_id != firm_id:
+        raise NotFound("Offering not found")
+    return o
+
+
+async def _check_offering(session: AsyncSession, firm_id: uuid.UUID, specialization: str, delivered_by: list[uuid.UUID]) -> bool:
+    """A real specialization, delivered by professionals of this firm. Returns whether the specialization is regulated."""
+    await marketplace_facade.validate_specializations(session, [specialization])
+    members = await _members_of(session, firm_id)
+    if any(i not in members for i in delivered_by):
+        raise ValidationFailed("Only professionals who practise under this firm can deliver its offerings", code="NOT_A_FIRM_MEMBER")
+    return bool((await marketplace_facade.get_specializations(session, [specialization]))[specialization].regulated)
+
+
+async def offering_blockers(session: AsyncSession, firm: Firm, o: FirmOffering) -> list[str]:
+    """Why this offering cannot be (or stay) published; empty when it can."""
+    if firm.status == "SUSPENDED":
+        return ["The firm is suspended."]
+    members = await _members_of(session, firm.id)
+    ids = [uuid.UUID(i) for i in o.delivered_by if uuid.UUID(i) in members]
+    reasons = [] if ids else ["Name at least one member professional who delivers it."]
+    if not o.regulated:
+        return reasons
+    summary = await firm_facade.get_firm(session, firm.id)
+    if firm.status != "VERIFIED":
+        reasons.append("The firm's registration must be verified before it offers regulated work.")
+    if not (summary and summary.has_verified_representative):
+        reasons.append("An authorized representative must verify their identity.")
+    trust = await trust_facade.get_trust_many(session, ids)
+    if not any(licensed_member(members[i], trust.get(i), o.specialization) for i in ids):
+        reasons.append("At least one delivering member must be a verified, licensed professional (Green: fully verified, credentials "
+                       "validated, licensed, with this specialization on their profile).")
+    return reasons
+
+
+async def list_offerings(session: AsyncSession, actor: Actor, firm_id: uuid.UUID) -> list[FirmOfferingOut]:
+    await _require_member(session, actor, firm_id)
+    rows = (await session.scalars(select(FirmOffering).where(FirmOffering.firm_id == firm_id).order_by(FirmOffering.created_at))).all()
+    members = await _members_of(session, firm_id)
+    return [await _offering_out(session, o, members) for o in rows]
+
+
+async def create_offering(session: AsyncSession, actor: Actor, firm_id: uuid.UUID, body: FirmOfferingIn) -> FirmOfferingOut:
+    await _require_member(session, actor, firm_id, FirmRole.FIRM_ADMIN)
+    await _firm(session, firm_id)
+    regulated = await _check_offering(session, firm_id, body.specialization, body.deliveredBy)
+    o = FirmOffering(firm_id=firm_id, title=body.title.strip(), summary=body.summary.strip(), specialization=body.specialization,
+                     engagement_types=sorted(set(body.engagementTypes)), pricing_model=body.pricingModel,
+                     starting_price_minor=body.startingPriceMinor, currency=body.currency,
+                     delivered_by=[str(i) for i in dict.fromkeys(body.deliveredBy)], regulated=regulated, status="DRAFT",
+                     created_by=actor.identity_id)
+    session.add(o)
+    await session.flush()
+    return await _offering_out(session, o)
+
+
+async def update_offering(session: AsyncSession, actor: Actor, firm_id: uuid.UUID, offering_id: uuid.UUID,
+                          body: FirmOfferingPatch) -> FirmOfferingOut:
+    await _require_member(session, actor, firm_id, FirmRole.FIRM_ADMIN)
+    firm = await _firm(session, firm_id)
+    o = await _offering(session, firm_id, offering_id, lock=True)
+    specialization = body.specialization or o.specialization
+    delivered = body.deliveredBy if body.deliveredBy is not None else [uuid.UUID(i) for i in o.delivered_by]
+    o.regulated = await _check_offering(session, firm_id, specialization, delivered)
+    for field, col in (("title", "title"), ("summary", "summary"), ("pricingModel", "pricing_model"),
+                       ("startingPriceMinor", "starting_price_minor"), ("currency", "currency")):
+        value = getattr(body, field)
+        if value is not None:
+            setattr(o, col, value.strip() if field in ("title", "summary") else value)
+    if body.engagementTypes is not None:
+        o.engagement_types = sorted(set(body.engagementTypes))
+    o.specialization, o.delivered_by = specialization, [str(i) for i in dict.fromkeys(delivered)]
+    if o.status == "PUBLISHED" and (blockers := await offering_blockers(session, firm, o)):
+        raise PolicyBlocked("This change would break the published offering: " + " ".join(blockers), code="OFFERING_NOT_PUBLISHABLE",
+                            extra={"reasons": blockers})
+    await session.flush()
+    return await _offering_out(session, o)
+
+
+async def publish_offering(session: AsyncSession, actor: Actor, firm_id: uuid.UUID, offering_id: uuid.UUID) -> FirmOfferingOut:
+    await _require_member(session, actor, firm_id, FirmRole.FIRM_ADMIN)
+    firm = await _firm(session, firm_id, lock=True)
+    o = await _offering(session, firm_id, offering_id, lock=True)
+    if o.status == "PUBLISHED":
+        return await _offering_out(session, o)
+    o.regulated = await _check_offering(session, firm_id, o.specialization, [uuid.UUID(i) for i in o.delivered_by])
+    blockers = await offering_blockers(session, firm, o)
+    if blockers:
+        raise PolicyBlocked(" ".join(blockers), extra={"reasons": blockers},
+                            code="REGULATED_OFFERING_NEEDS_LICENSED_MEMBER" if o.regulated else "OFFERING_NOT_PUBLISHABLE")
+    o.status, o.published_at, o.published_by, o.unpublished_reason = "PUBLISHED", clock.now(), actor.identity_id, None
+    _evt(session, E.FIRM_OFFERING_PUBLISHED, firm, offeringId=o.id, title=o.title, specialization=o.specialization,
+         regulated=o.regulated, deliveredBy=list(o.delivered_by), publishedBy=actor.identity_id)
+    await session.flush()
+    return await _offering_out(session, o)
+
+
+async def _take_down(session: AsyncSession, firm: Firm, o: FirmOffering, reason: str | None, by: uuid.UUID | None) -> None:
+    o.status, o.unpublished_reason = "UNPUBLISHED", (reason or "").strip()[:300] or None
+    _evt(session, E.FIRM_OFFERING_UNPUBLISHED, firm, offeringId=o.id, reason=o.unpublished_reason, by=by)
+
+
+async def unpublish_offering(session: AsyncSession, actor: Actor, firm_id: uuid.UUID, offering_id: uuid.UUID,
+                             reason: str | None) -> FirmOfferingOut:
+    await _require_member(session, actor, firm_id, FirmRole.FIRM_ADMIN)
+    firm = await _firm(session, firm_id)
+    o = await _offering(session, firm_id, offering_id, lock=True)
+    if o.status == "PUBLISHED":
+        await _take_down(session, firm, o, reason, actor.identity_id)
+        await session.flush()
+    return await _offering_out(session, o)
+
+
+async def recheck_offerings(session: AsyncSession, firm_id: uuid.UUID) -> None:
+    """Keep the invariant over time: a published offering whose firm or people no longer qualify is taken down."""
+    firm = await session.get(Firm, firm_id)
+    if firm is None:
+        return
+    for o in (await session.scalars(select(FirmOffering).where(
+            FirmOffering.firm_id == firm_id, FirmOffering.status == "PUBLISHED").with_for_update())).all():
+        if blockers := await offering_blockers(session, firm, o):
+            await _take_down(session, firm, o, "Unpublished automatically: " + " ".join(blockers), None)
+
+
+async def published_offerings(session: AsyncSession, firm_id: uuid.UUID) -> list[FirmOfferingOut]:
+    rows = (await session.scalars(select(FirmOffering).where(FirmOffering.firm_id == firm_id, FirmOffering.status == "PUBLISHED")
+                                  .order_by(FirmOffering.published_at))).all()
+    members = await _members_of(session, firm_id)
+    return [await _offering_out(session, o, members) for o in rows]

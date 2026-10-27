@@ -29,3 +29,14 @@ async def on_verification_lapsed(session: AsyncSession, event: EventEnvelope) ->
     p = event.payload
     if p.get("subjectType") == "FIRM" and p.get("verificationType") == "FIRM_REGISTRATION":
         await service.set_registration_verified(session, uuid.UUID(str(p["subjectId"])), False)
+        await service.recheck_offerings(session, uuid.UUID(str(p["subjectId"])))
+
+
+@subscribe(E.TRUST_TIER_CHANGED, consumer="firm.recheck_offerings_on_tier")
+async def on_tier_changed(session: AsyncSession, event: EventEnvelope) -> None:
+    """A delivering member's trust light changed: published regulated offerings must still have a licensed member."""
+    from zoikorum.domains.professional import facade as professional_facade
+
+    pro = await professional_facade.get_professional(session, uuid.UUID(str(event.payload["professionalId"])))
+    if pro is not None and pro.firm_id is not None:
+        await service.recheck_offerings(session, pro.firm_id)
