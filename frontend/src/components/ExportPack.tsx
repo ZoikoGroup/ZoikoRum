@@ -7,8 +7,9 @@ const FORMATS: { key: PackFormat; label: string }[] = [{ key: 'pdf', label: 'PDF
 
 /** Export Pack: one button with a format choice. The server checks the same permission for every format and prints the
     SHA-256 of the exported record in the file; each download is recorded in the audit trail. */
-export function ExportPack({ label = 'Export Pack', fileStem, fetchPack, onError }: {
+export function ExportPack({ label = 'Export Pack', fileStem, fetchPack, onError, formats }: {
   label?: string; fileStem: string; fetchPack: (format: PackFormat) => Promise<Blob>; onError: (err: unknown) => void
+  formats?: PackFormat[]  // the formats the server offers for this record (all three when omitted)
 }) {
   const [format, setFormat] = useState<PackFormat>('pdf')
   const [busy, setBusy] = useState(false)
