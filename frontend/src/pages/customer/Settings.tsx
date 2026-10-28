@@ -78,10 +78,10 @@ function AccountForm({ me, onSaved }: { me: ProfileDetails; onSaved: (p: Profile
   const [error, setError] = useState<unknown>(null)
   const [phoneError, setPhoneError] = useState('')
   const cleanPhone = (v: string) => v.replace(/[\s().-]/g, '')
-  // Same rule as the backend: optional +, 7-15 digits, first digit non-zero. Checked on blur/submit only, never while typing.
+  // Same rule as the backend: + country code then 7-15 digits, first digit non-zero. Checked on blur/submit only, never while typing.
   const checkPhone = (v: string) => {
     const c = cleanPhone(v)
-    const msg = c && !/^\+?[1-9]\d{6,14}$/.test(c) ? 'Enter a valid mobile number of 7 to 15 digits, with or without the country code, e.g. 9876543210 or +91 98765 43210.' : ''
+    const msg = c && !/^\+[1-9]\d{6,14}$/.test(c) ? 'Enter the mobile number with its country code, e.g. +91 98765 43210.' : ''
     setPhoneError(msg)
     return !msg
   }
@@ -100,7 +100,7 @@ function AccountForm({ me, onSaved }: { me: ProfileDetails; onSaved: (p: Profile
         <Field label="Full name" id="s-name"><input id="s-name" className="input" value={f.displayName} onChange={(e) => setF({ ...f, displayName: e.target.value })} required /></Field>
         <Field label="Email" id="s-email" hint="Contact support to change the email you sign in with.">
           <input id="s-email" className="input" value={me.email} disabled /></Field>
-        <Field label="Phone (optional)" id="s-phone" hint="7 to 15 digits, with or without the country code, e.g. 9876543210 or +91 98765 43210. Stored encrypted.">
+        <Field label="Phone (optional)" id="s-phone" hint="With the country code, e.g. +91 98765 43210. Stored encrypted.">
           <input id="s-phone" className="input" type="tel" value={f.phone} maxLength={20} inputMode="tel" aria-invalid={!!phoneError} onChange={(e) => { setF({ ...f, phone: e.target.value.replace(/(?!^)\+|[^\d+\s().-]/g, '') }); if (phoneError) setPhoneError('') }} onBlur={() => checkPhone(f.phone)} placeholder="+91 98765 43210" />
           {phoneError && <div className="error" role="alert">{phoneError}</div>}</Field>
         <button className="btn btn-primary">Save changes</button>
