@@ -25,7 +25,7 @@ class ExportIn(BaseModel):
     correlationId: str | None = None
     since: datetime | None = None
     until: datetime | None = None
-    format: Literal["json", "csv"] = "json"
+    format: Literal["json", "csv", "pdf"] = "json"
     # Staff exports only: why the export is needed, for the Compliance Officer or Legal who approves it.
     justification: str | None = Field(default=None, min_length=10, max_length=2000)
 
@@ -87,9 +87,11 @@ async def download_export(export_id: uuid.UUID, actor: CurrentActor, session: Db
     if job.status != "COMPLETED":
         from zoikorum.shared.errors import Conflict
         raise Conflict("This export has not been made: it is waiting for approval or was not approved", code="EXPORT_NOT_READY")
+    headers = {"X-Content-SHA256": job.content_sha256 or ""}
+    if job.format == "pdf":
+        return Response(content=service.render_export_pdf(job), media_type="application/pdf", headers=headers)
     media = "application/json" if job.format == "json" else "text/csv"
-    return Response(content=job.content or "", media_type=media,
-                    headers={"X-Content-SHA256": job.content_sha256 or ""})
+    return Response(content=job.content or "", media_type=media, headers=headers)
 
 
 @router.post("/chain/verify")

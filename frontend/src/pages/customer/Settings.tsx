@@ -11,7 +11,7 @@ import { maskEmail } from '../../lib/maskEmail'
 import { countryName } from '../ProfessionalPages'
 
 type Tab = 'account' | 'security' | 'notifications' | 'privacy' | 'payments' | 'platform' | 'linked'
-const LANGUAGES: [string, string][] = [['en', 'English'], ['en-GB', 'English (UK)'], ['fr', 'Français'], ['de', 'Deutsch'], ['es', 'Español'], ['hi', 'हिन्दी']]
+export const LANGUAGES: [string, string][] = [['en', 'English'], ['en-GB', 'English (UK)'], ['fr', 'Français'], ['de', 'Deutsch'], ['es', 'Español'], ['hi', 'हिन्दी']]
 const TIME_ZONES = ['UTC', 'Europe/London', 'Europe/Berlin', 'America/New_York', 'America/Chicago', 'America/Los_Angeles',
   'Asia/Kolkata', 'Asia/Singapore', 'Asia/Dubai', 'Australia/Sydney', 'Africa/Johannesburg']
 

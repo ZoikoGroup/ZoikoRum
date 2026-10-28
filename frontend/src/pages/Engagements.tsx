@@ -21,6 +21,7 @@ import { Icon } from '../components/dashboard'
 import { EmptyTable, PortalHeader, SidePanel, StatCard, Tabs } from '../components/portal'
 import { ErrorAlert, useStepUp, Loading } from '../components/ui'
 import { saveBlob } from '../lib/exports'
+import { ExportPack } from '../components/ExportPack'
 import { formatCurrencies } from '../lib/money'
 
 /* Engagements (Step 7) for both sides: the contract generated from an accepted proposal, signatures (buyer first,
@@ -150,6 +151,7 @@ export function EngagementDetail({ side }: { side: Side }) {
       <PortalHeader eyebrow={<Link to={base(side)}>← Engagements</Link>} title={c.title}
         subtitle={<><span className={`badge ${st.tone}`}>{st.label}</span> · {c.reference} · {formatMoney(c.total)} · version {c.contractVersion}</>}
         actions={<><Link className="btn btn-secondary" to={`/app/messages?contextType=CONTRACT&contextId=${c.id}`}><Icon name="message" /> Messages</Link>
+          <ExportPack fileStem={`${c.reference}-export-pack`} fetchPack={(f) => contractApi.evidencePack(c.id, f)} onError={setError} />
           {(c.status === 'ACTIVE' || c.status === 'DISPUTED' || (c.status === 'COMPLETED' && paymentStuck(c, escrow).size > 0)) && disputableMilestones(c, escrow).length > 0 &&
             <button className="btn btn-ghost" onClick={() => setRaising(true)}><Icon name="help" /> Raise a dispute</button>}</>} />
       {notice && <div className="alert alert-success" role="status">{notice}</div>}
@@ -816,14 +818,10 @@ function FilesPanel({ c, onError }: { c: Contract; onError: (e: unknown) => void
 function ActivityPanel({ c, onError }: { c: Contract; onError: (e: unknown) => void }) {
   const [rows, setRows] = useState<ActivityEntry[] | null>(null)
   useEffect(() => { contractApi.activity(c.id).then(setRows).catch(onError) }, [c.id, onError])
-  const download = (format: 'pdf' | 'json') => contractApi.evidencePack(c.id, format)
-    .then((b) => saveBlob(`${c.reference}-evidence-pack.${format}`, b)).catch(onError)
   return (
     <section className="card panel">
       <div className="panel-head"><h2>Activity</h2>
-        <span className="row" style={{ flexWrap: 'nowrap' }}>
-          <button className="btn btn-secondary btn-sm" onClick={() => download('pdf')}><Icon name="download" /> Evidence pack (PDF)</button>
-          <button className="btn btn-ghost btn-sm" onClick={() => download('json')}>JSON</button></span></div>
+        <ExportPack label="Export Pack" fileStem={`${c.reference}-export-pack`} fetchPack={(f) => contractApi.evidencePack(c.id, f)} onError={onError} /></div>
       {rows === null ? <Loading /> : (
         <ul className="activity">{rows.map((a, i) => <li key={a.hash + i}><span className="dot" /><span>{a.what}<span className="muted small"> · {a.by}</span></span>
           <span className="muted small" title={`Audit record hash ${a.hash}`}>{new Date(a.at).toLocaleString()}</span></li>)}</ul>

@@ -111,3 +111,17 @@ async def test_invoice_shows_the_tax_included_in_the_amount(client, make_user, d
     assert invoice["lines"][1]["description"] == "Of which Sales tax 10% on the Zoikorum platform fee (included)"
     r = await client.get(f"/v1/payments/invoices/{invoice['id']}/pdf", headers=buyer.h)
     assert r.status_code == 200 and r.content.startswith(b"%PDF-")
+
+
+@pytest.mark.unit
+def test_audit_export_pdf_renders_records_and_empty_case():
+    import json
+    from types import SimpleNamespace
+    from zoikorum.domains.audit.service import render_export_pdf
+
+    records = [{"seq": i, "occurredAt": "2026-10-09T10:00:00+00:00", "action": "policy.dashboard.exported " * 4,
+                "actorId": "11111111-2222", "objectType": "Organization", "objectId": "abcdef0123456789", "hash": "f" * 64}
+               for i in range(120)]
+    job = SimpleNamespace(content=json.dumps({"records": records}), content_sha256="ab" * 32, chain_head_hash="cd" * 32)
+    assert render_export_pdf(job).startswith(b"%PDF-")
+    assert render_export_pdf(SimpleNamespace(content=json.dumps({"records": []}), content_sha256=None, chain_head_hash=None)).startswith(b"%PDF-")

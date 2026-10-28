@@ -14,12 +14,14 @@ async def test_apply_review_and_show_enterprise_ready(client, make_user, drain):
     assert status["status"] == "NONE" and not all(r["met"] for r in status["requirements"])
     attest = {"attestation": {i["key"]: True for i in status["attestationItems"]}}
     r = await client.post(f"{ME}/apply", headers=u.h, json=attest)
+    assert r.status_code == 409 and r.json()["code"] == "MFA_REQUIRED"  # two-step sign-in comes first
+    await u.enable_mfa()
+    r = await client.post(f"{ME}/apply", headers=u.h, json=attest)
     assert r.json()["code"] == "ENTERPRISE_REQUIREMENTS_NOT_MET" and "Green trust light" in r.json()["detail"]
 
     await verify(client, make_user, u, pro, "IDENTITY")
     await verify(client, make_user, u, pro, "JURISDICTION", jurisdiction="US")
     await drain()
-    await u.enable_mfa()
     await u.step_up()
     partial = {"attestation": {**attest["attestation"], "breachNotice": False}}
     assert (await client.post(f"{ME}/apply", headers=u.h, json=partial)).json()["code"] == "ATTESTATION_INCOMPLETE"
@@ -42,3 +44,16 @@ async def test_apply_review_and_show_enterprise_ready(client, make_user, drain):
     assert [i["professionalId"] for i in found["items"]] == [pro["id"]] and found["items"][0]["enterpriseReady"] is True
     titles = [n["title"] for n in (await client.get("/v1/notifications", headers=u.h)).json()["items"]]
     assert "Enterprise readiness decided" in titles
+
+
+def test_mfa_gate_refuses_without_two_step():
+    import pytest
+    from zoikorum.domains.professional.enterprise import require_mfa
+    from zoikorum.shared.errors import Conflict
+    off = [{"key": "tierA", "met": True}, {"key": "twoStep", "met": False}]
+    with pytest.raises(Conflict) as e:
+        require_mfa(off)
+    assert e.value.code == "MFA_REQUIRED" and "two-step" in e.value.detail
+    with pytest.raises(Conflict):
+        require_mfa(off, own=False)
+    require_mfa([{"key": "twoStep", "met": True}])

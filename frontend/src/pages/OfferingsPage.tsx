@@ -67,7 +67,7 @@ function OfferingWizard({ profile: initialProfile, offering: initial, onDone, on
     offering?.status === 'ACTIVE',
   ]
 
-  async function save(e?: FormEvent) {
+  async function save(e?: FormEvent, exit = false) {
     e?.preventDefault()
     setBusy(true)
     setError(null)
@@ -89,6 +89,7 @@ function OfferingWizard({ profile: initialProfile, offering: initial, onDone, on
         setProfile(await proApi.setAvailability({ availability: avail.availability,
           maxConcurrentEngagements: avail.max ? Number(avail.max) : null, temporarilyUnavailable: avail.paused, weeklyHours: avail.hours }))
       }
+      if (exit) { clearDraft(draftKey); onDone(); return }
       setStep((s) => Math.min(s + 1, WIZARD.length - 1))
     } catch (err) {
       setError(err)
@@ -116,6 +117,9 @@ function OfferingWizard({ profile: initialProfile, offering: initial, onDone, on
     <section className="card panel">
       <div className="panel-head"><h2>{initial ? 'Edit service' : 'New service'}</h2>
         <button type="button" className="btn btn-ghost btn-sm" onClick={offering ? onDone : onCancel}>{offering ? 'Save & close' : 'Cancel'}</button></div>
+      <p className="muted small" style={{ margin: '0 0 4px' }}>Step {step + 1} of {WIZARD.length}</p>
+      <div className="progress" style={{ maxWidth: 'none', marginBottom: 12 }} role="progressbar" aria-valuemin={1}
+        aria-valuemax={WIZARD.length} aria-valuenow={step + 1}><span style={{ width: `${((step + 1) / WIZARD.length) * 100}%` }} /></div>
       <nav className="steps" aria-label="Service steps">
         {WIZARD.map((label, i) => (
           <button key={label} type="button" aria-current={i === step ? 'step' : undefined} disabled={i > 0 && !offering}
@@ -234,6 +238,8 @@ function OfferingWizard({ profile: initialProfile, offering: initial, onDone, on
         {step < 4 && (
           <div className="row" style={{ marginTop: 16 }}>
             {step > 0 && <button type="button" className="btn btn-secondary" onClick={() => setStep(step - 1)}>Back</button>}
+            <button type="button" className="btn btn-ghost" disabled={busy || (step === 2 && types.length === 0) || (step === 0 && f.title.trim().length < 3)}
+              onClick={() => save(undefined, true)}>Save &amp; exit</button>
             <button className="btn btn-primary" disabled={busy || (step === 2 && types.length === 0)}>{busy ? 'Saving…' : 'Save and continue'}</button>
           </div>
         )}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { auditApi, exportAuditCsv, type AuditRecord } from '../../api/audit'
+import { auditApi, type AuditRecord } from '../../api/audit'
+import { AuditExportButtons } from '../../components/AuditExport'
 import { formatMoney, ORG_ROLE_INFO, orgApi, type BillingContact, type Invitation, type LegalEntity, type LegalEntityInput, type Organization, type OrgMember, type OrgRole } from '../../api/orgs'
 import { useAuth } from '../../auth/AuthContext'
 import { ago, ActivityList } from '../../components/activity'
@@ -169,14 +170,7 @@ export default function OrganisationPage() {
       {tab === 'security' && (
         <section className="card panel">
           <div className="panel-head"><h2>Security &amp; audit</h2>
-            {activity && <button className="btn btn-secondary btn-sm" onClick={async () => {
-              try {
-                const csv = await exportAuditCsv(org.id)
-                const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
-                Object.assign(document.createElement('a'), { href: url, download: `${orgCode}-audit.csv` }).click()
-                URL.revokeObjectURL(url)
-              } catch (err) { setError(err) }
-            }}><Icon name="download" /> Export audit log (CSV)</button>}
+            {activity && <AuditExportButtons orgId={org.id} fileStem={orgCode} onError={setError} />}
             <ProcurementPackButton onError={setError} /></div>
           <ul className="why">
             <li>Org Admins must use two-step verification; sensitive changes ask for a fresh code.</li>

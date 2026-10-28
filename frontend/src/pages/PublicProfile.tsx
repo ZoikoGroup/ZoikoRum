@@ -92,6 +92,8 @@ export default function PublicProfilePage() {
     ['Serves', p.servedJurisdictions.map(countryName).join(', ') || 'Anywhere'],
     ['Completed on Zoikorum', String(p.history?.completedEngagements ?? 0)],
     ['Typical response', response == null ? '—' : response < 1 ? 'Under 1 hour' : `About ${Math.round(response)} h`],
+    // Measured on Zoikorum only; shown only when the professional has milestones with due dates.
+    ...(p.history?.onTimeRate == null ? [] : [['On-time delivery rate', `${p.history.onTimeRate}%`] as [string, string]]),
   ]
   return (
     <>
@@ -348,5 +350,5 @@ function AskButton({ professionalId, onError }: { professionalId: string; onErro
       const thread = await messagingApi.inquire(org.id, professionalId)
       navigate(`/app/messages?thread=${thread.id}`)
     } catch (e) { onError(e) } finally { setBusy(false) }
-  }}>Ask a question</button>
+  }}>Contact professional</button>
 }

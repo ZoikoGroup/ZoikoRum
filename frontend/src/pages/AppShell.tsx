@@ -9,6 +9,7 @@ import { DASHBOARD_FOR_PERSONA, PLATFORM_ROLES, ROLE_LABEL } from '../api/auth'
 import { useAuth } from '../auth/AuthContext'
 import { Icon, type IconName } from '../components/dashboard'
 import { GlobalSearch } from '../components/GlobalSearch'
+import { LanguageSwitcher } from '../components/LanguageSwitcher'
 import { DuplicateNotice } from '../components/DuplicateNotice'
 import { dashboardPath, isStaffPath, STAFF_PREFIX } from '../staffRoutes'
 import { useCapabilities, StaffSessionNotice } from '../auth/capabilities'
@@ -225,6 +226,7 @@ export default function AppShell() {
   const dashboards = new Set(user.personas.map((p) => DASHBOARD_FOR_PERSONA[p]))
   const isStaff = user.platformRoles.length > 0
   const customer = dashboards.has('enterprise') ? 'enterprise' : dashboards.has('buyer') ? 'buyer' : null
+  const isEnterpriseAdmin = user.personas.includes('ENTERPRISE_ADMIN')
   const staffOnly = user.platformRoles.length > 0 && user.personas.length === 0
   const initials = user.displayName.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase()
   // Staff: the most senior role (PLATFORM_ROLES runs from Platform Admin down), not the first alphabetically.
@@ -248,7 +250,8 @@ export default function AppShell() {
 
         {customer && <>
           <div className="side-group">Customer</div>
-          <Item to={`/app/${customer}`} icon="home" end>Dashboard</Item>
+          <Item to={`/app/${customer}`} icon="home" end>{customer === 'enterprise' ? 'Policy dashboard' : 'Dashboard'}</Item>
+          {customer === 'enterprise' && <Item to="/app/enterprise/team" icon="team">Team &amp; roles</Item>}
           <Item to="/app/find" icon="search">Find Professionals</Item>
           <Item to="/app/saved" icon="bookmark" count={savedCount}>Saved Professionals</Item>
           <Item to="/app/requests" icon="request">Requests</Item>
@@ -259,7 +262,8 @@ export default function AppShell() {
           <Item to="/app/messages" icon="message" count={unreadMessages}>Messages</Item>
           <Item to="/app/disputes" count={n('/app/disputes')} icon="shield">Disputes</Item>
           <Item to="/app/policies" icon="contract">Policies &amp; Approvals</Item>
-          <Item to="/app/webhooks" icon="gear">Enterprise Webhooks</Item>
+          {/* The server lets only an active Org Admin manage webhooks (notification.require_webhook_admin). */}
+          {(customer !== 'enterprise' || isEnterpriseAdmin) && <Item to="/app/webhooks" icon="gear">Enterprise Webhooks</Item>}
           <Item to="/app/reports" icon="contract">Reports</Item>
         </>}
 
@@ -269,7 +273,7 @@ export default function AppShell() {
           <Item to="/app/professional/profile" icon="user">My Profile</Item>
           <Item to="/app/professional/offerings" icon="request">Service Offerings</Item>
           <Item to="/app/professional/verification" icon="shield">Verification &amp; Trust</Item>
-          {inFirm && !dashboards.has('firm') && <Item to="/app/firm/team" icon="team">My Firm</Item>}
+          {inFirm && !dashboards.has('firm') && <Item to="/app/firm" icon="team" end>My Firm</Item>}
           <Item to="/app/professional/requests" icon="proposal" count={n('/app/professional/requests')}>Requests</Item>
           <Item to="/app/professional/briefs" icon="mail">Open Briefs</Item>
           <Item to="/app/professional/engagements" icon="briefcase" count={n('/app/professional/engagements')}>Engagements</Item>
@@ -333,6 +337,7 @@ export default function AppShell() {
           <GlobalSearch side={customer ? 'buyer' : dashboards.has('professional') ? 'professional' : null}
             staff={isStaff && isStaffPath(location.pathname)} />
           <div style={{ flex: 1 }} />
+          <LanguageSwitcher />
           <NavLink to="/app/help" className="icon-btn" aria-label="Help &amp; support"><Icon name="help" /></NavLink>
           <div className="bell-pop">
             <button type="button" className="icon-btn" aria-label={`Notifications${bellTotal ? `: ${bellTotal} waiting for you` : ''}`}

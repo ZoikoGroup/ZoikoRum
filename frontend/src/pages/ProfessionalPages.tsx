@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import { firmApi, formatMoney, type Firm } from '../api/orgs'
 import {
@@ -210,7 +210,8 @@ export function ProfessionalDashboard() {
   const [now] = useState(() => Date.now())  // read the clock once, not on every render
 
   const [declining, setDeclining] = useState<ProposalRequest | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
+  const arrivedNotice = (useLocation().state as { notice?: string } | null)?.notice ?? null
+  const [notice, setNotice] = useState<string | null>(arrivedNotice)
   const [listsLoading, setListsLoading] = useState(true)
   const profileId = profile?.id
 
@@ -1229,6 +1230,8 @@ const STEP_VIEW: Record<StepKey, (p: StepProps) => ReactNode> = {
   verification: VerificationStep, credentials: CredentialsStep, jurisdictions: JurisdictionsStep, publish: PublishStep,
 }
 
+const EXIT_NOTICE = { notice: 'Your profile progress is saved. Pick up where you left off any time from your dashboard.' }
+
 export function ProfileSetupPage() {
   const { profile, setProfile, loading, error } = useMyProfile()
   const { user } = useAuth()
@@ -1243,7 +1246,7 @@ export function ProfileSetupPage() {
   const exiting = useRef(false)
   function saveAndExit() {
     const form = document.getElementById('step-form') as HTMLFormElement | null
-    if (!form) { navigate('/app/professional'); return }
+    if (!form) { navigate('/app/professional', { state: EXIT_NOTICE }); return }
     exiting.current = true
     form.requestSubmit()
     window.setTimeout(() => { exiting.current = false }, 5000)  // the save failed: stay on the step with its error
@@ -1262,10 +1265,6 @@ export function ProfileSetupPage() {
         </div>
         <div className="onb-tools">
           <Link className="small" to="/app/help?topic=profile-setup">Need help?</Link>
-          <label className="small">Language{' '}
-            <select className="input" aria-label="Language" value="en" onChange={() => {}} style={{ width: 'auto', display: 'inline-block' }}>
-              <option value="en">English</option>
-            </select></label>
         </div>
       </div>
       <p className="privacy-strip" role="note"><span aria-hidden>🔒</span><span>Your legal name, ID documents and registration numbers are never
@@ -1293,7 +1292,7 @@ export function ProfileSetupPage() {
             <View key={`${step}-${profile.version}`} profile={profile}
               onSaved={(p) => { setProfile(p); setSaved(true) }}
               next={() => {
-                if (exiting.current) { exiting.current = false; navigate('/app/professional'); return }
+                if (exiting.current) { exiting.current = false; navigate('/app/professional', { state: EXIT_NOTICE }); return }
                 if (index < STEPS.length - 1) go(STEPS[index + 1].key)
               }} />
           </section>

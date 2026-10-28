@@ -33,3 +33,11 @@ export async function exportAuditCsv(tenantId: string): Promise<string> {
   const job = await api<{ id: string }>('/v1/audit/exports', { method: 'POST', body: { tenantId, format: 'csv' } })
   return api<string>(`/v1/audit/exports/${job.id}/download`, { text: true })
 }
+
+export type AuditFormat = 'pdf' | 'csv' | 'json'
+
+/** Org Admins / Legal Reviewers: the organisation's audit log as a file (PDF, CSV or JSON), built on the server. */
+export async function exportAuditFile(tenantId: string, format: AuditFormat): Promise<Blob> {
+  const job = await api<{ id: string }>('/v1/audit/exports', { method: 'POST', body: { tenantId, format } })
+  return api<Blob>(`/v1/audit/exports/${job.id}/download`, { blob: true })
+}

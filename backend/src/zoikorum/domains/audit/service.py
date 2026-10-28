@@ -185,8 +185,8 @@ async def create_export(session: AsyncSession, actor: Actor, scope: dict, fmt: s
     """An organisation admin's export of their own organisation's trail is made at once. A staff export (any scope) is
     evidence-grade material: it is only requested here and is made once a second person, a Compliance Officer or Legal,
     approves it (admin/approvals.py). Returns the finished job, or the approval request for a staff export."""
-    if fmt not in ("json", "csv"):
-        raise ValidationFailed("format must be json or csv")
+    if fmt not in ("json", "csv", "pdf"):
+        raise ValidationFailed("format must be json, csv or pdf")
     if actor.has_capability(Cap.AUDIT_EXPORT):
         from zoikorum.domains.admin import facade as admin_facade
 
@@ -209,8 +209,8 @@ async def create_export(session: AsyncSession, actor: Actor, scope: dict, fmt: s
 
 async def open_export(session: AsyncSession, requested_by: uuid.UUID, scope: dict, fmt: str) -> uuid.UUID:
     """A staff export waiting for approval: recorded now (status REQUESTED), made only when approved."""
-    if fmt not in ("json", "csv"):
-        raise ValidationFailed("format must be json or csv")
+    if fmt not in ("json", "csv", "pdf"):
+        raise ValidationFailed("format must be json, csv or pdf")
     job = ExportJob(requested_by=requested_by, scope=_scope_json(scope), status="REQUESTED", format=fmt)
     session.add(job)
     await session.flush()
@@ -240,7 +240,7 @@ async def close_export(session: AsyncSession, export_id: uuid.UUID, status: str)
 def _fill(session: AsyncSession, job: ExportJob, rows: list[AuditRecord]) -> None:
     fmt = job.format
     records = [record_to_dict(r) for r in rows]
-    if fmt == "json":
+    if fmt in ("json", "pdf"):  # a PDF is drawn from these same records when it is downloaded
         content = json.dumps({"records": records, "attestation": {"recordCount": len(records)}}, default=str)
     else:
         buf = io.StringIO()
@@ -255,6 +255,21 @@ def _fill(session: AsyncSession, job: ExportJob, rows: list[AuditRecord]) -> Non
     record_event(session, E.AUDIT_EXPORT_REQUESTED, aggregate_type="AuditExport", aggregate_id=job.id,
                  payload={"exportId": job.id, "scope": job.scope, "format": fmt, "recordCount": len(records)},
                  tenant_id=job.scope.get("tenantId"))
+
+
+def render_export_pdf(job: ExportJob) -> bytes:
+    """The PDF of a finished export: a table of the exported records with the attestation (count, SHA-256 of the stored
+    records, chain head) in the subtitle. Same permission as the CSV: it is only reachable through get_export."""
+    from zoikorum.shared.report_pdf import render_grid_pdf
+
+    records = json.loads(job.content or "{}").get("records", [])
+    rows = [{"seq": r.get("seq"), "occurredAt": str(r.get("occurredAt", ""))[:19].replace("T", " "), "action": r.get("action"),
+             "actor": str(r.get("actorId") or "-")[:8], "object": f"{r.get('objectType', '')} {str(r.get('objectId', ''))[:8]}",
+             "hash": str(r.get("hash", ""))[:12]} for r in records]
+    cols = [("#", 16, "R"), ("Time (UTC)", 38, "L"), ("Action", 80, "L"), ("Actor", 24, "L"), ("Object", 70, "L"), ("Hash", 36, "L")]
+    sub = f"{len(records)} records · content SHA-256 {(job.content_sha256 or '')[:16]} · chain head {(job.chain_head_hash or '-')[:16]}"
+    return render_grid_pdf("Zoikorum audit log", sub, cols, rows, keys=["seq", "occurredAt", "action", "actor", "object", "hash"],
+                           empty="No audit records in scope.")
 
 
 async def get_export(session: AsyncSession, actor: Actor, export_id: uuid.UUID) -> ExportJob:

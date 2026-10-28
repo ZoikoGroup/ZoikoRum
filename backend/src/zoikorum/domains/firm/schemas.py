@@ -49,6 +49,7 @@ class FirmProfessionalWork(BaseModel):
     headline: str | None
     published: bool
     tier: str = "C"  # trust tier code (shown as a light): the firm sees which professionals still need verification
+    availability: str = "NOT_SPECIFIED"  # NOW|TWO_WEEKS|ONE_MONTH|NOT_SPECIFIED|AT_CAPACITY (indicative capacity)
     openRequests: int
     awaitingSignature: int
     activeContracts: int

@@ -507,6 +507,11 @@ async def _retire_renewed(session: AsyncSession, case: VerificationCase) -> None
         old.status, old.reason_code = "EXPIRED", "RENEWED"
 
 
+def reminder_schedule(expires_at: datetime, now: datetime) -> list[tuple[int, datetime]]:
+    """(daysBefore, fireAt) for each reminder (30/14/7 days before expiry) that is still in the future."""
+    return [(d, expires_at - timedelta(days=d)) for d in REMINDER_DAYS if expires_at - timedelta(days=d) > now]
+
+
 async def _verify(session: AsyncSession, case: VerificationCase, *, reviewer_id: uuid.UUID | None, expires_at: datetime | None) -> None:
     CASE_STATES.assert_can(case.status, "VERIFIED")
     await _retire_renewed(session, case)
@@ -515,10 +520,8 @@ async def _verify(session: AsyncSession, case: VerificationCase, *, reviewer_id:
     case.expires_at = expires_at or _default_expiry(case)
     case.reason_code = case.public_reason = None
     if case.expires_at:
-        for days in REMINDER_DAYS:
-            fire = case.expires_at - timedelta(days=days)
-            if fire > now:
-                await schedule_timer(session, TIMER_REMINDER, f"{case.id}:{days}", fire, {"caseId": str(case.id), "days": days})
+        for days, fire in reminder_schedule(case.expires_at, now):
+            await schedule_timer(session, TIMER_REMINDER, f"{case.id}:{days}", fire, {"caseId": str(case.id), "days": days})
         await schedule_timer(session, TIMER_EXPIRY, str(case.id), case.expires_at, {"caseId": str(case.id)})
     if reviewer_id is None and _sampled(case):  # automatic approval: a person looks again (ethics code)
         case.second_look = "SAMPLED"

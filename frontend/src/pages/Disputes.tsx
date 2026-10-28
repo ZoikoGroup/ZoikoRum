@@ -13,6 +13,7 @@ import { DOC_ACCEPT, toUpload, type Upload } from '../api/files'
 import { FileLinks } from '../components/FileLink'
 import { useAuth } from '../auth/AuthContext'
 import { useCapabilities } from '../auth/capabilities'
+import { ExportPack } from '../components/ExportPack'
 import { saveBlob } from '../lib/exports'
 import { Icon } from '../components/dashboard'
 import { EmptyTable, PortalHeader, SidePanel, StatCard } from '../components/portal'
@@ -209,8 +210,7 @@ export function DisputeDetail() {
         title={`Dispute ${d.reference}`}
         subtitle={<>Engagement {d.contractReference} · <span className="badge">{CATEGORY_LABEL[d.category]}</span> <span className={`badge ${ph.tone}`}>{ph.label}</span>
           {deadline && <> · <Icon name="clock" /> {timeLeft(deadline)}</>}</>}
-        actions={<button className="btn btn-secondary" onClick={() => disputeApi.record(d.id, 'pdf')
-          .then((b) => saveBlob(`${d.reference}-record.pdf`, b)).catch(setError)}><Icon name="download" /> Case record (PDF)</button>} />
+        actions={<ExportPack label="Case record" fileStem={`${d.reference}-record`} fetchPack={(f) => disputeApi.record(d.id, f === 'csv' ? 'json' : f)} onError={setError} formats={['pdf', 'json']} />} />
       {notice && <div className="alert alert-success" role="status">{notice}</div>}
       <ErrorAlert error={error} />
       <div className="attention-banner neutral"><span className="kpi-icon blue"><Icon name="help" /></span>
