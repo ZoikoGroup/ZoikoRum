@@ -14,12 +14,13 @@ from zoikorum.shared import clock
 
 PROVIDERS = {"stripe": "Stripe (card and bank payments)", "fake": "Test payment provider (no real money)",
              "persona": "Persona (identity verification)", "anthropic": "Anthropic (optional AI assistance)",
-             "smtp": "Email delivery provider (SMTP)", "r2": "Cloudflare R2 (files)", "database": "Application database (files)", "gcs": "Google Cloud Storage (files)", "s3": "Amazon S3 (files)"}
+             "smtp": "Email delivery provider (SMTP)", "database": "Application database (files)"}
 
 
 def build() -> dict:
     s = get_settings()
-    subprocessors = [PROVIDERS[p] for p in (s.payment_provider, s.verification_provider, s.ai_provider, s.email_provider, s.storage_provider)
+    subprocessors = [PROVIDERS[p] for p in (s.payment_provider, s.verification_provider, s.ai_provider, s.email_provider,
+                                  "database" if s.storage_provider != "local" else "local")
                      if p in PROVIDERS]
     controls = [
         ("Sign-in", "Passwords are hashed; two-step sign-in (authenticator app or passkey) is available to everyone and required "
@@ -29,8 +30,7 @@ def build() -> dict:
         ("Encryption in transit", "TLS between browsers and the platform, terminated at the load balancer."),
         ("Encryption at rest", "Database and file storage are encrypted at rest by the cloud provider."
          + (" Sensitive fields (two-step secrets, phone numbers, webhook secrets) are encrypted again with a key held in Cloud KMS."
-            if s.field_kms_key_name else " Sensitive fields are encrypted again with an application key.")
-         + (" Files use a customer-managed key in Cloud KMS." if s.gcs_kms_key_name else "")),
+            if s.field_kms_key_name else " Sensitive fields are encrypted again with an application key.")),
         ("Files", ("Every upload is scanned for malware before it is stored; " if s.malware_scanner == "clamav" else "")
          + "files are stored write-once with a SHA-256 fingerprint, and downloads are recorded."),
         ("Money", "Payments are held in escrow per milestone and released only when the buyer accepts the work; the ledger is "

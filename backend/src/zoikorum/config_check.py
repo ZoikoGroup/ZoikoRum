@@ -1,7 +1,7 @@
 """Deployment check: is this environment's configuration complete and usable? (python -m zoikorum.cli check-config)
 
 Prints one line per area - OK, WARN or MISSING - and never a configuration value (no addresses, keys or passwords).
-With --connect it also tries the database, Redis, the storage bucket (GCS or S3) and the email server. Exit code 1 when anything
+With --connect it also tries the database, Redis and the email server. Exit code 1 when anything
 required for a server deployment is missing or unreachable, so a release pipeline can stop before going live.
 In local development everything is reported for information only.
 """
@@ -92,24 +92,10 @@ def review(s: Settings) -> list[tuple[str, str, str]]:
     else:
         add(MISSING, "Identity checks", f"ZK_VERIFICATION_PROVIDER={provider} is for development; set veriff")
 
-    if s.storage_provider == "database":
-        add(OK, "File storage", "files are kept in the database (backed up with it)")
-    elif s.storage_provider == "r2" and s.r2_bucket and (s.r2_account_id or s.r2_endpoint_url):
-        add(OK, "File storage", "Cloudflare R2 bucket configured")
-    elif s.storage_provider == "r2":
-        add(MISSING, "File storage", "ZK_R2_BUCKET and ZK_R2_ACCOUNT_ID are needed")
-    elif s.storage_provider == "gcs" and s.gcs_bucket:
-        add(OK, "File storage", "Google Cloud Storage bucket configured" + (", with a KMS key" if s.gcs_kms_key_name else ""))
-    elif s.storage_provider == "gcs":
-        add(MISSING, "File storage", "ZK_GCS_BUCKET is needed")
-    elif s.storage_provider == "s3" and s.s3_bucket:
-        add(OK, "File storage", "S3 bucket configured" + (", with Object Lock" if s.s3_object_lock_mode else ""))
-        if s.s3_object_lock_mode and not s.s3_retention_days:
-            add(MISSING, "File storage", "ZK_S3_OBJECT_LOCK_MODE needs ZK_S3_RETENTION_DAYS")
-    elif s.storage_provider == "s3":
-        add(MISSING, "File storage", "ZK_S3_BUCKET is needed")
+    if s.storage_provider == "local":
+        add(MISSING, "File storage", "local disk is development only; set ZK_STORAGE_PROVIDER=database")
     else:
-        add(MISSING, "File storage", "local disk: files are lost when a container is replaced; set database (or r2, gcs, s3)")
+        add(OK, "File storage", "files are kept in the database (backed up with it)")
 
     if s.redis_url:
         add(OK, "Rate limits", "shared through Redis")
@@ -177,35 +163,6 @@ def connect(s: Settings) -> list[tuple[str, str, str]]:
             out.append((OK, "Redis", "reachable"))
         except Exception as exc:  # noqa: BLE001
             out.append((MISSING, "Redis", f"cannot connect ({type(exc).__name__})"))
-    if s.storage_provider == "gcs" and s.gcs_bucket:
-        try:
-            from google.cloud import storage as gcs
-
-            bucket = gcs.Client().get_bucket(s.gcs_bucket)
-            if bucket.versioning_enabled or bucket.retention_period:
-                kept = "versioning on" if bucket.versioning_enabled else "retention policy on"
-                out.append((OK, "GCS bucket", f"reachable with this server's service account, {kept}"))
-            else:
-                out.append((MISSING, "GCS bucket", "reachable, but neither object versioning nor a retention policy is on"))
-        except Exception as exc:  # noqa: BLE001
-            out.append((MISSING, "GCS bucket", f"not reachable ({type(exc).__name__})"))
-    if s.storage_provider == "r2" and s.r2_bucket and (s.r2_account_id or s.r2_endpoint_url):
-        try:
-            import boto3
-
-            endpoint = s.r2_endpoint_url or f"https://{s.r2_account_id}.r2.cloudflarestorage.com"
-            boto3.client("s3", region_name="auto", endpoint_url=endpoint).head_bucket(Bucket=s.r2_bucket)
-            out.append((OK, "R2 bucket", "reachable with this server's credentials"))
-        except Exception as exc:  # noqa: BLE001
-            out.append((MISSING, "R2 bucket", f"not reachable ({type(exc).__name__})"))
-    if s.storage_provider == "s3" and s.s3_bucket:
-        try:
-            import boto3
-
-            boto3.client("s3", region_name=s.aws_region, endpoint_url=s.s3_endpoint_url).head_bucket(Bucket=s.s3_bucket)
-            out.append((OK, "S3 bucket", "reachable with this server's credentials"))
-        except Exception as exc:  # noqa: BLE001
-            out.append((MISSING, "S3 bucket", f"not reachable ({type(exc).__name__})"))
     if s.malware_scanner == "clamav":
         from zoikorum.shared import scanning
 

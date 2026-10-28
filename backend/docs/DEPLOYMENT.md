@@ -15,7 +15,7 @@ Next to them on the VM: **clamav** (virus scanning of every upload) and **redis*
 ```
 browser ─HTTPS─> Google HTTPS load balancer ──app.──> web :8080 ──┐
                  (managed certificates)    └─staff.─> IAP ─> web-staff :8081 ─┤──/v1──> api :8000 ──> Cloud SQL (PostgreSQL)
-                                                                          worker ──┘   GCS bucket, Cloud KMS, ClamAV,
+                                                                          worker ──┘   Cloud KMS, ClamAV,
                                                                                         Stripe, Veriff, email
 ```
 
@@ -35,7 +35,7 @@ or no shared passkey domain). See what is missing without printing any value:
 ```
 DC="docker compose --env-file /run/zoikorum/.env.production -f docker-compose.prod.yml"
 $DC run --rm api python -m zoikorum.cli check-config            # settings only
-$DC run --rm api python -m zoikorum.cli check-config --connect  # also tries Cloud SQL, Redis, the bucket, ClamAV, email
+$DC run --rm api python -m zoikorum.cli check-config --connect  # also tries Cloud SQL, Redis, ClamAV, email
 ```
 
 ## Services needed
@@ -43,7 +43,7 @@ $DC run --rm api python -m zoikorum.cli check-config --connect  # also tries Clo
 | Service | Setting(s) | Notes |
 |---|---|---|
 | Cloud SQL (PostgreSQL 16) | `ZK_DATABASE_URL` (app user), `ZK_MIGRATION_DATABASE_URL` (owner), `ZK_DB_APP_ROLE` | Private IP, backups and point-in-time recovery on. Two users: see "Database users" |
-| GCS bucket | `ZK_STORAGE_PROVIDER=gcs`, `ZK_GCS_BUCKET`, optional `ZK_GCS_KMS_KEY_NAME` | Versioned and private. See "File storage on Google Cloud" |
+| File storage | `ZK_STORAGE_PROVIDER=database` | Files are stored in the PostgreSQL database and backed up with it. See "File storage" |
 | Cloud KMS | `ZK_FIELD_KMS_KEY_NAME`, `ZK_FIELD_DATA_KEYS`, `ZK_FIELD_ACTIVE_KEY` | Wraps the keys that encrypt sensitive fields. See "Field encryption keys" |
 | ClamAV | `ZK_MALWARE_SCANNER=clamav`, `ZK_CLAMAV_HOST=clamav` | The `clamav` service in `docker-compose.prod.yml`; updates its own signatures. Uploads are refused while it is down |
 | Email (SMTP) | `ZK_EMAIL_PROVIDER=smtp`, `ZK_SMTP_HOST/PORT/USERNAME/PASSWORD`, `ZK_EMAIL_FROM` | Any SMTP service; SPF, DKIM and DMARC on the sending domain |
@@ -65,7 +65,7 @@ Development-only switches are refused outside local development: `ZK_DEV_SKIP_MF
 **As code (recommended).** `backend/deploy/gcp/terraform/` creates everything below: the APIs, service accounts and
 their roles, Workload Identity Federation for the Release workflow, Artifact Registry (keeps the last 20 releases),
 the KMS key, one Secret Manager secret per line of `secrets.list` (values are added by hand, never in Terraform state),
-the files bucket, a private network with Cloud NAT, Cloud SQL (private IP, point-in-time recovery, optional analytics
+a private network with Cloud NAT, Cloud SQL (private IP, point-in-time recovery, optional analytics
 read replica), the VM without a public address, the firewall rules, and the HTTPS load balancer with a managed
 certificate, an http→https redirect and Identity-Aware Proxy on the staff app.
 
@@ -157,32 +157,15 @@ gcloud secrets add-iam-policy-binding zk-jwt-secret --member=serviceAccount:$VM_
 At deploy time `backend/deploy/gcp/fetch-secrets.sh` writes them into a root-only file in memory (`/run/zoikorum`), the
 services start, and the file is removed. Values are never printed.
 
-## File storage on Google Cloud
+## File storage
 
 Uploaded files (verification documents, profile photos, request and proposal attachments, delivered work, dispute
-evidence, message files, data exports) go to one private bucket, after a virus scan. The app writes each file once
-(never overwrites it), keeps every version, and only ever deletes replaced profile photos.
+evidence, message files, data exports) are stored in the PostgreSQL database (table `platform.stored_files`), after a
+virus scan. They are backed up and restored with the rest of the data (Cloud SQL backups and point-in-time recovery).
+The app writes each file once (never overwrites it) and only ever deletes replaced profile photos.
 
-```
-BUCKET=<zoikorum-prod-files>
-gcloud storage buckets create gs://$BUCKET --project=$PROJECT --location=$REGION --uniform-bucket-level-access --public-access-prevention
-gcloud storage buckets update gs://$BUCKET --versioning
-# Old versions of replaced profile photos: remove after 30 days.
-gcloud storage buckets update gs://$BUCKET --lifecycle-file=- <<'EOF'
-{"rule": [{"action": {"type": "Delete"}, "condition": {"isLive": false, "daysSinceNoncurrentTime": 30,
-           "matchesPrefix": ["professionals/"]}}]}
-EOF
-gcloud storage buckets add-iam-policy-binding gs://$BUCKET --member=serviceAccount:$VM_SA --role=roles/storage.objectAdmin
-gcloud storage buckets add-iam-policy-binding gs://$BUCKET --member=serviceAccount:$VM_SA --role=roles/storage.legacyBucketReader
-```
-
-Then `ZK_STORAGE_PROVIDER=gcs` and `ZK_GCS_BUCKET=$BUCKET`.
-
-- **Encryption with your own key (optional):** let the Cloud Storage service agent use a Cloud KMS key
-  (`roles/cloudkms.cryptoKeyEncrypterDecrypter`) and set `ZK_GCS_KMS_KEY_NAME`.
-- **Keeping evidence for a fixed period (optional, legal decision):** a bucket retention policy *instead of* versioning
-  (`--no-versioning --retention-period=<7y>`). Locking it is permanent: only with Legal's sign-off.
-- **Legal holds** on single files use Cloud Storage temporary holds.
+Set `ZK_STORAGE_PROVIDER=database`. Local disk (`local`) is for development and tests only and is refused in production.
+Keep uploads small (see the upload size limits).
 
 ## Releasing a version
 
@@ -287,7 +270,7 @@ what the alerts did. A run that does not end with RECOVERED is an incident to in
 * **Escrow ledger snapshots** run daily (03:30 UTC) with an integrity check; `python -m zoikorum.cli escrow-snapshots`
   runs them by hand. A mismatch pages Financial Operations (RUNBOOKS.md).
 * **Edge and disaster recovery (Terraform)**: Cloud Armor (`cloud_armor_enabled`, start with `cloud_armor_preview = true`),
-  a replica of the files bucket in another region (`files_replica_location`), and an optional cross-region Cloud SQL read
+  and an optional cross-region Cloud SQL read
   replica (`db_cross_region_replica_region`, promoted by hand in a region outage).
 * **Signed images**: the Release workflow signs every image with cosign (keyless, GitHub OIDC); `deploy.sh` verifies the
   signatures before pulling when cosign is installed on the VM (`ZK_COSIGN_REQUIRED=true` makes it mandatory).

@@ -1,23 +1,20 @@
-"""Blob storage adapter (Architecture 8.x: files live in object storage, databases keep only keys + hashes).
+"""Blob storage adapter: uploaded files are kept like normal data.
 
-``LocalDiskStorage`` is the development implementation. Production uses Google Cloud Storage (``GCSStorage``,
-ZK_STORAGE_PROVIDER=gcs) or Amazon S3 (``S3Storage``, =s3) behind the same ``BlobStorage`` interface, so domain code
-never changes. Both keep every version, never overwrite a stored file, and refuse deletes except for profile photos
-(not evidence: a professional can replace or remove theirs).
+``DatabaseStorage`` stores files in PostgreSQL (platform.stored_files), so they are backed up and restored with the
+database. ``LocalDiskStorage`` is for development and tests only. ZK_STORAGE_PROVIDER=local is refused outside
+local/test/development; any other value (including the old gcs, s3 and r2) selects the database. Both keep a key
+write-once and refuse deletes except for profile photos (not evidence: a professional can replace or remove theirs).
 
 The one other way a stored file goes is the reviewed retention workflow (shared/retention.py): ``purge_for_retention``
-removes a file (every version, or one exact version) whose retention period under ZK_RETENTION_RULES has ended. It is
-only called by that job, which skips anything under legal hold; object lock / bucket retention still refuse it while
-the storage's own retention runs.
+removes a file whose retention period under ZK_RETENTION_RULES has ended. It is only called by that job, which skips
+anything under legal hold.
 """
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import logging
 import re
-from datetime import timedelta
 from functools import lru_cache
 from pathlib import Path
 from typing import Protocol
@@ -25,7 +22,6 @@ from typing import Protocol
 from sqlalchemy import text
 
 from zoikorum.config import get_settings
-from zoikorum.shared import clock
 from zoikorum.shared.errors import ServiceUnavailable, ValidationFailed
 
 log = logging.getLogger("zoikorum.storage")
@@ -78,218 +74,6 @@ class LocalDiskStorage:
     def purge_for_retention(self, key: str, version_id: str | None = None) -> None:
         self._path(safe_key(key)).unlink(missing_ok=True)
 
-
-class S3Storage:
-    """Versioned private objects; conditional writes prevent replacing committed content."""
-
-    def __init__(self, settings, client=None):
-        self.settings = settings
-        if not settings.s3_bucket:
-            raise ServiceUnavailable("Cloud storage bucket is not configured", code="INTEGRATION_NOT_CONFIGURED")
-        if settings.s3_object_lock_mode not in (None, "GOVERNANCE", "COMPLIANCE"):
-            raise ValidationFailed("Choose GOVERNANCE or COMPLIANCE object retention")
-        if settings.s3_object_lock_mode and not settings.s3_retention_days:
-            raise ServiceUnavailable("An agreed retention period is required", code="INTEGRATION_NOT_CONFIGURED")
-        if client is None:
-            try:
-                import boto3
-            except ImportError as exc:
-                raise ServiceUnavailable("Install the cloud storage dependency", code="INTEGRATION_NOT_CONFIGURED") from exc
-            client = boto3.client("s3", region_name=settings.aws_region, endpoint_url=settings.s3_endpoint_url)
-        self.client = client
-
-    def _key(self, key):
-        return safe_key(key)
-
-    def _failure(self, exc):
-        raise ServiceUnavailable("Cloud storage could not complete the operation", code="STORAGE_UNAVAILABLE") from exc
-
-    def put(self, key, data):
-        key = self._key(key)
-        digest = hashlib.sha256(data).digest()
-        try:
-            if self.client.get_bucket_versioning(Bucket=self.settings.s3_bucket).get("Status") != "Enabled":
-                raise ValidationFailed("Enable bucket versioning before storing evidence", code="STORAGE_VERSIONING_REQUIRED")
-            args = {"Bucket": self.settings.s3_bucket, "Key": key, "Body": data, "IfNoneMatch": "*",
-                    "ChecksumSHA256": base64.b64encode(digest).decode(), "Metadata": {"sha256": digest.hex()}}
-            if self.settings.s3_kms_key_id:
-                args.update(ServerSideEncryption="aws:kms", SSEKMSKeyId=self.settings.s3_kms_key_id)
-            else:
-                args["ServerSideEncryption"] = "AES256"
-            if self.settings.s3_object_lock_mode:
-                args.update(ObjectLockMode=self.settings.s3_object_lock_mode,
-                            ObjectLockRetainUntilDate=clock.now() + timedelta(days=self.settings.s3_retention_days))
-            result = self.client.put_object(**args)
-            version = result.get("VersionId")
-            if not version or version == "null":
-                raise ValidationFailed("Cloud storage did not return an immutable version", code="STORAGE_VERSIONING_REQUIRED")
-            return version
-        except ValidationFailed:
-            raise
-        except Exception as exc:
-            code = getattr(exc, "response", {}).get("Error", {}).get("Code")
-            if code in ("PreconditionFailed", "412"):
-                current = self.client.head_object(Bucket=self.settings.s3_bucket, Key=key)
-                if current.get("Metadata", {}).get("sha256") != digest.hex():
-                    raise ValidationFailed("Committed files cannot be replaced", code="IMMUTABLE_FILE") from exc
-                return current["VersionId"]
-            self._failure(exc)
-
-    def get(self, key, version_id=None):
-        args = {"Bucket": self.settings.s3_bucket, "Key": self._key(key)}
-        if version_id:
-            args["VersionId"] = version_id
-        try:
-            response = self.client.get_object(**args)
-            body = response["Body"]
-            try:
-                return body.read()
-            finally:
-                body.close()
-        except Exception as exc:
-            if getattr(exc, "response", {}).get("Error", {}).get("Code") in ("NoSuchKey", "NoSuchVersion", "404"):
-                return None
-            self._failure(exc)
-
-    def delete(self, key):
-        refuse_unless_erasable(self._key(key))
-        try:
-            self.client.delete_object(Bucket=self.settings.s3_bucket, Key=key)
-        except Exception as exc:
-            self._failure(exc)
-
-    def purge_for_retention(self, key, version_id=None):
-        """Retention workflow only: removes that version, or every version of the key (no delete marker left)."""
-        key = self._key(key)
-        try:
-            if version_id:
-                self.client.delete_object(Bucket=self.settings.s3_bucket, Key=key, VersionId=version_id)
-                return
-            listing = self.client.list_object_versions(Bucket=self.settings.s3_bucket, Prefix=key)
-            for v in [*listing.get("Versions", []), *listing.get("DeleteMarkers", [])]:
-                if v.get("Key") == key:
-                    self.client.delete_object(Bucket=self.settings.s3_bucket, Key=key, VersionId=v["VersionId"])
-        except Exception as exc:
-            self._failure(exc)
-
-    def legal_hold(self, key, version_id, enabled):
-        if not version_id:
-            raise ValidationFailed("Legal holds require an exact object version")
-        try:
-            self.client.put_object_legal_hold(Bucket=self.settings.s3_bucket, Key=self._key(key), VersionId=version_id,
-                                             LegalHold={"Status": "ON" if enabled else "OFF"})
-        except Exception as exc:
-            self._failure(exc)
-
-
-class GCSStorage:
-    """Google Cloud Storage. The bucket must keep old versions safe: object versioning ON, or (when legal needs files
-    kept for a fixed period) a retention policy instead - Cloud Storage does not allow both on one bucket. A stored file
-    is never overwritten (a write only succeeds when no live object has that name); every file carries its SHA-256 and
-    is uploaded with a CRC32C check. ``put`` returns the object's generation, which ``get`` uses to read exactly that
-    version. Optional customer-managed KMS key (ZK_GCS_KMS_KEY_NAME). Credentials: the service account the app runs as
-    (Application Default Credentials), no key file."""
-
-    def __init__(self, settings, client=None):
-        self.settings = settings
-        if not settings.gcs_bucket:
-            raise ServiceUnavailable("Cloud storage bucket is not configured", code="INTEGRATION_NOT_CONFIGURED")
-        if client is None:
-            try:
-                from google.cloud import storage as gcs
-            except ImportError as exc:
-                raise ServiceUnavailable("Install the Google Cloud Storage dependency (backend[gcs])",
-                                         code="INTEGRATION_NOT_CONFIGURED") from exc
-            client = gcs.Client()
-        self.client = client
-        self.bucket = client.bucket(settings.gcs_bucket)
-
-    def _failure(self, exc):
-        raise ServiceUnavailable("Cloud storage could not complete the operation", code="STORAGE_UNAVAILABLE") from exc
-
-    @staticmethod
-    def _status(exc) -> int | None:
-        return getattr(exc, "code", None)
-
-    def _require_versioning(self):
-        if not _VERSIONING_CHECKED.get(self.settings.gcs_bucket):
-            self.bucket.reload()
-            if not (self.bucket.versioning_enabled or self.bucket.retention_period):
-                raise ValidationFailed("Turn on object versioning (or a retention policy) on the bucket before storing "
-                                       "evidence", code="STORAGE_VERSIONING_REQUIRED")
-            _VERSIONING_CHECKED[self.settings.gcs_bucket] = True
-
-    def put(self, key, data):
-        key = safe_key(key)
-        digest = hashlib.sha256(data).hexdigest()
-        try:
-            self._require_versioning()
-            blob = self.bucket.blob(key, kms_key_name=self.settings.gcs_kms_key_name or None)
-            blob.metadata = {"sha256": digest}
-            blob.upload_from_string(data, content_type="application/octet-stream", if_generation_match=0, checksum="crc32c")
-            if not blob.generation:
-                raise ValidationFailed("Cloud storage did not return an object version", code="STORAGE_VERSIONING_REQUIRED")
-            return str(blob.generation)
-        except ValidationFailed:
-            raise
-        except Exception as exc:
-            if self._status(exc) == 412:  # a live object already has this name: same content is fine, else refuse
-                current = self.bucket.get_blob(key)
-                if current is None or (current.metadata or {}).get("sha256") != digest:
-                    raise ValidationFailed("Committed files cannot be replaced", code="IMMUTABLE_FILE") from exc
-                return str(current.generation)
-            self._failure(exc)
-
-    def get(self, key, version_id=None):
-        blob = self.bucket.blob(safe_key(key), generation=int(version_id) if version_id else None)
-        try:
-            return blob.download_as_bytes(checksum="crc32c")
-        except Exception as exc:
-            if self._status(exc) == 404:
-                return None
-            self._failure(exc)
-
-    def delete(self, key):
-        refuse_unless_erasable(safe_key(key))
-        try:
-            self.bucket.blob(key).delete()
-        except Exception as exc:
-            if self._status(exc) == 404:
-                return
-            self._failure(exc)
-
-    def purge_for_retention(self, key, version_id=None):
-        """Retention workflow only: removes that generation, or every generation of the key."""
-        key = safe_key(key)
-        try:
-            if version_id:
-                self.bucket.blob(key, generation=int(version_id)).delete()
-                return
-            for blob in self.client.list_blobs(self.bucket, prefix=key, versions=True):
-                if blob.name == key:
-                    blob.delete()
-        except Exception as exc:
-            if self._status(exc) == 404:
-                return
-            self._failure(exc)
-
-    def legal_hold(self, key, version_id, enabled):
-        """A temporary hold on that exact version: it cannot be deleted or replaced while the hold is on."""
-        if not version_id:
-            raise ValidationFailed("Legal holds require an exact object version")
-        try:
-            blob = self.bucket.get_blob(safe_key(key), generation=int(version_id))
-            if blob is None:
-                raise ValidationFailed("That file version does not exist")
-            blob.temporary_hold = bool(enabled)
-            blob.patch()
-        except ValidationFailed:
-            raise
-        except Exception as exc:
-            self._failure(exc)
-
-
-_VERSIONING_CHECKED: dict[str, bool] = {}  # checked once per process and bucket
 
 
 @lru_cache
@@ -356,93 +140,11 @@ class DatabaseStorage:
             self._failure(exc)
 
 
-class R2Storage:
-    """Cloudflare R2 (S3-compatible, free tier). R2 has no object versioning, so immutability comes from conditional
-    writes alone: a put only succeeds when no object has that name (``If-None-Match: *``), and the same bytes written
-    again are accepted. Every file carries its SHA-256. There are no versions, so ``put`` returns None.
-    Credentials: R2 API token as AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (read by boto3)."""
-
-    def __init__(self, settings, client=None):
-        self.settings = settings
-        self.bucket = settings.r2_bucket
-        if not self.bucket:
-            raise ServiceUnavailable("Cloud storage bucket is not configured", code="INTEGRATION_NOT_CONFIGURED")
-        if client is None:
-            endpoint = settings.r2_endpoint_url or (
-                f"https://{settings.r2_account_id}.r2.cloudflarestorage.com" if settings.r2_account_id else None)
-            if not endpoint:
-                raise ServiceUnavailable("ZK_R2_ACCOUNT_ID is needed", code="INTEGRATION_NOT_CONFIGURED")
-            try:
-                import boto3
-            except ImportError as exc:
-                raise ServiceUnavailable("Install the cloud storage dependency", code="INTEGRATION_NOT_CONFIGURED") from exc
-            client = boto3.client("s3", region_name="auto", endpoint_url=endpoint)
-        self.client = client
-
-    def _failure(self, exc):
-        raise ServiceUnavailable("Cloud storage could not complete the operation", code="STORAGE_UNAVAILABLE") from exc
-
-    @staticmethod
-    def _code(exc):
-        return getattr(exc, "response", {}).get("Error", {}).get("Code")
-
-    def put(self, key, data):
-        key = safe_key(key)
-        digest = hashlib.sha256(data).hexdigest()
-        try:
-            self.client.put_object(Bucket=self.bucket, Key=key, Body=data, IfNoneMatch="*",
-                                   ContentType="application/octet-stream", Metadata={"sha256": digest})
-            return None
-        except Exception as exc:
-            if self._code(exc) in ("PreconditionFailed", "412"):
-                try:
-                    current = self.client.head_object(Bucket=self.bucket, Key=key)
-                except Exception as head_exc:
-                    self._failure(head_exc)
-                if current.get("Metadata", {}).get("sha256") != digest:
-                    raise ValidationFailed("Committed files cannot be replaced", code="IMMUTABLE_FILE") from exc
-                return None
-            self._failure(exc)
-
-    def get(self, key, version_id=None):
-        if version_id:
-            raise ServiceUnavailable("This object belongs to versioned cloud storage", code="STORAGE_PROVIDER_MISMATCH")
-        try:
-            body = self.client.get_object(Bucket=self.bucket, Key=safe_key(key))["Body"]
-            try:
-                return body.read()
-            finally:
-                body.close()
-        except Exception as exc:
-            if self._code(exc) in ("NoSuchKey", "404"):
-                return None
-            self._failure(exc)
-
-    def delete(self, key):
-        refuse_unless_erasable(safe_key(key))
-        try:
-            self.client.delete_object(Bucket=self.bucket, Key=key)
-        except Exception as exc:
-            self._failure(exc)
-
-    def purge_for_retention(self, key, version_id=None):
-        """Retention workflow only: removes the object (there is only ever one version)."""
-        try:
-            self.client.delete_object(Bucket=self.bucket, Key=safe_key(key))
-        except Exception as exc:
-            self._failure(exc)
-
-
 def get_storage() -> BlobStorage:
+    """'local' is development only; any other provider value (including old 'gcs', 's3', 'r2') means the database."""
     settings = get_settings()
-    if settings.storage_provider == "database":
-        return DatabaseStorage()
-    if settings.storage_provider == "r2":
-        return R2Storage(settings)
-    if settings.storage_provider == "gcs":
-        return GCSStorage(settings)
-    if settings.storage_provider == "s3":
-        return S3Storage(settings)
-    if settings.storage_provider == "local" and settings.env in ("local", "test", "development"):
-        return LocalDiskStorage(settings.storage_dir)
-    raise ServiceUnavailable("Configure production object storage", code="INTEGRATION_NOT_CONFIGURED")
+    if settings.storage_provider == "local":
+        if settings.env in ("local", "test", "development"):
+            return LocalDiskStorage(settings.storage_dir)
+        raise ServiceUnavailable("Configure production object storage", code="INTEGRATION_NOT_CONFIGURED")
+    return DatabaseStorage()
