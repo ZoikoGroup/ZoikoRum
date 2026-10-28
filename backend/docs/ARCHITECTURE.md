@@ -103,7 +103,7 @@ Companion documents: [BUILD_SPEC.md](BUILD_SPEC.md) (per-domain contracts), [DAT
    Modelled as milestones today; recurring funding cycles are a follow-up.
 9. **Accessibility target.** Some docs say WCAG 2.2 AAA and the category doc says AA. This is frontend-only, but procurement packs quote it.
 10. **Data retention.** Retention is "policy-configured by evidence type and jurisdiction", but no periods are given.
-    S3 Object Lock periods and GDPR/CCPA erasure workflows need concrete numbers from Legal.
+    Retention periods and GDPR/CCPA erasure workflows need concrete numbers from Legal.
 
 ## 6. Build status (step by step)
 
@@ -130,7 +130,7 @@ The other domain folders contain only their `facade.py` interface contracts; the
 | Topic | Decision |
 |---|---|
 | Engagement type "Fractional" and pricing "Quote on request" | Kept (Onboarding doc s.9 lists them; the Professional Dashboard doc's shorter list is treated as examples) |
-| Profile photo | Required to publish (Onboarding s.7). Stored through `shared/storage.py` (local disk in development, S3 in production) |
+| Profile photo | Required to publish (Onboarding s.7). Stored through `shared/storage.py` (local disk in development, the PostgreSQL database in production) |
 | Tier names | Homepage wireframe wording: "Fully Verified Professional", "Verified Identity", "Unverified (Discovery Only)" |
 | Step-up MFA before submitting verification evidence (Architecture 11.4) | Not enforced yet (BUILD_SPEC omits it; it would force every professional to enrol an authenticator first). Can be enabled later |
 | Offering editor | Five-step wizard with per-step saving (Professional Dashboard s.6) |

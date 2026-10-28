@@ -41,7 +41,7 @@ def test_templates_list_every_setting(path):
 @pytest.mark.unit
 def test_local_template_loads_as_is(no_env):
     s = Settings(_env_file=LOCAL)
-    assert s.env == "local" and s.s3_retention_days is None and s.redis_url is None  # blank means the default
+    assert s.env == "local" and s.storage_provider == "local" and s.redis_url is None  # blank means the default
     assert s.payment_operating_countries == [] and s.verification_provider == "simulated"
 
 
@@ -67,8 +67,8 @@ def test_review_of_a_complete_production_configuration():
     s = Settings(_env_file=None, **PRODUCTION, email_provider="smtp", smtp_host="smtp.example.com", smtp_username="u",
                  smtp_password="secret-password", payment_provider="stripe", stripe_secret_key="sk_test_123",
                  stripe_webhook_secret="whsec_123", payment_flow_approved=True, payment_operating_countries=["GB"],
-                 verification_provider="veriff", veriff_api_key="k", veriff_shared_secret="s", storage_provider="s3",
-                 s3_bucket="files", redis_url="redis://cache:6379/0",
+                 verification_provider="veriff", veriff_api_key="k", veriff_shared_secret="s", storage_provider="database",
+                 redis_url="redis://cache:6379/0",
                  database_url="postgresql+asyncpg://app:pw@db.internal:5432/zoikorum", malware_scanner="clamav",
                  field_kms_key_name="projects/p/locations/l/keyRings/r/cryptoKeys/k", field_data_keys={"k1": "d3JhcHBlZA=="},
                  field_active_key="k1", migration_database_url="postgresql+asyncpg://owner:pw@db.internal:5432/zoikorum",

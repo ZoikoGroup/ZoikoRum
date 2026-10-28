@@ -12,11 +12,11 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Pinned versions first (cached layer).
 COPY requirements.txt constraints.txt ./
 RUN pip install -r requirements.txt -c constraints.txt
-# Optional integrations: gcs = Google Cloud Storage, cloud = Amazon S3, monitoring = error reporting,
+# Optional integrations: gcs = Google Cloud KMS client, monitoring = error reporting,
 # tracing = OpenTelemetry, ai = Claude.
 # Only their dependencies are installed here: the application runs from /app/src (next to /app/alembic, which the
 # startup schema check reads), so the package itself is removed again.
-ARG EXTRAS="gcs,cloud,monitoring,tracing,ai,push"
+ARG EXTRAS="gcs,monitoring,tracing,ai,push"
 COPY pyproject.toml ./
 COPY src ./src
 # Then: dependencies of dependencies are raised to their fixed versions (constraints.txt), and pip itself is removed.
@@ -34,7 +34,7 @@ COPY --from=build /opt/venv /opt/venv
 COPY alembic.ini ./
 COPY alembic ./alembic
 COPY src ./src
-# Local blob storage is for development only; production uses ZK_STORAGE_PROVIDER=database (or r2, gcs, s3).
+# Local blob storage is for development only; production uses ZK_STORAGE_PROVIDER=database (files are kept in PostgreSQL).
 RUN mkdir -p /app/var && chown zoikorum /app/var
 USER zoikorum
 EXPOSE 8000

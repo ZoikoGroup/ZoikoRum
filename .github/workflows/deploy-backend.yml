@@ -54,7 +54,7 @@ jobs:
           ssh "$VM_USER@$VM_HOST" 'set -e
             cd ~/zoikorum-app/backend
             if ! cmp -s requirements.txt .deployed-requirements; then
-              .venv/bin/pip install -q -r requirements.txt "boto3>=1.35"
+              .venv/bin/pip install -q -r requirements.txt
               cp requirements.txt .deployed-requirements
             fi
             export PYTHONPATH=$PWD/src

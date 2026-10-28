@@ -149,23 +149,11 @@ class Settings(BaseSettings):
     # file under legal hold. Report: python -m zoikorum.cli retention-report
     retention_rules: dict[str, dict[str, int]] = Field(default_factory=dict)
     retention_purge_enabled: bool = False
-    storage_dir: str = "var/storage"  # LocalDiskStorage root (development); S3 bucket in production
-    storage_provider: str = "local"  # local | database (files in PostgreSQL) | r2 (Cloudflare R2, free tier) | gcs (Google Cloud Storage) | s3 (Amazon S3)
-    r2_bucket: str | None = None  # Cloudflare R2 bucket (private; 10 GB free, no egress fees)
-    r2_account_id: str | None = None  # builds https://<account>.r2.cloudflarestorage.com
-    r2_endpoint_url: str | None = None  # overrides the account-based endpoint (e.g. an EU jurisdiction endpoint)
-    gcs_bucket: str | None = None  # Google Cloud Storage bucket (object versioning on, public access prevented)
+    storage_dir: str = "var/storage"  # LocalDiskStorage root (development only)
+    storage_provider: str = "local"  # local (dev only) | database (files in PostgreSQL); any other value also means database
     malware_scanner: str = "none"  # clamav (production) | none (development only): every upload is scanned first
     clamav_host: str = "clamav"
     clamav_port: int = 3310
-    # Optional customer-managed encryption key: projects/<p>/locations/<l>/keyRings/<r>/cryptoKeys/<k>
-    gcs_kms_key_name: str | None = None
-    s3_bucket: str | None = None
-    aws_region: str = "us-east-1"
-    s3_endpoint_url: str | None = None  # local S3-compatible service; not used for public file access
-    s3_kms_key_id: str | None = None
-    s3_object_lock_mode: str | None = None  # GOVERNANCE | COMPLIANCE, per the agreed retention policy
-    s3_retention_days: int | None = Field(default=None, ge=1)
 
     # Contracts (Step 7). Platform defaults until enterprise policy profiles can override them.
     signature_deadline_days: int = 7  # unsigned contracts escalate after this
