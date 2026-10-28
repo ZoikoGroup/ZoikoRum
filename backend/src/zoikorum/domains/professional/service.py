@@ -12,6 +12,7 @@ import uuid
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from zoikorum.config import get_settings
 from zoikorum.domains.contract import facade as contract_facade
 from zoikorum.domains.firm import facade as firm_facade
 from zoikorum.domains.identity import facade as identity_facade
@@ -644,7 +645,8 @@ async def _readiness(session: AsyncSession, pro: Professional) -> ReadinessOut:
     needs_credential = any(i.requires_credential for i in specs.values())
     copy_ok = not any(_SUPERLATIVES.search(t or "") for t in (pro.display_name, pro.headline, pro.bio))
     items = [
-        ReadinessItem(key="email", label="Confirm your email address", done=bool(who and who.email_confirmed), required=True),
+        ReadinessItem(key="email", label="Confirm your email address", done=bool(who and who.email_confirmed),
+                      required=get_settings().require_email_confirmation_to_publish),
         ReadinessItem(key="basics", label="Add your legal name (private), primary role title and years of experience",
                       done=bool(pro.legal_name and pro.headline and pro.years_experience_band), required=True),
         ReadinessItem(key="photo", label="Add a professional photo", done=pro.photo_key is not None, required=True),
