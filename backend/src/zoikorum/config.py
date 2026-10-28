@@ -150,7 +150,10 @@ class Settings(BaseSettings):
     retention_rules: dict[str, dict[str, int]] = Field(default_factory=dict)
     retention_purge_enabled: bool = False
     storage_dir: str = "var/storage"  # LocalDiskStorage root (development); S3 bucket in production
-    storage_provider: str = "local"  # local | gcs (Google Cloud Storage) | s3 (Amazon S3)
+    storage_provider: str = "local"  # local | database (files in PostgreSQL) | r2 (Cloudflare R2, free tier) | gcs (Google Cloud Storage) | s3 (Amazon S3)
+    r2_bucket: str | None = None  # Cloudflare R2 bucket (private; 10 GB free, no egress fees)
+    r2_account_id: str | None = None  # builds https://<account>.r2.cloudflarestorage.com
+    r2_endpoint_url: str | None = None  # overrides the account-based endpoint (e.g. an EU jurisdiction endpoint)
     gcs_bucket: str | None = None  # Google Cloud Storage bucket (object versioning on, public access prevented)
     malware_scanner: str = "none"  # clamav (production) | none (development only): every upload is scanned first
     clamav_host: str = "clamav"

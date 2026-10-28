@@ -20,6 +20,7 @@ export function useSavedIds() {
     const next = new Set(ids)
     if (ids.has(id)) { await savedApi.remove(id); next.delete(id) } else { await savedApi.save(id); next.add(id) }
     setIds(next)
+    window.dispatchEvent(new Event('zk:saved'))
   }, [ids])
   return { canSave, ids, toggle }
 }
@@ -38,7 +39,7 @@ export function SavedPage() {
   useEffect(() => { load() }, [load])
 
   async function remove(id: string) {
-    try { await savedApi.remove(id); await load() } catch (err) { setError(err) }
+    try { await savedApi.remove(id); await load(); window.dispatchEvent(new Event('zk:saved')) } catch (err) { setError(err) }
   }
 
   return (

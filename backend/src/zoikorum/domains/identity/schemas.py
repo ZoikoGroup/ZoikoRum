@@ -179,7 +179,7 @@ class MfaEnrollOut(BaseModel):
 
 class MePatch(BaseModel):
     displayName: str | None = Field(default=None, min_length=1, max_length=200)
-    phone: str | None = Field(default=None, max_length=32)  # E.164 after removing spaces and dashes; "" clears it
+    phone: str | None = Field(default=None, max_length=32)  # 7-15 digits, optional leading +, spaces/dashes ignored; "" clears it
 
     @field_validator("phone")
     @classmethod
@@ -187,8 +187,8 @@ class MePatch(BaseModel):
         if v is None:
             return v
         cleaned = re.sub(r"[\s().-]", "", v)  # people type "+44 20 7946 0958" or "+91-98765-43210"
-        if cleaned and not re.fullmatch(r"\+[1-9]\d{6,14}", cleaned):
-            raise ValueError("Enter the number with + and the country code, for example +44 20 7946 0958 or +91 98765 43210")
+        if cleaned and not re.fullmatch(r"\+?[1-9]\d{6,14}", cleaned):
+            raise ValueError("Enter a valid mobile number of 7 to 15 digits, with or without the country code, for example 9876543210 or +91 98765 43210")
         return cleaned
     language: Literal["en", "en-GB", "en-US", "es", "fr", "de", "hi"] | None = None
     timeZone: str | None = Field(default=None, max_length=64)

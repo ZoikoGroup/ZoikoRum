@@ -132,8 +132,9 @@ function OfferingWizard({ profile: initialProfile, offering: initial, onDone, on
       <form onSubmit={save}>
         {step === 0 && <>
           <div className="row">
-            <Field label="Service name" id="o-title" hint="A clear, professional title, e.g. “13-week cash flow forecast”">
-              <input id="o-title" className="input" value={f.title} onChange={set('title')} required minLength={3} maxLength={150} />
+            <Field label="Service name" id="o-title" hint="A clear, professional title using letters only, e.g. “Cash flow forecast”">
+              <input id="o-title" className="input" value={f.title} onChange={(e) => set('title')({ target: { value: e.target.value.replace(/\d/g, '') } })}
+                required minLength={3} maxLength={150} pattern="[^0-9]*" title="The service name cannot contain numbers" />
             </Field>
             <Field label="Specialization" id="o-spec" hint="From the Zoikorum taxonomy">
               <select id="o-spec" className="input" value={f.specialization} onChange={set('specialization')}>

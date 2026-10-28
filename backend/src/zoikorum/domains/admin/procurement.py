@@ -14,7 +14,7 @@ from zoikorum.shared import clock
 
 PROVIDERS = {"stripe": "Stripe (card and bank payments)", "fake": "Test payment provider (no real money)",
              "persona": "Persona (identity verification)", "anthropic": "Anthropic (optional AI assistance)",
-             "smtp": "Email delivery provider (SMTP)", "gcs": "Google Cloud Storage (files)", "s3": "Amazon S3 (files)"}
+             "smtp": "Email delivery provider (SMTP)", "r2": "Cloudflare R2 (files)", "database": "Application database (files)", "gcs": "Google Cloud Storage (files)", "s3": "Amazon S3 (files)"}
 
 
 def build() -> dict:

@@ -18,7 +18,7 @@ from zoikorum.shared.errors import NotFound, RateLimited, ValidationFailed
 from zoikorum.shared.http import caller_key
 from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_audit
-from zoikorum.shared.report_pdf import render_pdf
+from zoikorum.shared.report_pdf import render_table_pdf
 
 router = APIRouter(tags=["reports and analytics"])
 
@@ -152,7 +152,5 @@ async def report(role: Literal["buyer", "professional"], actor: CurrentActor, se
         buf = io.StringIO(); writer = csv.DictWriter(buf, fieldnames=fields); writer.writeheader(); writer.writerows(items)
         content, mime = buf.getvalue().encode(), "text/csv"
     else:
-        lines = ["Zoikorum financial report | amounts in minor currency units", "Date                 Currency    Gross       Fee       Net  Event"]
-        lines += [f"{r['date'][:19]} {r['currency'] or '---':>8} {r['grossMinor']:>10} {r['feeMinor']:>9} {r['netMinor']:>9} {r['eventType'].split('.')[-2]}" for r in items]
-        content, mime = render_pdf(lines), "application/pdf"
+        content, mime = render_table_pdf("Zoikorum financial report", "Amounts in minor currency units (e.g. cents)", items), "application/pdf"
     return Response(content, media_type=mime, headers={"Content-Disposition": f'attachment; filename="zoikorum-{role}-report.{format}"'})

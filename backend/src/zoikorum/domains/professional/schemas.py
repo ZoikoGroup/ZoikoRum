@@ -154,7 +154,7 @@ class CredentialOut(BaseModel):
 
 
 class OfferingIn(BaseModel):
-    title: str = Field(min_length=3, max_length=150)
+    title: str = Field(min_length=3, max_length=150, pattern=r"^[^0-9]+$")
     specialization: str
     summary: str | None = Field(default=None, max_length=1500)
     deliverables: list[str] = Field(default_factory=list, max_length=12)
@@ -165,7 +165,7 @@ class OfferingIn(BaseModel):
 
 
 class OfferingPatch(BaseModel):
-    title: str | None = Field(default=None, min_length=3, max_length=150)
+    title: str | None = Field(default=None, min_length=3, max_length=150, pattern=r"^[^0-9]+$")
     specialization: str | None = None
     summary: str | None = Field(default=None, max_length=1500)
     deliverables: list[str] | None = Field(default=None, max_length=12)

@@ -44,6 +44,7 @@ export default function SavedProfessionals() {
     setError(null)
     try {
       await action()
+      window.dispatchEvent(new Event('zk:saved'))
       if (message) setNotice(message)
       await load()
     } catch (err) {

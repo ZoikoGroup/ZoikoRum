@@ -18,8 +18,11 @@ import hashlib
 import logging
 import re
 from datetime import timedelta
+from functools import lru_cache
 from pathlib import Path
 from typing import Protocol
+
+from sqlalchemy import text
 
 from zoikorum.config import get_settings
 from zoikorum.shared import clock
@@ -289,8 +292,153 @@ class GCSStorage:
 _VERSIONING_CHECKED: dict[str, bool] = {}  # checked once per process and bucket
 
 
+@lru_cache
+def _sync_engine():
+    """A small synchronous connection pool for file storage (the BlobStorage interface is synchronous)."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.engine import make_url
+
+    url = make_url(get_settings().database_url).set(drivername="postgresql+psycopg")
+    return create_engine(url, pool_size=3, max_overflow=2, pool_pre_ping=True)
+
+
+class DatabaseStorage:
+    """Files kept in PostgreSQL (platform.stored_files), so they are backed up and restored with the rest of the data.
+    A key is written once: the same bytes again are accepted, different bytes are refused. No versions (``put``
+    returns None). Fine for documents and photos; keep uploads small (see the upload size limits)."""
+
+    def __init__(self, engine=None):
+        self.engine = engine or _sync_engine()
+
+    def _failure(self, exc):
+        raise ServiceUnavailable("File storage could not complete the operation", code="STORAGE_UNAVAILABLE") from exc
+
+    def put(self, key, data):
+        key = safe_key(key)
+        digest = hashlib.sha256(data).hexdigest()
+        try:
+            with self.engine.begin() as conn:
+                inserted = conn.execute(text(
+                    "INSERT INTO platform.stored_files (id, key, data, sha256, size_bytes) "
+                    "VALUES (gen_random_uuid(), :key, :data, :sha, :size) ON CONFLICT (key) DO NOTHING"),
+                    {"key": key, "data": data, "sha": digest, "size": len(data)}).rowcount
+                if inserted:
+                    return None
+                current = conn.execute(text("SELECT sha256 FROM platform.stored_files WHERE key = :key"), {"key": key}).scalar()
+        except Exception as exc:
+            self._failure(exc)
+        if current != digest:
+            raise ValidationFailed("Committed files cannot be replaced", code="IMMUTABLE_FILE")
+        return None
+
+    def get(self, key, version_id=None):
+        if version_id:
+            raise ServiceUnavailable("This object belongs to versioned cloud storage", code="STORAGE_PROVIDER_MISMATCH")
+        try:
+            with self.engine.connect() as conn:
+                row = conn.execute(text("SELECT data FROM platform.stored_files WHERE key = :key"), {"key": safe_key(key)}).first()
+        except Exception as exc:
+            self._failure(exc)
+        return bytes(row[0]) if row else None
+
+    def delete(self, key):
+        refuse_unless_erasable(safe_key(key))
+        self._remove(key)
+
+    def purge_for_retention(self, key, version_id=None):
+        self._remove(safe_key(key))
+
+    def _remove(self, key):
+        try:
+            with self.engine.begin() as conn:
+                conn.execute(text("DELETE FROM platform.stored_files WHERE key = :key"), {"key": key})
+        except Exception as exc:
+            self._failure(exc)
+
+
+class R2Storage:
+    """Cloudflare R2 (S3-compatible, free tier). R2 has no object versioning, so immutability comes from conditional
+    writes alone: a put only succeeds when no object has that name (``If-None-Match: *``), and the same bytes written
+    again are accepted. Every file carries its SHA-256. There are no versions, so ``put`` returns None.
+    Credentials: R2 API token as AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (read by boto3)."""
+
+    def __init__(self, settings, client=None):
+        self.settings = settings
+        self.bucket = settings.r2_bucket
+        if not self.bucket:
+            raise ServiceUnavailable("Cloud storage bucket is not configured", code="INTEGRATION_NOT_CONFIGURED")
+        if client is None:
+            endpoint = settings.r2_endpoint_url or (
+                f"https://{settings.r2_account_id}.r2.cloudflarestorage.com" if settings.r2_account_id else None)
+            if not endpoint:
+                raise ServiceUnavailable("ZK_R2_ACCOUNT_ID is needed", code="INTEGRATION_NOT_CONFIGURED")
+            try:
+                import boto3
+            except ImportError as exc:
+                raise ServiceUnavailable("Install the cloud storage dependency", code="INTEGRATION_NOT_CONFIGURED") from exc
+            client = boto3.client("s3", region_name="auto", endpoint_url=endpoint)
+        self.client = client
+
+    def _failure(self, exc):
+        raise ServiceUnavailable("Cloud storage could not complete the operation", code="STORAGE_UNAVAILABLE") from exc
+
+    @staticmethod
+    def _code(exc):
+        return getattr(exc, "response", {}).get("Error", {}).get("Code")
+
+    def put(self, key, data):
+        key = safe_key(key)
+        digest = hashlib.sha256(data).hexdigest()
+        try:
+            self.client.put_object(Bucket=self.bucket, Key=key, Body=data, IfNoneMatch="*",
+                                   ContentType="application/octet-stream", Metadata={"sha256": digest})
+            return None
+        except Exception as exc:
+            if self._code(exc) in ("PreconditionFailed", "412"):
+                try:
+                    current = self.client.head_object(Bucket=self.bucket, Key=key)
+                except Exception as head_exc:
+                    self._failure(head_exc)
+                if current.get("Metadata", {}).get("sha256") != digest:
+                    raise ValidationFailed("Committed files cannot be replaced", code="IMMUTABLE_FILE") from exc
+                return None
+            self._failure(exc)
+
+    def get(self, key, version_id=None):
+        if version_id:
+            raise ServiceUnavailable("This object belongs to versioned cloud storage", code="STORAGE_PROVIDER_MISMATCH")
+        try:
+            body = self.client.get_object(Bucket=self.bucket, Key=safe_key(key))["Body"]
+            try:
+                return body.read()
+            finally:
+                body.close()
+        except Exception as exc:
+            if self._code(exc) in ("NoSuchKey", "404"):
+                return None
+            self._failure(exc)
+
+    def delete(self, key):
+        refuse_unless_erasable(safe_key(key))
+        try:
+            self.client.delete_object(Bucket=self.bucket, Key=key)
+        except Exception as exc:
+            self._failure(exc)
+
+    def purge_for_retention(self, key, version_id=None):
+        """Retention workflow only: removes the object (there is only ever one version)."""
+        try:
+            self.client.delete_object(Bucket=self.bucket, Key=safe_key(key))
+        except Exception as exc:
+            self._failure(exc)
+
+
 def get_storage() -> BlobStorage:
     settings = get_settings()
+    if settings.storage_provider == "database":
+        return DatabaseStorage()
+    if settings.storage_provider == "r2":
+        return R2Storage(settings)
     if settings.storage_provider == "gcs":
         return GCSStorage(settings)
     if settings.storage_provider == "s3":

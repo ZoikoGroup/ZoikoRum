@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { briefApi } from '../../api/briefs'
+import { savedApi, type SavedProfessional } from '../../api/saved'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { orgApi, type Organization, type CostCenter, type LegalEntity } from '../../api/orgs'
 import { CURRENCIES, LABEL, proApi, taxonomyApi, toMinor, type PublicProfile } from '../../api/professional'
@@ -55,6 +56,10 @@ export default function RequestWizard() {
     currency: 'USD', ndaRequired: false, attachments: [], deliverables: [], dependencies: [], pricingPreferences: [], paymentCadence: '',
     successDefinition: '', successMeasures: [], acknowledged: false,
   })
+  const [savedList, setSavedList] = useState<SavedProfessional[] | null>(null)
+  useEffect(() => {
+    if (ids.length === 0) savedApi.list().then(setSavedList).catch(() => setSavedList([]))
+  }, [ids.length])
   const [measure, setMeasure] = useState('')
   const measures = f.successMeasures ?? []  // drafts saved before this field existed have none
   const [templates, setTemplates] = useState<string[]>([])
@@ -129,6 +134,15 @@ export default function RequestWizard() {
         <section className="card panel"><p style={{ margin: 0 }}>Requests go to professionals you choose — up to {MAX_REQUEST_PROFESSIONALS} at once so you can
           compare their proposals. <Link to="/app/find">Find professionals</Link> or pick from your <Link to="/app/saved">saved list</Link>, then
           use <strong>Request proposal</strong>.</p></section>
+        <section className="card panel" aria-label="Saved list">
+          <div className="panel-head"><h2>Saved list</h2><Link className="small" to="/app/saved">Manage</Link></div>
+          {savedList === null ? <p className="muted small" style={{ margin: 0 }}>Loading…</p>
+            : savedList.length === 0 ? <p className="muted small" style={{ margin: 0 }}>Nothing saved yet. <Link to="/app/find">Find professionals</Link> and save them to build a list.</p>
+            : <ul className="plain-list">{savedList.map((s) => (
+              <li key={s.professionalId} className="row" style={{ justifyContent: 'space-between' }}>
+                <span><strong>{s.displayName}</strong>{s.headline && <span className="muted small"> · {s.headline}</span>}</span>
+                <Link className="btn btn-secondary btn-sm" to={`/app/requests/new?pro=${s.professionalId}`}>Request proposal</Link></li>))}</ul>}
+        </section>
       </>
     )
   }

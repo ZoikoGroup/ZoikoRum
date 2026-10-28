@@ -147,7 +147,7 @@ export default function FindProfessionals() {
   // Active filter summary bar (Category doc s.4.5): every filter visible and removable on its own.
   const specName = Object.fromEntries(groups.flatMap((g) => g.specializations.map((s) => [s.slug, s.name])))
   const NAMES: Record<string, (v: string) => string> = {
-    q: (v) => `“${v}”`, spec: (v) => v.split(',').map((s) => specName[s] ?? s).join(', '), tier: (v) => `Trust light: ${v.split(',').map(lightName).join(' or ')}`,
+    q: (v) => `“${v}”`, category: (v) => `Category: ${taxonomy.find((c) => c.slug === v)?.name ?? v}`, spec: (v) => v.split(',').map((s) => specName[s] ?? s).join(', '), tier: (v) => `Trust light: ${v.split(',').map(lightName).join(' or ')}`,
     verified: (v) => `Verified: ${v.replace(/,/g, ', ')}`, jurisdiction: (v) => `Serves ${countryName(v)}`, experience: (v) => `${v} years`,
     engagementType: (v) => LABEL[v] ?? v, delivery: (v) => LABEL[v] ?? v, availability: (v) => LABEL[v] ?? v, pricingModel: (v) => LABEL[v] ?? v,
     credential: (v) => `Credential: ${v}`, industry: (v) => `Industry: ${v}`, crossBorder: () => 'Cross-border',
@@ -239,6 +239,9 @@ export default function FindProfessionals() {
               <option value="">{params.get('spec') ? 'Add another…' : 'Any expertise'}</option>
               {groups.flatMap((g) => g.specializations).filter((s) => !inList('spec', s.slug)).map((s) => <option key={s.slug} value={s.slug}>{s.name}</option>)}
             </select>
+            {(params.get('spec') ?? '').split(',').filter(Boolean).length > 0 && <span className="filter-pills" aria-label="Selected expertise">
+              {(params.get('spec') ?? '').split(',').filter(Boolean).map((s) => <button type="button" key={s} className="pill"
+                aria-label={`Remove expertise ${specName[s] ?? s}`} onClick={() => toggleList('spec', s)}>{specName[s] ?? s} ×</button>)}</span>}
           </label>
           {select('jurisdiction', 'Jurisdiction', COUNTRIES, 'Global')}
           {select('tier', 'Verification', [['A', 'Green — Fully verified'], ['B', 'Amber — Identity verified'], ['A,B', 'Green or Amber']], 'Any status')}
@@ -304,7 +307,7 @@ export default function FindProfessionals() {
             <button className="link-btn small" style={{ flex: 'none' }} onClick={() => { setQ(''); setParams({}) }}>Clear all</button>
             {saved.canSave && <button className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }} onClick={() => {
               const name = prompt('Name this search', params.get('q') || active.map(([, l]) => l).slice(0, 2).join(', '))
-              if (name && name.trim()) savedApi.saveSearch(name.trim(), Object.fromEntries(params)).then(() => setNotice('Search saved. Find it on Saved Professionals, with new matches.')).catch(setError)
+              if (name && name.trim()) savedApi.saveSearch(name.trim(), Object.fromEntries(params)).then(() => { window.dispatchEvent(new Event('zk:saved')); setNotice('Search saved. Find it on Saved Professionals, with new matches.') }).catch(setError)
             }}><Icon name="bookmark" /> Save this search</button>}
           </div>}
           {notice && <div className="alert alert-success" role="status">{notice}</div>}
@@ -318,7 +321,7 @@ export default function FindProfessionals() {
             {data.policy.hidden > 0 && ` ${data.policy.hidden} other professional${data.policy.hidden === 1 ? '' : 's'} matching your search ${data.policy.hidden === 1 ? 'is' : 'are'} not shown.`}
             {' '}Your organisation administrator sets these rules.</span></div>}
           <div className="results-head">
-            <h2 style={{ margin: 0 }}>{data ? `${data.total} professional${data.total === 1 ? '' : 's'} found` : 'Searching…'}</h2>
+            <h2 style={{ margin: 0 }}>{data ? `${data.total} professional${data.total === 1 ? '' : 's'} found${params.get('q') ? ` for “${params.get('q')}”` : ''}` : 'Searching…'}</h2>
             <div className="view-toggle" role="group" aria-label="View">
               <button className={`btn btn-sm ${view === 'grid' ? 'btn-primary' : 'btn-ghost'}`} aria-pressed={view === 'grid'} onClick={() => setView('grid')}>Grid</button>
               <button className={`btn btn-sm ${view === 'list' ? 'btn-primary' : 'btn-ghost'}`} aria-pressed={view === 'list'} onClick={() => setView('list')}>List</button>

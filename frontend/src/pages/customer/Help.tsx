@@ -62,7 +62,7 @@ export default function HelpPage() {
     <>
       <PortalHeader eyebrow="Help & support" title="How can we help?" subtitle="Answers about finding, verifying, contracting and paying professionals on Zoikorum." />
       <section className="card panel search-panel">
-        <form className="search-bar" role="search" onSubmit={(e) => e.preventDefault()}>
+        <form className="search-bar help-search" role="search" onSubmit={(e) => e.preventDefault()}>
           <input className="input" aria-label="Search help" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search help (e.g. escrow, trust light, NDA)" />
         </form>
         {term && (
@@ -120,6 +120,8 @@ function SupportRequests() {
   const [message, setMessage] = useState('')
   const [error, setError] = useState<unknown>(null)
   const [busy, setBusy] = useState(false)
+  const [sentRef, setSentRef] = useState<string | null>(null)
+  const [sentQ, setSentQ] = useState<{ subject: string; message: string } | null>(null)
   const load = useCallback(() => supportApi.mine().then(setRows).catch(setError), [])
   useEffect(() => { load() }, [load])
   const openId = params.get('request')
@@ -130,8 +132,10 @@ function SupportRequests() {
     try {
       const r = await supportApi.open({ topic, subject: subject.trim(), message: message.trim(), context: {
         page: params.get('from') ?? undefined, contractId: params.get('contract') ?? undefined, errorReference: params.get('ref') ?? undefined } })
+      setSentQ({ subject: subject.trim(), message: message.trim() })
       setAsking(false); setSubject(''); setMessage(''); setSelected(r); await load()
       setParams({ request: r.id })
+      setSentRef(r.reference)
     } catch (err) { setError(err) } finally { setBusy(false) }
   }
 
@@ -141,17 +145,27 @@ function SupportRequests() {
       onResolve={async () => { setSelected(await supportApi.resolve(selected.id)); await load() }} />}
     <section className="card panel">
       <div className="panel-head"><h2>Your help requests</h2>
-        {!asking && <button className="btn btn-primary btn-sm" onClick={() => setAsking(true)}>Ask for help</button>}</div>
+        {!asking && <button className="btn btn-primary btn-sm" onClick={() => { setSentRef(null); setSentQ(null); setAsking(true) }}>Ask for help</button>}</div>
       <ErrorAlert error={error} />
+      {sentRef && <div className="alert alert-success" role="status">Your request <code>{sentRef}</code> was sent. Our team replies within one business day;
+        the conversation with our reply is shown at the top of this page and in your list below.
+        {sentQ && <div style={{ marginTop: 8 }}><strong>Your question:</strong> {sentQ.subject}<div className="small">{sentQ.message}</div></div>}
+        <div className="small" style={{ marginTop: 8 }}><strong>Status: received.</strong> We have received your request. Our answer will appear here, and in your inbox, once we reply.</div></div>}
       {asking && <form onSubmit={(e) => { e.preventDefault(); void submit() }} style={{ marginBottom: 16 }}>
         {params.get('ref') && <p className="muted small">Error reference <code>{params.get('ref')}</code> will be attached, so our team can find what happened.</p>}
-        <label className="label" htmlFor="support-topic">What is it about?</label>
-        <select id="support-topic" className="input" value={topic} onChange={(e) => setTopic(e.target.value as SupportTopic)}>
-          {SUPPORT_TOPICS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
-        <label className="label" htmlFor="support-subject" style={{ marginTop: 10 }}>Short summary</label>
-        <input id="support-subject" className="input" maxLength={200} value={subject} onChange={(e) => setSubject(e.target.value)} required />
-        <label className="label" htmlFor="support-message" style={{ marginTop: 10 }}>What happened, and what did you expect?</label>
-        <textarea id="support-message" className="input" rows={4} maxLength={5000} value={message} onChange={(e) => setMessage(e.target.value)} required />
+        <div className="field">
+          <label htmlFor="support-topic">What is it about?</label>
+          <select id="support-topic" className="input" value={topic} onChange={(e) => setTopic(e.target.value as SupportTopic)}>
+            {SUPPORT_TOPICS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+        </div>
+        <div className="field">
+          <label htmlFor="support-subject">Short summary</label>
+          <input id="support-subject" className="input" maxLength={200} value={subject} onChange={(e) => setSubject(e.target.value)} required />
+        </div>
+        <div className="field">
+          <label htmlFor="support-message">What happened, and what did you expect?</label>
+          <textarea id="support-message" className="input" rows={4} maxLength={5000} value={message} onChange={(e) => setMessage(e.target.value)} required />
+        </div>
         <p className="muted small">We answer within one business day. For disagreements about delivered work, raise a dispute from the engagement instead.</p>
         <div className="row"><button className="btn btn-primary" disabled={busy || subject.trim().length < 5 || message.trim().length < 10}>Send</button>
           <button type="button" className="btn btn-ghost" onClick={() => setAsking(false)}>Cancel</button></div>

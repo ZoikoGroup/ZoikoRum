@@ -19,3 +19,48 @@ def render_pdf(lines: list[str]) -> bytes:
     for offset in offsets[1:]: result.extend(f"{offset:010d} 00000 n \n".encode())
     result.extend(f"trailer << /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode())
     return bytes(result)
+
+
+def render_table_pdf(title: str, subtitle: str, rows: list[dict]) -> bytes:
+    """Aligned landscape table: fixed column widths, right-aligned numbers, wrapped event names, header repeated per page."""
+    from fpdf import FPDF
+    from fpdf.enums import XPos, YPos
+    from zoikorum.shared.pdf import FONTS, MUTED, INK, RULE
+
+    class _Report(FPDF):
+        def footer(self):
+            self.set_y(-12); self.set_font("DejaVu", "", 8); self.set_text_color(*MUTED)
+            self.cell(0, 5, f"Page {self.page_no()} of {{nb}}", align="R")
+
+    pdf = _Report(orientation="L", format="A4")
+    pdf.add_font("DejaVu", "", str(FONTS / "DejaVuSans.ttf")); pdf.add_font("DejaVu", "B", str(FONTS / "DejaVuSans-Bold.ttf"))
+    pdf.set_margins(15, 15, 15); pdf.set_auto_page_break(True, margin=16); pdf.alias_nb_pages()
+    cols = [("Date", 42, "L"), ("Event", 85, "L"), ("Currency", 22, "C"), ("Gross", 39, "R"), ("Fee", 39, "R"), ("Net", 40, "R")]
+    pdf.add_page()
+    pdf.set_font("DejaVu", "B", 15); pdf.set_text_color(*INK); pdf.cell(0, 8, title, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.set_font("DejaVu", "", 9); pdf.set_text_color(*MUTED); pdf.cell(0, 5, subtitle, new_x=XPos.LMARGIN, new_y=YPos.NEXT); pdf.ln(3)
+
+    def head():
+        pdf.set_font("DejaVu", "B", 9); pdf.set_text_color(*INK); pdf.set_draw_color(*INK)
+        for name, w, a in cols:
+            pdf.cell(w, 7, name, border="B", align=a)
+        pdf.ln(7)
+
+    head()
+    pdf.set_font("DejaVu", "", 9); pdf.set_draw_color(*RULE)
+    for r in rows:
+        values = [str(r["date"])[:19].replace("T", " "), str(r["eventType"]), r["currency"] or "-",
+                  f"{r['grossMinor']:,}", f"{r['feeMinor']:,}", f"{r['netMinor']:,}"]
+        height = 6 * max(1, len(pdf.multi_cell(cols[1][1], 6, values[1], dry_run=True, output="LINES")))
+        if pdf.get_y() + height > pdf.page_break_trigger:
+            pdf.add_page(); head(); pdf.set_font("DejaVu", "", 9); pdf.set_draw_color(*RULE)
+        y = pdf.get_y(); x = pdf.l_margin
+        for (name, w, a), v in zip(cols, values):
+            pdf.set_xy(x, y)
+            pdf.multi_cell(w, 6, v, align=a, max_line_height=6, new_x=XPos.RIGHT, new_y=YPos.TOP)
+            x += w
+        pdf.set_xy(pdf.l_margin, y + height)
+        pdf.line(pdf.l_margin, y + height, pdf.w - pdf.r_margin, y + height)
+    if not rows:
+        pdf.set_text_color(*MUTED); pdf.cell(0, 8, "No activity in this period.")
+    return bytes(pdf.output())

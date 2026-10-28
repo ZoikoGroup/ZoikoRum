@@ -92,7 +92,13 @@ def review(s: Settings) -> list[tuple[str, str, str]]:
     else:
         add(MISSING, "Identity checks", f"ZK_VERIFICATION_PROVIDER={provider} is for development; set veriff")
 
-    if s.storage_provider == "gcs" and s.gcs_bucket:
+    if s.storage_provider == "database":
+        add(OK, "File storage", "files are kept in the database (backed up with it)")
+    elif s.storage_provider == "r2" and s.r2_bucket and (s.r2_account_id or s.r2_endpoint_url):
+        add(OK, "File storage", "Cloudflare R2 bucket configured")
+    elif s.storage_provider == "r2":
+        add(MISSING, "File storage", "ZK_R2_BUCKET and ZK_R2_ACCOUNT_ID are needed")
+    elif s.storage_provider == "gcs" and s.gcs_bucket:
         add(OK, "File storage", "Google Cloud Storage bucket configured" + (", with a KMS key" if s.gcs_kms_key_name else ""))
     elif s.storage_provider == "gcs":
         add(MISSING, "File storage", "ZK_GCS_BUCKET is needed")
@@ -103,7 +109,7 @@ def review(s: Settings) -> list[tuple[str, str, str]]:
     elif s.storage_provider == "s3":
         add(MISSING, "File storage", "ZK_S3_BUCKET is needed")
     else:
-        add(MISSING, "File storage", "local disk: files are lost when a container is replaced; set gcs (or s3)")
+        add(MISSING, "File storage", "local disk: files are lost when a container is replaced; set database (or r2, gcs, s3)")
 
     if s.redis_url:
         add(OK, "Rate limits", "shared through Redis")
@@ -183,6 +189,15 @@ def connect(s: Settings) -> list[tuple[str, str, str]]:
                 out.append((MISSING, "GCS bucket", "reachable, but neither object versioning nor a retention policy is on"))
         except Exception as exc:  # noqa: BLE001
             out.append((MISSING, "GCS bucket", f"not reachable ({type(exc).__name__})"))
+    if s.storage_provider == "r2" and s.r2_bucket and (s.r2_account_id or s.r2_endpoint_url):
+        try:
+            import boto3
+
+            endpoint = s.r2_endpoint_url or f"https://{s.r2_account_id}.r2.cloudflarestorage.com"
+            boto3.client("s3", region_name="auto", endpoint_url=endpoint).head_bucket(Bucket=s.r2_bucket)
+            out.append((OK, "R2 bucket", "reachable with this server's credentials"))
+        except Exception as exc:  # noqa: BLE001
+            out.append((MISSING, "R2 bucket", f"not reachable ({type(exc).__name__})"))
     if s.storage_provider == "s3" and s.s3_bucket:
         try:
             import boto3

@@ -677,6 +677,28 @@ async def add_persona(session: AsyncSession, actor: Actor, account_type: str, us
     return AuthOut(tokens=pair, user=to_out(identity, await _links(session, identity.id)))
 
 
+async def remove_persona(session: AsyncSession, actor: Actor, account_type: str, user_agent: str | None) -> AuthOut:
+    """Self-service: drop the Buyer or Professional role again, as long as another role remains on the account."""
+    identity = await _get_for_update(session, actor.identity_id)
+    persona = Persona.FROM_ACCOUNT_TYPE[account_type]
+    if persona not in (Persona.BUYER, Persona.PROFESSIONAL):
+        raise Forbidden("Firm and Enterprise roles are managed through an organization")
+    if persona not in identity.personas:
+        raise NotFound("You do not hold that role")
+    if len(identity.personas) < 2:
+        raise Conflict("This is your only role; it cannot be removed", code="LAST_ROLE")
+    identity.personas = sorted(p for p in identity.personas if p != persona)
+    if identity.primary_persona == persona:
+        identity.primary_persona = identity.personas[0]
+    record_audit(session, "identity.persona.removed", object_type="Identity", object_id=identity.id, details={"persona": persona})
+    family, audience = None, "APP"
+    if actor.session_id:
+        old = await session.get(Session, actor.session_id)
+        family, audience = (old.family_id, old.audience) if old else (None, "APP")
+    pair = await _start_session(session, identity, actor.auth_strength, user_agent, family, actor.auth_time, audience)
+    return AuthOut(tokens=pair, user=to_out(identity, await _links(session, identity.id)))
+
+
 def _password_fingerprint(identity: Identity) -> str:
     # Binds a reset token to the current password hash, so the token dies once used.
     return sha256_hex(identity.password_hash or "")[:16]

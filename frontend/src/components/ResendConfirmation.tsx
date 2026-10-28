@@ -2,9 +2,12 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { authApi } from '../api/auth'
 import { ApiError } from '../api/client'
+import { useAuth } from '../auth/AuthContext'
+import { maskEmail } from '../lib/maskEmail'
 
 /** "Resend confirmation email": one new link a minute. In local development (no email service) the link is shown here. */
 export function ResendConfirmation() {
+  const { user } = useAuth()
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [devToken, setDevToken] = useState<string | null>(null)
@@ -14,7 +17,7 @@ export function ResendConfirmation() {
     setMessage(null)
     try {
       const result = await authApi.resendConfirmation()
-      setMessage(result.message)
+      setMessage(`We sent the confirmation link to ${maskEmail(user?.email)}. ${result.message}`)
       setDevToken(result.emailConfirmationToken)
     } catch (err) {
       setMessage(err instanceof ApiError ? err.message : 'Could not send the link. Please try again.')
