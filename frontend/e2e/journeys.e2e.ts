@@ -17,6 +17,7 @@ test('staff and customers each sign in on their own page', async ({ page }) => {
 test('a new customer signs up, confirms their email and signs back in', async ({ page }) => {
   const email = `lennox-${Date.now()}@example.com`
   await page.goto('/join')
+  await page.getByRole('button', { name: /I want to hire/ }).click()
   await page.getByRole('radio', { name: /Buyer/ }).click()
   await page.getByLabel('Full name').fill('Lennox Shaw')
   await page.getByLabel('Work email').fill(email)
