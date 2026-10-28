@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { FIRM_ROLE_INFO, firmApi, formatMoney, type Firm, type FirmMember, type FirmMoney, type FirmOffering, type FirmOverview, type FirmRole,
   type Invitation } from '../api/orgs'
@@ -17,22 +17,29 @@ export function useMyFirm() {
   const [firm, setFirm] = useState<Firm | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<unknown>(null)
+  const alive = useRef(true)
   const reload = useCallback(async () => {
     try {
-      for (let attempt = 0; attempt < 10; attempt++) {  // see useEnterpriseOrg: firm is created by the worker
+      setError(null)
+      for (let attempt = 0; attempt < 10 && alive.current; attempt++) {  // see useEnterpriseOrg: firm is created by the worker
         const found = (await firmApi.mine())[0] ?? null
-        setFirm(found)
+        if (alive.current) setFirm(found)
         if (found) break
         await new Promise((r) => setTimeout(r, 800))
       }
     } catch (err) {
-      setError(err)
+      if (alive.current) setError(err)
     } finally {
-      setLoading(false)
+      if (alive.current) setLoading(false)
     }
   }, [])
-  useEffect(() => { reload() }, [reload])
+  useEffect(() => { alive.current = true; reload(); return () => { alive.current = false } }, [reload])
   return { firm, setFirm, loading, error, reload, isAdmin: !!firm?.myRoles.includes('FIRM_ADMIN') }
+}
+
+/** Shown when the account has no firm to display: the load failed (show why) or the firm is still being created. */
+export function NoFirm({ error }: { error: unknown }) {
+  return <><ErrorAlert error={error} />{!error && <p className="muted">Your firm is still being set up. Refresh in a moment.</p>}</>
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -50,7 +57,7 @@ function FirmRoleBadges({ roles }: { roles: string[] }) {
 }
 
 export function FirmTeamPage() {
-  const { firm, loading, isAdmin, reload: reloadFirm } = useMyFirm()
+  const { firm, loading, error: firmError, isAdmin, reload: reloadFirm } = useMyFirm()
   const { user } = useAuth()
   const [members, setMembers] = useState<FirmMember[]>([])
   const [invites, setInvites] = useState<Invitation[]>([])
@@ -71,7 +78,7 @@ export function FirmTeamPage() {
   }, [firm])
   useEffect(() => { load() }, [load])
   if (loading) return <Loading />
-  if (!firm) return <p className="muted">Your firm is still being set up. Refresh in a moment.</p>
+  if (!firm) return <NoFirm error={firmError} />
   const rep = (identityId: string) => firm.representatives.find((r) => r.identityId === identityId)
   const myRep = user ? rep(user.id) : undefined
 
@@ -207,7 +214,7 @@ export function FirmTeamPage() {
 }
 
 export function FirmProfilePage() {
-  const { firm, setFirm, loading, isAdmin } = useMyFirm()
+  const { firm, setFirm, loading, error: firmError, isAdmin } = useMyFirm()
   const [form, setForm] = useState<Record<string, string>>({})
   const [error, setError] = useState<unknown>(null)
   const [saved, setSaved] = useState(false)
@@ -222,7 +229,8 @@ export function FirmProfilePage() {
       hqCountry: firm.hqCountry, sizeBand: firm.sizeBand ?? '', website: firm.website ?? '',
     })
   }
-  if (loading || !firm) return <Loading />
+  if (loading) return <Loading />
+  if (!firm) return <NoFirm error={firmError} />
   const set = (k: string) => (e: { target: { value: string } }) => { setSaved(false); setForm({ ...form, [k]: e.target.value }) }
 
   async function save(e: FormEvent) {
@@ -441,7 +449,7 @@ function FirmWork({ firmId }: { firmId: string }) {
 
 /** Firm home: verification status, team and representative. */
 export function FirmDashboard() {
-  const { firm, loading, isAdmin } = useMyFirm()
+  const { firm, loading, error: firmError, isAdmin } = useMyFirm()
   const { user } = useAuth()
   const [cases, setCases] = useState<VerificationCase[]>([])
   const [invites, setInvites] = useState(0)
@@ -451,7 +459,7 @@ export function FirmDashboard() {
     firmApi.invitations(firm.id).then((i) => setInvites(i.length)).catch(() => {})
   }, [firm, isAdmin])
   if (loading || !user) return <Loading />
-  if (!firm) return <p className="muted">Your firm is still being set up. Refresh in a moment.</p>
+  if (!firm) return <NoFirm error={firmError} />
 
   const registration = cases.find((c) => c.verificationType === 'FIRM_REGISTRATION')
   const actions: Action[] = []

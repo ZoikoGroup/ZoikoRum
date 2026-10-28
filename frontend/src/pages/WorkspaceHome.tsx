@@ -311,6 +311,11 @@ export function WorkspaceHome({ kind }: { kind: 'buyer' | 'enterprise' }) {
             )}
           </section>
 
+          {kind === 'enterprise' && !orgLoading && !org && (
+            <section className="card panel" id="controls">
+              <div className="panel-head"><h2><Icon name="gear" /> Enterprise controls</h2></div>
+              <p className="muted small" style={{ margin: 0 }}>Your enterprise organisation is still being set up. Refresh in a moment.</p>
+            </section>)}
           {kind === 'enterprise' && (orgLoading ? <section className="card panel"><Loading lines={3} /></section> : org && <section className="card panel" id="controls">
             <div className="panel-head"><h2><Icon name="gear" /> Enterprise controls</h2></div>
             {policy && <dl className="facts">

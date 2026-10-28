@@ -312,7 +312,7 @@ export default function AppShell() {
         {/* Organisation invitations and Safety & Appeals belong to customer and professional accounts, not staff-only ones. */}
         {!staffOnly && <Item to="/app/invitations" icon="mail" count={n('/app/invitations')}>Invitations</Item>}
         <Item to="/app/settings" icon="gear">Settings</Item>
-        {staffOnly && <Item to="/app/security" icon="lock">Two-step &amp; Passkeys</Item>}
+        {(staffOnly || user.personas.some((p) => p === 'FIRM_ADMIN' || p === 'ENTERPRISE_ADMIN')) && <Item to="/app/security" icon="lock">Two-step &amp; Passkeys</Item>}
         {!staffOnly && <Item to="/app/safety" icon="shield">Safety &amp; Appeals</Item>}
         {!customer && !user.platformRoles.length && <Item to="/app/reports" icon="contract">Reports</Item>}
         <Item to="/app/help" icon="help">Help &amp; Support</Item>

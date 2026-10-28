@@ -36,6 +36,7 @@ export default function OrganisationPage() {
   const [editing, setEditing] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<unknown>(null)
+  const [missing, setMissing] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -45,7 +46,7 @@ export default function OrganisationPage() {
         found = orgs.find((o) => o.orgType !== 'INDIVIDUAL') ?? orgs[0]
         if (!found) await new Promise((r) => setTimeout(r, 800))
       }
-      if (!found) return
+      if (!found) { setMissing(true); return }
       setOrg(found)
       const admin = found.myRoles.includes('ORG_ADMIN')
       const [m, b] = await Promise.all([orgApi.members(found.id), orgApi.billingContacts(found.id)])
@@ -61,7 +62,8 @@ export default function OrganisationPage() {
   useEffect(() => { load() }, [load])
 
   if (!user) return null
-  if (!org) return error ? <ErrorAlert error={error} /> : <Loading />
+  if (!org) return error ? <ErrorAlert error={error} /> : missing
+    ? <p className="muted">Your organisation is still being set up. Refresh in a moment.</p> : <Loading />
   const isAdmin = org.myRoles.includes('ORG_ADMIN')
   const canBill = isAdmin || org.myRoles.includes('BUDGET_OWNER')
   const isTeam = org.orgType !== 'INDIVIDUAL'

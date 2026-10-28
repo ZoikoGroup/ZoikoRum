@@ -9,7 +9,7 @@ import { toUpload } from '../api/files'
 import { FileLink } from '../components/FileLink'
 import { HostedVerification } from '../components/HostedVerification'
 import { ErrorAlert, Field, useStepUp, Loading } from '../components/ui'
-import { useMyFirm } from './FirmPages'
+import { NoFirm, useMyFirm } from './FirmPages'
 import { COUNTRIES } from './Join'
 import { countryName, useMyProfile } from './ProfessionalPages'
 import { proApi, type Profile } from '../api/professional'
@@ -379,9 +379,9 @@ export function ProfessionalVerificationPage() {
 }
 
 export function FirmVerificationPage() {
-  const { firm, loading, isAdmin } = useMyFirm()
+  const { firm, loading, error, isAdmin } = useMyFirm()
   if (loading) return <Loading />
-  if (!firm) return <p className="muted">Your firm is still being set up. Refresh in a moment.</p>
+  if (!firm) return <NoFirm error={error} />
   return (
     <>
       <div className="page-head"><div><h1>Firm verification</h1>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import {
   formatMoney, ORG_ROLE_INFO, ORG_ROLES, orgApi,
   type BusinessUnit, type CostCenter, type Invitation, type Organization, type OrgMember, type OrgRole,
@@ -15,23 +15,25 @@ export function useEnterpriseOrg() {
   const [org, setOrg] = useState<Organization | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<unknown>(null)
+  const alive = useRef(true)
   const reload = useCallback(async () => {
     try {
+      setError(null)
       // Right after sign-up the organization is created by the background worker,
       // usually within a second: retry briefly instead of showing an empty page.
-      for (let attempt = 0; attempt < 10; attempt++) {
+      for (let attempt = 0; attempt < 10 && alive.current; attempt++) {
         const found = (await orgApi.mine()).find((o) => o.orgType !== 'INDIVIDUAL') ?? null
-        setOrg(found)
+        if (alive.current) setOrg(found)
         if (found) break
         await new Promise((r) => setTimeout(r, 800))
       }
     } catch (err) {
-      setError(err)
+      if (alive.current) setError(err)
     } finally {
-      setLoading(false)
+      if (alive.current) setLoading(false)
     }
   }, [])
-  useEffect(() => { reload() }, [reload])
+  useEffect(() => { alive.current = true; reload(); return () => { alive.current = false } }, [reload])
   return { org, loading, error, reload, isAdmin: !!org?.myRoles.includes('ORG_ADMIN') }
 }
 
@@ -267,7 +269,7 @@ function EditMemberModal({ orgId, member, onClose, onSaved, run, setError }: {
 }
 
 export function EnterpriseStructurePage() {
-  const { org, loading, isAdmin } = useEnterpriseOrg()
+  const { org, loading, error: orgError, isAdmin } = useEnterpriseOrg()
   const [units, setUnits] = useState<BusinessUnit[]>([])
   const [centers, setCenters] = useState<CostCenter[]>([])
   const [error, setError] = useState<unknown>(null)
@@ -287,7 +289,8 @@ export function EnterpriseStructurePage() {
     }
   }, [org])
   useEffect(() => { load() }, [load])
-  if (loading || !org) return <Loading />
+  if (loading) return <Loading />
+  if (!org) return <><ErrorAlert error={orgError} />{!orgError && <p className="muted">Your enterprise organization is still being set up. Refresh in a moment.</p>}</>
 
   async function addUnit(e: FormEvent) {
     e.preventDefault()
