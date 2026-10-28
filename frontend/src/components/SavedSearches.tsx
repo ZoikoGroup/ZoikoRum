@@ -36,7 +36,7 @@ export function SavedSearchesPanel() {
             <button className="icon-btn" aria-pressed={s.alertsOn} title={s.alertsOn ? 'Daily notice of new matches is on' : 'Daily notice is off'}
               aria-label={`${s.alertsOn ? 'Turn off' : 'Turn on'} new-match notices for ${s.name}`}
               onClick={() => savedApi.searchAlerts(s.id, !s.alertsOn).then(load)}><Icon name="bell" />{!s.alertsOn && <span className="small"> off</span>}</button>
-            <button className="icon-btn" aria-label={`Delete ${s.name}`} onClick={() => { if (confirm(`Delete the saved search “${s.name}”?`)) savedApi.deleteSearch(s.id).then(load) }}>×</button>
+            <button className="icon-btn" aria-label={`Delete ${s.name}`} onClick={() => { if (confirm(`Delete the saved search “${s.name}”?`)) savedApi.deleteSearch(s.id).then(load).then(() => window.dispatchEvent(new Event('zk:saved'))) }}>×</button>
           </li>))}</ul>
       )}
     </SidePanel>

@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Identity, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import BigInteger, Boolean, DateTime, Identity, Index, Integer, LargeBinary, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -81,6 +81,21 @@ class IdempotencyRecord(Base, CreatedAt):
     request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     response_status: Mapped[int] = mapped_column(Integer, nullable=False)
     response_body: Mapped[dict | list | None] = mapped_column(JSONB)
+
+
+class StoredFile(Base, UUIDPk, CreatedAt):
+    """An uploaded file kept in the database (ZK_STORAGE_PROVIDER=database; shared/storage.DatabaseStorage).
+
+    Written once and never replaced; backed up and restored together with the rest of the data.
+    """
+
+    __tablename__ = "stored_files"
+    __table_args__ = {"schema": SCHEMA}
+
+    key: Mapped[str] = mapped_column(String(500), unique=True, nullable=False)
+    data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
 
 class Timer(Base, UUIDPk, CreatedAt):

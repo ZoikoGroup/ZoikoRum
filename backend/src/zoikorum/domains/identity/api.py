@@ -313,6 +313,14 @@ async def add_account_type(body: AddPersonaIn, request: Request, response: Respo
     return result.model_copy(update={"tokens": _issue(request, response, result.tokens)})
 
 
+@router.delete("/me/account-types/{account_type}", response_model=AuthOut)
+async def remove_account_type(account_type: Literal["BUYER", "PROFESSIONAL"], request: Request, response: Response,
+                              actor: CurrentActor, session: DbSession) -> AuthOut:
+    """Remove Buyer or Professional from an account that holds more than one role."""
+    result = await service.remove_persona(session, actor, account_type, _ua(request))
+    return result.model_copy(update={"tokens": _issue(request, response, result.tokens)})
+
+
 # ---- Platform staff administration (Platform Admin, MFA + step-up) -------------
 
 @router.get("/admin/staff", response_model=list[StaffMemberOut])

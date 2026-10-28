@@ -1,5 +1,5 @@
 # Single-host deployment (staging or a small production): migrations, API, worker and the web app.
-# PostgreSQL is a managed service (Cloud SQL, ZK_DATABASE_URL); files go to Google Cloud Storage (ZK_STORAGE_PROVIDER=gcs).
+# PostgreSQL is a managed service (Cloud SQL, ZK_DATABASE_URL); uploaded files are kept in that database (ZK_STORAGE_PROVIDER=database).
 # Configuration: backend/.env.production (git-ignored; start from backend/.env.production.example). See backend/docs/DEPLOYMENT.md.
 # Pass it with --env-file on every command: the web app addresses and ZK_RELEASE (the image tag) are read from it.
 #

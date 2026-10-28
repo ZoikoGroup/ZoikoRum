@@ -7,6 +7,7 @@ import { useAuth } from '../../auth/AuthContext'
 import { Icon } from '../../components/dashboard'
 import { PortalHeader, SidePanel, Tabs } from '../../components/portal'
 import { ErrorAlert, Field, useStepUp, Loading } from '../../components/ui'
+import { maskEmail } from '../../lib/maskEmail'
 import { countryName } from '../ProfessionalPages'
 
 type Tab = 'account' | 'security' | 'notifications' | 'privacy' | 'payments' | 'platform' | 'linked'
@@ -75,10 +76,21 @@ export default function SettingsPage() {
 function AccountForm({ me, onSaved }: { me: ProfileDetails; onSaved: (p: ProfileDetails) => void }) {
   const [f, setF] = useState({ displayName: me.displayName, phone: me.phone ?? '' })
   const [error, setError] = useState<unknown>(null)
+  const [phoneError, setPhoneError] = useState('')
+  const cleanPhone = (v: string) => v.replace(/[\s().-]/g, '')
+  // Same rule as the backend: + country code then 7-15 digits, first digit non-zero. Checked on blur/submit only, never while typing.
+  const checkPhone = (v: string) => {
+    const c = cleanPhone(v)
+    const msg = c && !/^\+[1-9]\d{6,14}$/.test(c) ? 'Enter the mobile number with its country code, e.g. +91 98765 43210.' : ''
+    setPhoneError(msg)
+    return !msg
+  }
   async function save(e: FormEvent) {
     e.preventDefault()
     setError(null)
-    try { onSaved(await accountApi.update({ displayName: f.displayName.trim(), ...(f.phone.trim() ? { phone: f.phone.trim() } : {}) })) } catch (err) { setError(err) }
+    if (!checkPhone(f.phone)) return
+    const phone = cleanPhone(f.phone)
+    try { onSaved(await accountApi.update({ displayName: f.displayName.trim(), ...(phone ? { phone } : {}) })) } catch (err) { setError(err) }
   }
   return (
     <section className="card panel">
@@ -88,8 +100,9 @@ function AccountForm({ me, onSaved }: { me: ProfileDetails; onSaved: (p: Profile
         <Field label="Full name" id="s-name"><input id="s-name" className="input" value={f.displayName} onChange={(e) => setF({ ...f, displayName: e.target.value })} required /></Field>
         <Field label="Email" id="s-email" hint="Contact support to change the email you sign in with.">
           <input id="s-email" className="input" value={me.email} disabled /></Field>
-        <Field label="Phone (optional)" id="s-phone" hint="Start with + and the country code, e.g. +44 20 7946 0958 or +91 98765 43210. Spaces are fine. Stored encrypted.">
-          <input id="s-phone" className="input" type="tel" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} placeholder="+44…" /></Field>
+        <Field label="Phone (optional)" id="s-phone" hint="With the country code, e.g. +91 98765 43210. Stored encrypted.">
+          <input id="s-phone" className="input" type="tel" value={f.phone} maxLength={20} inputMode="tel" aria-invalid={!!phoneError} onChange={(e) => { setF({ ...f, phone: e.target.value.replace(/(?!^)\+|[^\d+\s().-]/g, '') }); if (phoneError) setPhoneError('') }} onBlur={() => checkPhone(f.phone)} placeholder="+91 98765 43210" />
+          {phoneError && <div className="error" role="alert">{phoneError}</div>}</Field>
         <button className="btn btn-primary">Save changes</button>
       </form>
     </section>
@@ -109,7 +122,7 @@ function SecurityTab({ me }: { me: ProfileDetails }) {
         <ErrorAlert error={error} />
         <ul className="settings-list">
           <li><Icon name="lock" /><span><strong>Password</strong><br /><span className="muted small">We'll email you a secure link to set a new password.</span></span>
-            {resetSent ? <span className="badge green">Link sent</span> : (
+            {resetSent ? <span className="badge green" role="status">We sent the link to {maskEmail(me.email)}</span> : (
               <button className="btn btn-secondary btn-sm" onClick={() => authApi.forgotPassword(me.email).then(() => setResetSent(true)).catch(setError)}>Change password</button>)}</li>
           <li><Icon name="shield" /><span><strong>Two-step verification</strong><br /><span className="muted small">{me.mfaEnabled ? 'On — an authenticator app code is asked at sign-in.' : 'Off — protect your account with an authenticator app.'}</span></span>
             <Link className="btn btn-secondary btn-sm" to="/app/security">{me.mfaEnabled ? 'Manage' : 'Turn on'}</Link></li>
@@ -178,6 +191,7 @@ const day = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString(unde
 
 /** Download my data and delete my account. Deleting needs a fresh two-step check and can be cancelled for 14 days. */
 function PrivacyTab({ onNotice }: { onNotice: (m: string) => void }) {
+  const { user } = useAuth()
   const [requests, setRequests] = useState<DataRequest[] | null>(null)
   const [error, setError] = useState<unknown>(null)
   const { run, modal } = useStepUp(setError)
@@ -200,7 +214,7 @@ function PrivacyTab({ onNotice }: { onNotice: (m: string) => void }) {
     run(async () => {
       await accountApi.requestData('ACCESS')
       await load()
-      onNotice('We are preparing your data. It is usually ready in a minute; we will email you too.')
+      onNotice(`Request received. We sent a message to your registered email (${maskEmail(user?.email)}) with a secure link. The download needs the secure check (your password or two-step code); no personal data is in the email.`)
     })
   }
   function requestDeletion() {
@@ -272,16 +286,23 @@ function PrivacyTab({ onNotice }: { onNotice: (m: string) => void }) {
 function PlatformTab({ me, onSaved }: { me: ProfileDetails; onSaved: (p: ProfileDetails) => void }) {
   const [f, setF] = useState({ language: me.language ?? 'en', timeZone: me.timeZone ?? '' })
   const [error, setError] = useState<unknown>(null)
+  const [saved, setSaved] = useState(false)
   async function save(e: FormEvent) {
     e.preventDefault()
     setError(null)
-    try { onSaved(await accountApi.update({ language: f.language, ...(f.timeZone ? { timeZone: f.timeZone } : {}) })) } catch (err) { setError(err) }
+    setSaved(false)
+    try {
+      onSaved(await accountApi.update({ language: f.language, ...(f.timeZone ? { timeZone: f.timeZone } : {}) }))
+      try { localStorage.setItem('zk:language', f.language) } catch { /* per-viewer convenience only */ }
+      setSaved(true)
+    } catch (err) { setError(err) }
   }
   return (
     <section className="card panel">
       <div className="panel-head"><h2>Platform preferences</h2></div>
       <form onSubmit={save}>
         <ErrorAlert error={error} />
+        {saved && <div className="alert alert-success" role="status">Language saved: {LANGUAGES.find(([v]) => v === f.language)?.[1] ?? f.language}.</div>}
         <div className="row">
           <Field label="Language" id="p-lang"><select id="p-lang" className="input" value={f.language} onChange={(e) => setF({ ...f, language: e.target.value })}>
             {LANGUAGES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field>

@@ -181,6 +181,9 @@ table.data td { padding: 12px; border-bottom: 1px solid var(--zk-border); vertic
   border-radius: var(--radius-sm); word-break: break-all; font-size: 14px; border: 1px dashed var(--zk-border-strong); }
 .row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
 .row .field { margin-bottom: 0; flex: 1; min-width: 200px; }
+.row-top { align-items: flex-start; }
+.row-top .field { min-width: min(200px, 100%); }
+.help-search:last-child { margin-bottom: 0; }
 
 /* ---- Modal ---- */
 .modal-backdrop { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); display: grid; place-items: center; z-index: 50; padding: 16px; }
@@ -424,7 +427,7 @@ textarea.input { height: auto; min-height: 96px; padding: 10px 12px; line-height
 .btn-warn { background: #b54708; color: #fff; border-color: #b54708; }
 .btn-warn:hover:not(:disabled) { background: #93370d; }
 .home-grid.wide { grid-template-columns: minmax(0, 1fr) 340px; }
-.portal-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--zk-border); margin-bottom: 16px; overflow-x: auto; scrollbar-width: thin; }
+.portal-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--zk-border); margin-bottom: 16px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; }
 .portal-tabs button { flex: none; background: none; border: 0; border-bottom: 2px solid transparent; padding: 10px 12px; margin-bottom: -1px;
   font: inherit; font-size: 14px; font-weight: 500; color: var(--zk-muted); cursor: pointer; white-space: nowrap; }
 .portal-tabs button:hover { color: var(--zk-navy); }
@@ -519,7 +522,7 @@ textarea.input { height: auto; min-height: 96px; padding: 10px 12px; line-height
 .tray-person button { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%; border: 0; padding: 0;
   background: #fff; color: var(--zk-navy); font-size: 12px; line-height: 18px; cursor: pointer; }
 .compare-modal { max-width: 1000px; max-height: calc(100vh - 32px); overflow: auto; }
-.compare-scroll { overflow-x: auto; }
+.compare-scroll { overflow-x: auto; overflow-y: hidden; }
 .compare-table th[scope="row"] { white-space: nowrap; text-transform: none; letter-spacing: 0; font-size: 13px; color: var(--zk-navy); }
 .compare-table td, .compare-table thead th { min-width: 200px; }
 
@@ -1098,7 +1101,7 @@ pre.agreement { white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular
   display: flex; align-items: center; justify-content: center; overflow: auto; }
 .doc-frame iframe { width: 100%; height: 100%; border: 0; background: #fff; }
 .doc-frame img { max-width: 100%; max-height: 100%; object-fit: contain; }
-.table-scroll { overflow-x: auto; }
+.table-scroll { overflow-x: auto; overflow-y: hidden; }
 
 /* Text for screen readers only (empty-looking table headers, icon buttons). */
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }

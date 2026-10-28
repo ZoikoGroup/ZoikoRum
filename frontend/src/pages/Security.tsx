@@ -71,8 +71,8 @@ export default function Security() {
       <div className="page-head"><div><h1>Security</h1><p className="muted" style={{ margin: 0 }}>Protect your account and the engagements it controls.</p></div></div>
       {required && !user.mfaEnabled && (
         <div className="alert alert-warn">
-          Your role ({user.platformRoles.length ? 'platform staff' : 'organization admin'}) requires two-step verification
-          before you can continue.
+          Your role ({user.platformRoles.length ? 'platform staff' : user.personas.includes('FIRM_ADMIN') ? 'firm admin' : 'organization admin'}) requires
+          two-step verification. Every other section stays locked and sends you back here until you turn it on below.
         </div>
       )}
       <ErrorAlert error={error} />

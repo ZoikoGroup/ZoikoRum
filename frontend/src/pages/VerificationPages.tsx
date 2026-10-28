@@ -83,6 +83,7 @@ function EvidenceUpload({ c, onDone }: { c: VerificationCase; onDone: (c: Verifi
   const [files, setFiles] = useState<File[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
+  const [done, setDone] = useState(false)
   const hint = EVIDENCE_FOR[c.verificationType] ?? { type: 'OTHER' as EvidenceType, label: 'Supporting document' }
 
   async function submit(e: FormEvent) {
@@ -93,6 +94,8 @@ function EvidenceUpload({ c, onDone }: { c: VerificationCase; onDone: (c: Verifi
       const items = await Promise.all(files.map((f) => toUpload(f, ['pdf', 'jpg', 'jpeg', 'png'])))
       onDone(await verificationApi.addEvidence(c.id, hint.type, items))
       setFiles([])
+      setDone(true)
+      window.setTimeout(() => setDone(false), 8000)
     } catch (err) {
       setError(err)
     } finally {
@@ -103,6 +106,7 @@ function EvidenceUpload({ c, onDone }: { c: VerificationCase; onDone: (c: Verifi
   return (
     <form onSubmit={submit} className="evidence-form">
       <ErrorAlert error={error} />
+      {done && <div className="alert alert-success" role="status">Document uploaded successfully. It is now with the reviewer.</div>}
       <Field label={hint.label} id={`ev-${c.id}`} hint="PDF, JPG or PNG. Up to 5 files, 10 MB each. Only you and the compliance reviewer can open them.">
         <input id={`ev-${c.id}`} type="file" multiple accept=".pdf,.jpg,.jpeg,.png"
           onChange={(e) => setFiles([...(e.target.files ?? [])].slice(0, 5))} />

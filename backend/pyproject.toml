@@ -23,6 +23,7 @@ dependencies = [
     "webauthn>=2.5,<3",  # passkeys (identity/passkeys.py)
     "signxml>=5.2,<6",  # SAML 2.0 response signatures (identity/saml.py); pure Python on lxml + cryptography wheels
     "lxml>=6.1",
+    "psycopg[binary]>=3.2",  # synchronous connections for file storage in the database (shared/storage.DatabaseStorage)
 ]
 
 [project.optional-dependencies]

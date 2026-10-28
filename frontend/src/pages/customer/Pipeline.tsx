@@ -300,7 +300,10 @@ export function MessagesPage() {
         jobs.push(proposalApi.list('professional').then((rows) => requestOptions(rows, true)))
         jobs.push(contractApi.list('professional').then((rows) => contractOptions(rows, true)))
       }
-      const groups = await Promise.all(jobs)
+      // One failing list must not stop the modal opening with the other options.
+      const settled = await Promise.allSettled(jobs)
+      if (settled.length && settled.every((r) => r.status === 'rejected')) throw (settled[0] as PromiseRejectedResult).reason
+      const groups = settled.map((r) => r.status === 'fulfilled' ? r.value : [])
       const existing = new Set(threads.map((thread) => `${thread.contextType}:${thread.contextId}`))
       setStartOptions(groups.flat().filter((option) => !existing.has(option.key)))
     } catch (cause) {
@@ -558,7 +561,7 @@ export function MessagesPage() {
               <span><strong>{option.counterpart}</strong><small>{option.contextType === 'CONTRACT' ? 'Engagement' : 'Request'} · {option.title}</small></span>
               <span aria-hidden>→</span>
             </button>)}
-          </div> : <p className="muted">No conversations to start. Create a request or open an engagement first.</p>}
+          </div> : <p className="muted">{professional && !customer ? 'No new conversations to start. Messages open once you receive a request or have an engagement; existing conversations are in the list.' : 'No conversations to start. Create a request or open an engagement first.'}</p>}
         </section>
       </div>}
     </>

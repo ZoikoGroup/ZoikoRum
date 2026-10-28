@@ -106,6 +106,8 @@ export const authApi = {
   passkeyStepUp: (credential: Record<string, unknown>) => api<TokenPair>('/v1/auth/step-up/passkey', { method: 'POST', body: { credential } }),
   addAccountType: (accountType: 'BUYER' | 'PROFESSIONAL') =>
     api<AuthResult>('/v1/me/account-types', { method: 'POST', body: { accountType } }),
+  removeAccountType: (accountType: 'BUYER' | 'PROFESSIONAL') =>
+    api<AuthResult>(`/v1/me/account-types/${accountType}`, { method: 'DELETE' }),
 
   // Platform Admin / Trust & Safety
   listUsers: (filters: { q?: string; role?: UserRoleFilter; status?: string; cursor?: string | null }) =>

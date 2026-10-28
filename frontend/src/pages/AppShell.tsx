@@ -2,6 +2,7 @@ import { Suspense, useEffect, useRef, useState, type ReactNode } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { firmApi } from '../api/orgs'
 import { messagingApi } from '../api/messaging'
+import { savedApi } from '../api/saved'
 import { notificationApi } from '../api/notifications'
 import { useActionCounts } from '../components/actionCounts'
 import { DASHBOARD_FOR_PERSONA, PLATFORM_ROLES, ROLE_LABEL } from '../api/auth'
@@ -98,6 +99,16 @@ export default function AppShell() {
   const menuBtnRef = useRef<HTMLButtonElement>(null)
   const mainRef = useRef<HTMLElement>(null)
   const wasOpen = useRef(false)
+  // Profile menu (<details>): closes on an outside click, on Escape, and after a menu link is followed.
+  const userMenuRef = useRef<HTMLDetailsElement>(null)
+  useEffect(() => {
+    const close = () => { if (userMenuRef.current) userMenuRef.current.open = false }
+    const onDown = (e: Event) => { const el = userMenuRef.current; if (el?.open && !el.contains(e.target as Node)) close() }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && userMenuRef.current?.open) { close(); userMenuRef.current.querySelector('summary')?.focus() } }
+    document.addEventListener('pointerdown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('pointerdown', onDown); document.removeEventListener('keydown', onKey) }
+  }, [])
   useEffect(() => {
     if (!open) {
       if (wasOpen.current) {
@@ -195,6 +206,20 @@ export default function AppShell() {
     window.addEventListener('zk:activity', load)
     return () => { active = false; window.clearInterval(timer); window.removeEventListener('zk:message-read', load); window.removeEventListener('zk:activity', load) }
   }, [user?.id, canMessage])
+  // Saved professionals + saved searches count on the sidebar entry; refreshed whenever something is saved or removed.
+  const canSaveItems = !!user?.personas.some((role) => ['BUYER', 'ENTERPRISE_ADMIN', 'ENTERPRISE_MEMBER'].includes(role))
+  const [savedCount, setSavedCount] = useState(0)
+  useEffect(() => {
+    if (!canSaveItems) return
+    let active = true
+    const load = () => {
+      Promise.all([savedApi.list().catch(() => []), savedApi.searches().catch(() => [])])
+        .then(([pros, searches]) => { if (active) setSavedCount(pros.length + searches.length) })
+    }
+    load()
+    window.addEventListener('zk:saved', load)
+    return () => { active = false; window.removeEventListener('zk:saved', load) }
+  }, [user?.id, canSaveItems])
   if (!user) return null
 
   const dashboards = new Set(user.personas.map((p) => DASHBOARD_FOR_PERSONA[p]))
@@ -225,7 +250,7 @@ export default function AppShell() {
           <div className="side-group">Customer</div>
           <Item to={`/app/${customer}`} icon="home" end>Dashboard</Item>
           <Item to="/app/find" icon="search">Find Professionals</Item>
-          <Item to="/app/saved" icon="bookmark">Saved Professionals</Item>
+          <Item to="/app/saved" icon="bookmark" count={savedCount}>Saved Professionals</Item>
           <Item to="/app/requests" icon="request">Requests</Item>
           <Item to="/app/briefs" icon="mail">Open Briefs</Item>
           <Item to="/app/proposals" count={n('/app/proposals')} icon="proposal">Proposals</Item>
@@ -329,12 +354,12 @@ export default function AppShell() {
               </div>
             </>}
           </div>
-          <details className="user-menu-pop">
+          <details ref={userMenuRef} className="user-menu-pop">
             <summary>
               <span className="avatar" aria-hidden>{initials}</span>
               <span className="who"><strong>{user.displayName}</strong><span>{roleName}</span></span>
             </summary>
-            <div className="menu card">
+            <div className="menu card" onClick={() => { if (userMenuRef.current) userMenuRef.current.open = false }}>
               <div className="badges" style={{ padding: '4px 4px 10px' }}>
                 {[...user.personas, ...user.platformRoles].map((r) => <span key={r} className="badge">{ROLE_LABEL[r] ?? r}</span>)}
               </div>

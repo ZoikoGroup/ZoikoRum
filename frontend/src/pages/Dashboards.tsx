@@ -63,6 +63,14 @@ export function AccountPage() {
     }
   }
 
+  async function remove(type: 'BUYER' | 'PROFESSIONAL') {
+    if (!confirm(`Remove the ${ROLE_LABEL[type]} role from this account? You can add it again later.`)) return
+    setBusy(true)
+    setError(null)
+    try { accept(await authApi.removeAccountType(type)) } catch (err) { setError(err) } finally { setBusy(false) }
+  }
+  const removable = user.personas.filter((r) => r === 'BUYER' || r === 'PROFESSIONAL')
+
   return (
     <>
       <div className="page-head"><div><h1>Profile &amp; roles</h1><p className="muted" style={{ margin: 0 }}>One ZoikoID, every role you hold.</p></div></div>
@@ -81,6 +89,10 @@ export function AccountPage() {
         <div className="badges" style={{ marginBottom: 16 }}>
           {[...user.personas, ...user.platformRoles].map((r) => <span key={r} className="badge green">{ROLE_LABEL[r] ?? r}</span>)}
         </div>
+        {user.personas.length > 1 && removable.map((r) => (
+          <p key={r} className="row" style={{ alignItems: 'center' }}><span>{ROLE_LABEL[r] ?? r}</span>
+            <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => remove(r as 'BUYER' | 'PROFESSIONAL')}>Remove</button></p>
+        ))}
         {canAdd.length > 0 && (
           <>
             <p className="muted small">You can use the same account on both sides of the marketplace.</p>

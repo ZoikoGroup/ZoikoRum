@@ -1063,7 +1063,7 @@ function CredentialsStep({ profile, next }: StepProps) {
       )}
       <form className="card panel" style={{ boxShadow: 'none' }} onSubmit={add}>
         <h3>Add a credential</h3>
-        <div className="row">
+        <div className="row row-top">
           <Field label="Type" id="c-type">
             <select id="c-type" className="input" value={f.credentialType} onChange={set('credentialType')}>
               {CREDENTIAL_TYPES.map((t) => <option key={t} value={t}>{LABEL[t]}</option>)}
@@ -1074,7 +1074,7 @@ function CredentialsStep({ profile, next }: StepProps) {
           </Field>
         </div>
         <div style={{ height: 16 }} />
-        <div className="row">
+        <div className="row row-top">
           <Field label="Issuing body" id="c-issuer" hint="e.g. Texas State Board of Public Accountancy">
             <input id="c-issuer" className="input" value={f.issuingBody} onChange={set('issuingBody')} required minLength={2} />
           </Field>
@@ -1083,7 +1083,7 @@ function CredentialsStep({ profile, next }: StepProps) {
           </Field>
         </div>
         <div style={{ height: 16 }} />
-        <div className="row">
+        <div className="row row-top">
           <Field label="Jurisdiction" id="c-jur" hint="Country code, e.g. US">
             <input id="c-jur" className="input" maxLength={10} value={f.jurisdiction} onChange={set('jurisdiction')} />
           </Field>
