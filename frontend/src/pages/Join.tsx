@@ -5,6 +5,7 @@ import { authApi, type AccountType } from '../api/auth'
 import { ApiError } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { AuthLayout, ErrorAlert, Field, PasswordInput, PasswordStrength } from '../components/ui'
+import { SocialSignUpOptions } from '../components/SingleSignOn'
 import { dashboardPath } from '../staffRoutes'
 import { safeNextPath } from '../auth/guards'
 import { growthApi } from '../api/professional'
@@ -150,6 +151,7 @@ export default function Join() {
           onClick={() => setGroup(null)}>Change</button>
       </p>
       <ErrorAlert error={error} />
+      {group === 'hire' && type === 'BUYER' && <SocialSignUpOptions />}
       <form onSubmit={submit} noValidate>
         <div className="type-grid" role="radiogroup" aria-label="Account type">
           {TYPES.filter((t) => groupOf(t.value) === group).map((t) => (
