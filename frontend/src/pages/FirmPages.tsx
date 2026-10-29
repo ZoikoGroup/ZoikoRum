@@ -674,7 +674,7 @@ export function FirmDashboard() {
           {isAdmin && <Link className="btn btn-primary" to="/app/firm/team"><Icon name="team" /> Manage team</Link>}
         </div>
       </div>
-      <div className="kpi-row">
+      <div className="kpi-row three">
         <Kpi icon="shield" tone={firm.status === 'VERIFIED' ? 'green' : 'amber'} label="Firm verification"
           value={STATUS_LABEL[firm.status] ?? firm.status}
           note={isAdmin ? (registration ? `Check: ${registration.status.replace('_', ' ').toLowerCase()}` : 'Not started') : 'Managed by Firm Admins'} />
