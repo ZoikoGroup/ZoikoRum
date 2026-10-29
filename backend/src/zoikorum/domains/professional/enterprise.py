@@ -46,6 +46,14 @@ async def _requirements(session: AsyncSession, pro: Professional) -> list[dict]:
     ]
 
 
+def require_mfa(requirements: list[dict], *, own: bool = True) -> None:
+    """Enterprise Ready is never granted or applied for without two-step sign-in, whatever else is missing."""
+    if any(r["key"] == "twoStep" and not r["met"] for r in requirements):
+        raise Conflict("Turn on two-step sign-in (MFA) in Security settings before applying for Enterprise Ready."
+                       if own else "This professional has not turned on two-step sign-in (MFA); decline with that reason instead.",
+                       code="MFA_REQUIRED", extra={"link": "/app/security"})
+
+
 async def is_ready(session: AsyncSession, pro: Professional) -> bool:
     """Designated, and every requirement still holds."""
     return pro.enterprise_status == "READY" and all(r["met"] for r in await _requirements(session, pro))
@@ -71,6 +79,7 @@ async def apply(session: AsyncSession, actor: Actor, attestation: dict[str, bool
         raise Conflict("You have already applied" if pro.enterprise_status == "PENDING" else "You are already Enterprise Ready",
                        code="ALREADY_APPLIED")
     requirements = await _requirements(session, pro)
+    require_mfa(requirements)
     missing = [r["label"] for r in requirements if not r["met"]]
     if missing:
         raise Conflict("Complete these first: " + "; ".join(missing), code="ENTERPRISE_REQUIREMENTS_NOT_MET", extra={"missing": missing})
@@ -112,6 +121,8 @@ async def decide(session: AsyncSession, actor: Actor, professional_id: uuid.UUID
     if pro.identity_id == actor.identity_id:
         raise Conflict("You cannot decide your own application", code="CONFLICT_OF_INTEREST")
     requirements = await _requirements(session, pro)
+    if approve:
+        require_mfa(requirements, own=False)
     if approve and not all(r["met"] for r in requirements):
         raise Conflict("A requirement no longer holds; decline with the reason instead", code="ENTERPRISE_REQUIREMENTS_NOT_MET")
     pro.enterprise_status = "READY" if approve else "REJECTED"

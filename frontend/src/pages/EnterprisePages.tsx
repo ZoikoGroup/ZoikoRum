@@ -1,11 +1,17 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { Link } from 'react-router-dom'
 import {
   formatMoney, ORG_ROLE_INFO, ORG_ROLES, orgApi,
   type BusinessUnit, type CostCenter, type Invitation, type Organization, type OrgMember, type OrgRole,
 } from '../api/orgs'
 import { ErrorAlert, Field, useDialog, useStepUp, Loading } from '../components/ui'
 import { ApiError } from '../api/client'
-import { policyApi, type PolicySetup } from '../api/policy'
+import { policyApi, type CurrencyAmount, type PolicyDashboard, type PolicySetup, type ProfileInsight } from '../api/policy'
+import { ActionList, greeting, Icon, type Action } from '../components/dashboard'
+import { EmptyTable, PortalHeader, StatCard } from '../components/portal'
+import { AuditExportButtons } from '../components/AuditExport'
+import { saveBlob } from '../lib/exports'
+import { useAuth } from '../auth/AuthContext'
 
 const CURRENCIES = ['USD', 'GBP', 'EUR', 'INR', 'CAD', 'AUD', 'SGD', 'AED']
 
@@ -15,23 +21,25 @@ export function useEnterpriseOrg() {
   const [org, setOrg] = useState<Organization | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<unknown>(null)
+  const alive = useRef(true)
   const reload = useCallback(async () => {
     try {
+      setError(null)
       // Right after sign-up the organization is created by the background worker,
       // usually within a second: retry briefly instead of showing an empty page.
-      for (let attempt = 0; attempt < 10; attempt++) {
+      for (let attempt = 0; attempt < 10 && alive.current; attempt++) {
         const found = (await orgApi.mine()).find((o) => o.orgType !== 'INDIVIDUAL') ?? null
-        setOrg(found)
+        if (alive.current) setOrg(found)
         if (found) break
         await new Promise((r) => setTimeout(r, 800))
       }
     } catch (err) {
-      setError(err)
+      if (alive.current) setError(err)
     } finally {
-      setLoading(false)
+      if (alive.current) setLoading(false)
     }
   }, [])
-  useEffect(() => { reload() }, [reload])
+  useEffect(() => { alive.current = true; reload(); return () => { alive.current = false } }, [reload])
   return { org, loading, error, reload, isAdmin: !!org?.myRoles.includes('ORG_ADMIN') }
 }
 
@@ -267,7 +275,7 @@ function EditMemberModal({ orgId, member, onClose, onSaved, run, setError }: {
 }
 
 export function EnterpriseStructurePage() {
-  const { org, loading, isAdmin } = useEnterpriseOrg()
+  const { org, loading, error: orgError, isAdmin } = useEnterpriseOrg()
   const [units, setUnits] = useState<BusinessUnit[]>([])
   const [centers, setCenters] = useState<CostCenter[]>([])
   const [error, setError] = useState<unknown>(null)
@@ -287,7 +295,8 @@ export function EnterpriseStructurePage() {
     }
   }, [org])
   useEffect(() => { load() }, [load])
-  if (loading || !org) return <Loading />
+  if (loading) return <Loading />
+  if (!org) return <><ErrorAlert error={orgError} />{!orgError && <p className="muted">Your enterprise organization is still being set up. Refresh in a moment.</p>}</>
 
   async function addUnit(e: FormEvent) {
     e.preventDefault()
@@ -588,3 +597,226 @@ export function DefinePolicyPrompt({ org, onChanged }: { org: Organization; onCh
 }
 
 /** Enterprise home: the organization, your roles, and team setup progress. */
+
+
+/* ---------------------------------------------------------------------------------------------------------------
+   Enterprise dashboard (Enterprise Policy doc, "Enterprise Admin Dashboard: Policy view"): active policies,
+   engagements and exceptions per policy, spend exposure, approval bottlenecks, sortable table, drill-down, export.
+   Reads the policy dashboard endpoints; engagement and payment widgets of the buyer home are linked, not repeated. */
+
+const titleCase = (r: string) => r.toLowerCase().replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase())
+const hoursText = (h: number | null | undefined) => (h == null ? '—' : h < 48 ? `${Math.round(h)} h` : `${(h / 24).toFixed(1)} days`)
+const moneyText = (list: CurrencyAmount[]) => (list.length ? list.map((m) => formatMoney(m)).join(' + ') : '—')
+
+/** Sums per currency, never converted. */
+// eslint-disable-next-line react-refresh/only-export-components
+export function sumMoney(lists: CurrencyAmount[][]): CurrencyAmount[] {
+  const totals = new Map<string, number>()
+  for (const list of lists) for (const m of list) totals.set(m.currency, (totals.get(m.currency) ?? 0) + m.amountMinor)
+  return [...totals].sort(([a], [b]) => a.localeCompare(b)).map(([currency, amountMinor]) => ({ currency, amountMinor }))
+}
+
+type PolicySort = 'name' | 'engagements' | 'exceptions' | 'exposure' | 'pending' | 'wait'
+const POLICY_SORT: Record<PolicySort, (p: ProfileInsight) => number | string> = {
+  name: (p) => p.name.toLowerCase(), engagements: (p) => p.engagements, exceptions: (p) => p.exceptions.requested,
+  exposure: (p) => p.spendExposure.reduce((a, m) => a + m.amountMinor, 0), pending: (p) => p.approvals.pending,
+  wait: (p) => p.bottleneck?.medianHoursWait ?? -1,
+}
+
+export function EnterpriseDashboard() {
+  const { user } = useAuth()
+  const { org, loading, error: orgError, isAdmin } = useEnterpriseOrg()
+  const [days, setDays] = useState(30)
+  const [summary, setSummary] = useState<PolicyDashboard | null>(null)
+  const [profiles, setProfiles] = useState<ProfileInsight[] | null>(null)
+  const [dataError, setDataError] = useState<unknown>(null)
+  const [error, setError] = useState<unknown>(null)
+  const [sort, setSort] = useState<{ key: PolicySort; desc: boolean }>({ key: 'exposure', desc: true })
+  const [admin, setAdmin] = useState<{ members: number; hasAuthority: boolean; units: number; invites: number } | null>(null)
+  const [exporting, setExporting] = useState(false)
+  const [reloads, setReloads] = useState(0)
+  const orgId = org?.id
+
+  useEffect(() => {
+    if (!orgId) return
+    let live = true
+    setDataError(null); setSummary(null); setProfiles(null)
+    Promise.all([policyApi.dashboard(orgId, days), policyApi.byProfile(orgId, days)])
+      .then(([s, b]) => { if (live) { setSummary(s); setProfiles(b.profiles) } })
+      .catch((e) => { if (live) setDataError(e) })
+    return () => { live = false }
+  }, [orgId, days, reloads])
+
+  useEffect(() => {
+    if (!orgId || !isAdmin) return
+    let live = true
+    Promise.all([orgApi.members(orgId), orgApi.businessUnits(orgId), orgApi.invitations(orgId)])
+      .then(([ms, units, inv]) => { if (live) setAdmin({ members: ms.length, units: units.length, invites: inv.length,
+        hasAuthority: ms.some((m) => m.roles.includes('EXCEPTION_AUTHORITY') && !m.roles.includes('ORG_ADMIN')) }) })
+      .catch(() => { /* the admin to-do list is optional: the dashboard stays usable */ })
+    return () => { live = false }
+  }, [orgId, isAdmin])
+
+  const rows = useMemo(() => [...(profiles ?? [])].sort((a, b) => {
+    const x = POLICY_SORT[sort.key](a), y = POLICY_SORT[sort.key](b)
+    const order = x < y ? -1 : x > y ? 1 : 0
+    return sort.desc ? -order : order
+  }), [profiles, sort])
+  const bottlenecks = useMemo(() => (profiles ?? []).filter((p) => p.bottleneck && p.bottleneck.pending > 0)
+    .sort((a, b) => (b.bottleneck?.medianHoursWait ?? 0) - (a.bottleneck?.medianHoursWait ?? 0)), [profiles])
+
+  if (!user) return null
+  const q = org ? `orgId=${org.id}` : ''
+  const exposure = sumMoney((profiles ?? []).map((p) => p.spendExposure))
+  const engagements = (profiles ?? []).reduce((a, p) => a + p.engagements, 0)
+  const openExceptions = (profiles ?? []).reduce((a, p) => a + p.exceptions.pending, 0)
+  const pending = summary?.approvals.pending ?? 0
+  const figures = summary && profiles ? { summary, profiles } : null
+
+  const actions: Action[] = []
+  if (org && summary && summary.activeProfiles === 0) actions.push({ title: 'Activate a policy', detail: 'No policy is active: engagements are not governed yet', priority: 'High', to: `/app/policies?${q}`, icon: 'contract' })
+  if (org && pending > 0) actions.push({ title: `${pending} approval${pending > 1 ? 's' : ''} pending`, detail: 'Work waits until the approvers decide', priority: 'Medium', to: `/app/policies?${q}&tab=approvals`, icon: 'shield' })
+  if (org && openExceptions > 0) actions.push({ title: `${openExceptions} open exception${openExceptions > 1 ? 's' : ''}`, detail: 'Waiting for the Exception Authority', priority: 'Medium', to: `/app/policies?${q}&tab=exceptions`, icon: 'alert' })
+  if (isAdmin && admin) {
+    if (admin.members <= 1) actions.push({ title: 'Invite your team', detail: 'Add requesters, approvers and budget owners', priority: 'Medium', to: '/app/enterprise/team', icon: 'team' })
+    if (!admin.hasAuthority) actions.push({ title: 'Name an Exception Authority', detail: 'Must be someone other than an Org Admin', priority: 'Medium', to: '/app/enterprise/team', icon: 'shield' })
+    if (admin.units === 0) actions.push({ title: 'Add business units and cost centers', detail: 'Used for budgets and approval routing', priority: 'Low', to: '/app/enterprise/structure', icon: 'building' })
+    if (admin.invites > 0) actions.push({ title: `${admin.invites} invitation${admin.invites > 1 ? 's' : ''} not yet accepted`, detail: 'Remind your colleagues or resend', priority: 'Low', to: '/app/enterprise/team', icon: 'mail' })
+  }
+
+  const header = (key: PolicySort, text: string) => (
+    <th scope="col" aria-sort={sort.key === key ? (sort.desc ? 'descending' : 'ascending') : 'none'}>
+      <button type="button" className="link-button" onClick={() => setSort((s) => ({ key, desc: s.key === key ? !s.desc : key !== 'name' }))}>
+        {text}{sort.key === key ? (sort.desc ? ' ↓' : ' ↑') : ''}</button>
+    </th>
+  )
+
+  async function exportPolicyCsv() {
+    if (!org) return
+    setExporting(true)
+    try { saveBlob(`zoikorum-policy-profiles-${days}d.csv`, await policyApi.byProfileCsv(org.id, days)) }
+    catch (e) { setError(e) }
+    finally { setExporting(false) }
+  }
+
+  const val = (v: () => string | number) => (figures ? v() : '…')
+  const canAudit = !!org && (org.myRoles.includes('ORG_ADMIN') || org.myRoles.includes('LEGAL_REVIEWER'))
+  return (
+    <>
+      <PortalHeader eyebrow="Enterprise admin" title={greeting(user.displayName)}
+        subtitle={<>{org ? `${org.name} · ` : ''}Policy view: what your policies govern, who is holding approvals up, and where spend is exposed.</>}
+        actions={<>
+          <select className="input" aria-label="Period" style={{ maxWidth: 160 }} value={days} onChange={(e) => setDays(Number(e.target.value))}>
+            {[7, 30, 90, 365].map((n) => <option key={n} value={n}>Last {n} days</option>)}</select>
+          <button type="button" className="btn btn-secondary" disabled={!org || !profiles?.length || exporting} onClick={() => { exportPolicyCsv() }}>
+            <Icon name="download" /> Export policy view (CSV)</button>
+        </>} />
+      <ErrorAlert error={orgError ?? dataError ?? error} />
+      {dataError ? <p><button type="button" className="btn btn-secondary btn-sm" onClick={() => setReloads((n) => n + 1)}>Try again</button></p> : null}
+      {loading && <Loading lines={4} />}
+      {!loading && !org && !orgError && (
+        <section className="card panel"><div className="panel-head"><h2><Icon name="gear" /> Enterprise controls</h2></div>
+          <p className="muted small" style={{ margin: 0 }}>Your enterprise organisation is still being set up. Refresh in a moment.</p></section>)}
+
+      {org && <>
+        <div className="stat-row auto">
+          <StatCard icon="contract" tone="blue" label="Active policies" value={val(() => figures!.summary.activeProfiles)}
+            sub={figures ? `${figures.summary.draftProfiles} in draft` : 'Loading'} to={`/app/policies?${q}`} />
+          <StatCard icon="briefcase" tone="green" label="Engagements under policy" value={val(() => engagements)} sub={`Accepted in the last ${days} days`} to="/app/engagements" />
+          <StatCard icon="alert" tone="amber" label="Open exceptions" value={val(() => openExceptions)}
+            sub={figures ? `${figures.summary.exceptions.requested} requested in period` : 'Loading'} to={`/app/policies?${q}&tab=exceptions`} />
+          <StatCard icon="wallet" tone="teal" label="Spend exposure" value={val(() => moneyText(exposure))} sub="Per currency, never converted" />
+          <StatCard icon="shield" tone="violet" label="Approvals pending" value={val(() => pending)} sub={pending ? 'Needs an approver' : 'None waiting'} to={`/app/policies?${q}&tab=approvals`} />
+          <StatCard icon="lock" tone="red" label="Blocked by policy" value={val(() => figures!.summary.decisions.BLOCK ?? 0)} sub={`Last ${days} days`} to={`/app/policies?${q}&tab=dashboard`} />
+          <StatCard icon="clock" tone="blue" label="Median approval time" value={val(() => hoursText(figures!.summary.approvals.medianHoursToDecide))} sub="From request to decision" />
+        </div>
+
+        <div className="home-grid wide">
+          <div>
+            <section className="card panel" id="policy-view">
+              <div className="panel-head"><h2>Policy view</h2><Link className="small" to={`/app/policies?${q}&tab=dashboard`}>Full policy dashboard</Link></div>
+              {dataError ? <p className="muted small">The policy figures could not be loaded.</p> : !profiles ? <Loading lines={4} />
+                : rows.length === 0 ? (
+                  <EmptyTable columns={['Policy', 'Engagements', 'Exceptions', 'Spend exposure', 'Approvals']}>
+                    <strong>No policies yet.</strong> <Link to={`/app/policies?${q}`}>Define your policy</Link> to govern engagements.
+                  </EmptyTable>
+                ) : (
+                  <div className="compare-scroll">
+                    <table className="data">
+                      <thead><tr>{header('name', 'Policy')}<th scope="col">Status</th>{header('engagements', 'Engagements')}{header('exceptions', 'Exceptions')}
+                        {header('exposure', 'Spend exposure')}{header('pending', 'Approvals pending')}{header('wait', 'Bottleneck')}</tr></thead>
+                      <tbody>{rows.map((p) => (
+                        <tr key={p.profileId}>
+                          <td><Link to={`/app/policies?${q}`}><strong>{p.name}</strong></Link>
+                            <div className="muted small">{titleCase(p.riskLevel)} risk{p.activeVersion ? ` · v${p.activeVersion}` : ''}</div></td>
+                          <td><span className={`badge ${p.status === 'ACTIVE' ? 'green' : ''}`}>{titleCase(p.status)}</span></td>
+                          <td>{p.engagements.toLocaleString()}</td>
+                          <td>{p.exceptions.requested ? <Link to={`/app/policies?${q}&tab=exceptions`}>{p.exceptions.requested}</Link> : 0}
+                            <span className="muted small"> ({p.exceptions.granted} granted)</span></td>
+                          <td>{moneyText(p.spendExposure)}</td>
+                          <td>{p.approvals.pending ? <Link to={`/app/policies?${q}&tab=approvals`}>{p.approvals.pending}</Link> : 0}
+                            <span className="muted small"> of {p.approvals.requested}</span></td>
+                          <td>{p.bottleneck ? <>Step {p.bottleneck.step} · {titleCase(p.bottleneck.role)}<div className="muted small">median {hoursText(p.bottleneck.medianHoursWait)}</div></> : '—'}</td>
+                        </tr>))}</tbody>
+                    </table>
+                  </div>
+                )}
+              <p className="muted small" style={{ marginTop: 8 }}>Spend exposure is the value of engagements accepted under each policy. Select a policy or a count to drill down.</p>
+            </section>
+
+            <section className="card panel" id="bottlenecks">
+              <div className="panel-head"><h2>Approval bottlenecks</h2><Link className="small" to={`/app/policies?${q}&tab=approvals`}>All approvals</Link></div>
+              {dataError ? <p className="muted small">The approval figures could not be loaded.</p> : !profiles ? <Loading lines={2} />
+                : bottlenecks.length === 0 ? <p className="muted small" style={{ margin: 0 }}>No approval is waiting on anyone. Nothing is held up.</p> : (
+                  <ul className="pro-list">{bottlenecks.map((p) => (
+                    <li key={p.profileId}><Icon name="clock" /><span><Link to={`/app/policies?${q}&tab=approvals`}><strong>{p.name}</strong></Link>
+                      <br /><span className="muted small">Step {p.bottleneck!.step} · {titleCase(p.bottleneck!.role)} · median wait {hoursText(p.bottleneck!.medianHoursWait)}</span></span>
+                      <span className="badge warn">{p.bottleneck!.pending} waiting</span></li>))}</ul>
+                )}
+            </section>
+          </div>
+
+          <aside>
+            <section className="card panel attention" id="actions">
+              <div className="panel-head"><h2>Pending Admin Actions</h2></div>
+              {dataError ? <p className="muted small" style={{ margin: 0 }}>Unavailable until the policy figures load.</p> : !figures ? <Loading lines={2} /> : <ActionList actions={actions} empty="You're all caught up." />}
+            </section>
+
+            <section className="card panel" id="controls">
+              <div className="panel-head"><h2><Icon name="gear" /> Enterprise controls</h2></div>
+              <ul className="quick-actions">
+                <li><Link to={`/app/policies?${q}`}><Icon name="contract" /><span>Policies, approvals and exceptions</span><span aria-hidden>›</span></Link></li>
+                <li><Link to="/app/enterprise/team"><Icon name="team" /><span>Roles and team</span><span aria-hidden>›</span></Link></li>
+                <li><Link to="/app/enterprise/structure"><Icon name="building" /><span>Structure and budgets</span><span aria-hidden>›</span></Link></li>
+                <li><Link to="/app/organisation?tab=entities"><Icon name="contract" /><span>Legal entities</span><span aria-hidden>›</span></Link></li>
+                {isAdmin && <li><Link to="/app/organisation?tab=security"><Icon name="lock" /><span>Single sign-on and API keys</span><span aria-hidden>›</span></Link></li>}
+                {isAdmin && <li><Link to="/app/webhooks"><Icon name="gear" /><span>Webhooks</span><span aria-hidden>›</span></Link></li>}
+              </ul>
+            </section>
+
+            <section className="card panel" id="exports">
+              <div className="panel-head"><h2>Exports</h2></div>
+              <p className="muted small">The policy view as CSV, and the hash-chained audit log as PDF, CSV or JSON.</p>
+              <div className="row" style={{ gap: 6 }}>
+                <button type="button" className="btn btn-secondary btn-sm" disabled={!profiles?.length || exporting} onClick={() => { exportPolicyCsv() }}>
+                  <Icon name="download" /> Policy view CSV</button>
+                {canAudit ? <AuditExportButtons orgId={org.id} fileStem={`ORG-${org.id.slice(0, 8).toUpperCase()}`} onError={setError} />
+                  : <span className="muted small">The audit log export is for Org Admins and Legal Reviewers.</span>}
+              </div>
+            </section>
+
+            <section className="card panel" id="engagement-links">
+              <div className="panel-head"><h2>Engagements &amp; payments</h2></div>
+              <ul className="quick-actions">
+                <li><Link to="/app/engagements"><Icon name="briefcase" /><span>Engagements</span><span aria-hidden>›</span></Link></li>
+                <li><Link to="/app/requests"><Icon name="request" /><span>Requests and proposals</span><span aria-hidden>›</span></Link></li>
+                <li><Link to="/app/payments"><Icon name="wallet" /><span>Payments and protection</span><span aria-hidden>›</span></Link></li>
+                <li><Link to="/app/find"><Icon name="search" /><span>Find professionals</span><span aria-hidden>›</span></Link></li>
+              </ul>
+            </section>
+          </aside>
+        </div>
+      </>}
+    </>
+  )
+}

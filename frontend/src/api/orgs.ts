@@ -107,7 +107,7 @@ export interface Firm {
 
 export interface FirmMoney { currency: string; heldMinor: number; releasedMinor: number }
 export interface FirmProfessionalWork {
-  professionalId: string; displayName: string; headline: string | null; published: boolean; tier: 'A' | 'B' | 'C'
+  professionalId: string; displayName: string; headline: string | null; published: boolean; tier: 'A' | 'B' | 'C'; availability?: string
   openRequests: number; awaitingSignature: number; activeContracts: number; completedContracts: number; money: FirmMoney[]
 }
 /** Counts and money totals only: buyers, contract terms and documents stay with each professional. */

@@ -5,6 +5,7 @@ import { authApi, type AccountType } from '../api/auth'
 import { ApiError } from '../api/client'
 import { useAuth } from '../auth/AuthContext'
 import { AuthLayout, ErrorAlert, Field, PasswordInput, PasswordStrength } from '../components/ui'
+import { SocialSignUpOptions } from '../components/SingleSignOn'
 import { dashboardPath } from '../staffRoutes'
 import { safeNextPath } from '../auth/guards'
 import { growthApi } from '../api/professional'
@@ -21,6 +22,8 @@ export const COUNTRIES: [string, string][] = [
   ['IE', 'Ireland'], ['DE', 'Germany'], ['FR', 'France'], ['NL', 'Netherlands'], ['SG', 'Singapore'],
   ['AE', 'United Arab Emirates'], ['ZA', 'South Africa'],
 ]
+
+const groupOf = (t: AccountType): 'hire' | 'offer' => (t === 'BUYER' || t === 'ENTERPRISE' ? 'hire' : 'offer')
 
 function isAccountType(v: string | null): v is AccountType {
   return !!v && TYPES.some((t) => t.value === v)
@@ -57,6 +60,8 @@ export default function Join() {
   const navigate = useNavigate()
 
   const [type, setType] = useState<AccountType>(isAccountType(initial) ? initial : 'BUYER')
+  // First step: hire or offer services. A deep link that already names a type skips straight to the form.
+  const [group, setGroup] = useState<'hire' | 'offer' | null>(isAccountType(initial) ? groupOf(initial) : null)
   const [form, setForm] = useState({ displayName: '', email: '', password: '', country: 'US', organizationName: '',
     referralCode: (params.get('ref') ?? params.get('code') ?? '').slice(0, 40) })
   const [showCode, setShowCode] = useState(!!(params.get('ref') ?? params.get('code')))
@@ -114,14 +119,42 @@ export default function Join() {
     }
   }
 
+  const foot = <p className="auth-foot">Already have an account? <Link to={safeNext ? `/login?next=${encodeURIComponent(safeNext)}` : '/login'}>Sign in</Link></p>
+
+  if (!group) {
+    const pick = (g: 'hire' | 'offer') => { setGroup(g); setType(g === 'hire' ? 'BUYER' : 'PROFESSIONAL') }
+    return (
+      <AuthLayout>
+        <h1>Create your Zoikorum account</h1>
+        <p className="sub">What brings you here? You can add the other role later.</p>
+        <div className="type-grid" role="group" aria-label="What brings you here">
+          <button type="button" className="type-card" onClick={() => pick('hire')}>
+            <span className="t">I want to hire</span>
+            <span className="d">Find verified professionals, as an individual or a business.</span>
+          </button>
+          <button type="button" className="type-card" onClick={() => pick('offer')}>
+            <span className="t">I want to offer services</span>
+            <span className="d">Join as an independent professional or as a firm.</span>
+          </button>
+        </div>
+        {foot}
+      </AuthLayout>
+    )
+  }
+
   return (
     <AuthLayout>
       <h1>Create your Zoikorum account</h1>
-      <p className="sub">Choose how you'll use Zoikorum. You can add the Buyer or Professional role later.</p>
+      <p className="sub">
+        {group === 'hire' ? 'Hiring: choose Buyer or Enterprise.' : 'Offering services: choose Individual or Firm.'}{' '}
+        <button type="button" className="link-btn small" style={{ display: 'inline', padding: 0 }}
+          onClick={() => setGroup(null)}>Change</button>
+      </p>
       <ErrorAlert error={error} />
+      {group === 'hire' && type === 'BUYER' && <SocialSignUpOptions />}
       <form onSubmit={submit} noValidate>
         <div className="type-grid" role="radiogroup" aria-label="Account type">
-          {TYPES.map((t) => (
+          {TYPES.filter((t) => groupOf(t.value) === group).map((t) => (
             <button type="button" key={t.value} role="radio" aria-checked={type === t.value}
               className="type-card" onClick={() => setType(t.value)}>
               <span className="t">{t.title}{type === t.value && <span aria-hidden>✓</span>}</span>
@@ -176,7 +209,7 @@ export default function Join() {
         {fieldErrors.terms && <p className="small" style={{ color: 'var(--zk-danger)', marginTop: -10 }}>{fieldErrors.terms}</p>}
         <button className="btn btn-primary btn-block" disabled={busy}>{busy ? 'Creating account…' : 'Create account'}</button>
       </form>
-      <p className="auth-foot">Already have an account? <Link to={safeNext ? `/login?next=${encodeURIComponent(safeNext)}` : '/login'}>Sign in</Link></p>
+      {foot}
     </AuthLayout>
   )
 }

@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { useAuth } from '../auth/AuthContext'
 import { AuthLayout } from '../components/ui'
 
 const ROLES = [
@@ -12,6 +13,7 @@ const ROLES = [
 
 /** Enterprise entry point: sign in or create an enterprise account. */
 export default function EnterpriseAccess() {
+  const { user } = useAuth()
   return (
     <AuthLayout
       aside={
@@ -30,7 +32,13 @@ export default function EnterpriseAccess() {
         Engage external professionals under your own policy profiles, approval chains and audit exports,
         before work begins.
       </p>
-      <div className="grid-cards" style={{ gridTemplateColumns: '1fr' }}>
+      {user && (
+        <div className="alert alert-info">
+          You are signed in as {user.email}. An enterprise account is a separate account: sign out and create it with a work email,
+          or ask your organization admin to invite you to an existing one.
+        </div>
+      )}
+      {!user && <div className="grid-cards" style={{ gridTemplateColumns: '1fr' }}>
         <div className="card panel" style={{ boxShadow: 'none' }}>
           <h3>My organization already uses Zoikorum</h3>
           <p className="muted small">Sign in with your work email. Your role decides what you can see and approve.</p>
@@ -41,7 +49,7 @@ export default function EnterpriseAccess() {
           <p className="muted small">You become the Enterprise Admin. Two-step verification is required for admins.</p>
           <Link className="btn btn-secondary" to="/join?type=ENTERPRISE">Create enterprise account</Link>
         </div>
-      </div>
+      </div>}
       <p className="small muted">
         Need a procurement pack or a security review first? Mention it when you create the account and our team will follow up.
       </p>

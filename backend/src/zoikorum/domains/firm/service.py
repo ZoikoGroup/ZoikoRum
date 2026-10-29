@@ -25,6 +25,7 @@ from zoikorum.domains.proposal import facade as proposal_facade
 from zoikorum.domains.trust import facade as trust_facade
 from zoikorum.domains.verification import facade as verification_facade
 from zoikorum.shared import clock
+from zoikorum.shared import validation as rules
 from zoikorum.shared.auth import Actor, AuthStrength, FirmRole
 from zoikorum.shared.crypto import sha256_hex
 from zoikorum.shared.errors import Conflict, Forbidden, NotFound, PolicyBlocked, StepUpRequired, ValidationFailed, VersionConflict
@@ -141,12 +142,20 @@ async def overview(session: AsyncSession, actor: Actor, firm_id: uuid.UUID) -> F
             t["released"] += v["released"]
         rows.append(FirmProfessionalWork(
             professionalId=p.id, displayName=p.display_name, headline=p.headline, published=p.status == "PUBLISHED",
-            tier=trust[p.id].tier if p.id in trust else "C", openRequests=open_requests.get(p.id, 0), awaitingSignature=c["awaitingSignature"], activeContracts=c["active"],
+            tier=trust[p.id].tier if p.id in trust else "C", availability=p.availability, openRequests=open_requests.get(p.id, 0), awaitingSignature=c["awaitingSignature"], activeContracts=c["active"],
             completedContracts=c["completed"], money=_money(money.get(p.id, {}))))
     return FirmOverviewOut(
         professionals=rows, openRequests=sum(r.openRequests for r in rows), awaitingSignature=sum(r.awaitingSignature for r in rows),
         activeContracts=sum(r.activeContracts for r in rows), completedContracts=sum(r.completedContracts for r in rows),
         money=_money(totals))
+
+
+def _valid_website(value: str | None) -> str | None:
+    """Buyers only see a web address that passes today's rule; older saved values that do not are left out."""
+    try:
+        return rules.website_url(value) if value else None
+    except ValueError:
+        return None
 
 
 async def public_firm(session: AsyncSession, firm_id: uuid.UUID) -> FirmPageOut:
@@ -166,7 +175,7 @@ async def public_firm(session: AsyncSession, firm_id: uuid.UUID) -> FirmPageOut:
     summary = await firm_facade.get_firm(session, firm.id)
     return FirmPageOut(
         id=firm.id, name=firm.trading_name or firm.legal_name, legalName=firm.legal_name, hqCountry=firm.hq_country,
-        sizeBand=firm.size_band, primaryCategory=firm.primary_category, website=firm.website,
+        sizeBand=firm.size_band, primaryCategory=firm.primary_category, website=_valid_website(firm.website),
         verified=firm.status == "VERIFIED", hasVerifiedRepresentative=bool(summary and summary.has_verified_representative),
         verifiedCredentials=sorted(c.label for c in checks if c.status == "VERIFIED" and c.verification_type != "FIRM_REGISTRATION"),
         professionals=members, offerings=await published_offerings(session, firm.id))
@@ -419,6 +428,17 @@ async def _check_offering(session: AsyncSession, firm_id: uuid.UUID, specializat
     return bool((await marketplace_facade.get_specializations(session, [specialization]))[specialization].regulated)
 
 
+REP_BLOCKER = "An authorized representative must verify their identity."
+
+
+def publish_error_code(regulated: bool, blockers: list[str]) -> str:
+    """Error code for a refused publish. When the missing verified representative is the only gap on a regulated offering
+    it gets its own code; otherwise the licensed-member code (its message lists every reason)."""
+    if not regulated:
+        return "OFFERING_NOT_PUBLISHABLE"
+    return "REGULATED_OFFERING_NEEDS_VERIFIED_REPRESENTATIVE" if blockers == [REP_BLOCKER] else "REGULATED_OFFERING_NEEDS_LICENSED_MEMBER"
+
+
 async def offering_blockers(session: AsyncSession, firm: Firm, o: FirmOffering) -> list[str]:
     """Why this offering cannot be (or stay) published; empty when it can."""
     if firm.status == "SUSPENDED":
@@ -432,7 +452,7 @@ async def offering_blockers(session: AsyncSession, firm: Firm, o: FirmOffering) 
     if firm.status != "VERIFIED":
         reasons.append("The firm's registration must be verified before it offers regulated work.")
     if not (summary and summary.has_verified_representative):
-        reasons.append("An authorized representative must verify their identity.")
+        reasons.append(REP_BLOCKER)
     trust = await trust_facade.get_trust_many(session, ids)
     if not any(licensed_member(members[i], trust.get(i), o.specialization) for i in ids):
         reasons.append("At least one delivering member must be a verified, licensed professional (Green: fully verified, credentials "
@@ -494,7 +514,7 @@ async def publish_offering(session: AsyncSession, actor: Actor, firm_id: uuid.UU
     blockers = await offering_blockers(session, firm, o)
     if blockers:
         raise PolicyBlocked(" ".join(blockers), extra={"reasons": blockers},
-                            code="REGULATED_OFFERING_NEEDS_LICENSED_MEMBER" if o.regulated else "OFFERING_NOT_PUBLISHABLE")
+                            code=publish_error_code(o.regulated, blockers))
     o.status, o.published_at, o.published_by, o.unpublished_reason = "PUBLISHED", clock.now(), actor.identity_id, None
     _evt(session, E.FIRM_OFFERING_PUBLISHED, firm, offeringId=o.id, title=o.title, specialization=o.specialization,
          regulated=o.regulated, deliveredBy=list(o.delivered_by), publishedBy=actor.identity_id)

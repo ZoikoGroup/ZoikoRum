@@ -147,10 +147,10 @@ function SupportRequests() {
       <div className="panel-head"><h2>Your help requests</h2>
         {!asking && <button className="btn btn-primary btn-sm" onClick={() => { setSentRef(null); setSentQ(null); setAsking(true) }}>Ask for help</button>}</div>
       <ErrorAlert error={error} />
-      {sentRef && <div className="alert alert-success" role="status">Your request <code>{sentRef}</code> was sent. Our team replies within one business day;
-        the conversation with our reply is shown at the top of this page and in your list below.
+      {sentRef && <div className="alert alert-success" role="status">We received your request. Reference <code>{sentRef}</code>. Our team will reply here and by email, usually within one business day.
+        Nothing has been resolved yet.
         {sentQ && <div style={{ marginTop: 8 }}><strong>Your question:</strong> {sentQ.subject}<div className="small">{sentQ.message}</div></div>}
-        <div className="small" style={{ marginTop: 8 }}><strong>Status: received.</strong> We have received your request. Our answer will appear here, and in your inbox, once we reply.</div></div>}
+        <div className="small" style={{ marginTop: 8 }}><strong>Status: Open (received).</strong> It stays open until our team replies and the request is marked resolved.</div></div>}
       {asking && <form onSubmit={(e) => { e.preventDefault(); void submit() }} style={{ marginBottom: 16 }}>
         {params.get('ref') && <p className="muted small">Error reference <code>{params.get('ref')}</code> will be attached, so our team can find what happened.</p>}
         <div className="field">

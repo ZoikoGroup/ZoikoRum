@@ -82,7 +82,7 @@ class ReplayPayload(BaseModel):
 
 class ExportPayload(BaseModel):
     scope: dict[str, Any] = Field(default_factory=dict)  # tenantId, objectType, objectId, correlationId, since, until
-    format: Literal["json", "csv"] = "json"
+    format: Literal["json", "csv", "pdf"] = "json"
     exportId: uuid.UUID | None = None  # set when the request is recorded
 
 

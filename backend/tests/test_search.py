@@ -30,7 +30,7 @@ async def publish(client, make_user, drain, name, *, headline, primary, secondar
     await client.put("/v1/professionals/me/photo", headers=u.h, json=PHOTO)
     await client.patch("/v1/professionals/me", headers=u.h, json={
         "headline": headline, "bio": BIO, "engagementTypes": ["PROJECT"], "deliveryModes": ["REMOTE"],
-        "pricingModels": ["FIXED"], "yearsExperienceBand": "6-10", "legalName": f"{name.title()} Example"})
+        "pricingModels": ["FIXED"], "yearsExperienceBand": "6-10", "legalName": f"{name.translate(str.maketrans('0123456789', 'abcdefghij')).title()} Example"})
     await client.put("/v1/professionals/me/specializations", headers=u.h, json={"primary": primary, "secondary": list(secondary)})
     await client.put("/v1/professionals/me/jurisdictions", headers=u.h,
                      json={"served": list(served), "licensed": list(licensed), "crossBorderAcknowledged": True})

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { auditApi, exportAuditCsv, type AuditRecord } from '../../api/audit'
+import { auditApi, type AuditRecord } from '../../api/audit'
+import { AuditExportButtons } from '../../components/AuditExport'
 import { formatMoney, ORG_ROLE_INFO, orgApi, type BillingContact, type Invitation, type LegalEntity, type LegalEntityInput, type Organization, type OrgMember, type OrgRole } from '../../api/orgs'
 import { useAuth } from '../../auth/AuthContext'
 import { ago, ActivityList } from '../../components/activity'
@@ -36,6 +37,7 @@ export default function OrganisationPage() {
   const [editing, setEditing] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<unknown>(null)
+  const [missing, setMissing] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -45,7 +47,7 @@ export default function OrganisationPage() {
         found = orgs.find((o) => o.orgType !== 'INDIVIDUAL') ?? orgs[0]
         if (!found) await new Promise((r) => setTimeout(r, 800))
       }
-      if (!found) return
+      if (!found) { setMissing(true); return }
       setOrg(found)
       const admin = found.myRoles.includes('ORG_ADMIN')
       const [m, b] = await Promise.all([orgApi.members(found.id), orgApi.billingContacts(found.id)])
@@ -61,7 +63,8 @@ export default function OrganisationPage() {
   useEffect(() => { load() }, [load])
 
   if (!user) return null
-  if (!org) return error ? <ErrorAlert error={error} /> : <Loading />
+  if (!org) return error ? <ErrorAlert error={error} /> : missing
+    ? <p className="muted">Your organisation is still being set up. Refresh in a moment.</p> : <Loading />
   const isAdmin = org.myRoles.includes('ORG_ADMIN')
   const canBill = isAdmin || org.myRoles.includes('BUDGET_OWNER')
   const isTeam = org.orgType !== 'INDIVIDUAL'
@@ -167,14 +170,7 @@ export default function OrganisationPage() {
       {tab === 'security' && (
         <section className="card panel">
           <div className="panel-head"><h2>Security &amp; audit</h2>
-            {activity && <button className="btn btn-secondary btn-sm" onClick={async () => {
-              try {
-                const csv = await exportAuditCsv(org.id)
-                const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
-                Object.assign(document.createElement('a'), { href: url, download: `${orgCode}-audit.csv` }).click()
-                URL.revokeObjectURL(url)
-              } catch (err) { setError(err) }
-            }}><Icon name="download" /> Export audit log (CSV)</button>}
+            {activity && <AuditExportButtons orgId={org.id} fileStem={orgCode} onError={setError} />}
             <ProcurementPackButton onError={setError} /></div>
           <ul className="why">
             <li>Org Admins must use two-step verification; sensitive changes ask for a fresh code.</li>

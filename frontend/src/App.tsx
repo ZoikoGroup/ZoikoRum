@@ -62,7 +62,7 @@ const Security = lazy(() => import('./pages/Security'))
 const ComparePage = lazy(() => import('./pages/customer/ComparePage'))
 const SavedBuyersPage = lazy(() => import('./pages/SavedBuyers'))
 const BuyerHome = lazy(() => import('./pages/WorkspaceHome').then((m) => ({ default: m.BuyerHome })))
-const EnterpriseHome = lazy(() => import('./pages/WorkspaceHome').then((m) => ({ default: m.EnterpriseHome })))
+const EnterpriseHome = lazy(() => import('./pages/EnterprisePages').then((m) => ({ default: m.EnterpriseDashboard })))
 const CustomerVerification = lazy(() => import('./pages/customer/CustomerVerification'))
 const FindProfessionals = lazy(() => import('./pages/customer/FindProfessionals'))
 const HelpPage = lazy(() => import('./pages/customer/Help'))
@@ -109,7 +109,7 @@ export default function App() {
           <Route path="/login" element={<GuestOnly><SignIn /></GuestOnly>} />
           <Route path="/staff/login" element={<GuestOnly><SignIn staff key="staff" /></GuestOnly>} />
           <Route path="/join" element={<GuestOnly><Join /></GuestOnly>} />
-          <Route path="/enterprise" element={<GuestOnly><EnterpriseAccess /></GuestOnly>} />
+          <Route path="/enterprise" element={<EnterpriseAccess />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/confirm-email" element={<ConfirmEmail />} />
@@ -136,7 +136,7 @@ export default function App() {
             <Route path="professional/requests/:id" element={<RequireRole any={['PROFESSIONAL']}><ProfessionalRequestDetail /></RequireRole>} />
             <Route path="professional/offerings" element={<RequireRole any={['PROFESSIONAL']}><OfferingsPage /></RequireRole>} />
             <Route path="professional/verification" element={<RequireRole any={['PROFESSIONAL']}><ProfessionalVerificationPage /></RequireRole>} />
-            <Route path="firm" element={<RequireRole any={['FIRM_ADMIN']}><FirmDashboard /></RequireRole>} />
+            <Route path="firm" element={<RequireRole any={['FIRM_ADMIN', 'PROFESSIONAL']}><FirmDashboard /></RequireRole>} />
             <Route path="firm/team" element={<RequireRole any={['FIRM_ADMIN', 'PROFESSIONAL']}><FirmTeamPage /></RequireRole>} />
             <Route path="firm/profile" element={<RequireRole any={['FIRM_ADMIN', 'PROFESSIONAL']}><FirmProfilePage /></RequireRole>} />
             <Route path="firm/verification" element={<RequireRole any={['FIRM_ADMIN']}><FirmVerificationPage /></RequireRole>} />

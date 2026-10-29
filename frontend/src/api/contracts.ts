@@ -263,7 +263,7 @@ export const contractApi = {
   pause: (id: string, reason?: string) => api<Contract>(`${C}/${id}/pause`, { method: 'POST', body: { reason: reason || null } }),
   resume: (id: string) => api<Contract>(`${C}/${id}/resume`, { method: 'POST' }),
   files: (id: string) => api<EngagementFile[]>(`${C}/${id}/all-files`),
-  evidencePack: (id: string, format: 'pdf' | 'json') => api<Blob>(`${C}/${id}/evidence-pack`, { query: { format }, blob: true }),
+  evidencePack: (id: string, format: 'pdf' | 'csv' | 'json') => api<Blob>(`${C}/${id}/evidence-pack`, { query: { format }, blob: true }),
   terminate: (id: string, reason: string, mutual: boolean) =>
     api<Contract>(`${C}/${id}/terminate`, { method: 'POST', body: { reason, mutual }, headers: idem() }),
   answerTermination: (id: string, agree: boolean, note?: string) =>

@@ -976,6 +976,7 @@
  ],
  "FirmProfessionalWork": [
   "activeContracts",
+  "availability",
   "awaitingSignature",
   "completedContracts",
   "displayName",

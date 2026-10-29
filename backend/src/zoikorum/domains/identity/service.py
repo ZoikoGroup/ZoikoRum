@@ -613,13 +613,29 @@ def _derived_personas(links: list[IdentityLink]) -> set[str]:
     return out
 
 
-async def recompute_personas(session: AsyncSession, identity_id: uuid.UUID) -> None:
+def _pending_admin_personas(stored: set[str], links: list[IdentityLink]) -> set[str]:
+    """Admin personas stored at signup whose link row has not arrived yet (it is created by an outbox event).
+    Kept until a link of that family exists, so another link event cannot drop the persona (and mandatory MFA with it)."""
+    has_firm = any(link.link_type == "FIRM_MEMBER" for link in links)
+    has_org = any(link.link_type == "ORG_MEMBER" and link.target_kind in ("ENTERPRISE", "BUSINESS") for link in links)
+    out: set[str] = set()
+    if Persona.FIRM_ADMIN in stored and not has_firm:
+        out.add(Persona.FIRM_ADMIN)
+    if Persona.ENTERPRISE_ADMIN in stored and not has_org:
+        out.add(Persona.ENTERPRISE_ADMIN)
+    return out
+
+
+async def recompute_personas(session: AsyncSession, identity_id: uuid.UUID, *, keep_pending_admin: bool = True) -> None:
+    """keep_pending_admin=False is for link removal: the person has positively left, so nothing is pending."""
     identity = await session.get(Identity, identity_id, with_for_update=True)
     if identity is None:
         return
     links = await _links(session, identity_id)
-    self_chosen = set(identity.personas or []) & Persona.SELF_SERVICE
-    personas = sorted(self_chosen | _derived_personas(links))
+    stored = set(identity.personas or [])
+    self_chosen = stored & Persona.SELF_SERVICE
+    pending = _pending_admin_personas(stored, links) if keep_pending_admin else set()
+    personas = sorted(self_chosen | _derived_personas(links) | pending)
     if personas != sorted(identity.personas or []):
         added = set(personas) - set(identity.personas or [])
         identity.personas = personas
@@ -642,7 +658,7 @@ async def remove_link(session: AsyncSession, identity_id: uuid.UUID, link_type: 
     if link is not None:
         await session.delete(link)
         await session.flush()
-        await recompute_personas(session, identity_id)
+        await recompute_personas(session, identity_id, keep_pending_admin=False)
 
 
 async def get_me(session: AsyncSession, actor: Actor) -> IdentityOut:
@@ -685,6 +701,9 @@ async def remove_persona(session: AsyncSession, actor: Actor, account_type: str,
         raise Forbidden("Firm and Enterprise roles are managed through an organization")
     if persona not in identity.personas:
         raise NotFound("You do not hold that role")
+    if persona in _derived_personas(await _links(session, identity.id)):
+        raise Conflict("This role comes with your firm membership. Leave the firm team to drop it.",
+                       code="ROLE_FROM_MEMBERSHIP")
     if len(identity.personas) < 2:
         raise Conflict("This is your only role; it cannot be removed", code="LAST_ROLE")
     identity.personas = sorted(p for p in identity.personas if p != persona)

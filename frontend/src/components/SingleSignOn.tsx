@@ -32,6 +32,23 @@ export function SsoSignInOptions({ email }: { email: string }) {
   )
 }
 
+/** On the sign-up page: "Continue with Google / Microsoft" (shown only where the platform has them set up). A new person
+    gets a Buyer account; the other role can be added later under Profile & roles. */
+export function SocialSignUpOptions() {
+  const [providers, setProviders] = useState<{ google: boolean; microsoft: boolean }>({ google: false, microsoft: false })
+  const [error, setError] = useState<unknown>(null)
+  useEffect(() => { api<{ google: boolean; microsoft: boolean }>('/v1/auth/sso/providers', { auth: false }).then(setProviders).catch(() => {}) }, [])
+  if (!providers.google && !providers.microsoft) return null
+  return (
+    <div style={{ display: 'grid', gap: 8, margin: '12px 0' }}>
+      <ErrorAlert error={error} />
+      {providers.google && <button type="button" className="btn btn-secondary btn-block" onClick={() => go({ provider: 'google' }).catch(setError)}>Sign up with Google</button>}
+      {providers.microsoft && <button type="button" className="btn btn-secondary btn-block" onClick={() => go({ provider: 'microsoft' }).catch(setError)}>Sign up with Microsoft</button>}
+      <div className="divider">or with your email</div>
+    </div>
+  )
+}
+
 /** /sso/callback: the identity provider sends the browser back here with a code to exchange. */
 export function SsoCallbackPage() {
   const [params] = useSearchParams()

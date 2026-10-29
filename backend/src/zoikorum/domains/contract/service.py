@@ -1960,6 +1960,25 @@ async def evidence_pack(session: AsyncSession, actor: Actor, contract_id: uuid.U
                         "authStrength": s.authStrength, "signedAt": s.signedAt.isoformat()} for s in out.signatures],
         "milestones": [{"sequence": m.sequence, "title": m.title, "amountMinor": m.amount.amountMinor, "status": m.status,
                         "acceptedAt": m.acceptedAt.isoformat() if m.acceptedAt else None} for m in out.milestones],
+        "request": await proposal_facade.assistance_brief(session, c.request_id) or {},
+        "proposal": _proposal_summary(await proposal_facade.get_proposal(session, c.proposal_id)),
+        "terms": out.terms,
+        "changeOrders": [{"id": str(o.id), "type": o.type, "proposedBy": o.proposerParty, "status": o.status, "impact": o.impact,
+                          "baseVersion": o.baseContractVersion, "appliedVersion": o.appliedVersion,
+                          "decisionReason": o.decisionReason, "createdAt": o.createdAt.isoformat(),
+                          "decidedAt": o.decidedAt.isoformat() if o.decidedAt else None,
+                          "changes": [{"label": x.label, "before": x.before, "after": x.after} for x in o.preview]}
+                         for o in out.changeOrders],
+        "acceptanceLog": [{"milestone": m.sequence, "milestoneTitle": m.title, "revision": s.revisionNumber,
+                           "submittedAt": s.submittedAt.isoformat(), "note": s.note,
+                           "files": [{"name": f.name, "sha256": f.sha256} for f in s.files],
+                           "deliverables": [{"key": i.deliverableKey, "title": i.title, "criteria": i.acceptanceCriteria}
+                                            for i in s.items],
+                           "outcome": s.review.outcome if s.review else None,
+                           "reviewedAt": s.review.reviewedAt.isoformat() if s.review else None,
+                           "verdicts": [{"key": v.deliverableKey, "verdict": v.verdict, "comment": v.comment}
+                                        for v in (s.review.verdicts if s.review else [])]}
+                          for m in out.milestones for s in m.submissions],
         "escrowLedger": await escrow_facade.ledger_for_contract(session, c.id),
         "disputes": await dispute_facade.disputes_for_contract(session, c.id),
         "files": [{k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in f.items() if k != "url"}
@@ -2007,8 +2026,21 @@ async def evidence_pack(session: AsyncSession, actor: Actor, contract_id: uuid.U
                                                      f"document {v['documentSha256'][:16]}…") for v in record["versions"]]),
             pdf.Section("Signatures", rows=[(f"{s['party'].title()} (v{s['version']})", f"{s['signer']} · {s['signedAt'][:19]}"
                                              f" · {s['authStrength']}") for s in record["signatures"]] or [("—", "Not signed")]),
+            pdf.Section("Request and proposal", rows=[(k.title(), str(v)) for k, v in record["request"].items() if v not in (None, "")]
+                        + [(f"Proposal {k}", str(v)) for k, v in record["proposal"].items()] or [("—", "")]),
             pdf.Section("Milestones", table=[(f"M{m['sequence']} {m['title']} ({m['status'].lower()})", money(m["amountMinor"]))
                                              for m in record["milestones"]], total=("Total", money(c.total_minor))),
+            pdf.Section("Change orders (amendments)", rows=[
+                (f"{o['createdAt'][:10]} {o['type'].replace('_', ' ').lower()} by {o['proposedBy'].lower()}",
+                 f"{o['status'].lower()} · from v{o['baseVersion']}" + (f" to v{o['appliedVersion']}" if o["appliedVersion"] else "")
+                 + "".join(f" · {x['label']}: {x['before']} -> {x['after']}" for x in o["changes"])
+                 + (f" · {o['decisionReason']}" if o["decisionReason"] else "")) for o in record["changeOrders"]] or [("None", "")]),
+            pdf.Section("Deliverables and acceptance log", rows=[
+                (f"M{a['milestone']} delivery {a['revision'] + 1} · {a['submittedAt'][:10]}",
+                 (a["outcome"] or "awaiting review").replace("_", " ").lower()
+                 + "".join(f" · {v['key']} {v['verdict'].replace('_', ' ').lower()}" + (f" ({v['comment']})" if v["comment"] else "")
+                           for v in a["verdicts"])
+                 + (f" · {len(a['files'])} file(s)" if a["files"] else "")) for a in record["acceptanceLog"]] or [("None submitted", "")]),
             pdf.Section("Escrow ledger", table=[(f"{e['at'][:10]} {e['type'].lower()} · {e['account'].lower()}",
                                                  money(e["debitMinor"] or e["creditMinor"])) for e in record["escrowLedger"]]
                         or [("No money has moved", "")]),
@@ -2024,6 +2056,10 @@ async def evidence_pack(session: AsyncSession, actor: Actor, contract_id: uuid.U
                              "below is the SHA-256 of this record and is stored with the download in the audit trail."),
         ])
     return pdf.render(doc), f"{name}.pdf", "application/pdf"
+
+
+def _proposal_summary(p) -> dict:
+    return {"status": p.status, "totalMinor": p.total_minor, "currency": p.currency} if p else {}
 
 
 def _evidence_csv(c: Contract, record: dict, fingerprint: str) -> bytes:
@@ -2050,6 +2086,18 @@ def _evidence_csv(c: Contract, record: dict, fingerprint: str) -> bytes:
         w.writerow(["Signatures", s["signedAt"], s["party"], f"{s['signer']} (v{s['version']}, {s['authStrength']})", s["termsHash"]])
     for m in record["milestones"]:
         w.writerow(["Milestones", m["acceptedAt"] or "", f"M{m['sequence']} {m['title']}", f"{m['status']} · {m['amountMinor']} {c.currency}", ""])
+    for k, v in record["request"].items():
+        w.writerow(["Request", "", k, v if v is not None else "", ""])
+    for k, v in record["proposal"].items():
+        w.writerow(["Proposal", "", k, v, ""])
+    for o in record["changeOrders"]:
+        w.writerow(["Change orders", o["createdAt"], f"{o['type']} by {o['proposedBy']}", f"{o['status']} · v{o['baseVersion']} -> "
+                    f"{o['appliedVersion'] or '-'} · " + "; ".join(f"{x['label']}: {x['before']} -> {x['after']}" for x in o["changes"])
+                    + (f" · {o['decisionReason']}" if o["decisionReason"] else ""), o["id"]])
+    for a in record["acceptanceLog"]:
+        w.writerow(["Acceptance log", a["reviewedAt"] or a["submittedAt"], f"M{a['milestone']} delivery {a['revision'] + 1}",
+                    (a["outcome"] or "AWAITING_REVIEW") + " · " + "; ".join(f"{v['key']} {v['verdict']} {v['comment']}".strip() for v in a["verdicts"])
+                    + " · files: " + ", ".join(f["name"] for f in a["files"]), ", ".join(f["sha256"] for f in a["files"])])
     for e in record["escrowLedger"]:
         w.writerow(["Escrow ledger", e.get("at", ""), e.get("type", ""), f"{e.get('account', '')} · debit {e.get('debitMinor', 0)} · "
                     f"credit {e.get('creditMinor', 0)} {c.currency}", ""])

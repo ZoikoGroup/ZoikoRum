@@ -358,3 +358,26 @@ def test_mfa_switch_skips_step_up_and_staff_mfa_only_when_on(monkeypatch):
     monkeypatch.setattr(auth, "get_settings", lambda: Settings(env="local", dev_skip_mfa=True, _env_file=None))
     actor.require_step_up()
     actor.require_platform_role("PLATFORM_ADMIN")
+
+
+# ---- Firm regulated offerings and admin personas -------------------------------------------------------------
+
+def test_publish_error_code_names_missing_verified_representative():
+    from zoikorum.domains.firm.service import REP_BLOCKER, publish_error_code
+    assert publish_error_code(True, [REP_BLOCKER]) == "REGULATED_OFFERING_NEEDS_VERIFIED_REPRESENTATIVE"
+    assert publish_error_code(True, [REP_BLOCKER, "licence"]) == "REGULATED_OFFERING_NEEDS_LICENSED_MEMBER"
+    assert publish_error_code(False, ["x"]) == "OFFERING_NOT_PUBLISHABLE"
+
+
+def test_pending_admin_persona_is_kept_until_its_link_exists():
+    from zoikorum.domains.identity.service import _derived_personas, _pending_admin_personas
+    from zoikorum.shared.auth import Persona
+    firm_link = SimpleNamespace(link_type="FIRM_MEMBER", target_kind="FIRM", roles=["FIRM_MEMBER"])
+    org_link = SimpleNamespace(link_type="ORG_MEMBER", target_kind="ENTERPRISE", roles=["ORG_ADMIN"])
+    stored = {Persona.FIRM_ADMIN, Persona.ENTERPRISE_ADMIN}
+    # Another link event arrives first: the not-yet-linked admin persona survives.
+    assert _pending_admin_personas(stored, [org_link]) == {Persona.FIRM_ADMIN}
+    assert _pending_admin_personas(stored, []) == stored
+    # Once the firm link exists (as a plain member) the admin persona is decided by its roles: demotion works.
+    assert _pending_admin_personas({Persona.FIRM_ADMIN}, [firm_link]) == set()
+    assert Persona.FIRM_ADMIN not in _derived_personas([firm_link])

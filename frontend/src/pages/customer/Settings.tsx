@@ -8,10 +8,11 @@ import { Icon } from '../../components/dashboard'
 import { PortalHeader, SidePanel, Tabs } from '../../components/portal'
 import { ErrorAlert, Field, useStepUp, Loading } from '../../components/ui'
 import { maskEmail } from '../../lib/maskEmail'
+import { keepText, textError } from '../../lib/validation'
 import { countryName } from '../ProfessionalPages'
 
 type Tab = 'account' | 'security' | 'notifications' | 'privacy' | 'payments' | 'platform' | 'linked'
-const LANGUAGES: [string, string][] = [['en', 'English'], ['en-GB', 'English (UK)'], ['fr', 'Français'], ['de', 'Deutsch'], ['es', 'Español'], ['hi', 'हिन्दी']]
+export const LANGUAGES: [string, string][] = [['en', 'English'], ['en-GB', 'English (UK)'], ['fr', 'Français'], ['de', 'Deutsch'], ['es', 'Español'], ['hi', 'हिन्दी']]
 const TIME_ZONES = ['UTC', 'Europe/London', 'Europe/Berlin', 'America/New_York', 'America/Chicago', 'America/Los_Angeles',
   'Asia/Kolkata', 'Asia/Singapore', 'Asia/Dubai', 'Australia/Sydney', 'Africa/Johannesburg']
 
@@ -77,6 +78,8 @@ function AccountForm({ me, onSaved }: { me: ProfileDetails; onSaved: (p: Profile
   const [f, setF] = useState({ displayName: me.displayName, phone: me.phone ?? '' })
   const [error, setError] = useState<unknown>(null)
   const [phoneError, setPhoneError] = useState('')
+  const [nameShown, setNameShown] = useState(false)
+  const nameError = textError('person', f.displayName)
   const cleanPhone = (v: string) => v.replace(/[\s().-]/g, '')
   // Same rule as the backend: + country code then 7-15 digits, first digit non-zero. Checked on blur/submit only, never while typing.
   const checkPhone = (v: string) => {
@@ -88,16 +91,18 @@ function AccountForm({ me, onSaved }: { me: ProfileDetails; onSaved: (p: Profile
   async function save(e: FormEvent) {
     e.preventDefault()
     setError(null)
-    if (!checkPhone(f.phone)) return
+    setNameShown(true)
+    const phoneOk = checkPhone(f.phone)
+    if (nameError || !phoneOk) return
     const phone = cleanPhone(f.phone)
     try { onSaved(await accountApi.update({ displayName: f.displayName.trim(), ...(phone ? { phone } : {}) })) } catch (err) { setError(err) }
   }
   return (
     <section className="card panel">
       <div className="panel-head"><h2>Account details</h2></div>
-      <form onSubmit={save}>
+      <form onSubmit={save} noValidate>
         <ErrorAlert error={error} />
-        <Field label="Full name" id="s-name"><input id="s-name" className="input" value={f.displayName} onChange={(e) => setF({ ...f, displayName: e.target.value })} required /></Field>
+        <Field label="Full name" id="s-name" error={nameShown ? nameError || undefined : undefined}><input id="s-name" className="input" value={f.displayName} maxLength={200} aria-invalid={nameShown && !!nameError} onBlur={() => setNameShown(true)} onChange={(e) => setF({ ...f, displayName: keepText('person', e.target.value) })} /></Field>
         <Field label="Email" id="s-email" hint="Contact support to change the email you sign in with.">
           <input id="s-email" className="input" value={me.email} disabled /></Field>
         <Field label="Phone (optional)" id="s-phone" hint="With the country code, e.g. +91 98765 43210. Stored encrypted.">

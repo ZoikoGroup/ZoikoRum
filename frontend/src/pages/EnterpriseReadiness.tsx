@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { proApi, type EnterpriseReadiness } from '../api/professional'
 import { PortalHeader } from '../components/portal'
 import { ErrorAlert, Loading, useStepUp } from '../components/ui'
@@ -19,6 +20,7 @@ export function EnterpriseReadinessPage() {
   if (!data) return error ? <ErrorAlert error={error} /> : <Loading />
   const [tone, label] = STATUS[data.status] ?? ['', data.status]
   const canApply = (data.status === 'NONE' || data.status === 'REJECTED' || data.status === 'LAPSED') && data.requirements.every((r) => r.met)
+  const mfaMissing = data.requirements.some((r) => r.key === 'twoStep' && !r.met)
   return (
     <>
       <PortalHeader eyebrow="Professional" title="Enterprise readiness"
@@ -28,10 +30,11 @@ export function EnterpriseReadinessPage() {
       <section className="card panel">
         <div className="panel-head"><h2>Status</h2><span className={`badge ${tone}`}>{label}</span></div>
         {data.decisionReason && <p className="small">{data.decisionReason}</p>}
+        {mfaMissing && <div className="alert alert-warn" role="alert">Two-step sign-in (MFA) is required for Enterprise Ready. <Link to="/app/security">Turn it on in Security</Link> before applying.</div>}
         <h3>Requirements</h3>
         <ul className="checklist">{data.requirements.map((r) => <li key={r.key}><span>{r.label}</span>
           <span className={`badge ${r.met ? 'green' : 'warn'}`}>{r.met ? 'done' : 'to do'}</span></li>)}</ul>
-        <p className="muted small">Verification is under Verification &amp; Trust; two-step sign-in is under Security.</p>
+        <p className="muted small">Verification is under Verification &amp; Trust; two-step sign-in is under <Link to="/app/security">Security</Link>.</p>
       </section>
       {canApply && <section className="card panel">
         <h2>Security statements</h2>

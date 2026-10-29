@@ -181,6 +181,12 @@ class MePatch(BaseModel):
     displayName: str | None = Field(default=None, min_length=1, max_length=200)
     phone: str | None = Field(default=None, max_length=32)  # +country code then 7-15 digits, spaces/dashes ignored; "" clears it
 
+    @field_validator("displayName")
+    @classmethod
+    def _name(cls, v: str | None) -> str | None:
+        from zoikorum.shared.validation import person_name
+        return None if v is None else person_name(v)
+
     @field_validator("phone")
     @classmethod
     def _phone(cls, v: str | None) -> str | None:

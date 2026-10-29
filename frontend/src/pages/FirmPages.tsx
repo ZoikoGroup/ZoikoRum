@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { FIRM_ROLE_INFO, firmApi, formatMoney, type Firm, type FirmMember, type FirmMoney, type FirmOffering, type FirmOverview, type FirmRole,
   type Invitation } from '../api/orgs'
+import { messagingApi } from '../api/messaging'
+import { notificationApi } from '../api/notifications'
 import { taxonomyApi, type TaxonomySpecialization } from '../api/professional'
 import { verificationApi, type VerificationCase } from '../api/verification'
 import { ChecksPanel } from './VerificationPages'
@@ -11,28 +13,36 @@ import { ErrorAlert, Field, useStepUp, Loading } from '../components/ui'
 import { COUNTRIES } from './Join'
 import { TrustLight } from '../components/TrustLight'
 import { lightName } from '../lib/trustLight'
+import { keepRegistration, keepText, registrationError, textError, websiteError } from '../lib/validation'
 
 // eslint-disable-next-line react-refresh/only-export-components
 export function useMyFirm() {
   const [firm, setFirm] = useState<Firm | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<unknown>(null)
+  const alive = useRef(true)
   const reload = useCallback(async () => {
     try {
-      for (let attempt = 0; attempt < 10; attempt++) {  // see useEnterpriseOrg: firm is created by the worker
+      setError(null)
+      for (let attempt = 0; attempt < 10 && alive.current; attempt++) {  // see useEnterpriseOrg: firm is created by the worker
         const found = (await firmApi.mine())[0] ?? null
-        setFirm(found)
+        if (alive.current) setFirm(found)
         if (found) break
         await new Promise((r) => setTimeout(r, 800))
       }
     } catch (err) {
-      setError(err)
+      if (alive.current) setError(err)
     } finally {
-      setLoading(false)
+      if (alive.current) setLoading(false)
     }
   }, [])
-  useEffect(() => { reload() }, [reload])
+  useEffect(() => { alive.current = true; reload(); return () => { alive.current = false } }, [reload])
   return { firm, setFirm, loading, error, reload, isAdmin: !!firm?.myRoles.includes('FIRM_ADMIN') }
+}
+
+/** Shown when the account has no firm to display: the load failed (show why) or the firm is still being created. */
+export function NoFirm({ error }: { error: unknown }) {
+  return <><ErrorAlert error={error} />{!error && <p className="muted">Your firm is still being set up. Refresh in a moment.</p>}</>
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -50,7 +60,7 @@ function FirmRoleBadges({ roles }: { roles: string[] }) {
 }
 
 export function FirmTeamPage() {
-  const { firm, loading, isAdmin, reload: reloadFirm } = useMyFirm()
+  const { firm, loading, error: firmError, isAdmin, reload: reloadFirm } = useMyFirm()
   const { user } = useAuth()
   const [members, setMembers] = useState<FirmMember[]>([])
   const [invites, setInvites] = useState<Invitation[]>([])
@@ -71,7 +81,7 @@ export function FirmTeamPage() {
   }, [firm])
   useEffect(() => { load() }, [load])
   if (loading) return <Loading />
-  if (!firm) return <p className="muted">Your firm is still being set up. Refresh in a moment.</p>
+  if (!firm) return <NoFirm error={firmError} />
   const rep = (identityId: string) => firm.representatives.find((r) => r.identityId === identityId)
   const myRep = user ? rep(user.id) : undefined
 
@@ -207,11 +217,12 @@ export function FirmTeamPage() {
 }
 
 export function FirmProfilePage() {
-  const { firm, setFirm, loading, isAdmin } = useMyFirm()
+  const { firm, setFirm, loading, error: firmError, isAdmin } = useMyFirm()
   const [form, setForm] = useState<Record<string, string>>({})
   const [error, setError] = useState<unknown>(null)
   const [saved, setSaved] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [shown, setShown] = useState<Set<string>>(new Set())  // fields whose error may show (after blur or submit)
 
   // Fill the form from each new version of the firm while rendering (no extra effect pass).
   const [formVersion, setFormVersion] = useState<number | null>(null)
@@ -222,11 +233,23 @@ export function FirmProfilePage() {
       hqCountry: firm.hqCountry, sizeBand: firm.sizeBand ?? '', website: firm.website ?? '',
     })
   }
-  if (loading || !firm) return <Loading />
-  const set = (k: string) => (e: { target: { value: string } }) => { setSaved(false); setForm({ ...form, [k]: e.target.value }) }
+  if (loading) return <Loading />
+  if (!firm) return <NoFirm error={firmError} />
+  const clean: Record<string, (v: string) => string> = { legalName: (v) => keepText('org', v), tradingName: (v) => keepText('org', v),
+    registrationNumber: keepRegistration, website: (v) => v.replace(/\s/g, '') }
+  const set = (k: string) => (e: { target: { value: string } }) => { setSaved(false); setForm({ ...form, [k]: (clean[k] ?? ((v: string) => v))(e.target.value) }) }
+  const errs: Record<string, string> = {
+    legalName: textError('org', form.legalName ?? ''), tradingName: textError('org', form.tradingName ?? '', false),
+    registrationNumber: registrationError(form.registrationNumber ?? ''), website: websiteError(form.website ?? ''),
+    hqCountry: COUNTRIES.some(([c]) => c === form.hqCountry) ? '' : 'Choose a country from the list.',
+  }
+  const errOf = (k: string) => (shown.has(k) ? errs[k] : '') || undefined
+  const blur = (k: string) => () => setShown((s0) => new Set(s0).add(k))
 
   async function save(e: FormEvent) {
     e.preventDefault()
+    setShown(new Set(Object.keys(errs)))
+    if (Object.values(errs).some(Boolean)) { setSaved(false); return }  // show the field errors instead of saving
     setBusy(true)
     setError(null)
     try {
@@ -247,20 +270,21 @@ export function FirmProfilePage() {
         <p className="muted" style={{ margin: 0 }}>Registration details used for firm verification. <FirmStatusBadge status={firm.status} /></p></div></div>
       <ErrorAlert error={error} />
       {saved && <div className="alert alert-success" role="status">Firm profile saved.</div>}
-      <form className="card panel" style={{ maxWidth: 680 }} onSubmit={save}>
+      <form className="card panel" style={{ maxWidth: 680 }} onSubmit={save} noValidate>
         <fieldset disabled={!isAdmin} style={{ border: 0, padding: 0, margin: 0 }}>
-          <Field label="Registered legal name" id="f-legal" hint="Changing this restarts firm verification.">
-            <input id="f-legal" className="input" value={form.legalName ?? ''} onChange={set('legalName')} />
+          <Field label="Registered legal name" id="f-legal" hint="Changing this restarts firm verification." error={errOf('legalName')}>
+            <input id="f-legal" className="input" value={form.legalName ?? ''} onChange={set('legalName')} onBlur={blur('legalName')} maxLength={200} aria-invalid={!!errOf('legalName')} />
           </Field>
-          <Field label="Trading name (optional)" id="f-trading">
-            <input id="f-trading" className="input" value={form.tradingName ?? ''} onChange={set('tradingName')} />
+          <Field label="Trading name (optional)" id="f-trading" error={errOf('tradingName')}>
+            <input id="f-trading" className="input" value={form.tradingName ?? ''} onChange={set('tradingName')} onBlur={blur('tradingName')} maxLength={200} aria-invalid={!!errOf('tradingName')} />
           </Field>
-          <Field label="Company registration number" id="f-reg" hint="As shown on your incorporation documents.">
-            <input id="f-reg" className="input" value={form.registrationNumber ?? ''} onChange={set('registrationNumber')} />
+          <Field label="Company registration number" id="f-reg" hint="Letters, digits, hyphen and slash, e.g. SC123456." error={errOf('registrationNumber')}>
+            <input id="f-reg" className="input" value={form.registrationNumber ?? ''} onChange={set('registrationNumber')} onBlur={blur('registrationNumber')} maxLength={30} aria-invalid={!!errOf('registrationNumber')} />
           </Field>
           <div className="row">
-            <Field label="Headquarters country" id="f-country">
-              <select id="f-country" className="input" value={form.hqCountry ?? ''} onChange={set('hqCountry')}>
+            <Field label="Headquarters country" id="f-country" error={errOf('hqCountry')}>
+              <select id="f-country" className="input" value={form.hqCountry ?? ''} onChange={set('hqCountry')} onBlur={blur('hqCountry')}>
+                {!COUNTRIES.some(([c]) => c === form.hqCountry) && <option value="">Select…</option>}
                 {COUNTRIES.map(([c, n]) => <option key={c} value={c}>{n}</option>)}
               </select>
             </Field>
@@ -272,8 +296,8 @@ export function FirmProfilePage() {
             </Field>
           </div>
           <div style={{ height: 16 }} />
-          <Field label="Website (optional)" id="f-web" hint="Must start with https://">
-            <input id="f-web" className="input" value={form.website ?? ''} onChange={set('website')} placeholder="https://" />
+          <Field label="Website (optional)" id="f-web" hint="Must start with http:// or https://" error={errOf('website')}>
+            <input id="f-web" className="input" value={form.website ?? ''} onChange={set('website')} onBlur={blur('website')} maxLength={300} placeholder="https://" aria-invalid={!!errOf('website')} />
           </Field>
           {isAdmin && <button className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Save profile'}</button>}
         </fieldset>
@@ -297,6 +321,8 @@ export function FirmOfferingsPanel({ firm, isAdmin }: { firm: Firm; isAdmin: boo
   const [form, setForm] = useState(NO_OFFERING)
   const [error, setError] = useState<unknown>(null)
   const [busy, setBusy] = useState(false)
+  const [createError, setCreateError] = useState<unknown>(null)  // shown beside the Save as draft button, not at the top
+  const [titleShown, setTitleShown] = useState(false)
   const load = useCallback(async () => { setItems(await firmApi.offerings(firm.id)) }, [firm.id])
   useEffect(() => {
     load().catch(setError)
@@ -317,15 +343,28 @@ export function FirmOfferingsPanel({ firm, isAdmin }: { firm: Firm; isAdmin: boo
     }
   }
   const chosen = specs.find((s) => s.slug === form.specialization)
-  function create(e: FormEvent) {
+  const priceNum = form.price ? Number(form.price) : null
+  const priceError = priceNum !== null && (!Number.isFinite(priceNum) || priceNum < 0 || priceNum > 1e9) ? 'Enter a valid amount, for example 2500 or 99.50.' : ''
+  const titleError = form.title.trim().length < 3 ? 'Title must be at least 3 characters.' : ''
+  async function create(e: FormEvent) {
     e.preventDefault()
-    act(async () => {
+    setTitleShown(true)
+    if (titleError || priceError) return
+    setCreateError(null)
+    setBusy(true)
+    try {
       await firmApi.createOffering(firm.id, { title: form.title.trim(), summary: form.summary.trim(), specialization: form.specialization,
         engagementTypes: form.engagementTypes, pricingModel: form.pricingModel,
-        startingPriceMinor: form.price ? Math.round(parseFloat(form.price) * 100) : null, currency: form.price ? form.currency : null,
+        startingPriceMinor: priceNum !== null ? Math.round(priceNum * 100) : null, currency: priceNum !== null ? form.currency : null,
         deliveredBy: form.deliveredBy })
       setForm(NO_OFFERING)
-    })
+      setTitleShown(false)
+      await load()
+    } catch (err) {
+      setCreateError(err)  // the real message from the server, next to the button
+    } finally {
+      setBusy(false)
+    }
   }
   const toggle = (list: string[], v: string) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v])
 
@@ -353,8 +392,8 @@ export function FirmOfferingsPanel({ firm, isAdmin }: { firm: Firm; isAdmin: boo
       {isAdmin && (
         <details style={{ marginTop: 12 }}><summary><strong>Add an offering</strong></summary>
           <form onSubmit={create} style={{ marginTop: 8 }}>
-            <Field label="Title" id="fo-title"><input id="fo-title" className="input" value={form.title} maxLength={200}
-              onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field>
+            <Field label="Title" id="fo-title" error={titleShown ? titleError || undefined : undefined}><input id="fo-title" className="input" value={form.title} maxLength={200}
+              onBlur={() => setTitleShown(true)} onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field>
             <Field label="Summary" id="fo-summary"><textarea id="fo-summary" className="input" rows={3} maxLength={2000} value={form.summary}
               onChange={(e) => setForm({ ...form, summary: e.target.value })} /></Field>
             <Field label="Specialization" id="fo-spec" hint={chosen?.regulated ? 'Regulated: a verified, licensed member must deliver it.' : undefined}>
@@ -368,7 +407,7 @@ export function FirmOfferingsPanel({ firm, isAdmin }: { firm: Firm; isAdmin: boo
             <div className="row">
               <Field label="Pricing" id="fo-pricing"><select id="fo-pricing" className="input" value={form.pricingModel} onChange={(e) => setForm({ ...form, pricingModel: e.target.value })}>
                 {['FIXED', 'HOURLY', 'RETAINER', 'CUSTOM'].map((p) => <option key={p} value={p}>{p.toLowerCase()}</option>)}</select></Field>
-              <Field label="Starting price (optional)" id="fo-price"><input id="fo-price" className="input" inputMode="decimal" value={form.price}
+              <Field label="Starting price (optional)" id="fo-price" error={priceError || undefined}><input id="fo-price" className="input" inputMode="decimal" value={form.price}
                 onChange={(e) => setForm({ ...form, price: e.target.value.replace(/[^\d.]/g, '') })} /></Field>
               <Field label="Currency" id="fo-currency"><select id="fo-currency" className="input" value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })}>
                 {['USD', 'GBP', 'EUR', 'INR', 'CAD', 'AUD', 'SGD', 'AED'].map((c) => <option key={c}>{c}</option>)}</select></Field>
@@ -378,8 +417,9 @@ export function FirmOfferingsPanel({ firm, isAdmin }: { firm: Firm; isAdmin: boo
               <div role="group" aria-labelledby="fo-people">{pros.map((p) => <label key={p.professionalId} className="checkbox small" style={{ display: 'inline-flex', marginRight: 12 }}>
                 <input type="checkbox" checked={form.deliveredBy.includes(p.professionalId)}
                   onChange={() => setForm({ ...form, deliveredBy: toggle(form.deliveredBy, p.professionalId) })} /> <span>{p.displayName} ({lightName(p.tier)} light)</span></label>)}</div>)}
+            <div style={{ marginTop: 8 }}><ErrorAlert error={createError} /></div>
             <button className="btn btn-primary" style={{ marginTop: 8 }}
-              disabled={busy || form.title.trim().length < 3 || !form.specialization || form.engagementTypes.length === 0 || form.deliveredBy.length === 0}>Save as draft</button>
+              disabled={busy || !form.specialization || form.engagementTypes.length === 0 || form.deliveredBy.length === 0}>Save as draft</button>
           </form>
         </details>
       )}
@@ -390,38 +430,44 @@ export function FirmOfferingsPanel({ firm, isAdmin }: { firm: Firm; isAdmin: boo
 const moneyList = (money: FirmMoney[], key: 'heldMinor' | 'releasedMinor') =>
   money.filter((m) => m[key]).map((m) => formatMoney({ amountMinor: m[key], currency: m.currency })).join(' · ') || '—'
 
+const AVAILABILITY: Record<string, string> = { NOW: 'Available now', TWO_WEEKS: 'In 2 weeks', ONE_MONTH: 'In 1 month', AT_CAPACITY: 'At capacity', NOT_SPECIFIED: 'Not set' }
+
 /** The firm's work across its professionals: counts and money totals only, never buyers, terms or documents. */
 function FirmWork({ firmId }: { firmId: string }) {
   const [work, setWork] = useState<FirmOverview | null>(null)
   const [error, setError] = useState<unknown>(null)
-  useEffect(() => { firmApi.overview(firmId).then(setWork).catch(setError) }, [firmId])
+  const load = useCallback(() => { setError(null); firmApi.overview(firmId).then(setWork).catch(setError) }, [firmId])
+  useEffect(() => { load() }, [load])
   return (
-    <section className="card panel">
+    <section className="card panel" aria-label="Firm work">
       <div className="panel-head"><h2>Your firm's work</h2></div>
       <ErrorAlert error={error} />
+      {!!error && !work && <button className="btn btn-secondary btn-sm" onClick={load}>Try again</button>}
       {!work ? (!error && <Loading />) : (<>
         <div className="kpi-row">
           <Kpi icon="request" tone="blue" label="Open requests" value={work.openRequests} note="Waiting for or holding a proposal" />
-          <Kpi icon="contract" tone="violet" label="Contracts" value={work.activeContracts}
+          <Kpi icon="contract" tone="violet" label="Active engagements" value={work.activeContracts}
             note={`${work.awaitingSignature} awaiting signature · ${work.completedContracts} completed`} />
           <Kpi icon="wallet" tone="teal" label="Held in escrow" value={moneyList(work.money, 'heldMinor')}
-            note={`Released to date: ${moneyList(work.money, 'releasedMinor')}`} />
+            note={`Earned (released) to date: ${moneyList(work.money, 'releasedMinor')}`} />
           <Kpi icon="shield" tone={work.professionals.some((p) => p.tier === 'C') ? 'amber' : 'green'} label="Verified professionals"
             value={`${work.professionals.filter((p) => p.tier !== 'C').length} of ${work.professionals.length}`}
             note="Green or Amber light: can send proposals" />
         </div>
         {work.professionals.length === 0 ? (
-          <p className="muted small" style={{ margin: 0 }}>No professionals practise under the firm yet. Invite them from the team page;
+          <p className="muted small" style={{ margin: 0 }}>No professionals practise under the firm yet. Invite them from the team panel;
             they choose the firm in their own profile.</p>
         ) : (
           <table className="data">
-            <thead><tr><th>Professional</th><th>Trust light</th><th>Open requests</th><th>Contracts</th><th>Held in escrow</th><th>Released</th></tr></thead>
+            <thead><tr><th>Professional</th><th>Trust light</th><th>Capacity</th><th>Open requests</th><th>Engagements</th><th>Held in escrow</th><th>Earned</th></tr></thead>
             <tbody>{work.professionals.map((p) => (
               <tr key={p.professionalId}>
                 <td><strong>{p.displayName}</strong>{!p.published && <span className="badge" style={{ marginLeft: 6 }}>Not published</span>}
                   {p.headline && <div className="muted small">{p.headline}</div>}</td>
                 <td><TrustLight tier={p.tier} />
                   {p.tier === 'C' && <div className="muted small">Identity not verified</div>}</td>
+                <td><span className={`badge ${p.availability === 'AT_CAPACITY' ? 'warn' : p.availability === 'NOW' ? 'green' : ''}`}>
+                  {AVAILABILITY[p.availability ?? 'NOT_SPECIFIED'] ?? p.availability}</span></td>
                 <td>{p.openRequests}</td>
                 <td>{p.activeContracts} active<div className="muted small">{p.awaitingSignature} to sign · {p.completedContracts} completed</div></td>
                 <td>{moneyList(p.money, 'heldMinor')}</td>
@@ -439,9 +485,182 @@ function FirmWork({ firmId }: { firmId: string }) {
   )
 }
 
-/** Firm home: verification status, team and representative. */
+interface Check { label: string; done: boolean; required: boolean; to: string }
+
+/** Verification state, authorized representative and profile completeness. */
+function FirmStatusPanel({ firm, registration }: { firm: Firm; registration: VerificationCase | undefined }) {
+  const checks: Check[] = [
+    { label: 'Registered legal name', done: !!firm.legalName, required: true, to: '/app/firm/profile' },
+    { label: 'Company registration number', done: !!firm.registrationNumber, required: true, to: '/app/firm/profile' },
+    { label: 'Headquarters country', done: !!firm.hqCountry, required: true, to: '/app/firm/profile' },
+    { label: 'Firm size', done: !!firm.sizeBand, required: true, to: '/app/firm/profile' },
+    { label: 'Firm registration verified', done: firm.status === 'VERIFIED', required: true, to: '/app/firm/verification' },
+    { label: 'Authorized representative named', done: firm.hasAuthorizedRepresentative, required: true, to: '/app/firm/team' },
+    { label: 'Representative identity verified', done: firm.hasVerifiedRepresentative, required: true, to: '/app/firm/team' },
+    { label: 'Primary category', done: !!firm.primaryCategory, required: false, to: '/app/firm/profile' },
+    { label: 'Website', done: !!firm.website, required: false, to: '/app/firm/profile' },
+  ]
+  const done = checks.filter((c) => c.done).length
+  return (
+    <section className="card panel" aria-label="Firm status">
+      <div className="panel-head"><h2>Setup and verification</h2><span className="muted small">{done} of {checks.length} complete</span></div>
+      <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+        {checks.map((c) => (
+          <li key={c.label} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '4px 0' }}>
+            <span className={`badge ${c.done ? 'green' : 'warn'}`}>{c.done ? 'Done' : 'To do'}</span>
+            <span>{c.label}</span>
+            {c.required && <span className="muted small">Required</span>}
+            {!c.done && <Link className="small" style={{ marginLeft: 'auto' }} to={c.to}>Fix</Link>}
+          </li>
+        ))}
+      </ul>
+      {registration?.status === 'NEEDS_INFO' && <p className="alert alert-warn" style={{ marginTop: 8 }}>
+        Firm verification needs more information{registration.publicReason ? `: ${registration.publicReason}` : '.'}</p>}
+      <p className="muted small" style={{ margin: '8px 0 0' }}>Regulated firm offerings need a verified firm and at least one verified authorized representative.</p>
+    </section>
+  )
+}
+
+/** Members, roles and pending invitations with a quick invite. */
+function FirmTeamPanel({ firm }: { firm: Firm }) {
+  const [members, setMembers] = useState<FirmMember[] | null>(null)
+  const [invites, setInvites] = useState<Invitation[]>([])
+  const [error, setError] = useState<unknown>(null)
+  const [email, setEmail] = useState('')
+  const [notice, setNotice] = useState<string | null>(null)
+  const { run, modal } = useStepUp(setError)
+  const load = useCallback(async () => {
+    try {
+      setError(null)
+      setMembers(await firmApi.members(firm.id))
+      setInvites(await firmApi.invitations(firm.id))
+    } catch (err) { setError(err) }
+  }, [firm.id])
+  useEffect(() => { load() }, [load])
+  function invite(e: FormEvent) {
+    e.preventDefault()
+    setNotice(null)
+    run(async () => {
+      const inv = await firmApi.invite(firm.id, email.trim(), ['FIRM_MEMBER'])
+      setNotice(`Invitation sent to ${inv.email}.`)
+      setEmail('')
+      await load()
+    })
+  }
+  return (
+    <section className="card panel" aria-label="Firm team">
+      <div className="panel-head"><h2>Team</h2><Link className="small" to="/app/firm/team">Manage team</Link></div>
+      <ErrorAlert error={error} />
+      {notice && <div className="alert alert-success" role="status">{notice}</div>}
+      {!members ? (!error && <Loading />) : (
+        <table className="data small"><tbody>{members.map((m) => (
+          <tr key={m.identityId}><td><strong>{m.displayName}</strong></td><td><FirmRoleBadges roles={m.roles} /></td></tr>
+        ))}</tbody></table>
+      )}
+      {invites.length > 0 && <>
+        <p className="small" style={{ margin: '10px 0 4px' }}><strong>Pending invitations ({invites.length})</strong></p>
+        <ul className="small" style={{ margin: 0, paddingLeft: 18 }}>{invites.map((i) => (
+          <li key={i.id}>{i.email} <span className="muted">expires {new Date(i.expiresAt).toLocaleDateString()}</span></li>))}</ul>
+      </>}
+      <form onSubmit={invite} style={{ marginTop: 10 }}>
+        <Field label="Quick invite (email)" id="fd-invite"><input id="fd-invite" className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
+        <button className="btn btn-secondary btn-sm" disabled={!email}>Send invitation</button>
+      </form>
+      {modal}
+    </section>
+  )
+}
+
+/** Published and draft offering counts with a link to manage them. */
+function FirmOfferingsSummary({ firm }: { firm: Firm }) {
+  const [items, setItems] = useState<FirmOffering[] | null>(null)
+  const [error, setError] = useState<unknown>(null)
+  useEffect(() => { firmApi.offerings(firm.id).then(setItems).catch(setError) }, [firm.id])
+  const count = (s: string) => items?.filter((o) => o.status === s).length ?? 0
+  return (
+    <section className="card panel" aria-label="Firm offerings summary">
+      <div className="panel-head"><h2>Firm offerings</h2><Link className="small" to="/app/firm/profile">Manage offerings</Link></div>
+      <ErrorAlert error={error} />
+      {!items ? (!error && <Loading />) : items.length === 0 ? (
+        <p className="muted small" style={{ margin: 0 }}>No firm offerings yet. Add one on the firm profile page; regulated offerings need a verified authorized representative.</p>
+      ) : (
+        <div className="badges">
+          <span className="badge green">{count('PUBLISHED')} published</span>
+          <span className="badge warn">{count('DRAFT')} draft</span>
+          <span className="badge">{count('UNPUBLISHED')} unpublished</span>
+          {items.some((o) => o.regulated) && <span className="badge warn">{items.filter((o) => o.regulated).length} regulated</span>}
+        </div>
+      )}
+    </section>
+  )
+}
+
+/** Unread messages and notifications (links to the shared inboxes). */
+function FirmInboxSummary() {
+  const [unread, setUnread] = useState<{ messages: number; notifications: number } | null>(null)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    Promise.all([messagingApi.summary(), notificationApi.count()])
+      .then(([m, n]) => setUnread({ messages: m.unreadMessages, notifications: n.unread })).catch(() => setFailed(true))
+  }, [])
+  return (
+    <section className="card panel" aria-label="Messages and notifications">
+      <div className="panel-head"><h2>Inbox</h2></div>
+      {failed ? <p className="muted small" style={{ margin: 0 }}>Could not load your unread counts.</p>
+        : !unread ? <Loading /> : (
+          <p style={{ margin: 0 }}>
+            <Link to="/app/messages">{unread.messages} unread message{unread.messages === 1 ? '' : 's'}</Link>{' · '}
+            <Link to="/app/notifications">{unread.notifications} unread notification{unread.notifications === 1 ? '' : 's'}</Link>
+          </p>)}
+    </section>
+  )
+}
+
+/** What a non-admin firm member may see: the firm summary, the colleagues' names and roles, their own role. */
+function FirmMemberView({ firm }: { firm: Firm }) {
+  const [members, setMembers] = useState<FirmMember[] | null>(null)
+  const [error, setError] = useState<unknown>(null)
+  useEffect(() => { firmApi.members(firm.id).then(setMembers).catch(setError) }, [firm.id])
+  return (
+    <div className="home-grid">
+      <div>
+        <section className="card panel" aria-label="Firm summary">
+          <div className="panel-head"><h2>Firm profile</h2></div>
+          <dl className="small" style={{ margin: 0 }}>
+            <dt className="muted">Legal name</dt><dd>{firm.legalName}</dd>
+            <dt className="muted">Headquarters</dt><dd>{firm.hqCountry}</dd>
+            <dt className="muted">Size</dt><dd>{firm.sizeBand ? `${firm.sizeBand} people` : 'Not set'}</dd>
+            {firm.website && <><dt className="muted">Website</dt><dd>{firm.website}</dd></>}
+            <dt className="muted">Authorized representative</dt>
+            <dd>{firm.hasVerifiedRepresentative ? 'Verified' : firm.hasAuthorizedRepresentative ? 'Named, identity not yet verified' : 'Not named'}</dd>
+          </dl>
+        </section>
+        <section className="card panel" aria-label="Firm members">
+          <div className="panel-head"><h2>Members{members ? ` (${members.length})` : ''}</h2></div>
+          <ErrorAlert error={error} />
+          {!members ? (!error && <Loading />) : (
+            <table className="data small"><tbody>{members.map((m) => (
+              <tr key={m.identityId}><td><strong>{m.displayName}</strong></td><td><FirmRoleBadges roles={m.roles} /></td></tr>
+            ))}</tbody></table>)}
+        </section>
+      </div>
+      <aside>
+        <section className="card panel">
+          <div className="panel-head"><h2>Your role</h2></div>
+          <FirmRoleBadges roles={firm.myRoles} />
+          <p className="muted small">Your requests, engagements and earnings are on your professional dashboard. Firm Admins see totals
+            across the firm, never your clients, terms or documents. Only Firm Admins can change the firm.</p>
+          <Link className="btn btn-secondary btn-sm" to="/app/professional">Open my dashboard</Link>
+        </section>
+        <FirmInboxSummary />
+      </aside>
+    </div>
+  )
+}
+
+/** Firm home. Admins: status, work, team, offerings and pending actions. Members: a read-only firm overview. */
 export function FirmDashboard() {
-  const { firm, loading, isAdmin } = useMyFirm()
+  const { firm, loading, error: firmError, isAdmin, reload } = useMyFirm()
   const { user } = useAuth()
   const [cases, setCases] = useState<VerificationCase[]>([])
   const [invites, setInvites] = useState(0)
@@ -451,7 +670,7 @@ export function FirmDashboard() {
     firmApi.invitations(firm.id).then((i) => setInvites(i.length)).catch(() => {})
   }, [firm, isAdmin])
   if (loading || !user) return <Loading />
-  if (!firm) return <p className="muted">Your firm is still being set up. Refresh in a moment.</p>
+  if (!firm) return <><NoFirm error={firmError} />{!!firmError && <button className="btn btn-secondary btn-sm" onClick={reload}>Try again</button>}</>
 
   const registration = cases.find((c) => c.verificationType === 'FIRM_REGISTRATION')
   const actions: Action[] = []
@@ -485,36 +704,36 @@ export function FirmDashboard() {
           {isAdmin && <Link className="btn btn-primary" to="/app/firm/team"><Icon name="team" /> Manage team</Link>}
         </div>
       </div>
-      <div className="kpi-row">
+      <div className="kpi-row three">
         <Kpi icon="shield" tone={firm.status === 'VERIFIED' ? 'green' : 'amber'} label="Firm verification"
-          value={STATUS_LABEL[firm.status] ?? firm.status} note={registration ? `Check: ${registration.status.replace('_', ' ').toLowerCase()}` : 'Not started'} />
+          value={STATUS_LABEL[firm.status] ?? firm.status}
+          note={isAdmin ? (registration ? `Check: ${registration.status.replace('_', ' ').toLowerCase()}` : 'Not started') : 'Managed by Firm Admins'} />
         <Kpi icon="team" tone="blue" label="Firm members" value={firm.memberCount} note={invites ? `${invites} invited` : 'Including you'} />
         <Kpi icon="user" tone={firm.hasVerifiedRepresentative ? 'green' : 'amber'} label="Authorized representative"
           value={firm.hasVerifiedRepresentative ? 'Verified' : firm.hasAuthorizedRepresentative ? 'Not verified' : 'Missing'}
           note="Needed for regulated work" />
       </div>
-      <div className="home-grid">
-        <div>
-          {isAdmin ? <FirmWork firmId={firm.id} /> : user.personas.includes('PROFESSIONAL') && (
+      {!isAdmin ? <FirmMemberView firm={firm} /> : (
+        <div className="home-grid">
+          <div>
+            <FirmWork firmId={firm.id} />
+            <FirmTeamPanel firm={firm} />
+            <FirmOfferingsSummary firm={firm} />
+          </div>
+          <aside>
             <section className="card panel">
-              <div className="panel-head"><h2>Your work under the firm</h2></div>
-              <p className="muted small">Your requests, engagements and earnings are on your professional dashboard. Firm Admins see
-                totals across the firm, never your clients, terms or documents.</p>
-              <Link className="btn btn-secondary btn-sm" to="/app/professional">Open my dashboard</Link>
+              <div className="panel-head"><h2>Pending actions</h2></div>
+              <ActionList actions={actions} empty="Your firm is set up." />
             </section>
-          )}
-          <section className="card panel">
-            <div className="panel-head"><h2>Your roles</h2></div>
-            <FirmRoleBadges roles={firm.myRoles} />
-          </section>
+            <FirmStatusPanel firm={firm} registration={registration} />
+            <FirmInboxSummary />
+            <section className="card panel">
+              <div className="panel-head"><h2>Your roles</h2></div>
+              <FirmRoleBadges roles={firm.myRoles} />
+            </section>
+          </aside>
         </div>
-        <aside>
-          <section className="card panel">
-            <div className="panel-head"><h2>Pending actions</h2></div>
-            <ActionList actions={actions} empty={isAdmin ? 'Your firm is set up.' : 'Firm Admins manage firm setup.'} />
-          </section>
-        </aside>
-      </div>
+      )}
     </>
   )
 }

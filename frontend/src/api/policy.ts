@@ -14,6 +14,17 @@ export interface PolicyDashboard {
   exceptions: { requested: number; granted: number; denied: number; emergency: number; rate: number | null }
   spendHeldBack: { currency: string; amountMinor: number }[]; topReasons: { code: string; count: number }[]
 }
+/** One policy profile in the per-policy breakdown (GET /v1/policy/dashboard/profiles). Money is per currency. */
+export type CurrencyAmount = { currency: string; amountMinor: number }
+export interface ProfileInsight {
+  profileId: string; name: string; riskLevel: string; status: string; activeVersion: number | null; evaluations: number
+  decisions: Record<string, number>; interventionRatePct: number | null; engagements: number
+  spendExposure: CurrencyAmount[]; spendHeldBack: CurrencyAmount[]
+  exceptions: { requested: number; granted: number; denied: number; pending: number }
+  approvals: { requested: number; pending: number; granted: number; denied: number; expired: number }
+  approvalSteps: { step: number; role: string; completed: number; medianHoursWait: number | null; pending: number; oldestPendingHours: number | null; expired: number }[]
+  bottleneck: { step: number; role: string; medianHoursWait: number | null; pending: number } | null
+}
 /** Procurement setup wizard progress; needsPolicySetup: no policy profile yet ("Define your policy"). */
 export interface PolicySetup {
   orgId: string; needsPolicySetup: boolean; hasProfile: boolean; hasActivePolicy: boolean; engagements: number; firstEngagement: boolean
@@ -45,6 +56,8 @@ export const policyApi = {
   decide: (id: string, decision: 'GRANT' | 'DENY', reason: string, stepId?: string) => api<Approval>(`/v1/policy/approvals/${id}/decide`, { headers: { 'Idempotency-Key': crypto.randomUUID() }, method: 'POST', body: { decision, reason, stepId } }),
   exceptions: (orgId: string, cursor?: string) => api<Page<ExceptionRequest>>(`/v1/policy/exceptions?orgId=${orgId}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`),
   checks: (id: string) => api<PolicyChecks>(`/v1/policy/profiles/${id}/checks`),
+  byProfile: (orgId: string, days = 30) => api<{ days: number; profiles: ProfileInsight[] }>('/v1/policy/dashboard/profiles', { query: { orgId, days: String(days) } }),
+  byProfileCsv: (orgId: string, days = 30) => api<Blob>('/v1/policy/dashboard/profiles.csv', { query: { orgId, days: String(days) }, blob: true }),
   dashboard: (orgId: string, days = 30) => api<PolicyDashboard>('/v1/policy/dashboard', { query: { orgId, days: String(days) } }),
   requestException: (body: { orgId: string; subjectType: string; subjectId: string; action: string; justification: string; documents: Upload[]; expiresAt: string; emergency?: boolean }) => api<ExceptionRequest>('/v1/policy/exceptions', { headers: { 'Idempotency-Key': crypto.randomUUID() }, method: 'POST', body }),
   decideException: (id: string, decision: 'GRANT' | 'DENY', reason: string) => api<ExceptionRequest>(`/v1/policy/exceptions/${id}/decide`, { headers: { 'Idempotency-Key': crypto.randomUUID() }, method: 'POST', body: { decision, reason } }),
