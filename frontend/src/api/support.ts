@@ -29,7 +29,7 @@ export const SUPPORT_TOPICS: [SupportTopic, string][] = [
 ]
 
 export const SUPPORT_STATUS: Record<SupportRequest['status'], { label: string; tone: '' | 'green' | 'warn' }> = {
-  OPEN: { label: 'With our team', tone: '' }, WAITING_ON_YOU: { label: 'Answered: your reply?', tone: 'warn' }, RESOLVED: { label: 'Resolved', tone: 'green' },
+  OPEN: { label: 'Open (received)', tone: '' }, WAITING_ON_YOU: { label: 'Answered: your reply?', tone: 'warn' }, RESOLVED: { label: 'Resolved', tone: 'green' },
 }
 
 export const supportApi = {

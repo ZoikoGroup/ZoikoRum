@@ -25,6 +25,7 @@ from zoikorum.domains.proposal import facade as proposal_facade
 from zoikorum.domains.trust import facade as trust_facade
 from zoikorum.domains.verification import facade as verification_facade
 from zoikorum.shared import clock
+from zoikorum.shared import validation as rules
 from zoikorum.shared.auth import Actor, AuthStrength, FirmRole
 from zoikorum.shared.crypto import sha256_hex
 from zoikorum.shared.errors import Conflict, Forbidden, NotFound, PolicyBlocked, StepUpRequired, ValidationFailed, VersionConflict
@@ -149,6 +150,14 @@ async def overview(session: AsyncSession, actor: Actor, firm_id: uuid.UUID) -> F
         money=_money(totals))
 
 
+def _valid_website(value: str | None) -> str | None:
+    """Buyers only see a web address that passes today's rule; older saved values that do not are left out."""
+    try:
+        return rules.website_url(value) if value else None
+    except ValueError:
+        return None
+
+
 async def public_firm(session: AsyncSession, firm_id: uuid.UUID) -> FirmPageOut:
     """The firm as buyers see it: who it is, what is verified, and its published professionals. Works without signing in."""
     firm = await _firm(session, firm_id)
@@ -166,7 +175,7 @@ async def public_firm(session: AsyncSession, firm_id: uuid.UUID) -> FirmPageOut:
     summary = await firm_facade.get_firm(session, firm.id)
     return FirmPageOut(
         id=firm.id, name=firm.trading_name or firm.legal_name, legalName=firm.legal_name, hqCountry=firm.hq_country,
-        sizeBand=firm.size_band, primaryCategory=firm.primary_category, website=firm.website,
+        sizeBand=firm.size_band, primaryCategory=firm.primary_category, website=_valid_website(firm.website),
         verified=firm.status == "VERIFIED", hasVerifiedRepresentative=bool(summary and summary.has_verified_representative),
         verifiedCredentials=sorted(c.label for c in checks if c.status == "VERIFIED" and c.verification_type != "FIRM_REGISTRATION"),
         professionals=members, offerings=await published_offerings(session, firm.id))

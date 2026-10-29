@@ -4,8 +4,9 @@ import uuid
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
+from zoikorum.shared import validation as rules
 from zoikorum.shared.money import MoneyDTO
 
 EngagementType = Literal["ADVISORY", "PROJECT", "RETAINER", "FRACTIONAL"]
@@ -42,11 +43,42 @@ class ProfilePatch(BaseModel):
     handlesRegulatedData: bool | None = None
     onsiteRegions: list[str] | None = Field(default=None, max_length=20)  # cities or regions for on-site work
 
+    # Text rules apply on write only; existing saved data is never re-validated on read.
+    @field_validator("displayName")
+    @classmethod
+    def _display(cls, v: str | None) -> str | None:
+        return None if v is None else rules.person_name(v)
+
+    @field_validator("legalName")
+    @classmethod
+    def _legal(cls, v: str | None) -> str | None:
+        return v if v is None or not v.strip() else rules.person_name(v)
+
+    @field_validator("headline")
+    @classmethod
+    def _headline(cls, v: str | None) -> str | None:
+        return v if v is None or not v.strip() else rules.role_title(v, 120)
+
+    @field_validator("city")
+    @classmethod
+    def _city(cls, v: str | None) -> str | None:
+        return v if v is None or not v.strip() else rules.city_name(v)
+
+    @field_validator("languages")
+    @classmethod
+    def _languages(cls, v: list[str] | None) -> list[str] | None:
+        return None if v is None else [rules.language_name(x) for x in v if x.strip()]
+
 
 class RegisterIn(BaseModel):
     displayName: str | None = Field(default=None, min_length=1, max_length=200)  # defaults to the account name
     country: str | None = Field(default=None, pattern="^[A-Z]{2}$")  # defaults to the account country
     firmId: uuid.UUID | None = None  # practise under a firm you belong to
+
+    @field_validator("displayName")
+    @classmethod
+    def _display(cls, v: str | None) -> str | None:
+        return None if v is None else rules.person_name(v)
 
 
 class SpecializationsIn(BaseModel):

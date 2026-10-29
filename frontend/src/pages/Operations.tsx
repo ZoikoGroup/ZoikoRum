@@ -648,6 +648,7 @@ export function ReportsPage() {
   const [since, setSince] = useState('')
   const [until, setUntil] = useState('')
   const [busy, setBusy] = useState(false)
+  const [period, setPeriod] = useState<string | null>(null)
 
   const query: Record<string, string> = {
     ...(role === 'buyer' ? { organizationId: orgId } : {}),
@@ -666,12 +667,18 @@ export function ReportsPage() {
       .catch(setError)
   }, [user])
 
+  const rangeError = since && until && since > until ? 'The “From” date must be on or before the “To” date.' : null
+  const periodLabel = (s: string, u: string) =>
+    s && u ? `${s} to ${u}` : s ? `From ${s} (no end date)` : u ? `Up to ${u} (no start date)` : 'All time (no dates chosen)'
+
   async function loadReport() {
+    if (rangeError) return
     setBusy(true)
     setError(null)
     try {
       const data = await api<Report>(`/v1/reports/${role}`, { query })
       setReport(data)
+      setPeriod(periodLabel(since, until))
     } catch (err) {
       setError(err)
     } finally {
@@ -738,7 +745,7 @@ export function ReportsPage() {
           label="Projection Freshness"
           sub={
             report?.summary.lastEventAt
-              ? new Date(report.summary.lastEventAt).toLocaleDateString()
+              ? `Latest event ${new Date(report.summary.lastEventAt).toLocaleDateString()} (current snapshot, not date-filtered)`
               : 'No projection lag detected'
           }
         />
@@ -813,6 +820,8 @@ export function ReportsPage() {
               type="date"
               className="input"
               value={until}
+              min={since || undefined}
+              aria-invalid={!!rangeError}
               onChange={(e) => setUntil(e.target.value)}
             />
           </div>
@@ -821,13 +830,18 @@ export function ReportsPage() {
             <button
               type="button"
               className="btn btn-primary"
-              disabled={busy}
+              disabled={busy || !!rangeError}
               onClick={loadReport}
             >
               Generate Report
             </button>
           </div>
         </div>
+        {rangeError && <p className="field-error small" role="alert" style={{ margin: '0 0 8px' }}>{rangeError}</p>}
+        <p className="muted small" style={{ margin: 0 }}>
+          Period: <strong>{period ?? periodLabel(since, until)}</strong>{period && period !== periodLabel(since, until) ? ' (shown report; press Generate to update)' : ''}
+          {' '}Leave both dates empty to see all time.
+        </p>
       </div>
 
       <section className="card panel">
@@ -835,7 +849,7 @@ export function ReportsPage() {
           <h2>Financial Movement Ledger</h2>
           {report && (
             <span className="small muted">
-              {report.items.length} recorded movement{report.items.length === 1 ? '' : 's'}
+              {report.items.length} recorded movement{report.items.length === 1 ? '' : 's'}{period ? ` · ${period}` : ''}
             </span>
           )}
         </div>

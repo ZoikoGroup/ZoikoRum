@@ -32,6 +32,7 @@ import { formatCurrencies } from '../lib/money'
 import { COUNTRIES } from './Join'
 import { TrustLight } from '../components/TrustLight'
 import { lightName, trustLight } from '../lib/trustLight'
+import { keepText, textError, type TextKind } from '../lib/validation'
 
 // eslint-disable-next-line react-refresh/only-export-components
 export function useMyProfile() {
@@ -655,7 +656,20 @@ function BasicsStep({ profile, onSaved, next }: StepProps) {
   const [f, setF] = useState(initial)
   const [error, setError] = useState<unknown>(null)
   const { busy, save } = useSave(setError)
-  const set = (k: keyof typeof f) => (e: { target: { value: string } }) => { setTouched(true); setF({ ...f, [k]: e.target.value }) }
+  const kindOf: Partial<Record<keyof typeof f, TextKind>> = { displayName: 'person', legalName: 'person', headline: 'role', languages: 'language', city: 'city' }
+  const set = (k: keyof typeof f) => (e: { target: { value: string } }) => {
+    const kind = kindOf[k]
+    setTouched(true)
+    setF({ ...f, [k]: kind ? keepText(kind, e.target.value) : e.target.value })  // digits and symbols are dropped as they are typed
+  }
+  // Errors show after leaving a field or on submit, never while typing.
+  const [shown, setShown] = useState<Set<string>>(new Set())
+  const errs: Record<string, string> = {
+    displayName: textError('person', f.displayName), legalName: textError('person', f.legalName), headline: textError('role', f.headline),
+    languages: f.languages.split(',').map((l) => textError('language', l, false)).find(Boolean) ?? '', city: textError('city', f.city, false),
+  }
+  const errOf = (k: string) => (shown.has(k) ? errs[k] : '') || undefined
+  const blur = (k: string) => () => setShown((s0) => new Set(s0).add(k))
   // Autosave (Onboarding s.20/s.22): an unfinished step is kept in this browser and offered back on return.
   const { user } = useAuth()
   const draftKey = user ? `${user.id}.profile.basics` : null
@@ -665,6 +679,8 @@ function BasicsStep({ profile, onSaved, next }: StepProps) {
 
   function submit(e: FormEvent) {
     e.preventDefault()
+    setShown(new Set(Object.keys(errs)))
+    if (Object.values(errs).some(Boolean)) return
     save(async () => {
       const { languages, yearsExperienceBand, ...rest } = f
       onSaved(await proApi.update(profile.version, {
@@ -677,23 +693,23 @@ function BasicsStep({ profile, onSaved, next }: StepProps) {
   }
 
   return (
-    <form id="step-form" onSubmit={submit}>
+    <form id="step-form" onSubmit={submit} noValidate>
       {pending && !touched && <ResumeDraft savedAt={pending.savedAt}
         onResume={() => { setF(pending.value); setPending(null); setTouched(true) }} onDiscard={() => { clearDraft(draftKey); setPending(null) }} />}
       <PhotoUploader profile={profile} onSaved={onSaved} />
       <ErrorAlert error={error} />
       <div style={{ textAlign: 'right', minHeight: 18 }}><DraftSaved at={savedAt} /></div>
       <div className="row">
-        <Field label="Display name" id="b-name" hint="Shown to buyers.">
-          <input id="b-name" className="input" value={f.displayName} onChange={set('displayName')} required />
+        <Field label="Display name" id="b-name" hint="Shown to buyers." error={errOf('displayName')}>
+          <input id="b-name" className="input" maxLength={200} value={f.displayName} onChange={set('displayName')} onBlur={blur('displayName')} aria-invalid={!!errOf('displayName')} />
         </Field>
-        <Field label="Legal name (private) *" id="b-legal" hint="As on your ID. Used for verification, never shown publicly.">
-          <input id="b-legal" className="input" value={f.legalName} onChange={set('legalName')} required />
+        <Field label="Legal name (private) *" id="b-legal" hint="As on your ID. Used for verification, never shown publicly." error={errOf('legalName')}>
+          <input id="b-legal" className="input" maxLength={200} value={f.legalName} onChange={set('legalName')} onBlur={blur('legalName')} aria-invalid={!!errOf('legalName')} />
         </Field>
       </div>
       <div style={{ height: 16 }} />
-      <Field label="Primary role title *" id="b-headline" hint="e.g. “Fractional CFO for SaaS companies”.">
-        <input id="b-headline" className="input" maxLength={120} value={f.headline} onChange={set('headline')} required list="role-titles" />
+      <Field label="Primary role title *" id="b-headline" hint="e.g. “Fractional CFO for SaaS companies”." error={errOf('headline')}>
+        <input id="b-headline" className="input" maxLength={120} value={f.headline} onChange={set('headline')} onBlur={blur('headline')} aria-invalid={!!errOf('headline')} list="role-titles" />
         <datalist id="role-titles">{ROLE_TITLES.map((t) => <option key={t} value={t} />)}</datalist>
       </Field>
       <Field label="Bio (optional)" id="b-bio" hint={`What you do and for whom, in plain words: 150–250 words reads best, 300 at most ` +
@@ -708,8 +724,8 @@ function BasicsStep({ profile, onSaved, next }: StepProps) {
             {EXPERIENCE_BANDS.map((b) => <option key={b} value={b}>{b} years</option>)}
           </select>
         </Field>
-        <Field label="Languages" id="b-lang" hint="Separate with commas.">
-          <input id="b-lang" className="input" value={f.languages} onChange={set('languages')} placeholder="English, Spanish" />
+        <Field label="Languages" id="b-lang" hint="Separate with commas." error={errOf('languages')}>
+          <input id="b-lang" className="input" value={f.languages} onChange={set('languages')} onBlur={blur('languages')} aria-invalid={!!errOf('languages')} placeholder="English, Spanish" />
         </Field>
       </div>
       <fieldset className="plain-fieldset" style={{ marginTop: 16 }}>
@@ -721,8 +737,8 @@ function BasicsStep({ profile, onSaved, next }: StepProps) {
       </fieldset>
       <div style={{ height: 16 }} />
       <div className="row">
-        <Field label="City" id="b-city">
-          <input id="b-city" className="input" value={f.city} onChange={set('city')} />
+        <Field label="City" id="b-city" error={errOf('city')}>
+          <input id="b-city" className="input" maxLength={100} value={f.city} onChange={set('city')} onBlur={blur('city')} aria-invalid={!!errOf('city')} />
         </Field>
         <Field label="Country" id="b-country">
           <select id="b-country" className="input" value={f.country} onChange={set('country')}>

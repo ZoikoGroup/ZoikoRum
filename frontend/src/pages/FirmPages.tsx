@@ -13,6 +13,7 @@ import { ErrorAlert, Field, useStepUp, Loading } from '../components/ui'
 import { COUNTRIES } from './Join'
 import { TrustLight } from '../components/TrustLight'
 import { lightName } from '../lib/trustLight'
+import { keepRegistration, keepText, registrationError, textError, websiteError } from '../lib/validation'
 
 // eslint-disable-next-line react-refresh/only-export-components
 export function useMyFirm() {
@@ -221,6 +222,7 @@ export function FirmProfilePage() {
   const [error, setError] = useState<unknown>(null)
   const [saved, setSaved] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [shown, setShown] = useState<Set<string>>(new Set())  // fields whose error may show (after blur or submit)
 
   // Fill the form from each new version of the firm while rendering (no extra effect pass).
   const [formVersion, setFormVersion] = useState<number | null>(null)
@@ -233,10 +235,21 @@ export function FirmProfilePage() {
   }
   if (loading) return <Loading />
   if (!firm) return <NoFirm error={firmError} />
-  const set = (k: string) => (e: { target: { value: string } }) => { setSaved(false); setForm({ ...form, [k]: e.target.value }) }
+  const clean: Record<string, (v: string) => string> = { legalName: (v) => keepText('org', v), tradingName: (v) => keepText('org', v),
+    registrationNumber: keepRegistration, website: (v) => v.replace(/\s/g, '') }
+  const set = (k: string) => (e: { target: { value: string } }) => { setSaved(false); setForm({ ...form, [k]: (clean[k] ?? ((v: string) => v))(e.target.value) }) }
+  const errs: Record<string, string> = {
+    legalName: textError('org', form.legalName ?? ''), tradingName: textError('org', form.tradingName ?? '', false),
+    registrationNumber: registrationError(form.registrationNumber ?? ''), website: websiteError(form.website ?? ''),
+    hqCountry: COUNTRIES.some(([c]) => c === form.hqCountry) ? '' : 'Choose a country from the list.',
+  }
+  const errOf = (k: string) => (shown.has(k) ? errs[k] : '') || undefined
+  const blur = (k: string) => () => setShown((s0) => new Set(s0).add(k))
 
   async function save(e: FormEvent) {
     e.preventDefault()
+    setShown(new Set(Object.keys(errs)))
+    if (Object.values(errs).some(Boolean)) { setSaved(false); return }  // show the field errors instead of saving
     setBusy(true)
     setError(null)
     try {
@@ -257,20 +270,21 @@ export function FirmProfilePage() {
         <p className="muted" style={{ margin: 0 }}>Registration details used for firm verification. <FirmStatusBadge status={firm.status} /></p></div></div>
       <ErrorAlert error={error} />
       {saved && <div className="alert alert-success" role="status">Firm profile saved.</div>}
-      <form className="card panel" style={{ maxWidth: 680 }} onSubmit={save}>
+      <form className="card panel" style={{ maxWidth: 680 }} onSubmit={save} noValidate>
         <fieldset disabled={!isAdmin} style={{ border: 0, padding: 0, margin: 0 }}>
-          <Field label="Registered legal name" id="f-legal" hint="Changing this restarts firm verification.">
-            <input id="f-legal" className="input" value={form.legalName ?? ''} onChange={set('legalName')} />
+          <Field label="Registered legal name" id="f-legal" hint="Changing this restarts firm verification." error={errOf('legalName')}>
+            <input id="f-legal" className="input" value={form.legalName ?? ''} onChange={set('legalName')} onBlur={blur('legalName')} maxLength={200} aria-invalid={!!errOf('legalName')} />
           </Field>
-          <Field label="Trading name (optional)" id="f-trading">
-            <input id="f-trading" className="input" value={form.tradingName ?? ''} onChange={set('tradingName')} />
+          <Field label="Trading name (optional)" id="f-trading" error={errOf('tradingName')}>
+            <input id="f-trading" className="input" value={form.tradingName ?? ''} onChange={set('tradingName')} onBlur={blur('tradingName')} maxLength={200} aria-invalid={!!errOf('tradingName')} />
           </Field>
-          <Field label="Company registration number" id="f-reg" hint="As shown on your incorporation documents.">
-            <input id="f-reg" className="input" value={form.registrationNumber ?? ''} onChange={set('registrationNumber')} />
+          <Field label="Company registration number" id="f-reg" hint="Letters, digits, hyphen and slash, e.g. SC123456." error={errOf('registrationNumber')}>
+            <input id="f-reg" className="input" value={form.registrationNumber ?? ''} onChange={set('registrationNumber')} onBlur={blur('registrationNumber')} maxLength={30} aria-invalid={!!errOf('registrationNumber')} />
           </Field>
           <div className="row">
-            <Field label="Headquarters country" id="f-country">
-              <select id="f-country" className="input" value={form.hqCountry ?? ''} onChange={set('hqCountry')}>
+            <Field label="Headquarters country" id="f-country" error={errOf('hqCountry')}>
+              <select id="f-country" className="input" value={form.hqCountry ?? ''} onChange={set('hqCountry')} onBlur={blur('hqCountry')}>
+                {!COUNTRIES.some(([c]) => c === form.hqCountry) && <option value="">Select…</option>}
                 {COUNTRIES.map(([c, n]) => <option key={c} value={c}>{n}</option>)}
               </select>
             </Field>
@@ -282,8 +296,8 @@ export function FirmProfilePage() {
             </Field>
           </div>
           <div style={{ height: 16 }} />
-          <Field label="Website (optional)" id="f-web" hint="Must start with https://">
-            <input id="f-web" className="input" value={form.website ?? ''} onChange={set('website')} placeholder="https://" />
+          <Field label="Website (optional)" id="f-web" hint="Must start with http:// or https://" error={errOf('website')}>
+            <input id="f-web" className="input" value={form.website ?? ''} onChange={set('website')} onBlur={blur('website')} maxLength={300} placeholder="https://" aria-invalid={!!errOf('website')} />
           </Field>
           {isAdmin && <button className="btn btn-primary" disabled={busy}>{busy ? 'Saving…' : 'Save profile'}</button>}
         </fieldset>
@@ -307,6 +321,8 @@ export function FirmOfferingsPanel({ firm, isAdmin }: { firm: Firm; isAdmin: boo
   const [form, setForm] = useState(NO_OFFERING)
   const [error, setError] = useState<unknown>(null)
   const [busy, setBusy] = useState(false)
+  const [createError, setCreateError] = useState<unknown>(null)  // shown beside the Save as draft button, not at the top
+  const [titleShown, setTitleShown] = useState(false)
   const load = useCallback(async () => { setItems(await firmApi.offerings(firm.id)) }, [firm.id])
   useEffect(() => {
     load().catch(setError)
@@ -327,15 +343,28 @@ export function FirmOfferingsPanel({ firm, isAdmin }: { firm: Firm; isAdmin: boo
     }
   }
   const chosen = specs.find((s) => s.slug === form.specialization)
-  function create(e: FormEvent) {
+  const priceNum = form.price ? Number(form.price) : null
+  const priceError = priceNum !== null && (!Number.isFinite(priceNum) || priceNum < 0 || priceNum > 1e9) ? 'Enter a valid amount, for example 2500 or 99.50.' : ''
+  const titleError = form.title.trim().length < 3 ? 'Title must be at least 3 characters.' : ''
+  async function create(e: FormEvent) {
     e.preventDefault()
-    act(async () => {
+    setTitleShown(true)
+    if (titleError || priceError) return
+    setCreateError(null)
+    setBusy(true)
+    try {
       await firmApi.createOffering(firm.id, { title: form.title.trim(), summary: form.summary.trim(), specialization: form.specialization,
         engagementTypes: form.engagementTypes, pricingModel: form.pricingModel,
-        startingPriceMinor: form.price ? Math.round(parseFloat(form.price) * 100) : null, currency: form.price ? form.currency : null,
+        startingPriceMinor: priceNum !== null ? Math.round(priceNum * 100) : null, currency: priceNum !== null ? form.currency : null,
         deliveredBy: form.deliveredBy })
       setForm(NO_OFFERING)
-    })
+      setTitleShown(false)
+      await load()
+    } catch (err) {
+      setCreateError(err)  // the real message from the server, next to the button
+    } finally {
+      setBusy(false)
+    }
   }
   const toggle = (list: string[], v: string) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v])
 
@@ -363,8 +392,8 @@ export function FirmOfferingsPanel({ firm, isAdmin }: { firm: Firm; isAdmin: boo
       {isAdmin && (
         <details style={{ marginTop: 12 }}><summary><strong>Add an offering</strong></summary>
           <form onSubmit={create} style={{ marginTop: 8 }}>
-            <Field label="Title" id="fo-title"><input id="fo-title" className="input" value={form.title} maxLength={200}
-              onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field>
+            <Field label="Title" id="fo-title" error={titleShown ? titleError || undefined : undefined}><input id="fo-title" className="input" value={form.title} maxLength={200}
+              onBlur={() => setTitleShown(true)} onChange={(e) => setForm({ ...form, title: e.target.value })} /></Field>
             <Field label="Summary" id="fo-summary"><textarea id="fo-summary" className="input" rows={3} maxLength={2000} value={form.summary}
               onChange={(e) => setForm({ ...form, summary: e.target.value })} /></Field>
             <Field label="Specialization" id="fo-spec" hint={chosen?.regulated ? 'Regulated: a verified, licensed member must deliver it.' : undefined}>
@@ -378,7 +407,7 @@ export function FirmOfferingsPanel({ firm, isAdmin }: { firm: Firm; isAdmin: boo
             <div className="row">
               <Field label="Pricing" id="fo-pricing"><select id="fo-pricing" className="input" value={form.pricingModel} onChange={(e) => setForm({ ...form, pricingModel: e.target.value })}>
                 {['FIXED', 'HOURLY', 'RETAINER', 'CUSTOM'].map((p) => <option key={p} value={p}>{p.toLowerCase()}</option>)}</select></Field>
-              <Field label="Starting price (optional)" id="fo-price"><input id="fo-price" className="input" inputMode="decimal" value={form.price}
+              <Field label="Starting price (optional)" id="fo-price" error={priceError || undefined}><input id="fo-price" className="input" inputMode="decimal" value={form.price}
                 onChange={(e) => setForm({ ...form, price: e.target.value.replace(/[^\d.]/g, '') })} /></Field>
               <Field label="Currency" id="fo-currency"><select id="fo-currency" className="input" value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })}>
                 {['USD', 'GBP', 'EUR', 'INR', 'CAD', 'AUD', 'SGD', 'AED'].map((c) => <option key={c}>{c}</option>)}</select></Field>
@@ -388,8 +417,9 @@ export function FirmOfferingsPanel({ firm, isAdmin }: { firm: Firm; isAdmin: boo
               <div role="group" aria-labelledby="fo-people">{pros.map((p) => <label key={p.professionalId} className="checkbox small" style={{ display: 'inline-flex', marginRight: 12 }}>
                 <input type="checkbox" checked={form.deliveredBy.includes(p.professionalId)}
                   onChange={() => setForm({ ...form, deliveredBy: toggle(form.deliveredBy, p.professionalId) })} /> <span>{p.displayName} ({lightName(p.tier)} light)</span></label>)}</div>)}
+            <div style={{ marginTop: 8 }}><ErrorAlert error={createError} /></div>
             <button className="btn btn-primary" style={{ marginTop: 8 }}
-              disabled={busy || form.title.trim().length < 3 || !form.specialization || form.engagementTypes.length === 0 || form.deliveredBy.length === 0}>Save as draft</button>
+              disabled={busy || !form.specialization || form.engagementTypes.length === 0 || form.deliveredBy.length === 0}>Save as draft</button>
           </form>
         </details>
       )}

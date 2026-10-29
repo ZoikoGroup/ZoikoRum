@@ -26,6 +26,7 @@ export interface User {
   platformRoles: PlatformRole[]
   organizationName: string | null
   defaultDashboard: Dashboard
+  links?: { type: string; targetId: string; roles: string[]; kind: string | null }[]
   createdAt: string
 }
 

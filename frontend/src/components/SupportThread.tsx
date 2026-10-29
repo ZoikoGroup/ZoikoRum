@@ -32,7 +32,7 @@ export function SupportThread({ request, agent = false, onReply, onResolve }: {
       <div className="row" style={{ marginTop: 8 }}>
         <button className="btn btn-primary" disabled={busy || message.trim().length < 2} onClick={() => send(false)}>Send</button>
         {agent && <button className="btn btn-secondary" disabled={busy || message.trim().length < 2} onClick={() => send(true)}>Send and mark resolved</button>}
-        {!agent && onResolve && request.status !== 'RESOLVED' && <button className="btn btn-ghost" disabled={busy} onClick={() => { void onResolve() }}>My problem is solved</button>}
+        {!agent && onResolve && request.status !== 'RESOLVED' && !!request.firstRespondedAt && <button className="btn btn-ghost" disabled={busy} onClick={() => { void onResolve() }}>My problem is solved</button>}
       </div>
     </section>
   )

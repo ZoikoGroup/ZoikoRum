@@ -4,7 +4,9 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
+
+from zoikorum.shared import validation as rules
 
 FirmRoleName = Literal["FIRM_ADMIN", "FIRM_MEMBER", "AUTHORIZED_REPRESENTATIVE"]
 SizeBand = Literal["1-5", "6-20", "21-100", "100+"]
@@ -97,7 +99,28 @@ class FirmPatch(BaseModel):
     hqCountry: str | None = Field(default=None, pattern="^[A-Z]{2}$")
     sizeBand: SizeBand | None = None
     primaryCategory: str | None = Field(default=None, max_length=100)
-    website: str | None = Field(default=None, max_length=300, pattern=r"^https?://")
+    website: str | None = Field(default=None, max_length=300)
+
+    # Rules apply on write only; "" clears an optional field (the service treats a blank as "no value").
+    @field_validator("legalName")
+    @classmethod
+    def _legal(cls, v: str | None) -> str | None:
+        return None if v is None else rules.org_name(v)
+
+    @field_validator("tradingName")
+    @classmethod
+    def _trading(cls, v: str | None) -> str | None:
+        return v if v is None or not v.strip() else rules.org_name(v)
+
+    @field_validator("registrationNumber")
+    @classmethod
+    def _reg(cls, v: str | None) -> str | None:
+        return v if v is None or not v.strip() else rules.registration_number(v)
+
+    @field_validator("website")
+    @classmethod
+    def _web(cls, v: str | None) -> str | None:
+        return v if v is None or not v.strip() else rules.website_url(v)
 
 
 class FirmMemberOut(BaseModel):
@@ -143,7 +166,7 @@ class FirmOfferingIn(BaseModel):
     specialization: str = Field(min_length=1, max_length=100)
     engagementTypes: list[EngagementTypeName] = Field(default_factory=lambda: ["PROJECT"], min_length=1)
     pricingModel: PricingModelName = "FIXED"
-    startingPriceMinor: int | None = Field(default=None, ge=0)
+    startingPriceMinor: int | None = Field(default=None, ge=0, le=10**12)
     currency: str | None = Field(default=None, pattern="^[A-Z]{3}$")
     deliveredBy: list[uuid.UUID] = Field(min_length=1, max_length=50)  # member professional ids
 
@@ -154,7 +177,7 @@ class FirmOfferingPatch(BaseModel):
     specialization: str | None = Field(default=None, min_length=1, max_length=100)
     engagementTypes: list[EngagementTypeName] | None = Field(default=None, min_length=1)
     pricingModel: PricingModelName | None = None
-    startingPriceMinor: int | None = Field(default=None, ge=0)
+    startingPriceMinor: int | None = Field(default=None, ge=0, le=10**12)
     currency: str | None = Field(default=None, pattern="^[A-Z]{3}$")
     deliveredBy: list[uuid.UUID] | None = Field(default=None, min_length=1, max_length=50)
 

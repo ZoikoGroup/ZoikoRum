@@ -70,6 +70,10 @@ export function AccountPage() {
     try { accept(await authApi.removeAccountType(type)) } catch (err) { setError(err) } finally { setBusy(false) }
   }
   const removable = user.personas.filter((r) => r === 'BUYER' || r === 'PROFESSIONAL')
+  // A firm member is a Professional by design (they offer services through the firm), so that role cannot be dropped
+  // while they are on a firm team.
+  const inFirm = (user.links ?? []).some((l) => l.type === 'FIRM_MEMBER')
+  const fromFirm = (r: string) => inFirm && r === 'PROFESSIONAL'
 
   return (
     <>
@@ -87,11 +91,17 @@ export function AccountPage() {
       <section className="card panel">
         <h2>Your roles</h2>
         <div className="badges" style={{ marginBottom: 16 }}>
-          {[...user.personas, ...user.platformRoles].map((r) => <span key={r} className="badge green">{ROLE_LABEL[r] ?? r}</span>)}
+          {[...user.personas, ...user.platformRoles].map((r) => <span key={r} className="badge green">{ROLE_LABEL[r] ?? r}{fromFirm(r) ? ' (via firm)' : ''}</span>)}
         </div>
         {user.personas.length > 1 && removable.map((r) => (
-          <p key={r} className="row" style={{ alignItems: 'center' }}><span>{ROLE_LABEL[r] ?? r}</span>
-            <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => remove(r as 'BUYER' | 'PROFESSIONAL')}>Remove</button></p>
+          <div key={r} style={{ marginBottom: 8, overflowWrap: 'anywhere' }}>
+            <div className="row" style={{ alignItems: 'center' }}><span>{ROLE_LABEL[r] ?? r}</span>
+              {fromFirm(r)
+                ? <span className="badge">Included with your firm membership</span>
+                : <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => remove(r as 'BUYER' | 'PROFESSIONAL')}>Remove</button>}</div>
+            {fromFirm(r) && <p className="muted small" style={{ margin: '4px 0 0' }}>You did not add this role. It comes with being on a firm team, so it
+              cannot be removed here while you are a member. To drop it, <Link to="/app/firm/team">leave or manage the firm team</Link>.</p>}
+          </div>
         ))}
         {canAdd.length > 0 && (
           <>

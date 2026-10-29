@@ -85,13 +85,19 @@ export function SiteHeader() {
 }
 
 export function SiteFooter() {
+  const { user } = useAuth()
+  // /join is for visitors only (it bounces a signed-in person to their dashboard), so a signed-in person is sent where
+  // the same action really happens: adding the Professional role to their account.
+  const holdsPro = !!user?.personas.includes('PROFESSIONAL')
   return (
     <footer className="site-footer">
       <div className="inner">
         <nav aria-label="Footer">
           <Link to="/professionals">Find professionals</Link>
           <Link to="/categories/finance-and-accounting">Finance &amp; Accounting</Link>
-          <Link to="/join?type=PROFESSIONAL">Join as a professional</Link>
+          {!user
+            ? <Link to="/join?type=PROFESSIONAL">Join as a professional</Link>
+            : holdsPro ? <Link to={dashboardPath(user)}>Your dashboard</Link> : <Link to="/app/account">Add the professional role</Link>}
           <Link to="/enterprise">Enterprise</Link>
           <Link to="/legal/terms">Terms</Link>
           <Link to="/legal/privacy">Privacy</Link>

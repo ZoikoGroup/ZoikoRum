@@ -701,6 +701,9 @@ async def remove_persona(session: AsyncSession, actor: Actor, account_type: str,
         raise Forbidden("Firm and Enterprise roles are managed through an organization")
     if persona not in identity.personas:
         raise NotFound("You do not hold that role")
+    if persona in _derived_personas(await _links(session, identity.id)):
+        raise Conflict("This role comes with your firm membership. Leave the firm team to drop it.",
+                       code="ROLE_FROM_MEMBERSHIP")
     if len(identity.personas) < 2:
         raise Conflict("This is your only role; it cannot be removed", code="LAST_ROLE")
     identity.personas = sorted(p for p in identity.personas if p != persona)
