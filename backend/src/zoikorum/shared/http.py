@@ -147,6 +147,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+class _Unexpected(DomainError):
+    status, code, title = 500, "INTERNAL_ERROR", "Something went wrong"
+
+
 def install(app: FastAPI) -> None:
     from zoikorum.shared.idempotency import IdempotencyMiddleware
 
@@ -168,6 +172,12 @@ def install(app: FastAPI) -> None:
         return problem(ServiceUnavailable(
             "Zoikorum is temporarily unavailable while a database update is required. Please contact support.",
             code="DATABASE_SCHEMA_OUTDATED"))
+
+    @app.exception_handler(Exception)
+    async def _unexpected(_: Request, exc: Exception):
+        # Any other failure: one log line with the error type, the traceback and the correlation id the person sees.
+        log.error("Unhandled %s; correlationId=%s", type(exc).__name__, context.current().correlation_id, exc_info=exc)
+        return problem(_Unexpected())
 
     @app.exception_handler(StaleDataError)
     async def _stale(_: Request, __: StaleDataError):
