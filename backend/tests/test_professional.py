@@ -127,7 +127,7 @@ async def test_publish_requires_readiness_and_attestation(client, make_user, sf)
     u, pro = await new_pro(client, make_user)
     r = await client.post("/v1/professionals/me/publish", headers=u.h, json={"attestAccurate": True})
     assert r.status_code == 422 and r.json()["code"] == "PROFILE_NOT_READY"
-    assert "Confirm your email address" in r.json()["extra"]["missing"]
+    assert "Confirm your email address" not in r.json()["extra"]["missing"]  # email is not required to publish
 
     await ready_to_publish(client, u)
     ready = (await client.get("/v1/professionals/me/readiness", headers=u.h)).json()
