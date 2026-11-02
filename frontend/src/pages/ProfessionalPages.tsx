@@ -1297,7 +1297,7 @@ export function ProfileSetupPage() {
           </nav>
           {saved && <div className="alert alert-success" role="status">Saved.</div>}
           {!user?.emailConfirmed && step === 'publish' && (
-            <div className="alert alert-warn">Confirm your email address before publishing: open the link we emailed you. <ResendConfirmation /></div>
+            <div className="alert alert-warn">Please confirm your email address: open the link we emailed you. You can still publish. <ResendConfirmation /></div>
           )}
           <div className="onb-layout">
           <section className="card panel">
