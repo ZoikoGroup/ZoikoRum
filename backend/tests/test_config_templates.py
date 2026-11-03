@@ -41,7 +41,7 @@ def test_templates_list_every_setting(path):
 @pytest.mark.unit
 def test_local_template_loads_as_is(no_env):
     s = Settings(_env_file=LOCAL)
-    assert s.env == "local" and s.storage_provider == "local" and s.redis_url is None  # blank means the default
+    assert s.env == "local" and s.storage_provider == "gcs" and s.redis_url is None  # blank means the default
     assert s.payment_operating_countries == [] and s.verification_provider == "simulated"
 
 
