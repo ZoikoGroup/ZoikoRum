@@ -92,8 +92,12 @@ def review(s: Settings) -> list[tuple[str, str, str]]:
     else:
         add(MISSING, "Identity checks", f"ZK_VERIFICATION_PROVIDER={provider} is for development; set veriff")
 
-    if s.storage_provider == "local":
-        add(MISSING, "File storage", "local disk is development only; set ZK_STORAGE_PROVIDER=database")
+    if s.storage_provider == "gcs" and s.gcs_bucket:
+        add(OK, "File storage", "Google Cloud Storage bucket configured" + (", with a KMS key" if s.gcs_kms_key_name else ""))
+    elif s.storage_provider == "gcs":
+        add(MISSING, "File storage", "ZK_GCS_BUCKET is needed")
+    elif s.storage_provider == "local":
+        add(MISSING, "File storage", "local disk is development only; set ZK_STORAGE_PROVIDER=gcs (or database)")
     else:
         add(OK, "File storage", "files are kept in the database (backed up with it)")
 
@@ -163,6 +167,18 @@ def connect(s: Settings) -> list[tuple[str, str, str]]:
             out.append((OK, "Redis", "reachable"))
         except Exception as exc:  # noqa: BLE001
             out.append((MISSING, "Redis", f"cannot connect ({type(exc).__name__})"))
+    if s.storage_provider == "gcs" and s.gcs_bucket:
+        try:
+            from google.cloud import storage as gcs
+
+            bucket = gcs.Client().get_bucket(s.gcs_bucket)
+            if bucket.versioning_enabled or bucket.retention_period:
+                kept = "versioning on" if bucket.versioning_enabled else "retention policy on"
+                out.append((OK, "GCS bucket", f"reachable with this server's service account, {kept}"))
+            else:
+                out.append((MISSING, "GCS bucket", "reachable, but neither object versioning nor a retention policy is on"))
+        except Exception as exc:  # noqa: BLE001
+            out.append((MISSING, "GCS bucket", f"not reachable ({type(exc).__name__})"))
     if s.malware_scanner == "clamav":
         from zoikorum.shared import scanning
 
