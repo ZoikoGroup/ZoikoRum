@@ -10,6 +10,7 @@ from zoikorum.config import get_settings
 
 from zoikorum.domains.policy.facade import Attr, PolicyAction
 from zoikorum.shared.auth import OrgRole
+from zoikorum.shared import validation as text_rules
 from zoikorum.shared.uploads import UploadIn
 
 
@@ -27,13 +28,20 @@ class ContractVariantIn(BaseModel):
     governingLaw: str | None = Field(default=None, max_length=200)
     clauseTexts: dict[str, str] = Field(default_factory=dict)
 
+    @field_validator("name")
+    @classmethod
+    def variant_name(cls, value):
+        return text_rules.variant_name(value)
+
+    @field_validator("governingLaw")
+    @classmethod
+    def law_text(cls, value):
+        return text_rules.governing_law(value) if value and value.strip() else None
+
     @field_validator("jurisdictions")
     @classmethod
     def countries(cls, values):
-        values = sorted(set(v.upper() for v in values))
-        if any(len(v) != 2 or not v.isalpha() or not v.isascii() for v in values):
-            raise ValueError("use ISO two-letter country codes")
-        return values
+        return text_rules.iso_codes(values, "country")
 
     @model_validator(mode="after")
     def clauses(self):
@@ -54,20 +62,20 @@ class SettingsIn(BaseModel):
     partialReleaseAllowed: bool = True
     # Deadlines: leave empty to use the platform defaults (ZK_ACCEPTANCE_WINDOW_DAYS, ...; policy.service.platform_deadlines),
     # so a profile that only sets other rules never changes them silently.
-    acceptanceWindowDays: int | None = Field(default=None, ge=1, le=90)
-    autoAcceptAfterDays: int | None = Field(default=None, ge=1, le=90)
-    signatureDeadlineDays: int | None = Field(default=None, ge=1, le=90)
-    disputeEvidenceDays: int | None = Field(default=None, ge=1, le=90)
-    directResolutionBusinessDays: int | None = Field(default=None, ge=1, le=90)
-    challengeWindowDays: int | None = Field(default=None, ge=1, le=90)
+    acceptanceWindowDays: int | None = Field(default=None, strict=True, ge=1, le=90)
+    autoAcceptAfterDays: int | None = Field(default=None, strict=True, ge=1, le=90)
+    signatureDeadlineDays: int | None = Field(default=None, strict=True, ge=1, le=90)
+    disputeEvidenceDays: int | None = Field(default=None, strict=True, ge=1, le=90)
+    directResolutionBusinessDays: int | None = Field(default=None, strict=True, ge=1, le=90)
+    challengeWindowDays: int | None = Field(default=None, strict=True, ge=1, le=90)
     autoDisputeMissedDeadline: bool = False
-    autoDisputeRejectionCount: int | None = Field(default=None, ge=2, le=20)
+    autoDisputeRejectionCount: int | None = Field(default=None, strict=True, ge=2, le=20)
     autoDisputeComplianceFlag: bool = False
     # Enterprise dispute controls: above these amounts (minor units, engagement currency) a settlement needs a mediator,
     # or a Legal Reviewer of the organisation; escalation roles name who may take a case to mediation for the organisation.
-    disputeMediationAboveMinor: int | None = Field(default=None, ge=0)
-    disputeLegalReviewAboveMinor: int | None = Field(default=None, ge=0)
-    disputeRetentionYears: int | None = Field(default=None, ge=1, le=25)  # keep closed dispute records at least this long
+    disputeMediationAboveMinor: int | None = Field(default=None, strict=True, ge=0)
+    disputeLegalReviewAboveMinor: int | None = Field(default=None, strict=True, ge=0)
+    disputeRetentionYears: int | None = Field(default=None, strict=True, ge=1, le=25)  # keep closed dispute records at least this long
     disputeEscalationRoles: list[Literal["ORG_ADMIN", "REQUESTER", "APPROVER", "BUDGET_OWNER", "LEGAL_REVIEWER", "EXCEPTION_AUTHORITY"]] | None = None
     requiredClauses: list[Literal["CONFIDENTIALITY", "IP_OWNERSHIP", "TERMINATION", "GOVERNING_LAW"]] = [
         "CONFIDENTIALITY", "IP_OWNERSHIP", "TERMINATION", "GOVERNING_LAW",
@@ -76,7 +84,7 @@ class SettingsIn(BaseModel):
     clauseTexts: dict[str, str] = Field(default_factory=dict)
     stepUpForApprovals: bool = True
     # Payment rules. Escrow itself is never optional (platform baseline); these shape how milestones and retainers use it.
-    milestoneMaxSharePercent: int | None = Field(default=None, ge=1, le=100)  # no milestone above this share of the total
+    milestoneMaxSharePercent: int | None = Field(default=None, strict=True, ge=1, le=100)  # no milestone above this share of the total
     milestoneAcceptanceCriteriaRequired: bool = False  # every milestone names deliverables with acceptance criteria
     retainerAutoFundAllowed: bool = True  # retainer cycles may be funded automatically from a saved payment method
     retainerCycleApproval: bool = False  # each retainer cycle needs an approval before it is funded
@@ -101,11 +109,12 @@ class SettingsIn(BaseModel):
     def countries_and_currencies(cls, values, info):
         if values is None:
             return values
-        length = 2 if info.field_name == "allowedJurisdictions" else 3
-        values = sorted(set(v.upper() for v in values))
-        if not values or any(len(v) != length or not v.isalpha() or not v.isascii() for v in values):
-            raise ValueError("use a nonempty list of ISO country/currency codes, or null for no restriction")
-        return values
+        return text_rules.iso_codes(values, "country" if info.field_name == "allowedJurisdictions" else "currency")
+
+    @field_validator("governingLaw")
+    @classmethod
+    def law_text(cls, value):
+        return text_rules.governing_law(value) if value and value.strip() else None
 
     @model_validator(mode="after")
     def platform_safety(self):
@@ -208,6 +217,12 @@ class ProfileIn(BaseModel):
     orgId: uuid.UUID
     name: str = Field(min_length=2, max_length=80)
     description: str = Field(default="", max_length=1000)
+
+    @field_validator("name")
+    @classmethod
+    def profile_name(cls, value):
+        return text_rules.policy_name(value)
+
     template: Literal["REGULATED", "ENTERPRISE_STANDARD", "CROSS_BORDER", "GROWTH_ADVISORY"] | None = None
     settings: SettingsIn | None = None
     rules: list[RuleIn] | None = Field(default=None, max_length=50)

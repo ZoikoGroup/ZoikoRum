@@ -11,6 +11,7 @@ import { ActionList, greeting, Icon, type Action } from '../components/dashboard
 import { EmptyTable, PortalHeader, StatCard } from '../components/portal'
 import { AuditExportButtons } from '../components/AuditExport'
 import { saveBlob } from '../lib/exports'
+import { keepText, textError } from '../lib/validation'
 import { useAuth } from '../auth/AuthContext'
 
 const CURRENCIES = ['USD', 'GBP', 'EUR', 'INR', 'CAD', 'AUD', 'SGD', 'AED']
@@ -425,6 +426,7 @@ export function ProcurementSetupWizard({ org, onClose, onChanged }: { org: Organ
   const [basics, setBasics] = useState({ industry: org.industry ?? '', timeZone: org.timeZone ?? 'UTC' })
   const [template, setTemplate] = useState('ENTERPRISE_STANDARD')
   const [policyName, setPolicyName] = useState('Procurement policy')
+  const [nameTouched, setNameTouched] = useState(false)
   const [invite, setInvite] = useState<{ email: string; roles: OrgRole[] }>({ email: '', roles: ['APPROVER'] })
   const [invited, setInvited] = useState<string[]>([])
   const [cc, setCc] = useState({ name: '', code: '', amount: '', currency: 'USD' })
@@ -521,8 +523,9 @@ export function ProcurementSetupWizard({ org, onClose, onChanged }: { org: Organ
               <input type="radio" name="wiz-template" value={key} checked={template === key} onChange={() => setTemplate(key)} /> <strong>{name}</strong>
               <span className="small muted" style={{ display: 'block' }}>{text}</span></label>))}</div>
           <Field label="Policy name" id="wiz-policy-name"><input id="wiz-policy-name" className="input" value={policyName} maxLength={80}
-            onChange={(e) => setPolicyName(e.target.value)} /></Field>
-          <button type="button" className="btn btn-primary" disabled={busy || policyName.trim().length < 2} onClick={createPolicy}>Create and activate</button>
+            onChange={(e) => setPolicyName(keepText('policy', e.target.value))} onBlur={() => setNameTouched(true)} />
+            {nameTouched && textError('policy', policyName) && <span className="small warn-text" role="alert">{textError('policy', policyName)}</span>}</Field>
+          <button type="button" className="btn btn-primary" disabled={busy || !!textError('policy', policyName)} onClick={createPolicy}>Create and activate</button>
           <p className="small muted">Activating asks for two-step confirmation.</p>
         </div>
       ))}

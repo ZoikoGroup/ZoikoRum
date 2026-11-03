@@ -11,6 +11,7 @@ import AutomaticDisputeControls, { DisputeSettlementControls } from '../componen
 import { ContractVariantsEditor, PaymentAndExceptionControls, PolicyChecksPanel, PolicyDashboardView, PolicySettingsForm, RuleBuilder } from '../components/PolicyBuilder'
 import { DefinePolicyPrompt } from './EnterprisePages'
 import { saveBlob } from '../lib/exports'
+import { keepText, textError } from '../lib/validation'
 
 type PolicyTab = 'profiles' | 'approvals' | 'exceptions' | 'dashboard'
 
@@ -40,6 +41,8 @@ export default function PoliciesPage() {
   const [loaded, setLoaded] = useState({ settings: '{}', rules: '[]' })
   const [impact, setImpact] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
+  const [profileName, setProfileName] = useState('')
+  const [nameTouched, setNameTouched] = useState(false)
   const { run, modal } = useStepUp(setError)
 
   const org = orgs.find((o) => o.id === orgId)
@@ -116,11 +119,12 @@ export default function PoliciesPage() {
 
   async function create(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
+    if (textError('policy', profileName)) { setNameTouched(true); return }
     const f = new FormData(e.currentTarget)
     await action(async () => {
       const created = await policyApi.create({
         orgId,
-        name: String(f.get('name')),
+        name: profileName.trim().replace(/\s+/g, ' '),
         description: String(f.get('description')),
         template: String(f.get('template')),
         businessUnitIds: f.getAll('businessUnitIds').map(String),
@@ -128,6 +132,7 @@ export default function PoliciesPage() {
       })
       choose(created)
       setShowCreate(false)
+      setProfileName(''); setNameTouched(false)
     })
   }
 
@@ -316,7 +321,12 @@ export default function PoliciesPage() {
                       required
                       minLength={2}
                       maxLength={80}
+                      value={profileName}
+                      aria-invalid={nameTouched && textError('policy', profileName) ? true : undefined}
+                      onChange={(e) => setProfileName(keepText('policy', e.target.value))}
+                      onBlur={() => setNameTouched(true)}
                     />
+                    {nameTouched && textError('policy', profileName) && <span className="small warn-text" role="alert">{textError('policy', profileName)}</span>}
                   </div>
                   <div className="field" style={{ flex: 1 }}>
                     <label htmlFor="policies-template">Base Template</label>

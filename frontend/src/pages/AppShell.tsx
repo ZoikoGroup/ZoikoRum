@@ -338,9 +338,9 @@ export default function AppShell() {
             staff={isStaff && isStaffPath(location.pathname)} />
           <div style={{ flex: 1 }} />
           <LanguageSwitcher />
-          <NavLink to="/app/help" className="icon-btn" aria-label="Help &amp; support"><Icon name="help" /></NavLink>
+          <NavLink to="/app/help" className="icon-btn" aria-label="Help &amp; support" title="Help &amp; support"><Icon name="help" /></NavLink>
           <div className="bell-pop">
-            <button type="button" className="icon-btn" aria-label={`Notifications${bellTotal ? `: ${bellTotal} waiting for you` : ''}`}
+            <button type="button" className="icon-btn" title="Notifications" aria-label={`Notifications${bellTotal ? `: ${bellTotal} waiting for you` : ''}`}
               aria-expanded={bellOpen} onClick={() => {
                 // Nothing waiting: open the notification history. One kind of work: go straight there. Several: show the list.
                 if (bellItems.length === 0) navigate('/app/notifications')

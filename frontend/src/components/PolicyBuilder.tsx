@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { policyApi, type PolicyChecks, type PolicyDashboard as Dashboard, type PolicyRule } from '../api/policy'
 import { formatMoney } from '../api/orgs'
 import { ErrorAlert } from './ui'
+import IntInput from './IntInput'
+import { codesError, keepCodes, keepText, parseCodes, textError } from '../lib/validation'
 
 /* Structured policy builder (Enterprise policy profiles: no JSON boxes for everyday settings). Every control edits the
    same settings/rules JSON the page saves, so the advanced JSON view stays in step. */
@@ -33,10 +35,15 @@ export function PolicySettingsForm({ settings, onChange, disabled }: { settings:
   const s = parse<Record<string, unknown>>(settings, {})
   const set = (key: string, value: unknown) => onChange(JSON.stringify({ ...s, [key]: value }, null, 2))
   const toggle = (key: string, value: string) => { const cur = list(s[key]); set(key, cur.includes(value) ? cur.filter((x) => x !== value) : [...cur, value]) }
-  const codes = (key: string, v: string, n: number) => {
-    const items = v.split(',').map((x) => x.trim().toUpperCase()).filter((x) => x.length === n)
+  const [codeErr, setCodeErr] = useState<Record<string, string>>({})
+  const codes = (key: string, v: string, kind: 'country' | 'currency') => {
+    const err = codesError(kind, v)
+    setCodeErr((c) => ({ ...c, [key]: err }))
+    if (err) return
+    const items = parseCodes(v)
     set(key, items.length ? items : null)
   }
+  const [lawErr, setLawErr] = useState('')
   return (
     <fieldset disabled={disabled} className="panel policy-form"><legend>Who can be engaged</legend>
       <label>Minimum trust light
@@ -48,20 +55,26 @@ export function PolicySettingsForm({ settings, onChange, disabled }: { settings:
       <div className="row" style={{ marginTop: 10 }}>
         <label style={{ flex: 1 }}>Countries professionals must serve (two-letter codes; empty: any)
           <input className="input" defaultValue={list(s.allowedJurisdictions).join(', ')} key={`j${list(s.allowedJurisdictions).join()}`}
-            onBlur={(e) => codes('allowedJurisdictions', e.target.value, 2)} placeholder="GB, IE, DE" /></label>
+            onChange={(e) => { e.target.value = keepCodes(e.target.value) }} aria-invalid={codeErr.allowedJurisdictions ? true : undefined}
+            onBlur={(e) => codes('allowedJurisdictions', e.target.value, 'country')} placeholder="GB, IE, DE" />
+          {codeErr.allowedJurisdictions && <span className="small warn-text" role="alert" style={{ display: 'block' }}>{codeErr.allowedJurisdictions}</span>}</label>
         <label style={{ flex: 1 }}>Currencies allowed (empty: any)
           <input className="input" defaultValue={list(s.allowedCurrencies).join(', ')} key={`c${list(s.allowedCurrencies).join()}`}
-            onBlur={(e) => codes('allowedCurrencies', e.target.value, 3)} placeholder="USD, EUR" /></label>
+            onChange={(e) => { e.target.value = keepCodes(e.target.value) }} aria-invalid={codeErr.allowedCurrencies ? true : undefined}
+            onBlur={(e) => codes('allowedCurrencies', e.target.value, 'currency')} placeholder="USD, EUR" />
+          {codeErr.allowedCurrencies && <span className="small warn-text" role="alert" style={{ display: 'block' }}>{codeErr.allowedCurrencies}</span>}</label>
       </div>
       <h4 style={{ margin: '14px 0 4px' }}>Deadlines (empty: platform default)</h4>
       <div className="row">{DEADLINES.map(([k, l]) => <label key={k} style={{ flex: 1, minWidth: 150 }}>{l}
-        <input className="input" type="number" min={1} max={90} value={typeof s[k] === 'number' ? String(s[k]) : ''}
-          onChange={(e) => set(k, e.target.value ? Math.min(90, Math.max(1, Math.round(Number(e.target.value)))) : null)} /></label>)}</div>
+        <IntInput min={1} max={90} value={typeof s[k] === 'number' ? (s[k] as number) : null} onCommit={(n) => set(k, n)} /></label>)}</div>
       <h4 style={{ margin: '14px 0 4px' }}>Contracts</h4>
       {CLAUSES.map(([k, l]) => <label key={k} className="checkbox small" style={{ display: 'inline-flex', marginRight: 12 }}>
         <input type="checkbox" checked={list(s.requiredClauses ?? CLAUSES.map(([c]) => c)).includes(k)} onChange={() => toggle('requiredClauses', k)} /> <span>{l} clause required</span></label>)}
       <label style={{ display: 'block', marginTop: 8 }}>Governing law (optional)
-        <input className="input" value={String(s.governingLaw ?? '')} onChange={(e) => set('governingLaw', e.target.value || null)} placeholder="e.g. England and Wales" /></label>
+        <input className="input" value={String(s.governingLaw ?? '')} maxLength={200} aria-invalid={lawErr ? true : undefined}
+          onChange={(e) => { setLawErr(''); set('governingLaw', keepText('law', e.target.value) || null) }}
+          onBlur={(e) => setLawErr(textError('law', e.target.value, false))} placeholder="e.g. England and Wales" />
+        {lawErr && <span className="small warn-text" role="alert" style={{ display: 'block' }}>{lawErr}</span>}</label>
       <label className="checkbox small" style={{ marginTop: 8 }}><input type="checkbox" checked={s.stepUpForApprovals !== false}
         onChange={(e) => set('stepUpForApprovals', e.target.checked)} /> <span>Approvers confirm with two-step verification</span></label>
     </fieldset>
@@ -89,8 +102,8 @@ export function PaymentAndExceptionControls({ settings, onChange, disabled }: { 
       <h4 style={{ margin: '12px 0 4px' }}>Milestones</h4>
       <div className="row">
         <label style={{ flex: 1, minWidth: 180 }}>Largest share of the total in one milestone (%; empty: any)
-          <input className="input" type="number" min={1} max={100} value={typeof s.milestoneMaxSharePercent === 'number' ? String(s.milestoneMaxSharePercent) : ''}
-            onChange={(e) => set('milestoneMaxSharePercent', e.target.value ? Math.min(100, Math.max(1, Math.round(Number(e.target.value)))) : null)} /></label>
+          <IntInput min={1} max={100} value={typeof s.milestoneMaxSharePercent === 'number' ? s.milestoneMaxSharePercent : null}
+            onCommit={(n) => set('milestoneMaxSharePercent', n)} /></label>
       </div>
       <label className="checkbox small"><input type="checkbox" checked={s.milestoneAcceptanceCriteriaRequired === true}
         onChange={(e) => set('milestoneAcceptanceCriteriaRequired', e.target.checked)} /> <span>Every milestone names deliverables with acceptance criteria</span></label>
@@ -124,7 +137,11 @@ export function ContractVariantsEditor({ settings, onChange, disabled }: { setti
   const variants = (Array.isArray(s.contractVariants) ? s.contractVariants : []) as Variant[]
   const save = (next: Variant[]) => onChange(JSON.stringify({ ...s, contractVariants: next }, null, 2))
   const [f, setF] = useState({ name: '', countries: '', law: '', clause: 'CONFIDENTIALITY', text: '' })
-  const countries = f.countries.split(',').map((x) => x.trim().toUpperCase()).filter((x) => /^[A-Z]{2}$/.test(x))
+  const [touched, setTouched] = useState({ name: false, countries: false, law: false })
+  const nameErr = textError('variant', f.name, false)
+  const countryErr = codesError('country', f.countries)
+  const variantLawErr = textError('law', f.law, false)
+  const countries = parseCodes(f.countries)
   const taken = new Set(variants.flatMap((v) => v.jurisdictions))
   const clash = countries.filter((c) => taken.has(c))
   function add() {
@@ -132,6 +149,7 @@ export function ContractVariantsEditor({ settings, onChange, disabled }: { setti
     save([...variants, { id, name: f.name.trim(), jurisdictions: countries, governingLaw: f.law.trim() || null,
       clauseTexts: f.text.trim() ? { [f.clause]: f.text.trim() } : {} }])
     setF({ name: '', countries: '', law: '', clause: 'CONFIDENTIALITY', text: '' })
+    setTouched({ name: false, countries: false, law: false })
   }
   return (
     <fieldset disabled={disabled} className="panel policy-form"><legend>Regional contract variants</legend>
@@ -142,19 +160,25 @@ export function ContractVariantsEditor({ settings, onChange, disabled }: { setti
             <td>{Object.keys(v.clauseTexts ?? {}).map((k) => CLAUSES.find(([c]) => c === k)?.[1] ?? k).join(', ') || '—'}</td>
             <td><button type="button" className="btn btn-ghost btn-sm" onClick={() => save(variants.filter((_, j) => j !== i))}>Remove</button></td></tr>)}</tbody></table>)}
       <details style={{ marginTop: 10 }}><summary className="small"><strong>Add a variant</strong></summary>
-        <div className="row" style={{ marginTop: 8 }}>
-          <label style={{ flex: 1 }}>Name<input className="input" value={f.name} maxLength={80} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="e.g. United Kingdom" /></label>
-          <label style={{ flex: 1 }}>Countries (two-letter codes)<input className="input" value={f.countries} onChange={(e) => setF({ ...f, countries: e.target.value })} placeholder="GB, IE" /></label>
+        <div className="row pf-grid" style={{ marginTop: 8 }}>
+          <label style={{ flex: 1 }}>Name<input className="input" value={f.name} maxLength={80} aria-invalid={touched.name && nameErr ? true : undefined}
+            onChange={(e) => setF({ ...f, name: keepText('variant', e.target.value) })} onBlur={() => setTouched((t) => ({ ...t, name: true }))} placeholder="e.g. United Kingdom" />
+            {touched.name && nameErr && <span className="small warn-text" role="alert" style={{ display: 'block' }}>{nameErr}</span>}</label>
+          <label style={{ flex: 1 }}>Countries (two-letter codes)<input className="input" value={f.countries} aria-invalid={touched.countries && countryErr ? true : undefined}
+            onChange={(e) => setF({ ...f, countries: keepCodes(e.target.value) })} onBlur={() => setTouched((t) => ({ ...t, countries: true }))} placeholder="GB, IE" />
+            {touched.countries && countryErr && <span className="small warn-text" role="alert" style={{ display: 'block' }}>{countryErr}</span>}</label>
         </div>
-        <label style={{ display: 'block' }}>Governing law<input className="input" value={f.law} maxLength={200} onChange={(e) => setF({ ...f, law: e.target.value })} placeholder="e.g. England and Wales" /></label>
-        <div className="row">
+        <label style={{ display: 'block' }}>Governing law<input className="input" value={f.law} maxLength={200} aria-invalid={touched.law && variantLawErr ? true : undefined}
+          onChange={(e) => setF({ ...f, law: keepText('law', e.target.value) })} onBlur={() => setTouched((t) => ({ ...t, law: true }))} placeholder="e.g. England and Wales" />
+          {touched.law && variantLawErr && <span className="small warn-text" role="alert" style={{ display: 'block' }}>{variantLawErr}</span>}</label>
+        <div className="row pf-grid pf-grid-clause">
           <label>Clause<select className="input" value={f.clause} onChange={(e) => setF({ ...f, clause: e.target.value })}>
             {CLAUSES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
           <label style={{ flex: 1 }}>Wording (optional)<textarea className="input" rows={2} maxLength={6000} value={f.text} onChange={(e) => setF({ ...f, text: e.target.value })} /></label>
         </div>
         {clash.length > 0 && <p className="small warn-text">{clash.join(', ')} already belong to another variant.</p>}
         <button type="button" className="btn btn-secondary btn-sm" style={{ marginTop: 8 }}
-          disabled={f.name.trim().length < 2 || countries.length === 0 || clash.length > 0 || (!f.law.trim() && !f.text.trim())} onClick={add}>Add variant</button>
+          disabled={f.name.trim().length < 2 || !!nameErr || !!variantLawErr || !!countryErr || countries.length === 0 || clash.length > 0 || (!f.law.trim() && !f.text.trim())} onClick={add}>Add variant</button>
       </details>
     </fieldset>
   )
@@ -194,7 +218,7 @@ export function RuleBuilder({ rules, onChange, disabled }: { rules: string; onCh
         <p className="small" style={{ margin: '8px 0 4px' }}>When</p>
         {ACTIONS.map(([k, l]) => <label key={k} className="checkbox small" style={{ display: 'inline-flex', marginRight: 10 }}>
           <input type="checkbox" checked={f.actions.includes(k)} onChange={() => setF({ ...f, actions: f.actions.includes(k) ? f.actions.filter((x) => x !== k) : [...f.actions, k] })} /> <span>{l}</span></label>)}
-        <div className="row" style={{ marginTop: 8 }}>
+        <div className="row pf-grid" style={{ marginTop: 8 }}>
           <label>If<select className="input" value={f.field} onChange={(e) => setF({ ...f, field: e.target.value, value: '' })}>
             {FIELDS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
           {kind === 'money' && <label>is<select className="input" value={f.op} onChange={(e) => setF({ ...f, op: e.target.value })}>
@@ -206,7 +230,7 @@ export function RuleBuilder({ rules, onChange, disabled }: { rules: string; onCh
                 <option value="">Choose…</option><option value="A">Green: fully verified</option><option value="B">Amber: identity verified</option></select>
               : <input className="input" type={kind === 'money' ? 'number' : 'text'} min={0} value={f.value} onChange={(e) => setF({ ...f, value: e.target.value })} />}</label>
         </div>
-        <div className="row">
+        <div className="row pf-grid">
           <label>Then<select className="input" value={f.decision} onChange={(e) => setF({ ...f, decision: e.target.value })}>
             {Object.entries(DECISION_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></label>
           {f.decision === 'REQUIRE_APPROVAL' && <label>Approved by<select className="input" value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })}>

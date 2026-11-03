@@ -9,6 +9,7 @@ import { PortalHeader, SidePanel, StatCard, Tabs, VerifyChips } from '../../comp
 import { TrustLight } from '../../components/TrustLight'
 import { SavedSearchesPanel } from '../../components/SavedSearches'
 import { ErrorAlert, Loading } from '../../components/ui'
+import { collectionNameError, keepCollectionName, keepNeedText, needTextError } from '../../lib/validation'
 import { countryName } from '../ProfessionalPages'
 
 const MAX_COMPARE = 3
@@ -25,6 +26,8 @@ export default function SavedProfessionals() {
   const [availability, setAvailability] = useState('')
   const [sort, setSort] = useState('recent')
   const [newName, setNewName] = useState('')
+  const [nameError, setNameError] = useState('')
+  const [textTouched, setTextTouched] = useState(false)
   const [comparing, setComparing] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<unknown>(null)
@@ -56,8 +59,10 @@ export default function SavedProfessionals() {
   }
   function createCollection(e: FormEvent) {
     e.preventDefault()
-    if (!newName.trim()) return
-    act(() => savedApi.createCollection(newName.trim()), `Collection “${newName.trim()}” created.`).then(() => setNewName(''))
+    const problem = collectionNameError(newName)
+    setNameError(problem)
+    if (problem) return
+    act(() => savedApi.createCollection(newName.trim()), `Collection “${newName.trim()}” created.`).then(() => { setNewName(''); setNameError('') })
   }
 
   const list = useMemo(() => {
@@ -105,7 +110,9 @@ export default function SavedProfessionals() {
           ]} value={tab} onChange={setTab} />
           <div className="filter-row compact">
             <label className="filter-box grow"><span>Search</span>
-              <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Name, title or expertise" /></label>
+              <input value={text} maxLength={120} onChange={(e) => setText(keepNeedText(e.target.value))} onBlur={() => { setText(text.trim()); setTextTouched(true) }}
+                placeholder="Name, title or expertise" aria-invalid={textTouched && !!needTextError(text)} />
+              {textTouched && needTextError(text) && <small className="error" role="alert">{needTextError(text)}</small>}</label>
             <label className="filter-box"><span>Collection</span>
               <select value={collectionFilter} onChange={(e) => setCollectionFilter(e.target.value)}>
                 <option value="">All</option>{collections.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -177,10 +184,12 @@ export default function SavedProfessionals() {
           <SavedSearchesPanel />
           <SidePanel title="Collections">
             <form className="row" onSubmit={createCollection} style={{ marginBottom: 12 }}>
-              <input className="input" style={{ flex: 1, height: 38 }} aria-label="New collection name" placeholder="New collection" maxLength={80}
-                value={newName} onChange={(e) => setNewName(e.target.value)} />
+              <input className="input" style={{ flex: 1, height: 38 }} aria-label="New collection name" placeholder="New collection" maxLength={40}
+                value={newName} onChange={(e) => { setNewName(keepCollectionName(e.target.value)); setNameError('') }}
+                onBlur={() => newName && setNameError(collectionNameError(newName))} aria-invalid={!!nameError} />
               <button className="btn btn-secondary btn-sm" disabled={!newName.trim()}><Icon name="plus" /> Add</button>
             </form>
+            {nameError && <p className="error small" role="alert" style={{ margin: '-4px 0 10px' }}>{nameError}</p>}
             {collections.length === 0 ? <p className="muted small" style={{ margin: 0 }}>Group professionals by project, e.g. “Data Privacy Project”.</p> : (
               <ul className="collection-list">
                 {collections.map((c) => (
@@ -191,7 +200,7 @@ export default function SavedProfessionals() {
                     <details className="more-menu">
                       <summary aria-label={`Manage ${c.name}`}>⋮</summary>
                       <div className="menu card">
-                        <button onClick={() => { const n = prompt('Rename collection', c.name); if (n && n.trim()) act(() => savedApi.renameCollection(c.id, n.trim())) }}>Rename</button>
+                        <button onClick={() => { const n = prompt('Rename collection', c.name); if (n && n.trim()) { const bad = collectionNameError(keepCollectionName(n)); if (bad) alert(bad); else act(() => savedApi.renameCollection(c.id, keepCollectionName(n).trim())) } }}>Rename</button>
                         <button className="danger" onClick={() => { if (confirm(`Delete “${c.name}”? The professionals stay saved.`)) act(() => savedApi.deleteCollection(c.id), 'Collection deleted.') }}>Delete</button>
                       </div>
                     </details>

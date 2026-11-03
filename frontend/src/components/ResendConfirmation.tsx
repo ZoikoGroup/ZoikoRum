@@ -20,7 +20,9 @@ export function ResendConfirmation() {
       setMessage(`We sent the confirmation link to ${maskEmail(user?.email)}. ${result.message}`)
       setDevToken(result.emailConfirmationToken)
     } catch (err) {
-      setMessage(err instanceof ApiError ? err.message : 'Could not send the link. Please try again.')
+      const wait = err instanceof ApiError ? /ask for another in (\d+) seconds?/.exec(err.message)?.[1] : undefined
+      setMessage(wait ? `We sent a link to ${maskEmail(user?.email)}. You can ask for another in ${wait} seconds.`
+        : err instanceof ApiError ? err.message : 'Could not send the link. Please try again.')
     } finally {
       setBusy(false)
     }

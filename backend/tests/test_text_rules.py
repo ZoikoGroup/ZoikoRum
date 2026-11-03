@@ -63,3 +63,56 @@ def test_schemas_enforce_rules_on_write():
     with pytest.raises(ValidationError):
         MePatch(displayName="Ann 3")
     assert MePatch(displayName="Ann-Marie O'Neil").displayName == "Ann-Marie O'Neil"
+
+
+def test_policy_names_and_law():
+    assert v.policy_name("Acme & Co. (UK), Ltd") == "Acme & Co. (UK), Ltd"
+    assert v.variant_name("St. John's-Land") == "St. John's-Land"
+    assert v.governing_law("England and Wales (English law)") == "England and Wales (English law)"
+    for fn, bad in ((v.policy_name, "Policy 2"), (v.policy_name, "A/B"), (v.variant_name, "UK & IE"), (v.variant_name, "UK1"),
+                    (v.governing_law, "Law 4"), (v.governing_law, "Law & Co")):
+        with pytest.raises(ValueError):
+            fn(bad)
+
+
+def test_iso_codes():
+    assert v.iso_codes(["gb", "IE", "gb"], "country") == ["GB", "IE"]
+    assert v.iso_codes(["usd", "EUR"], "currency") == ["EUR", "USD"]
+    for kind, bad in (("country", ["ZZ"]), ("country", ["USD"]), ("currency", ["ABC"]), ("currency", ["US"]), ("country", [])):
+        with pytest.raises(ValueError):
+            v.iso_codes(bad, kind)
+
+
+def test_policy_schemas_enforce_rules():
+    from zoikorum.domains.policy.schemas import ContractVariantIn, ProfileIn, SettingsIn
+
+    org = "00000000-0000-0000-0000-000000000001"
+    assert ProfileIn(orgId=org, name="Acme Procurement").name == "Acme Procurement"
+    with pytest.raises(ValidationError):
+        ProfileIn(orgId=org, name="Policy 2")
+    assert SettingsIn(allowedCurrencies=["usd", "eur"], allowedJurisdictions=["gb"]).allowedCurrencies == ["EUR", "USD"]
+    for kw in ({"allowedCurrencies": ["ABC"]}, {"allowedJurisdictions": ["ZZ"]}, {"governingLaw": "Law 1"},
+               {"acceptanceWindowDays": 5.5}, {"acceptanceWindowDays": "5"}, {"disputeRetentionYears": 2.0},
+               {"disputeMediationAboveMinor": 10.5}, {"milestoneMaxSharePercent": True}):
+        with pytest.raises(ValidationError):
+            SettingsIn(**kw)
+    assert SettingsIn(acceptanceWindowDays=7, disputeRetentionYears=3).acceptanceWindowDays == 7
+    ok = {"id": "uk-1", "name": "United Kingdom", "jurisdictions": ["gb", "ie"], "governingLaw": "England and Wales"}
+    assert ContractVariantIn(**ok).jurisdictions == ["GB", "IE"]
+    for patch in ({"name": "UK 2"}, {"jurisdictions": ["GB", "ZZ"]}, {"governingLaw": "Law 3"}):
+        with pytest.raises(ValidationError):
+            ContractVariantIn(**{**ok, **patch})
+
+
+def test_frontend_code_lists_match_backend():
+    import re
+    from pathlib import Path
+
+    from zoikorum.shared.countries import ISO_3166
+    from zoikorum.shared.currencies import ISO_4217
+
+    lib = Path(__file__).resolve().parents[2] / "frontend" / "src" / "lib"
+    for name, backend in (("countries.ts", ISO_3166), ("currencies.ts", ISO_4217)):
+        body = re.search(r"`(.*?)`", (lib / name).read_text(encoding="utf8"), re.S).group(1)
+        assert set(body.split()) == set(backend), name
+    assert len(ISO_3166) == 249

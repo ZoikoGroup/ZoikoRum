@@ -381,3 +381,20 @@ def test_pending_admin_persona_is_kept_until_its_link_exists():
     # Once the firm link exists (as a plain member) the admin persona is decided by its roles: demotion works.
     assert _pending_admin_personas({Persona.FIRM_ADMIN}, [firm_link]) == set()
     assert Persona.FIRM_ADMIN not in _derived_personas([firm_link])
+
+
+def test_collection_names_and_iso_currencies():
+    from pydantic import ValidationError
+
+    from zoikorum.domains.marketplace.schemas import CollectionIn
+    from zoikorum.domains.proposal.schemas import Budget
+
+    assert CollectionIn(name="  Data  Privacy 2026 ").name == "Data Privacy 2026"
+    assert CollectionIn(name="Smith & Co's-list").name == "Smith & Co's-list"
+    for bad in ("###", "123", "Tax!", "a" * 41, "   "):
+        with pytest.raises(ValidationError):
+            CollectionIn(name=bad)
+    assert Budget(maxMinor=100, currency="USD").currency == "USD"
+    for bad in ("ABC", "XXX", "usd"):
+        with pytest.raises(ValidationError):
+            Budget(maxMinor=100, currency=bad)
