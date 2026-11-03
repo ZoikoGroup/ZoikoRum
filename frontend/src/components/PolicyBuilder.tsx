@@ -101,8 +101,8 @@ export function PaymentAndExceptionControls({ settings, onChange, disabled }: { 
         onChange={(e) => set('partialReleaseAllowed', e.target.checked)} /> <span>Release each milestone as it is accepted (off: pay only when every milestone is accepted)</span></label>
       <h4 style={{ margin: '12px 0 4px' }}>Milestones</h4>
       <div className="row">
-        <label style={{ flex: 1, minWidth: 180 }}>Largest share of the total in one milestone (%; empty: any)
-          <IntInput min={1} max={100} value={typeof s.milestoneMaxSharePercent === 'number' ? s.milestoneMaxSharePercent : null}
+        <label htmlFor="pb-milestone-share" style={{ flex: 1, minWidth: 180 }}>Largest share of the total in one milestone (%; empty: any)
+          <IntInput id="pb-milestone-share" min={1} max={100} value={typeof s.milestoneMaxSharePercent === 'number' ? s.milestoneMaxSharePercent : null}
             onCommit={(n) => set('milestoneMaxSharePercent', n)} /></label>
       </div>
       <label className="checkbox small"><input type="checkbox" checked={s.milestoneAcceptanceCriteriaRequired === true}

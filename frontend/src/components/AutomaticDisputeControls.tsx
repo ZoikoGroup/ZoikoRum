@@ -11,7 +11,7 @@ export default function AutomaticDisputeControls({ settings, onChange, disabled 
     <p className="muted">These controls apply to the policy version agreed for each engagement. Intake freezes eligible funded work for human review.</p>
     <label><input type="checkbox" checked={parsed.autoDisputeMissedDeadline === true} onChange={e => change('autoDisputeMissedDeadline', e.target.checked)} /> Open a case when a funded milestone misses its deadline</label><br />
     <label><input type="checkbox" checked={repeated} onChange={e => change('autoDisputeRejectionCount', e.target.checked ? 2 : null)} /> Open a case after repeated revision requests</label>
-    {repeated && <label>Revision requests before intake<IntInput min={2} max={20} value={Number(parsed.autoDisputeRejectionCount)} onCommit={n => { if (n !== null) change('autoDisputeRejectionCount', n) }} /></label>}<br />
+    {repeated && <label htmlFor="adc-rejections">Revision requests before intake<IntInput id="adc-rejections" min={2} max={20} value={Number(parsed.autoDisputeRejectionCount)} onCommit={n => { if (n !== null) change('autoDisputeRejectionCount', n) }} /></label>}<br />
     <label><input type="checkbox" checked={parsed.autoDisputeComplianceFlag === true} onChange={e => change('autoDisputeComplianceFlag', e.target.checked)} /> Open a case after a confirmed compliance restriction or verification revocation</label>
     <p className="muted">An AI flag alone never opens a case or imposes a sanction. Save and activate the draft to use these controls for new agreements.</p>
   </fieldset>
@@ -29,12 +29,12 @@ export function DisputeSettlementControls({ settings, onChange, disabled }: Prop
   const unitsInt = (key: string) => (units(key) === '' ? null : Math.round(Number(units(key))))
   const roles = Array.isArray(parsed.disputeEscalationRoles) ? parsed.disputeEscalationRoles as string[] : []
   return <fieldset disabled={disabled} className="panel"><legend>Dispute settlement controls</legend>
-    <label>A mediator handles settlements above (engagement currency, leave empty for none)
-      <IntInput min={0} value={unitsInt('disputeMediationAboveMinor')} onCommit={n => setUnits('disputeMediationAboveMinor', n)} /></label>
-    <label>Your Legal Reviewer must agree to settlements above
-      <IntInput min={0} value={unitsInt('disputeLegalReviewAboveMinor')} onCommit={n => setUnits('disputeLegalReviewAboveMinor', n)} /></label>
-    <label>Keep closed dispute records at least (years; empty: platform default or the law, whichever is longer)
-      <IntInput min={1} max={25} value={typeof parsed.disputeRetentionYears === 'number' ? parsed.disputeRetentionYears : null}
+    <label htmlFor="dsc-mediation">A mediator handles settlements above (engagement currency, leave empty for none)
+      <IntInput id="dsc-mediation" min={0} value={unitsInt('disputeMediationAboveMinor')} onCommit={n => setUnits('disputeMediationAboveMinor', n)} /></label>
+    <label htmlFor="dsc-legal">Your Legal Reviewer must agree to settlements above
+      <IntInput id="dsc-legal" min={0} value={unitsInt('disputeLegalReviewAboveMinor')} onCommit={n => setUnits('disputeLegalReviewAboveMinor', n)} /></label>
+    <label htmlFor="dsc-retention">Keep closed dispute records at least (years; empty: platform default or the law, whichever is longer)
+      <IntInput id="dsc-retention" min={1} max={25} value={typeof parsed.disputeRetentionYears === 'number' ? parsed.disputeRetentionYears : null}
         onCommit={n => change('disputeRetentionYears', n)} /></label>
     <p className="small">Who may escalate a dispute to mediation for your organisation (none ticked: any Requester or Approver)</p>
     {ROLES.map(r => <label key={r} style={{ marginRight: 12 }}><input type="checkbox" checked={roles.includes(r)}

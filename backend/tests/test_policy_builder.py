@@ -33,7 +33,7 @@ async def test_checks_block_activation_and_templates_are_filled(client, make_use
     assert r.status_code == 409 and r.json()["code"] == "POLICY_CHECKS_FAILED"
 
     for template, rule in (("CROSS_BORDER", "cross-border-legal-review"), ("GROWTH_ADVISORY", "growth-large-engagement")):
-        t = (await client.post(PROFILES, headers=buyer.idem(), json={"orgId": org["id"], "name": f"{template} policy", "template": template})).json()
+        t = (await client.post(PROFILES, headers=buyer.idem(), json={"orgId": org["id"], "name": f"{template.replace('_', ' ').title()} policy", "template": template})).json()
         version = t["draftVersion"] or t["activeVersion"]
         assert [x["id"] for x in version["rules"]] == [rule]
 
