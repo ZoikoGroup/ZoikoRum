@@ -153,7 +153,10 @@ class Settings(BaseSettings):
     retention_rules: dict[str, dict[str, int]] = Field(default_factory=dict)
     retention_purge_enabled: bool = False
     storage_dir: str = "var/storage"  # LocalDiskStorage root (development only)
-    storage_provider: str = "local"  # local (dev only) | database (files in PostgreSQL); any other value also means database
+    storage_provider: str = "auto"  # auto (gcs; local disk only in automated tests) | gcs | database | local (explicit, dev only)
+    gcs_bucket: str | None = None  # Google Cloud Storage bucket (object versioning on, public access prevented)
+    # Optional customer-managed encryption key: projects/<p>/locations/<l>/keyRings/<r>/cryptoKeys/<k>
+    gcs_kms_key_name: str | None = None
     malware_scanner: str = "none"  # clamav (production) | none (development only): every upload is scanned first
     clamav_host: str = "clamav"
     clamav_port: int = 3310
@@ -221,6 +224,13 @@ class Settings(BaseSettings):
         would otherwise switch off every production safeguard by meaning "local"."""
         if os.environ.get("ZK_ENV") is not None and not os.environ["ZK_ENV"].strip():
             raise ValueError("ZK_ENV is set but blank; name the environment (local, staging or production)")
+        return self
+
+    @model_validator(mode="after")
+    def _storage_provider_resolved(self):
+        """'auto' (the default) is Google Cloud Storage; only the automated tests (no bucket in CI) use local disk."""
+        if self.storage_provider == "auto":
+            self.storage_provider = "local" if self.env == "test" else "gcs"
         return self
 
     @model_validator(mode="after")

@@ -4,9 +4,10 @@ import uuid
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from zoikorum.config import get_settings
+from zoikorum.shared.currencies import is_iso_currency
 from zoikorum.shared.money import MoneyDTO
 from zoikorum.shared.uploads import StoredFileOut, UploadIn
 
@@ -19,6 +20,13 @@ class Budget(BaseModel):
     minMinor: int | None = Field(default=None, ge=0)
     maxMinor: int = Field(gt=0)
     currency: str = Field(pattern="^[A-Z]{3}$")
+
+    @field_validator("currency")
+    @classmethod
+    def _iso_currency(cls, v: str) -> str:
+        if not is_iso_currency(v):
+            raise ValueError("use a valid ISO 4217 currency code, such as USD")
+        return v
 
     @model_validator(mode="after")
     def _range(self):

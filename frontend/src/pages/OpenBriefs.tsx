@@ -9,6 +9,7 @@ import { PortalHeader } from '../components/portal'
 import { TrustLight } from '../components/TrustLight'
 import { ErrorAlert, Loading } from '../components/ui'
 import { countryName } from './ProfessionalPages'
+import { ISO_CURRENCIES, currencyError, keepCurrency } from '../lib/currencies'
 
 /* Open briefs: the buyer describes a need once, professionals in that specialization who serve the buyer's country say
    they are interested, and the buyer sends the normal request to the ones they pick. */
@@ -23,6 +24,7 @@ export function BuyerBriefsPage() {
   const [error, setError] = useState<unknown>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [currencyTouched, setCurrencyTouched] = useState(false)
   const [form, setForm] = useState({ service: '', specialization: '', objective: '', details: '', duration: '' as Duration | '', budget: '', currency: 'USD' })
 
   const load = useCallback(async (o: Organization) => setBriefs(await briefApi.mine(o.id)), [])
@@ -42,6 +44,8 @@ export function BuyerBriefsPage() {
   async function submit(e: FormEvent) {
     e.preventDefault()
     if (!org) return
+    setCurrencyTouched(true)
+    if (currencyError(form.currency)) return
     setBusy(true); setError(null); setNotice(null)
     try {
       const max = Math.round(Number(form.budget || 0) * 100)
@@ -85,7 +89,10 @@ export function BuyerBriefsPage() {
               <label className="filter-box"><span>Budget up to (optional)</span>
                 <input inputMode="decimal" value={form.budget} onChange={(e) => setForm({ ...form, budget: e.target.value.replace(/[^0-9.]/g, '') })} /></label>
               <label className="filter-box"><span>Currency</span>
-                <input maxLength={3} value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value.toUpperCase() })} /></label>
+                <input maxLength={3} list="iso-currencies" value={form.currency} aria-invalid={currencyTouched && !!currencyError(form.currency)}
+                  onChange={(e) => setForm({ ...form, currency: keepCurrency(e.target.value) })} onBlur={() => setCurrencyTouched(true)} />
+                <datalist id="iso-currencies">{ISO_CURRENCIES.map((c) => <option key={c} value={c} />)}</datalist>
+                {currencyTouched && currencyError(form.currency) && <small className="error" role="alert">{currencyError(form.currency)}</small>}</label>
             </div>
             <div className="row"><button className="btn btn-primary" disabled={busy}>Post brief</button></div>
           </form>

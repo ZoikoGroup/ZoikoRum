@@ -4,9 +4,10 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from zoikorum.shared.money import MoneyDTO
+from zoikorum.shared.validation import collection_name
 
 
 class SpecializationIn(BaseModel):
@@ -71,6 +72,11 @@ class SavedOut(BaseModel):
 
 class CollectionIn(BaseModel):
     name: str = Field(min_length=1, max_length=80)
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, v: str) -> str:
+        return collection_name(v)  # on write only; collections already saved still load
 
 
 class CollectionOut(BaseModel):

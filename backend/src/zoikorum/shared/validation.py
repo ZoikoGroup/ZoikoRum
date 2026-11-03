@@ -52,6 +52,34 @@ def language_name(v: str, hi: int = 60) -> str:
     return _text(v, "-,", "may contain only letters, spaces, hyphens and commas", 1, hi)
 
 
+def policy_name(v: str, hi: int = 80) -> str:
+    """Policy profile name: letters, spaces and . , & ' - ( ); no digits."""
+    return _text(v, _APOS + "-.,&()", "may contain only letters, spaces and . , & ' - ( )", 2, hi)
+
+
+def variant_name(v: str, hi: int = 80) -> str:
+    """Regional contract variant name: letters, spaces and . ' -."""
+    return _text(v, _APOS + "-.", "may contain only letters, spaces and . ' -", 2, hi)
+
+
+def governing_law(v: str, hi: int = 200) -> str:
+    """Governing law: letters, spaces and . , ' - ( ); no digits."""
+    return _text(v, _APOS + "-.,()", "may contain only letters, spaces and . , ' - ( )", 2, hi)
+
+
+def iso_codes(values: list[str], kind: str) -> list[str]:
+    """Upper-cased, de-duplicated, sorted ISO country ("country") or currency ("currency") codes; every code must be real."""
+    from zoikorum.shared.countries import ISO_3166
+    from zoikorum.shared.currencies import ISO_4217
+
+    known = ISO_3166 if kind == "country" else ISO_4217
+    out = sorted({v.strip().upper() for v in values})
+    bad = [c for c in out if c not in known]
+    if bad or not out:
+        raise ValueError(f"not a valid ISO {'3166-1 country' if kind == 'country' else '4217 currency'} code: {', '.join(bad) or 'empty list'}")
+    return out
+
+
 def registration_number(v: str) -> str:
     v = v.strip()
     if not re.fullmatch(r"[A-Za-z0-9/-]{4,30}", v):
@@ -76,4 +104,17 @@ def website_url(v: str) -> str:
     if "." not in host.strip(".") or host.startswith(".") or host.endswith(".") or ".." in host \
             or not re.fullmatch(r"[A-Za-z0-9.-]+", host.encode("idna").decode("ascii", "ignore") or "") or parts.username:
         raise ValueError(err)
+    return v
+
+
+def collection_name(v: str, hi: int = 40) -> str:
+    """Letters, digits, spaces, hyphen, apostrophe and &; at least one letter."""
+    v = _tidy(v)
+    if not 1 <= len(v) <= hi:
+        raise ValueError(f"must be 1-{hi} characters")
+    bad = next((c for c in v if not (_is_letter(c) or c.isdigit() or c == " " or c in _APOS + "-&")), None)
+    if bad is not None:
+        raise ValueError(f"may contain only letters, numbers, spaces and - ' &; '{bad}' is not allowed")
+    if not any(c.isalpha() for c in v):
+        raise ValueError("must contain at least one letter")
     return v

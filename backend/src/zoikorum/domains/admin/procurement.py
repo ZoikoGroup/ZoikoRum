@@ -14,13 +14,13 @@ from zoikorum.shared import clock
 
 PROVIDERS = {"stripe": "Stripe (card and bank payments)", "fake": "Test payment provider (no real money)",
              "persona": "Persona (identity verification)", "anthropic": "Anthropic (optional AI assistance)",
-             "smtp": "Email delivery provider (SMTP)", "database": "Application database (files)"}
+             "smtp": "Email delivery provider (SMTP)", "database": "Application database (files)", "gcs": "Google Cloud Storage (files)"}
 
 
 def build() -> dict:
     s = get_settings()
     subprocessors = [PROVIDERS[p] for p in (s.payment_provider, s.verification_provider, s.ai_provider, s.email_provider,
-                                  "database" if s.storage_provider != "local" else "local")
+                                  s.storage_provider)
                      if p in PROVIDERS]
     controls = [
         ("Sign-in", "Passwords are hashed; two-step sign-in (authenticator app or passkey) is available to everyone and required "

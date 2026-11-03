@@ -1,9 +1,9 @@
-"""Blob storage adapter: uploaded files are kept like normal data.
+"""Blob storage adapter: uploaded files are kept in Google Cloud Storage (ZK_STORAGE_PROVIDER=gcs).
 
-``DatabaseStorage`` stores files in PostgreSQL (platform.stored_files), so they are backed up and restored with the
-database. ``LocalDiskStorage`` is for development and tests only. ZK_STORAGE_PROVIDER=local is refused outside
-local/test/development; any other value (including the old gcs, s3 and r2) selects the database. Both keep a key
-write-once and refuse deletes except for profile photos (not evidence: a professional can replace or remove theirs).
+``GCSStorage`` keeps every version of a file in a Cloud Storage bucket (object versioning on). ``DatabaseStorage``
+(=database) stores files in PostgreSQL (platform.stored_files) instead, and ``LocalDiskStorage`` is for development and
+tests only (=local is refused outside local/test/development). All keep a key write-once and refuse deletes except for
+profile photos (not evidence: a professional can replace or remove theirs).
 
 The one other way a stored file goes is the reviewed retention workflow (shared/retention.py): ``purge_for_retention``
 removes a file whose retention period under ZK_RETENTION_RULES has ended. It is only called by that job, which skips
@@ -76,6 +76,116 @@ class LocalDiskStorage:
 
 
 
+class GCSStorage:
+    """Google Cloud Storage. The bucket must keep old versions safe: object versioning ON, or (when legal needs files
+    kept for a fixed period) a retention policy instead - Cloud Storage does not allow both on one bucket. A stored file
+    is never overwritten (a write only succeeds when no live object has that name); every file carries its SHA-256 and
+    is uploaded with a CRC32C check. ``put`` returns the object's generation, which ``get`` uses to read exactly that
+    version. Optional customer-managed KMS key (ZK_GCS_KMS_KEY_NAME). Credentials: the service account the app runs as
+    (Application Default Credentials), no key file."""
+
+    def __init__(self, settings, client=None):
+        self.settings = settings
+        if not settings.gcs_bucket:
+            raise ServiceUnavailable("Cloud storage bucket is not configured", code="INTEGRATION_NOT_CONFIGURED")
+        if client is None:
+            try:
+                from google.cloud import storage as gcs
+            except ImportError as exc:
+                raise ServiceUnavailable("Install the Google Cloud Storage dependency (backend[gcs])",
+                                         code="INTEGRATION_NOT_CONFIGURED") from exc
+            client = gcs.Client()
+        self.client = client
+        self.bucket = client.bucket(settings.gcs_bucket)
+
+    def _failure(self, exc):
+        raise ServiceUnavailable("Cloud storage could not complete the operation", code="STORAGE_UNAVAILABLE") from exc
+
+    @staticmethod
+    def _status(exc) -> int | None:
+        return getattr(exc, "code", None)
+
+    def _require_versioning(self):
+        if not _VERSIONING_CHECKED.get(self.settings.gcs_bucket):
+            self.bucket.reload()
+            if not (self.bucket.versioning_enabled or self.bucket.retention_period):
+                raise ValidationFailed("Turn on object versioning (or a retention policy) on the bucket before storing "
+                                       "evidence", code="STORAGE_VERSIONING_REQUIRED")
+            _VERSIONING_CHECKED[self.settings.gcs_bucket] = True
+
+    def put(self, key, data):
+        key = safe_key(key)
+        digest = hashlib.sha256(data).hexdigest()
+        try:
+            self._require_versioning()
+            blob = self.bucket.blob(key, kms_key_name=self.settings.gcs_kms_key_name or None)
+            blob.metadata = {"sha256": digest}
+            blob.upload_from_string(data, content_type="application/octet-stream", if_generation_match=0, checksum="crc32c")
+            if not blob.generation:
+                raise ValidationFailed("Cloud storage did not return an object version", code="STORAGE_VERSIONING_REQUIRED")
+            return str(blob.generation)
+        except ValidationFailed:
+            raise
+        except Exception as exc:
+            if self._status(exc) == 412:  # a live object already has this name: same content is fine, else refuse
+                current = self.bucket.get_blob(key)
+                if current is None or (current.metadata or {}).get("sha256") != digest:
+                    raise ValidationFailed("Committed files cannot be replaced", code="IMMUTABLE_FILE") from exc
+                return str(current.generation)
+            self._failure(exc)
+
+    def get(self, key, version_id=None):
+        blob = self.bucket.blob(safe_key(key), generation=int(version_id) if version_id else None)
+        try:
+            return blob.download_as_bytes(checksum="crc32c")
+        except Exception as exc:
+            if self._status(exc) == 404:
+                return None
+            self._failure(exc)
+
+    def delete(self, key):
+        refuse_unless_erasable(safe_key(key))
+        try:
+            self.bucket.blob(key).delete()
+        except Exception as exc:
+            if self._status(exc) == 404:
+                return
+            self._failure(exc)
+
+    def purge_for_retention(self, key, version_id=None):
+        """Retention workflow only: removes that generation, or every generation of the key."""
+        key = safe_key(key)
+        try:
+            if version_id:
+                self.bucket.blob(key, generation=int(version_id)).delete()
+                return
+            for blob in self.client.list_blobs(self.bucket, prefix=key, versions=True):
+                if blob.name == key:
+                    blob.delete()
+        except Exception as exc:
+            if self._status(exc) == 404:
+                return
+            self._failure(exc)
+
+    def legal_hold(self, key, version_id, enabled):
+        """A temporary hold on that exact version: it cannot be deleted or replaced while the hold is on."""
+        if not version_id:
+            raise ValidationFailed("Legal holds require an exact object version")
+        try:
+            blob = self.bucket.get_blob(safe_key(key), generation=int(version_id))
+            if blob is None:
+                raise ValidationFailed("That file version does not exist")
+            blob.temporary_hold = bool(enabled)
+            blob.patch()
+        except ValidationFailed:
+            raise
+        except Exception as exc:
+            self._failure(exc)
+
+
+_VERSIONING_CHECKED: dict[str, bool] = {}  # checked once per process and bucket
+
+
 @lru_cache
 def _sync_engine():
     """A small synchronous connection pool for file storage (the BlobStorage interface is synchronous)."""
@@ -141,8 +251,10 @@ class DatabaseStorage:
 
 
 def get_storage() -> BlobStorage:
-    """'local' is development only; any other provider value (including old 'gcs', 's3', 'r2') means the database."""
+    """'gcs' is Google Cloud Storage; 'local' is development only; any other provider value means the database."""
     settings = get_settings()
+    if settings.storage_provider == "gcs":
+        return GCSStorage(settings)
     if settings.storage_provider == "local":
         if settings.env in ("local", "test", "development"):
             return LocalDiskStorage(settings.storage_dir)

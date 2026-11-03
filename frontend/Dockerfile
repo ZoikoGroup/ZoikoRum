@@ -14,7 +14,7 @@ ARG VITE_STAFF_URL=""
 ENV VITE_PORTAL=$VITE_PORTAL VITE_CUSTOMER_URL=$VITE_CUSTOMER_URL VITE_STAFF_URL=$VITE_STAFF_URL
 RUN npm run build
 
-FROM nginx:1.27-alpine
+FROM nginx:1.30-alpine
 # Security fixes for the base system (OpenSSL, libexpat, libpng, ...) published since the base image was built.
 RUN apk upgrade --no-cache
 ENV API_UPSTREAM=http://api:8000

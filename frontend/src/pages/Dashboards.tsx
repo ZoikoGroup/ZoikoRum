@@ -32,7 +32,7 @@ export function AccountAlerts() {
       {welcome && <div className="alert alert-success" role="status">Welcome to Zoikorum, {user.displayName}. Your account is ready.</div>}
       {!user.emailConfirmed && (
         <div className="alert alert-warn">
-          Please confirm your email address: open the link we emailed you. Some actions wait until it is confirmed.
+          Please confirm your email address: open the link we emailed you. You can publish and take offers meanwhile.
           {welcome?.confirmToken && (
             <> {' '}Development mode: <Link to={`/confirm-email?token=${encodeURIComponent(welcome.confirmToken)}`}>confirm now</Link>.</>
           )}

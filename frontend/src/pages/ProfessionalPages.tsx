@@ -291,7 +291,7 @@ export function ProfessionalDashboard() {
     actions.push({ title: `${c.label} expires soon`, detail: `Valid until ${new Date(c.expiresAt!).toLocaleDateString()}: renew to keep your trust light`,
       priority: 'High', to: '/app/professional/verification', icon: 'clock' })
   }
-  for (const i of readiness?.items.filter((i) => i.required && !i.done) ?? []) {
+  for (const i of readiness?.items.filter((i) => i.required && !i.done && i.key !== 'email') ?? []) {
     actions.push({ title: i.label, detail: 'Required before you can publish', priority: 'High', to: FIX_AT[i.key], icon: 'user' })
   }
   if (profile && readiness?.canPublish && profile.status !== 'PUBLISHED' && profile.status !== 'SUSPENDED') {
