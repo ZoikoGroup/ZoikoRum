@@ -646,7 +646,7 @@ async def _readiness(session: AsyncSession, pro: Professional) -> ReadinessOut:
     copy_ok = not any(_SUPERLATIVES.search(t or "") for t in (pro.display_name, pro.headline, pro.bio))
     items = [
         ReadinessItem(key="email", label="Confirm your email address", done=bool(who and who.email_confirmed),
-                      required=get_settings().require_email_confirmation_to_publish),
+                      required=False),  # recommended, never a condition for going live
         ReadinessItem(key="basics", label="Add your legal name (private), primary role title and years of experience",
                       done=bool(pro.legal_name and pro.headline and pro.years_experience_band), required=True),
         ReadinessItem(key="photo", label="Add a professional photo", done=pro.photo_key is not None, required=True),
