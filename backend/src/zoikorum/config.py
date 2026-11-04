@@ -99,7 +99,10 @@ class Settings(BaseSettings):
     idempotency_retention_days: int = Field(default=30, ge=1)
     event_retention_days: int = Field(default=30, ge=7)
 
-    ai_provider: str = "offline"  # offline | anthropic
+    ai_provider: str = "offline"  # offline | anthropic | ollama
+    # Local chat model through Ollama (no external key): used by the assistant when no Anthropic key is configured.
+    ollama_url: str = "http://127.0.0.1:11434"
+    ollama_model: str = "qwen2.5:0.5b"
     trust_completion_half_life_days: int = Field(default=365, ge=1)
     trust_completion_full_credit: int = Field(default=10, ge=1)
     ai_model: str = "claude-opus-5-5"
