@@ -35,6 +35,16 @@ class InferenceLog(Base, UUIDPk, CreatedAt):
     fallback_used: Mapped[bool] = mapped_column(Boolean, nullable=False)
 
 
+class ChatFeedback(Base, UUIDPk, CreatedAt):
+    __tablename__ = "chat_feedback"
+    __table_args__ = (UniqueConstraint("inference_id", "requested_by"), {"schema": "ai"})
+    inference_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    rating: Mapped[str] = mapped_column(String(20), nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(40))
+    note: Mapped[str | None] = mapped_column(String(500))
+    requested_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+
+
 class RiskObservation(Base, UUIDPk, CreatedAt):
     __tablename__ = "risk_observations"
     __table_args__ = {"schema": "ai"}

@@ -8,6 +8,7 @@ import { useActionCounts } from '../components/actionCounts'
 import { DASHBOARD_FOR_PERSONA, PLATFORM_ROLES, ROLE_LABEL } from '../api/auth'
 import { useAuth } from '../auth/AuthContext'
 import { Icon, type IconName } from '../components/dashboard'
+import AssistantWidget from '../components/AssistantWidget'
 import { GlobalSearch } from '../components/GlobalSearch'
 import { LanguageSwitcher } from '../components/LanguageSwitcher'
 import { DuplicateNotice } from '../components/DuplicateNotice'
@@ -260,6 +261,7 @@ export default function AppShell() {
           <Item to="/app/engagements" count={n('/app/engagements')} icon="briefcase">Engagements</Item>
           <Item to="/app/payments" icon="wallet">Payments &amp; Protection</Item>
           <Item to="/app/messages" icon="message" count={unreadMessages}>Messages</Item>
+          <Item to="/app/assistant" icon="star">AI Assistant</Item>
           <Item to="/app/disputes" count={n('/app/disputes')} icon="shield">Disputes</Item>
           <Item to="/app/policies" icon="contract">Policies &amp; Approvals</Item>
           {/* The server lets only an active Org Admin manage webhooks (notification.require_webhook_admin). */}
@@ -278,6 +280,7 @@ export default function AppShell() {
           <Item to="/app/professional/briefs" icon="mail">Open Briefs</Item>
           <Item to="/app/professional/engagements" icon="briefcase" count={n('/app/professional/engagements')}>Engagements</Item>
           <Item to="/app/messages" icon="message" count={unreadMessages}>Messages</Item>
+          <Item to="/app/assistant" icon="star">AI Assistant</Item>
           <Item to="/app/professional/buyers" icon="bookmark">Saved Buyers</Item>
           <Item to="/app/professional/earnings" count={n('/app/professional/earnings')} icon="wallet">Earnings</Item>
           <Item to="/app/professional/insights" icon="star">Performance</Item>
@@ -384,6 +387,7 @@ export default function AppShell() {
           <Suspense fallback={<p className="muted page-loading">Loading…</p>}><Outlet /></Suspense>
         </main>
       </div>
+      {location.pathname.startsWith('/app') && <AssistantWidget />}
     </div>
   )
 }

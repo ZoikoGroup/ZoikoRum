@@ -3,9 +3,10 @@ from typing import Literal
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from zoikorum.config import get_settings
 from zoikorum.domains.ai import claude, service
-from zoikorum.domains.ai.models import PromptVersion, InferenceLog
+from zoikorum.domains.ai.models import ChatFeedback, PromptVersion, InferenceLog
 from zoikorum.domains.proposal import facade as proposal
 from zoikorum.domains.professional import facade as professional
 from zoikorum.domains.buyer import facade as buyer
@@ -32,6 +33,16 @@ class ContractIn(BaseModel):
 
 class DisputeIn(BaseModel):
     disputeId: uuid.UUID
+
+
+class ChatIn(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+
+
+class ChatFeedbackIn(BaseModel):
+    rating: Literal["HELPFUL", "NOT_HELPFUL"]
+    reason: Literal["accurate", "clear", "missing_sources", "too_generic", "incorrect", "other"] | None = None
+    note: str | None = Field(default=None, max_length=500)
 
 
 class GoldenTest(BaseModel):
@@ -82,6 +93,31 @@ async def dispute_summary(body: DisputeIn, actor: CurrentActor, session: DbSessi
     record_audit(session, "ai.dispute.evidence.read", object_type="DisputeCase", object_id=body.disputeId)
     fallback = f"{facts['reference']}: {facts['category']}\nReported issue: {facts['summary']}\n" + "\n".join(f"Evidence {e['id']} ({e['party']}): {e['description']}" for e in facts["evidence"]) + "\nNo outcome is recommended by this summary."
     return await service.infer(session, actor.identity_id, "dispute-summary", body.disputeId, facts, fallback)
+
+
+@router.post("/chat")
+async def chat(body: ChatIn, actor: CurrentActor, session: DbSession):
+    """General help-desk chat. Advisory only: it cannot read account records or perform actions."""
+    await enforce_budget("ai", str(actor.identity_id), 20, 20, "Too many AI requests. Please wait a minute.")
+    return await service.chat(session, actor.identity_id, body.message)
+
+
+@router.post("/chat/{answer_id}/feedback")
+async def chat_feedback(answer_id: uuid.UUID, body: ChatFeedbackIn, actor: CurrentActor, session: DbSession):
+    """Record one person's judgement of one answer. The answer and its log stay unchanged."""
+    await enforce_budget("ai-feedback", str(actor.identity_id), 30, 30, "Too many feedback requests. Please wait a minute.")
+    log = await session.get(InferenceLog, answer_id)
+    if not log or log.purpose != "assistant-chat" or log.requested_by != actor.identity_id:
+        raise NotFound("Assistant answer not found")
+    values = {"inference_id": log.id, "requested_by": actor.identity_id, "rating": body.rating,
+              "reason": body.reason, "note": " ".join((body.note or "").split())[:500] or None}
+    await session.execute(
+        pg_insert(ChatFeedback).values(**values).on_conflict_do_update(
+            index_elements=[ChatFeedback.inference_id, ChatFeedback.requested_by],
+            set_={"rating": values["rating"], "reason": values["reason"], "note": values["note"]},
+        )
+    )
+    return {"recorded": True}
 
 
 @router.get("/prompts")
