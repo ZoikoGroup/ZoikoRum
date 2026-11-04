@@ -135,9 +135,6 @@ class Settings(BaseSettings):
     smtp_username: str | None = None
     smtp_password: str | None = None
     smtp_starttls: bool = True
-    # A professional must confirm their email before the profile can go live. Turn off only while email delivery is
-    # not working yet (for example the sending domain is not verified); turn it back on once mail is delivered.
-    require_email_confirmation_to_publish: bool = False
     email_from: str = "notifications@zoikorum.com"
 
     rate_limit_enabled: bool = True
