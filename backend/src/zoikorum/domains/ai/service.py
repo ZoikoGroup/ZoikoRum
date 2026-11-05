@@ -169,6 +169,25 @@ FAQ_REPLIES = [
     },
     {
         "pattern": re.compile(
+            r"\b(?:professionals? (?:tab|section|page)|professional (?:dashboard|workspace|area)|"
+            r"provider (?:dashboard|workspace|area)|what(?:'s| is) (?:in )?the professionals? (?:tab|section|page)|"
+            r"explain (?:me )?(?:about )?(?:the )?professionals? (?:tab|section|page))\b", re.I),
+        "intent": "enterprise_discovery",
+        "answer": ("The Professionals area has two sides. Buyers use it to find, filter, save and compare verified "
+                   "professionals and request proposals. Professional accounts use the Professional workspace to "
+                   "manage their profile, offerings, verification, requests, briefs, engagements and earnings."),
+        "sections": [("For buyers", [
+            "Search, filter and sort verified professionals.",
+            "Save and compare up to three, then request a proposal.",
+            "Each result shows its trust light and why it matched."]),
+            ("For professionals", [
+                "Manage your profile, service offerings and verification.",
+                "Handle requests, open briefs, engagements and earnings."])],
+        "suggestions": ["How do I find the right professional?", "How does verification work?",
+                        "How do I ask for a proposal?"],
+    },
+    {
+        "pattern": re.compile(
             r"\b(?:find (?:a |the )?(?:right )?professionals?|choose (?:a |the )?professional|"
             r"compare professionals?|search (?:for )?professionals?|how do i find|how can my company find|"
             r"search rank)\b", re.I),
@@ -299,15 +318,16 @@ FAQ_REPLIES = [
 CHAT_CACHE: dict[str, tuple[float, dict, str]] = {}
 CHAT_CACHE_TTL_SECONDS = 600
 CHAT_CACHE_MAX = 200
+CHAT_FALLBACK_MODELS = ["qwen2.5:1.5b", "llama3.2:3b"]
 
 
-async def _ollama_chat(settings, message: str) -> str:
-    """Local model through Ollama's chat API, so the assistant answers without an external API key."""
+async def _ollama_chat_with(settings, message: str, model: str) -> str:
+    """Local model through Ollama's chat API, for a specific model."""
     import httpx
 
     async with httpx.AsyncClient(timeout=120) as client:
         response = await client.post(f"{settings.ollama_url.rstrip('/')}/api/chat", json={
-            "model": settings.ollama_model,
+            "model": model,
             "messages": [{"role": "system", "content": CHAT_INSTRUCTIONS},
                          {"role": "user", "content": message}],
             "stream": False,
@@ -317,6 +337,11 @@ async def _ollama_chat(settings, message: str) -> str:
         })
         response.raise_for_status()
         return ((response.json().get("message") or {}).get("content") or "").strip()
+
+
+async def _ollama_chat(settings, message: str) -> str:
+    """Local model through Ollama's chat API, so the assistant answers without an external API key."""
+    return await _ollama_chat_with(settings, message, settings.ollama_model)
 
 
 def _clean(value, limit: int = 500) -> str:
@@ -418,22 +443,30 @@ async def chat(session, actor_id, message: str):
         else:
             fallback_used = True
             payload = _fallback_chat()
-            for attempt in range(2):
+            anthropic = settings.ai_provider == "anthropic" and bool(settings.anthropic_api_key)
+            models = list(dict.fromkeys([settings.ollama_model, *CHAT_FALLBACK_MODELS]))
+            tries = 1 if anthropic else len(models)
+            for attempt in range(tries):
                 try:
-                    if settings.ai_provider == "anthropic" and settings.anthropic_api_key:
+                    if anthropic:
                         raw = await providers.provider().generate(CHAT_INSTRUCTIONS, message[:4000])
                         model = settings.ai_model
-                    else:
+                    elif attempt == 0:
                         raw = await _ollama_chat(settings, message[:4000])
-                        model = f"ollama:{settings.ollama_model}"
+                        model = f"ollama:{models[0]}"
+                    else:
+                        raw = await _ollama_chat_with(settings, message[:4000], models[attempt])
+                        model = f"ollama:{models[attempt]}"
                     if not raw.strip():
                         raise ValueError("Empty provider output")
                     payload = _normalize_chat(raw)
+                    if payload["answer"] == CHAT_UNHELPFUL:
+                        raise ValueError("Unusable provider output")
                     fallback_used = False
                     break
                 except Exception:
-                    if attempt == 0:
-                        await asyncio.sleep(0.8)
+                    if attempt + 1 < tries:
+                        await asyncio.sleep(0.5)
             if fallback_used:
                 payload, model = _fallback_chat(), "fallback:deterministic:v1"
             else:
