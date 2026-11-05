@@ -17,8 +17,9 @@ from zoikorum.shared.crypto import canonical_json
 DISCLAIMER = "Advisory assistance only. Verify against the source documents. This output does not approve terms, execute a contract, release funds or decide a dispute."
 PURPOSES = {"proposal-draft", "contract-summary", "dispute-summary", "match-intent", "assistant-chat"}
 CHAT_FALLBACK = (
-    "I can only give general guidance right now because the AI model is unavailable. "
-    "You can still browse Zoikorum normally or open the Help Center."
+    "I can help with how Zoikorum works: finding and comparing professionals, requests and proposals, "
+    "contracts and milestones, protected payments, verification, reviews, disputes and account settings. "
+    "Ask about any of these, or open the Help Center for published guidance."
 )
 CHAT_UNHELPFUL = (
     "I could not answer that reliably. Try rephrasing the question, or open the Help Center for published guidance."
@@ -68,6 +69,8 @@ GREETING_RE = re.compile(
     r"(?:\s+(?:there|zoikorum))?[\s!.,?]*$",
     re.IGNORECASE,
 )
+PLATFORM_RE = re.compile(
+    r"\b(?:zoikorum|zoiko|marketplace|professional services|this (?:site|website|app|platform))\b", re.I)
 GREETING_REPLY = {
     "intent": "general",
     "answer": ("Hi! I'm the Zoikorum AI Concierge. Ask me about finding professionals, proposals, contracts, "
@@ -84,7 +87,13 @@ FAQ_REPLIES = [
     {
         "pattern": re.compile(
             r"\b(?:what(?:'s| is) zoikorum|how does zoikorum work|about zoikorum|what does zoikorum do|"
-            r"why zoikorum|how does the platform work|what is this platform)\b", re.I),
+            r"why zoikorum|how does the platform work|what is this platform|what is the platform|"
+            r"what is this site|what is this app|"
+            r"explore (?:zoikorum|the platform|this platform)|tour of zoikorum|platform tour|site tour|take a tour|"
+            r"what can i do (?:here|on zoikorum)?|what can you do|"
+            r"how do i use (?:zoikorum|this site|this platform|the app)|how do i get started|getting started|"
+            r"walk me through|show me around|overview of zoikorum|what are the main features|"
+            r"what can i do on zoikorum|how does it work)\b", re.I),
         "intent": "general",
         "answer": ("Zoikorum is a governed marketplace for professional services. Buyers describe the work and request "
                    "proposals, agree a contract with milestones, fund milestones into escrow, and accept the work "
@@ -132,9 +141,10 @@ FAQ_REPLIES = [
     {
         "pattern": re.compile(
             r"\b(?:escrow|protected payments?|payments? (?:are )?protected|payment protection|"
-            r"how (?:are|do) (?:payments?|funds?) (?:protected|released)|"
+            r"how (?:are|do) (?:payments?|funds?) (?:protected|released)|how do (?:payments?|payment) work|"
+            r"how do i pay|pay (?:someone|the professional)|make a payment|pay for (?:the )?work|"
             r"when (?:is|does|do) .{0,30}(?:get paid|paid)|release (?:the |a )?(?:payment|funds)|"
-            r"held in escrow)\b", re.I),
+            r"fund (?:a |the )?milestone|held in escrow)\b", re.I),
         "intent": "protected_payments",
         "answer": ("Professionals are paid only after the buyer accepts a milestone. Until then the funds stay in "
                    "escrow for that engagement and are released milestone by milestone."),
@@ -147,7 +157,8 @@ FAQ_REPLIES = [
     },
     {
         "pattern": re.compile(
-            r"\b(?:store my card|save my card|card details|store my payment|payment method|"
+            r"\b(?:store my card|save my card|card details|store my payment|payment method|payment methods|"
+            r"how can i pay|what can i pay with|credit card|debit card|"
             r"is zoikorum a bank|hold a balance)\b", re.I),
         "intent": "protected_payments",
         "answer": ("Zoikorum stores only a token from the payment partner, never your full card details. It is not a "
@@ -158,6 +169,22 @@ FAQ_REPLIES = [
             "Escrow funds belong to the engagement, not a Zoikorum balance."])],
         "suggestions": ["How are payments protected?", "How does milestone funding work?",
                         "Terms of Service"],
+    },
+    {
+        "pattern": re.compile(
+            r"\b(?:how do i get paid|receive (?:my )?payment|payouts?|payout account|withdraw (?:my )?"
+            r"(?:money|funds|earnings)|paid out|payout time|how long.*pay(?:out|ment)|"
+            r"when will i (?:get paid|be paid)|when.*payout)\b", re.I),
+        "intent": "protected_payments",
+        "answer": ("Add a payout account in Payments, then funds are released to it after the buyer accepts each "
+                   "milestone. A payout usually reaches the bank within two business days after it starts, and the "
+                   "expected date is shown to professionals."),
+        "sections": [("Getting paid", [
+            "Add and verify a payout account in Payments.",
+            "Escrow releases after the buyer accepts a milestone.",
+            "Expected bank arrival is about two business days after a payout starts."])],
+        "suggestions": ["How are payments protected?", "When does work start?",
+                        "What happens in a dispute?"],
     },
     {
         "pattern": re.compile(
@@ -177,7 +204,8 @@ FAQ_REPLIES = [
     },
     {
         "pattern": re.compile(
-            r"\b(?:reset (?:my )?password|forgot (?:my )?password|password reset|lost password)\b", re.I),
+            r"\b(?:reset (?:my )?password|forgot (?:my )?password|password reset|lost password|"
+            r"change (?:my )?password)\b", re.I),
         "intent": "account_help",
         "answer": ("Use the Forgot your password? link on the sign-in page to get a reset email. If it does not "
                    "arrive, check your spam folder and then contact support from the Help Center."),
@@ -190,26 +218,104 @@ FAQ_REPLIES = [
     },
     {
         "pattern": re.compile(
-            r"\b(?:two-step|two step|2fa|authenticator|security settings|sign in|sign-in|"
-            r"password|delete my data|get my data|privacy)\b", re.I),
+            r"\b(?:(?:can't|cant|cannot|can not|unable to) (?:sign in|log in)|login|log in|"
+            r"sign-in (?:problem|issue|help)|email verification|verify (?:my )?email|confirm (?:my )?email|"
+            r"locked out|account locked)\b", re.I),
         "intent": "account_help",
-        "answer": ("Turn on two-step verification in Settings → Security; admin roles must use it. Use Settings → "
-                   "Privacy & data to get or delete your data."),
+        "answer": ("If you cannot sign in, check the email and password, then use Forgot your password? for a reset "
+                   "link. For a new account, confirm the verification email first. If it still fails, contact support "
+                   "with the error reference; you can review signed-in devices in Settings -> Security."),
+        "sections": [("Sign-in help", [
+            "Use Forgot your password? to get a reset link.",
+            "Confirm your email address after signing up.",
+            "Review signed-in devices in Settings -> Security."])],
+        "suggestions": ["How do I reset my password?", "How do I turn on two-step verification?",
+                        "How do I contact support?"],
+    },
+    {
+        "pattern": re.compile(
+            r"\b(?:download my data|export my data|get my data|data request|delete my data|"
+            r"privacy request|personal data|data retention|how long do you keep my data)\b", re.I),
+        "intent": "account_help",
+        "answer": ("Use Settings -> Privacy & data to export or delete your personal data. Legally required records "
+                   "(contracts, payments, invoices, disputes and audit) are kept and anonymised where possible; "
+                   "account deletion has a 14-day cooling-off period."),
+        "sections": [("Your data", [
+            "Export or delete personal data in Settings -> Privacy & data.",
+            "Contracts, payments, invoices, disputes and audit records are kept by law.",
+            "Account deletion has a 14-day cooling-off period you can cancel."])],
+        "suggestions": ["How do I delete my account?", "How do I contact support?",
+                        "Privacy Notice"],
+    },
+    {
+        "pattern": re.compile(
+            r"\b(?:terms of service|terms of use|terms and conditions|privacy policy|privacy notice|"
+            r"cookie policy|cookies|trust & safety charter|trust and safety charter|legal documents)\b", re.I),
+        "intent": "support_handoff",
+        "answer": ("The Terms of Service, Privacy Notice and Trust & Safety Charter are linked from the footer and "
+                   "the Help Center. They explain the rules for using Zoikorum, how data is handled and the trust "
+                   "and safety standards."),
+        "sections": [("Where to find them", [
+            "Terms of Service and Privacy Notice are in the footer.",
+            "The Trust & Safety Charter is linked from the Help Center.",
+            "Each page shows the current version and its effective date."])],
+        "suggestions": ["How do I get or delete my data?", "How does verification work?",
+                        "How do I contact support?"],
+    },
+    {
+        "pattern": re.compile(
+            r"\b(?:two-step|two step|2fa|authenticator|security settings|"
+            r"signed-in devices|sign out (?:a |this )?device)\b", re.I),
+        "intent": "account_help",
+        "answer": ("Turn on two-step verification in Settings -> Security; admin roles must use it. You can also "
+                   "review and sign out signed-in devices from the same page."),
         "sections": [("Account and security", [
-            "Two-step verification lives in Settings → Security.",
+            "Two-step verification lives in Settings -> Security.",
             "Admin roles must keep two-step verification on.",
-            "Privacy & data handles export and deletion requests."])],
-        "suggestions": ["How do I contact support?", "How do I add a colleague?",
-                        "Privacy Policy"],
+            "Signed-in devices can be signed out from the same page."])],
+        "suggestions": ["How do I get or delete my data?", "How do I contact support?",
+                        "How do I add a colleague?"],
+    },
+    {
+        "pattern": re.compile(
+            r"\b(?:edit (?:my )?profile|update (?:my )?profile|change my (?:name|email|phone)|"
+            r"update my (?:name|email|phone)|change (?:the )?email|profile details)\b", re.I),
+        "intent": "account_help",
+        "answer": ("Update your name and phone in Settings -> Account. The email you sign in with can only be "
+                   "changed by contacting support. Professionals manage their public profile and offerings in the "
+                   "Professional workspace."),
+        "sections": [("Profile and account details", [
+            "Name and phone: Settings -> Account.",
+            "Sign-in email: contact support to change it.",
+            "Professionals edit their public profile in the Professional workspace."])],
+        "suggestions": ["How do I contact support?", "How does verification work?",
+                        "How do I join as a professional?"],
+    },
+    {
+        "pattern": re.compile(
+            r"\b(?:notification|notifications|email alerts|browser push|push notification|digest|"
+            r"email digest|bell menu|calendar feed)\b", re.I),
+        "intent": "account_help",
+        "answer": ("Manage email, in-app, SMS and product-news notifications in Settings -> Notifications. Choose "
+                   "each update as it happens, a daily or weekly email summary, or browser push on supported "
+                   "devices; urgent payment and security messages always arrive straight away."),
+        "sections": [("Notification settings", [
+            "Settings -> Notifications controls email, in-app, SMS and product news.",
+            "Email delivery can be instant, a daily digest or a weekly digest.",
+            "Browser push and the calendar feed are on the same page."])],
+        "suggestions": ["How do I contact support?", "How do I turn on two-step verification?",
+                        "How do I change my email address?"],
     },
     {
         "pattern": re.compile(
             r"\b(?:verification|verified professional|trust tier|trust score|trust light|trust lights|"
-            r"who verifies|how does verification work|get verified)\b", re.I),
+            r"who verifies|how does verification work|get verified|become verified|verify my profile|"
+            r"tier (?:a|b|c)|green light|amber light|red light)\b", re.I),
         "intent": "trust_verification",
         "answer": ("A verification provider or a compliance reviewer checks identity, credentials and eligibility; "
                    "AI never decides a verification outcome. On profiles, a green light means fully verified, amber "
-                   "means identity verified with restrictions clear, and red means verification is not complete."),
+                   "means identity verified with restrictions clear, and red means verification is not complete. "
+                   "The raw trust score is internal; you see the light and each verified dimension."),
         "sections": [("Trust Tiers", [
             "Tier A: identity, credentials and eligibility verified.",
             "Tier B: identity verified and restrictions clear.",
@@ -243,8 +349,12 @@ FAQ_REPLIES = [
     {
         "pattern": re.compile(
             r"\b(?:find (?:a |the )?(?:right )?professionals?|choose (?:a |the )?professional|"
-            r"compare professionals?|search (?:for )?professionals?|how do i find|how can my company find|"
-            r"search rank)\b", re.I),
+            r"compare (?:professionals?|them|up to|two|three)|how do i compare|how can i compare|"
+            r"how many .{0,20}compare|"
+            r"search (?:for )?(?:professionals?|work|help)|how do i (?:find|search)|how can my company find|"
+            r"save (?:a |the )?professional|saved professionals|favourite|favorite|"
+            r"ranking|ranked|rank higher|pay for ranking|paid ranking|"
+            r"how are results (?:sorted|ranked)|search rank)\b", re.I),
         "intent": "enterprise_discovery",
         "answer": ("Search results are ranked by relevance to your words, then verification, availability and fit. "
                    "Nobody can pay to rank higher, and each result shows why it matched."),
@@ -254,6 +364,21 @@ FAQ_REPLIES = [
             "Open a profile or result to request a proposal."])],
         "suggestions": ["What does a Trust Tier mean?", "How do I ask for a proposal?",
                         "How do requests and proposals work?"],
+    },
+    {
+        "pattern": re.compile(
+            r"\b(?:filter|filters|search by language|language filter|speaks|languages|what languages|"
+            r"location|remote|on-site|onsite|hybrid|availability|timezone|countries|country)\b", re.I),
+        "intent": "enterprise_discovery",
+        "answer": ("Use Find filters for service, location, delivery (remote, on-site or hybrid), availability, "
+                   "language, Trust Tier, budget and pricing model. Professionals list the countries they serve and "
+                   "the languages they speak, and each result shows why it matched."),
+        "sections": [("Finding and comparing", [
+            "Filter by service, location, delivery mode and availability.",
+            "Filter by language, Trust Tier, budget and pricing model.",
+            "Each result shows its trust light and why it matched."])],
+        "suggestions": ["How do I find the right professional?", "What does a Trust Tier mean?",
+                        "How do I ask for a proposal?"],
     },
     {
         "pattern": re.compile(r"\bnda\b", re.I),
@@ -270,6 +395,9 @@ FAQ_REPLIES = [
         "pattern": re.compile(
             r"\b(?:proposal|ask for a proposal|request proposal|send a request|"
             r"create (?:a )?(?:request|brief)|post (?:a )?(?:request|brief|job)|start a request|"
+            r"hire (?:a |the )?professional|hire someone|how do i hire|start a project|post a project|"
+            r"need (?:a |the )?professional|looking for (?:a |the )?professional|"
+            r"brief|how many professionals|how many can i (?:request|send)|"
             r"how do (?:requests|proposals) work)\b", re.I),
         "intent": "contracts_milestones",
         "answer": ("Open a verified professional's profile or a search result and choose Request proposal. Describe "
@@ -277,6 +405,7 @@ FAQ_REPLIES = [
                    "revise or accept."),
         "sections": [("Requests and proposals", [
             "A request describes the work, deliverables and budget.",
+            "A request can go to up to five professionals; each replies separately.",
             "The professional replies with a structured proposal.",
             "You can compare, revise or accept before a contract exists."])],
         "suggestions": ["Can I require an NDA?", "Can the terms change after signing?",
@@ -284,8 +413,9 @@ FAQ_REPLIES = [
     },
     {
         "pattern": re.compile(
-            r"\b(?:message (?:a |the )?professional|message (?:the )?buyer|send (?:a |the )?message|"
-            r"messaging|chat with (?:a |the )?professional|communicate with|direct message)\b", re.I),
+            r"\b(?:message (?:a |the )?professional|message (?:the )?buyer|message (?:someone|anyone)|"
+            r"how do i message|send (?:a |the )?message|messaging|chat with (?:a |the )?professional|"
+            r"contact (?:a |the )?(?:professional|buyer)|communicate with|direct message)\b", re.I),
         "intent": "contracts_milestones",
         "answer": ("Open the engagement's Messages tab to talk with the other side. Messages are tied to the engagement "
                    "and stay on record. If a dispute is open, direct messages move to the dispute thread."),
@@ -298,8 +428,39 @@ FAQ_REPLIES = [
     },
     {
         "pattern": re.compile(
+            r"\b(?:attach (?:a |the )?file|attachment|attachments|upload (?:a |the )?file|"
+            r"send (?:a |the )?file|share (?:a |the )?file|stored file|file storage)\b", re.I),
+        "intent": "contracts_milestones",
+        "answer": ("Attach files to requests, proposals, milestones and messages. Every upload is scanned before it "
+                   "can be opened, and files are kept with the engagement record."),
+        "sections": [("Files and attachments", [
+            "Add attachments to a request, proposal, milestone or message.",
+            "Uploads are virus-scanned before they open.",
+            "Files stay with the engagement record."])],
+        "suggestions": ["How do I message a professional?", "How do I ask for a proposal?",
+                        "How do I contact support?"],
+    },
+    {
+        "pattern": re.compile(
+            r"\b(?:accept (?:the )?(?:work|delivery|milestone)|approve (?:the )?(?:work|delivery|milestone)|"
+            r"request (?:a )?revision|revision request|request (?:a )?changes?|ask for (?:a )?changes?|"
+            r"changes to the (?:work|deliverable)|revise (?:the )?work|deliverable|"
+            r"late delivery|work is late)\b", re.I),
+        "intent": "contracts_milestones",
+        "answer": ("When a milestone is delivered, review it against the agreed acceptance criteria. Accept it to "
+                   "release the milestone funds, or request a revision first. Every revision request stays on the "
+                   "engagement record."),
+        "sections": [("Delivering and accepting", [
+            "Review the delivery against the agreed acceptance criteria.",
+            "Accept to release the milestone funds to the professional.",
+            "Request a revision before accepting if something is missing."])],
+        "suggestions": ["When is the professional paid?", "What happens in a dispute?",
+                        "How do I sign a contract?"],
+    },
+    {
+        "pattern": re.compile(
             r"\b(?:cancel (?:a |the |my )?(?:contract|engagement)|end (?:a |the |my )?(?:contract|engagement)|"
-            r"terminate (?:a |the |my )?(?:contract|engagement)|termination)\b", re.I),
+            r"terminate (?:a |the |my )?(?:contract|engagement)|how do i terminate|termination)\b", re.I),
         "intent": "contracts_milestones",
         "answer": ("If no money is held in escrow, the professional or the buyer's requester or approver can end the "
                    "engagement directly. If funds are held, send the other side a request to end it by agreement; "
@@ -313,8 +474,23 @@ FAQ_REPLIES = [
     },
     {
         "pattern": re.compile(
-            r"\b(?:contract|change order|terms change|when does work start|milestones?|"
-            r"engagement terms)\b", re.I),
+            r"\b(?:withdraw (?:my |the )?proposal|decline (?:a |the )?proposal|reject (?:a |the )?proposal|"
+            r"cancel (?:my |a |the )?request|close (?:my |a |the )?request|stop (?:my |the )?request)\b", re.I),
+        "intent": "contracts_milestones",
+        "answer": ("A professional can withdraw a proposal before it is accepted. A buyer can decline a proposal, "
+                   "and can cancel or close a request while it is still open; accepting one proposal closes the "
+                   "others for that request."),
+        "sections": [("Closing a request or proposal", [
+            "Professionals can withdraw a proposal before acceptance.",
+            "Buyers can decline a proposal or close an open request.",
+            "Accepting one proposal closes the others for that request."])],
+        "suggestions": ["How do I ask for a proposal?", "How do I sign a contract?",
+                        "How do I contact support?"],
+    },
+    {
+        "pattern": re.compile(
+            r"\b(?:contract|engagement|what is an engagement|change order|terms change|"
+            r"when does work start|milestones?|engagement terms)\b", re.I),
         "intent": "contracts_milestones",
         "answer": ("Work starts after the contract is signed and the first milestone is funded. The buyer signs "
                    "first and the professional countersigns, each with a fresh two-step check. Terms change only "
@@ -351,7 +527,8 @@ FAQ_REPLIES = [
         "sections": [("When something goes wrong", [
             "Raise the dispute from the affected engagement.",
             "The affected milestone funds are frozen.",
-            "A mediator reviews the evidence and records a decision."])],
+            "A mediator reviews the evidence and records a decision.",
+            "If you disagree with the decision, file an appeal on the case."])],
         "suggestions": ["How are payments protected?", "How do I contact support?",
                         "Trust & Safety Charter"],
     },
@@ -359,7 +536,8 @@ FAQ_REPLIES = [
         "pattern": re.compile(
             r"\b(?:leave (?:a |the )?review|write (?:a |the )?review|how do reviews work|what are reviews|"
             r"are reviews (?:public|verified)|review (?:a |the )?professional|rate (?:a |the )?professional|"
-            r"star rating|ratings? (?:count|matter|work))\b", re.I),
+            r"star rating|ratings? (?:count|matter|work)|reply to (?:a )?review|respond to (?:a )?review|"
+            r"review reply|review score|rating score)\b", re.I),
         "intent": "trust_verification",
         "answer": ("After an engagement is completed, the buyer can leave one rating from 1 to 5 and a review. It "
                    "appears on the professional's public profile, the professional can reply once, and reviews feed "
@@ -375,10 +553,12 @@ FAQ_REPLIES = [
     {
         "pattern": re.compile(
             r"\b(?:platform fee|fees?|commission|how much (?:does|do) (?:zoikorum|you) charge|"
-            r"pricing|cost)\b", re.I),
+            r"pricing|cost|free|membership|subscription|sign-up fee|joining fee|how much to join|"
+            r"charge|charges|do you charge|pay to join|cost to join)\b", re.I),
         "intent": "pricing_public",
         "answer": ("The price for the work is agreed in the proposal and contract, and any platform fee is shown "
-                   "there before you commit. Zoikorum does not add hidden charges."),
+                   "there before you commit. No payment is taken until you fund a milestone in a signed contract, "
+                   "and Zoikorum does not add hidden charges."),
         "sections": [("Pricing", [
             "Professionals set their own proposal price.",
             "Any platform fee is displayed before signing.",
@@ -388,8 +568,23 @@ FAQ_REPLIES = [
     },
     {
         "pattern": re.compile(
-            r"\b(?:report (?:a |the )?(?:user|professional|profile|fraud|scam|abuse)|fake profile|"
-            r"scam|fraud|abuse|trust & safety)\b", re.I),
+            r"\b(?:suspend|suspended|ban|banned|account (?:is )?blocked|account (?:is )?suspended|"
+            r"restricted|appeal|appeals)\b", re.I),
+        "intent": "support_handoff",
+        "answer": ("If an account or case is restricted, Trust & Safety records the reason and the evidence. You can "
+                   "file an appeal on the case with your explanation and supporting evidence; the decision is "
+                   "reviewed on the record."),
+        "sections": [("Restrictions and appeals", [
+            "Trust & Safety records the reason and evidence for a restriction.",
+            "File an appeal on the case with your explanation and evidence.",
+            "The decision is reviewed on the record."])],
+        "suggestions": ["How do I report a scam?", "How do I contact support?",
+                        "What happens in a dispute?"],
+    },
+    {
+        "pattern": re.compile(
+            r"\b(?:report (?:a |the )?(?:user|professional|profile|fraud|scam|abuse|review|message|"
+            r"account|organisation)|fake profile|scam|fraud|abuse|trust & safety)\b", re.I),
         "intent": "support_handoff",
         "answer": ("Report a profile, message or engagement to Trust & Safety from the app or Help & Support, "
                    "including the link or reference. Reports are reviewed and recorded; conduct and compliance "
@@ -403,8 +598,9 @@ FAQ_REPLIES = [
     },
     {
         "pattern": re.compile(
-            r"\b(?:contact support|get help|help & support|help and support|customer service|"
-            r"talk to (?:a )?human|contact us|how do i contact)\b", re.I),
+            r"\b(?:contact support|get help|help & support|help and support|customer service|help center|"
+            r"support hours|response time|how long.*reply|talk to (?:a |the )?human|contact (?:a |the )?human|"
+            r"contact us|how do i contact (?:support|you|the team|zoikorum))\b", re.I),
         "intent": "support_handoff",
         "answer": ("Open Help & Support in the app to search answers or send a help request; we reply within one "
                    "business day. For disagreements about delivered work, raise a dispute from the engagement "
@@ -418,15 +614,19 @@ FAQ_REPLIES = [
     },
     {
         "pattern": re.compile(
-            r"\b(?:organisation|organization|add a colleague|team member|spending approval|"
-            r"spend limit|who can approve)\b", re.I),
+            r"\b(?:organisation|organization|add a colleague|invite (?:a )?(?:colleague|member)|"
+            r"invite (?:someone|a user|people)|team member|set up a team|team setup|manage a team|"
+            r"spending approval|spend limit|who can approve|roles? and permissions|"
+            r"permissions|single sign-on|sso|create (?:an )?organisation)\b", re.I),
         "intent": "account_help",
-        "answer": ("Approvers can approve spending up to their spend limit, and requesters cannot approve their own "
-                   "requests. Org Admins invite members and assign roles from Organisation → Members & access."),
+        "answer": ("Org Admins invite members and assign roles from Organisation -> Members & access. Approvers can "
+                   "approve spending up to their spend limit, and requesters cannot approve their own requests. "
+                   "Sign-in strength can be password, two-step, passkey or single sign-on."),
         "sections": [("Organisation and access", [
             "Org Admins manage members and roles.",
             "Approvers work within their spend limit.",
-            "Requesters cannot approve their own requests."])],
+            "Requesters cannot approve their own requests.",
+            "Sign-in strength can be password, two-step, passkey or single sign-on."])],
         "suggestions": ["How do I turn on two-step verification?", "How do I contact support?",
                         "How do I get or delete my data?"],
     },
@@ -535,7 +735,7 @@ def _fallback_chat() -> dict:
             "Finding and comparing professionals", "Requests, proposals and contracts",
             "Protected payments, milestones and delivery", "Verification, reviews and disputes"]}],
         "suggestions": CHAT_SUGGESTIONS,
-        "limitations": "AI assistance is offline; I cannot access your account or take any action.",
+        "limitations": "I can explain published information only and cannot access your account or take any action.",
         "related": [{"label": label, "to": to} for label, to in RELATED_PAGES["general"]],
     }
 
@@ -551,6 +751,8 @@ async def chat(session, actor_id, message: str):
         model, fallback_used = "deterministic:greeting:v1", False
     elif faq:
         payload, model, fallback_used = _curated_reply(faq), "deterministic:faq:v1", False
+    elif PLATFORM_RE.search(message):
+        payload, model, fallback_used = _curated_reply(FAQ_REPLIES[0]), "deterministic:overview:v1", False
     else:
         key = " ".join(message.lower().split())
         cached = CHAT_CACHE.get(key)
