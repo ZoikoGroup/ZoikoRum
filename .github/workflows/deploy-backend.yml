@@ -64,6 +64,52 @@ jobs:
             export PYTHONPATH=$PWD/src
             .venv/bin/python -m zoikorum.ai_env'
 
+      # When the AI settings select Ollama, make sure the local model server and model exist. Skipped for
+      # offline/anthropic. The RAM check stops before touching a VM that cannot hold the small model.
+      - name: Ensure local AI model (Ollama)
+        env:
+          VM_HOST: ${{ secrets.VM_HOST }}
+          VM_USER: ${{ secrets.VM_USER }}
+        run: |
+          ssh "$VM_USER@$VM_HOST" 'set -e
+            cd ~/zoikorum-app/backend
+            provider=$(sed -n "s/^ZK_AI_PROVIDER=//p" .env | tail -n 1 | tr -d "\r")
+            if [ "$provider" != "ollama" ]; then
+              echo "Local Ollama not selected (provider=${provider:-unset})."
+              exit 0
+            fi
+            model=$(sed -n "s/^ZK_OLLAMA_MODEL=//p" .env | tail -n 1 | tr -d "\r")
+            model=${model:-qwen2.5:0.5b}
+            mem_kb=$(awk "/MemAvailable/ {print \$2}" /proc/meminfo)
+            if [ "${mem_kb:-0}" -lt 900000 ]; then
+              echo "Not enough available memory for ${model} (need at least 900 MB free)."
+              exit 1
+            fi
+            if ! command -v ollama >/dev/null 2>&1; then
+              if ! sudo -n true >/dev/null 2>&1; then
+                echo "Cannot install Ollama: passwordless sudo is not available."
+                exit 1
+              fi
+              echo "Installing Ollama."
+              curl -fsSL https://ollama.com/install.sh | sudo sh
+            fi
+            sudo systemctl enable --now ollama
+            for _ in $(seq 1 30); do
+              if curl -fsS http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then break; fi
+              sleep 2
+            done
+            curl -fsS http://127.0.0.1:11434/api/tags >/dev/null
+            ollama pull "$model"
+            answer=$(curl -fsS --max-time 120 http://127.0.0.1:11434/api/generate \
+              -H "Content-Type: application/json" \
+              -d "{\"model\":\"$model\",\"prompt\":\"Reply with OK\",\"stream\":false}" \
+              | python3 -c "import json,sys; print(json.load(sys.stdin).get(\"response\", \"\").strip())")
+            if [ -z "$answer" ]; then
+              echo "Ollama returned an empty answer for ${model}."
+              exit 1
+            fi
+            echo "Ollama ready with ${model}."'
+
       - name: Dependencies, migrations, restart
         env:
           VM_HOST: ${{ secrets.VM_HOST }}
