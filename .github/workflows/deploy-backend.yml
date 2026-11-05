@@ -46,6 +46,24 @@ jobs:
             --exclude __pycache__ --exclude '*.pyc' --exclude .pytest_cache \
             backend/ "$VM_USER@$VM_HOST:~/zoikorum-app/backend/"
 
+      # Optional AI settings from one repository secret. The value is a small block of allow-listed KEY=VALUE
+      # lines (see the deploy notes). It is piped over SSH on standard input and merged into the server .env
+      # before the restart below, so the same deploy keeps the setting. Skipped until ZK_AI_ENV is set.
+      - name: Configure AI provider
+        env:
+          VM_HOST: ${{ secrets.VM_HOST }}
+          VM_USER: ${{ secrets.VM_USER }}
+          AI_ENV: ${{ secrets.ZK_AI_ENV }}
+        run: |
+          if [ -z "$AI_ENV" ]; then
+            echo "No ZK_AI_ENV secret set; leaving the server AI configuration unchanged."
+            exit 0
+          fi
+          printf '%s\n' "$AI_ENV" | ssh "$VM_USER@$VM_HOST" 'set -e
+            cd ~/zoikorum-app/backend
+            export PYTHONPATH=$PWD/src
+            .venv/bin/python -m zoikorum.ai_env'
+
       - name: Dependencies, migrations, restart
         env:
           VM_HOST: ${{ secrets.VM_HOST }}
