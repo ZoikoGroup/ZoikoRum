@@ -83,6 +83,24 @@ GREETING_REPLY = {
 FAQ_REPLIES = [
     {
         "pattern": re.compile(
+            r"\b(?:what(?:'s| is) zoikorum|how does zoikorum work|about zoikorum|what does zoikorum do|"
+            r"why zoikorum|how does the platform work|what is this platform)\b", re.I),
+        "intent": "general",
+        "answer": ("Zoikorum is a governed marketplace for professional services. Buyers describe the work and request "
+                   "proposals, agree a contract with milestones, fund milestones into escrow, and accept the work "
+                   "before the professional is paid. Verification, reviews and disputes keep a reliable record."),
+        "sections": [("For buyers", [
+            "Search, compare and request proposals from verified professionals.",
+            "Agree a contract and fund milestones into escrow.",
+            "Accept delivered work before funds are released."]),
+            ("For professionals", [
+                "Publish your profile, offerings and availability.",
+                "Answer requests, deliver milestones and get paid on acceptance."])],
+        "suggestions": ["How do I find the right professional?", "How are payments protected?",
+                        "How does verification work?"],
+    },
+    {
+        "pattern": re.compile(
             r"\b(?:join (?:zoikorum )?as a professional|become a professional|professional onboarding|"
             r"create a professional account|publish my profile)\b", re.I),
         "intent": "professional_onboarding",
@@ -95,6 +113,21 @@ FAQ_REPLIES = [
             "Requests and proposals appear in your dashboard."])],
         "suggestions": ["What does a Trust Tier mean?", "How does verification work?",
                         "How do requests and proposals work?"],
+    },
+    {
+        "pattern": re.compile(
+            r"\b(?:sign up|sign-up|create (?:an? )?(?:buyer |customer |free |zoikorum )?account|"
+            r"register (?:an? )?account|how do i join zoikorum|join zoikorum)\b", re.I),
+        "intent": "account_help",
+        "answer": ("Choose Sign up, confirm your email address, then add your profile. Buyers can browse and request "
+                   "proposals straight away; organisations can invite colleagues and assign roles afterwards. "
+                   "Professionals complete verification before publishing."),
+        "sections": [("Creating an account", [
+            "Sign up and confirm your email address.",
+            "Add your profile and, for a company, your organisation details.",
+            "Professionals complete verification before their profile is published."])],
+        "suggestions": ["How do I join as a professional?", "How do I reset my password?",
+                        "How do I add a colleague?"],
     },
     {
         "pattern": re.compile(
@@ -128,6 +161,22 @@ FAQ_REPLIES = [
     },
     {
         "pattern": re.compile(
+            r"\b(?:delete (?:my )?account|close (?:my )?account|erase (?:my )?account)\b", re.I),
+        "intent": "account_help",
+        "answer": ("Open Settings -> Privacy & data and choose Delete my account. The request is scheduled after a "
+                   "14-day cooling-off period and can be cancelled. It is blocked while engagements, disputes or "
+                   "payouts are open, or while you are the only admin of a team; legally required records are kept "
+                   "and anonymised where possible."),
+        "sections": [("Deleting your account", [
+            "Start the request in Settings -> Privacy & data.",
+            "There is a 14-day cooling-off period you can cancel.",
+            "Open work, disputes, payouts or sole-admin status block deletion.",
+            "Contracts, payments, invoices, disputes and audit records are kept by law."])],
+        "suggestions": ["How do I get or delete my data?", "How do I contact support?",
+                        "How do I turn on two-step verification?"],
+    },
+    {
+        "pattern": re.compile(
             r"\b(?:reset (?:my )?password|forgot (?:my )?password|password reset|lost password)\b", re.I),
         "intent": "account_help",
         "answer": ("Use the Forgot your password? link on the sign-in page to get a reset email. If it does not "
@@ -155,17 +204,41 @@ FAQ_REPLIES = [
     },
     {
         "pattern": re.compile(
-            r"\b(?:verification|verified professional|trust tier|trust score|who verifies|"
-            r"how does verification work|get verified)\b", re.I),
+            r"\b(?:verification|verified professional|trust tier|trust score|trust light|trust lights|"
+            r"who verifies|how does verification work|get verified)\b", re.I),
         "intent": "trust_verification",
         "answer": ("A verification provider or a compliance reviewer checks identity, credentials and eligibility; "
-                   "AI never decides a verification outcome."),
+                   "AI never decides a verification outcome. On profiles, a green light means fully verified, amber "
+                   "means identity verified with restrictions clear, and red means verification is not complete."),
         "sections": [("Trust Tiers", [
             "Tier A: identity, credentials and eligibility verified.",
             "Tier B: identity verified and restrictions clear.",
-            "Tier C: verification not complete."])],
+            "Tier C: verification not complete."]),
+            ("Trust lights", [
+                "Green: fully verified.",
+                "Amber: identity verified and restrictions clear.",
+                "Red: verification not complete."])],
         "suggestions": ["Why can't I see a trust score?", "How do I join as a professional?",
                         "How does search rank professionals?"],
+    },
+    {
+        "pattern": re.compile(
+            r"\b(?:professionals? (?:tab|section|page)|professional (?:dashboard|workspace|area)|"
+            r"provider (?:dashboard|workspace|area)|what(?:'s| is) (?:in )?the professionals? (?:tab|section|page)|"
+            r"explain (?:me )?(?:about )?(?:the )?professionals? (?:tab|section|page))\b", re.I),
+        "intent": "enterprise_discovery",
+        "answer": ("The Professionals area has two sides. Buyers use it to find, filter, save and compare verified "
+                   "professionals and request proposals. Professional accounts use the Professional workspace to "
+                   "manage their profile, offerings, verification, requests, briefs, engagements and earnings."),
+        "sections": [("For buyers", [
+            "Search, filter and sort verified professionals.",
+            "Save and compare up to three, then request a proposal.",
+            "Each result shows its trust light and why it matched."]),
+            ("For professionals", [
+                "Manage your profile, service offerings and verification.",
+                "Handle requests, open briefs, engagements and earnings."])],
+        "suggestions": ["How do I find the right professional?", "How does verification work?",
+                        "How do I ask for a proposal?"],
     },
     {
         "pattern": re.compile(
@@ -196,6 +269,7 @@ FAQ_REPLIES = [
     {
         "pattern": re.compile(
             r"\b(?:proposal|ask for a proposal|request proposal|send a request|"
+            r"create (?:a )?(?:request|brief)|post (?:a )?(?:request|brief|job)|start a request|"
             r"how do (?:requests|proposals) work)\b", re.I),
         "intent": "contracts_milestones",
         "answer": ("Open a verified professional's profile or a search result and choose Request proposal. Describe "
@@ -207,6 +281,20 @@ FAQ_REPLIES = [
             "You can compare, revise or accept before a contract exists."])],
         "suggestions": ["Can I require an NDA?", "Can the terms change after signing?",
                         "When does work start?"],
+    },
+    {
+        "pattern": re.compile(
+            r"\b(?:message (?:a |the )?professional|message (?:the )?buyer|send (?:a |the )?message|"
+            r"messaging|chat with (?:a |the )?professional|communicate with|direct message)\b", re.I),
+        "intent": "contracts_milestones",
+        "answer": ("Open the engagement's Messages tab to talk with the other side. Messages are tied to the engagement "
+                   "and stay on record. If a dispute is open, direct messages move to the dispute thread."),
+        "sections": [("Messaging", [
+            "Messages live in the engagement workspace.",
+            "The conversation stays with the engagement record.",
+            "An open dispute moves discussion to the dispute thread."])],
+        "suggestions": ["How do I contact support?", "What happens in a dispute?",
+                        "How do I ask for a proposal?"],
     },
     {
         "pattern": re.compile(
@@ -228,9 +316,11 @@ FAQ_REPLIES = [
             r"\b(?:contract|change order|terms change|when does work start|milestones?|"
             r"engagement terms)\b", re.I),
         "intent": "contracts_milestones",
-        "answer": ("Work starts after the contract is signed and the first milestone is funded. Terms change only "
+        "answer": ("Work starts after the contract is signed and the first milestone is funded. The buyer signs "
+                   "first and the professional countersigns, each with a fresh two-step check. Terms change only "
                    "through a versioned change order that both parties accept."),
         "sections": [("Contracts and milestones", [
+            "The buyer's requester or approver signs first; the professional countersigns.",
             "Each milestone has an amount and a due date.",
             "The buyer funds a milestone before work on it starts.",
             "Change orders keep every accepted revision on record."])],
@@ -239,8 +329,21 @@ FAQ_REPLIES = [
     },
     {
         "pattern": re.compile(
-            r"\b(?:dispute|disagreement|something went wrong|problem with (?:the )?(?:work|delivery)|"
-            r"refund)\b", re.I),
+            r"\b(?:refund|money back|invoice|receipt|billing document|download (?:my )?invoice)\b", re.I),
+        "intent": "protected_payments",
+        "answer": ("Refunds follow the agreed outcome: if work is not accepted, the professional can agree to release "
+                   "the unused amount, or a mediator decides in a dispute. The payment partner returns the money to "
+                   "the original payment method. Invoices and receipts are available from Payments."),
+        "sections": [("Refunds and documents", [
+            "Unused milestone funds can be refunded by agreement or a dispute decision.",
+            "The payment partner returns funds to the original payment method.",
+            "Download invoices and receipts from Payments & Protection."])],
+        "suggestions": ["What happens in a dispute?", "How are payments protected?",
+                        "When is the professional paid?"],
+    },
+    {
+        "pattern": re.compile(
+            r"\b(?:dispute|disagreement|something went wrong|problem with (?:the )?(?:work|delivery))\b", re.I),
         "intent": "disputes_public",
         "answer": ("If something goes wrong on a funded milestone, raise a dispute from the engagement. The "
                    "milestone's funds are frozen while a mediator reviews the evidence, and direct messages move "
@@ -251,6 +354,23 @@ FAQ_REPLIES = [
             "A mediator reviews the evidence and records a decision."])],
         "suggestions": ["How are payments protected?", "How do I contact support?",
                         "Trust & Safety Charter"],
+    },
+    {
+        "pattern": re.compile(
+            r"\b(?:leave (?:a |the )?review|write (?:a |the )?review|how do reviews work|what are reviews|"
+            r"are reviews (?:public|verified)|review (?:a |the )?professional|rate (?:a |the )?professional|"
+            r"star rating|ratings? (?:count|matter|work))\b", re.I),
+        "intent": "trust_verification",
+        "answer": ("After an engagement is completed, the buyer can leave one rating from 1 to 5 and a review. It "
+                   "appears on the professional's public profile, the professional can reply once, and reviews feed "
+                   "the track-record ranking."),
+        "sections": [("Reviews", [
+            "Reviews open after the engagement is completed.",
+            "One review per engagement, rated 1 to 5.",
+            "The professional can post one public reply.",
+            "Reviews count toward search ranking."])],
+        "suggestions": ["How does search rank professionals?", "What does a Trust Tier mean?",
+                        "What happens in a dispute?"],
     },
     {
         "pattern": re.compile(
@@ -265,6 +385,21 @@ FAQ_REPLIES = [
             "Escrow funding follows the agreed milestones."])],
         "suggestions": ["How are payments protected?", "How do I ask for a proposal?",
                         "Terms of Service"],
+    },
+    {
+        "pattern": re.compile(
+            r"\b(?:report (?:a |the )?(?:user|professional|profile|fraud|scam|abuse)|fake profile|"
+            r"scam|fraud|abuse|trust & safety)\b", re.I),
+        "intent": "support_handoff",
+        "answer": ("Report a profile, message or engagement to Trust & Safety from the app or Help & Support, "
+                   "including the link or reference. Reports are reviewed and recorded; conduct and compliance "
+                   "cases skip direct resolution."),
+        "sections": [("Reporting a concern", [
+            "Report the profile or engagement with its link or reference.",
+            "Our team reviews the report and records the outcome.",
+            "Conduct and compliance cases go straight to review."])],
+        "suggestions": ["How do I contact support?", "What happens in a dispute?",
+                        "How does verification work?"],
     },
     {
         "pattern": re.compile(
@@ -299,15 +434,16 @@ FAQ_REPLIES = [
 CHAT_CACHE: dict[str, tuple[float, dict, str]] = {}
 CHAT_CACHE_TTL_SECONDS = 600
 CHAT_CACHE_MAX = 200
+CHAT_FALLBACK_MODELS = ["qwen2.5:1.5b", "llama3.2:3b"]
 
 
-async def _ollama_chat(settings, message: str) -> str:
-    """Local model through Ollama's chat API, so the assistant answers without an external API key."""
+async def _ollama_chat_with(settings, message: str, model: str) -> str:
+    """Local model through Ollama's chat API, for a specific model."""
     import httpx
 
     async with httpx.AsyncClient(timeout=120) as client:
         response = await client.post(f"{settings.ollama_url.rstrip('/')}/api/chat", json={
-            "model": settings.ollama_model,
+            "model": model,
             "messages": [{"role": "system", "content": CHAT_INSTRUCTIONS},
                          {"role": "user", "content": message}],
             "stream": False,
@@ -317,6 +453,11 @@ async def _ollama_chat(settings, message: str) -> str:
         })
         response.raise_for_status()
         return ((response.json().get("message") or {}).get("content") or "").strip()
+
+
+async def _ollama_chat(settings, message: str) -> str:
+    """Local model through Ollama's chat API, so the assistant answers without an external API key."""
+    return await _ollama_chat_with(settings, message, settings.ollama_model)
 
 
 def _clean(value, limit: int = 500) -> str:
@@ -418,22 +559,30 @@ async def chat(session, actor_id, message: str):
         else:
             fallback_used = True
             payload = _fallback_chat()
-            for attempt in range(2):
+            anthropic = settings.ai_provider == "anthropic" and bool(settings.anthropic_api_key)
+            models = list(dict.fromkeys([settings.ollama_model, *CHAT_FALLBACK_MODELS]))
+            tries = 1 if anthropic else len(models)
+            for attempt in range(tries):
                 try:
-                    if settings.ai_provider == "anthropic" and settings.anthropic_api_key:
+                    if anthropic:
                         raw = await providers.provider().generate(CHAT_INSTRUCTIONS, message[:4000])
                         model = settings.ai_model
-                    else:
+                    elif attempt == 0:
                         raw = await _ollama_chat(settings, message[:4000])
-                        model = f"ollama:{settings.ollama_model}"
+                        model = f"ollama:{models[0]}"
+                    else:
+                        raw = await _ollama_chat_with(settings, message[:4000], models[attempt])
+                        model = f"ollama:{models[attempt]}"
                     if not raw.strip():
                         raise ValueError("Empty provider output")
                     payload = _normalize_chat(raw)
+                    if payload["answer"] == CHAT_UNHELPFUL:
+                        raise ValueError("Unusable provider output")
                     fallback_used = False
                     break
                 except Exception:
-                    if attempt == 0:
-                        await asyncio.sleep(0.8)
+                    if attempt + 1 < tries:
+                        await asyncio.sleep(0.5)
             if fallback_used:
                 payload, model = _fallback_chat(), "fallback:deterministic:v1"
             else:

@@ -26,6 +26,9 @@ RUN if [ -n "$EXTRAS" ]; then pip install ".[${EXTRAS}]" -c constraints.txt && p
 
 FROM python:3.13-slim AS runtime
 ENV PATH="/opt/venv/bin:$PATH" PYTHONPATH=/app/src PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 ZK_ENV=production
+# Security fixes for the base system published since the base image was built (the image scan fails on fixable HIGH
+# and CRITICAL vulnerabilities).
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 # No installer at runtime: pip bundles its own older copies of urllib3, msgpack and setuptools, and nothing is
 # installed after the build (the app environment's pip is removed in the build stage).
 RUN python -m pip uninstall -y pip && useradd --system --uid 10001 --home-dir /app zoikorum
