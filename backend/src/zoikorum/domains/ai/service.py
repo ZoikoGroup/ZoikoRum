@@ -83,6 +83,24 @@ GREETING_REPLY = {
 FAQ_REPLIES = [
     {
         "pattern": re.compile(
+            r"\b(?:what(?:'s| is) zoikorum|how does zoikorum work|about zoikorum|what does zoikorum do|"
+            r"why zoikorum|how does the platform work|what is this platform)\b", re.I),
+        "intent": "general",
+        "answer": ("Zoikorum is a governed marketplace for professional services. Buyers describe the work and request "
+                   "proposals, agree a contract with milestones, fund milestones into escrow, and accept the work "
+                   "before the professional is paid. Verification, reviews and disputes keep a reliable record."),
+        "sections": [("For buyers", [
+            "Search, compare and request proposals from verified professionals.",
+            "Agree a contract and fund milestones into escrow.",
+            "Accept delivered work before funds are released."]),
+            ("For professionals", [
+                "Publish your profile, offerings and availability.",
+                "Answer requests, deliver milestones and get paid on acceptance."])],
+        "suggestions": ["How do I find the right professional?", "How are payments protected?",
+                        "How does verification work?"],
+    },
+    {
+        "pattern": re.compile(
             r"\b(?:join (?:zoikorum )?as a professional|become a professional|professional onboarding|"
             r"create a professional account|publish my profile)\b", re.I),
         "intent": "professional_onboarding",
@@ -95,6 +113,21 @@ FAQ_REPLIES = [
             "Requests and proposals appear in your dashboard."])],
         "suggestions": ["What does a Trust Tier mean?", "How does verification work?",
                         "How do requests and proposals work?"],
+    },
+    {
+        "pattern": re.compile(
+            r"\b(?:sign up|sign-up|create (?:an? )?(?:buyer |customer |free |zoikorum )?account|"
+            r"register (?:an? )?account|how do i join zoikorum|join zoikorum)\b", re.I),
+        "intent": "account_help",
+        "answer": ("Choose Sign up, confirm your email address, then add your profile. Buyers can browse and request "
+                   "proposals straight away; organisations can invite colleagues and assign roles afterwards. "
+                   "Professionals complete verification before publishing."),
+        "sections": [("Creating an account", [
+            "Sign up and confirm your email address.",
+            "Add your profile and, for a company, your organisation details.",
+            "Professionals complete verification before their profile is published."])],
+        "suggestions": ["How do I join as a professional?", "How do I reset my password?",
+                        "How do I add a colleague?"],
     },
     {
         "pattern": re.compile(
@@ -128,6 +161,22 @@ FAQ_REPLIES = [
     },
     {
         "pattern": re.compile(
+            r"\b(?:delete (?:my )?account|close (?:my )?account|erase (?:my )?account)\b", re.I),
+        "intent": "account_help",
+        "answer": ("Open Settings -> Privacy & data and choose Delete my account. The request is scheduled after a "
+                   "14-day cooling-off period and can be cancelled. It is blocked while engagements, disputes or "
+                   "payouts are open, or while you are the only admin of a team; legally required records are kept "
+                   "and anonymised where possible."),
+        "sections": [("Deleting your account", [
+            "Start the request in Settings -> Privacy & data.",
+            "There is a 14-day cooling-off period you can cancel.",
+            "Open work, disputes, payouts or sole-admin status block deletion.",
+            "Contracts, payments, invoices, disputes and audit records are kept by law."])],
+        "suggestions": ["How do I get or delete my data?", "How do I contact support?",
+                        "How do I turn on two-step verification?"],
+    },
+    {
+        "pattern": re.compile(
             r"\b(?:reset (?:my )?password|forgot (?:my )?password|password reset|lost password)\b", re.I),
         "intent": "account_help",
         "answer": ("Use the Forgot your password? link on the sign-in page to get a reset email. If it does not "
@@ -155,15 +204,20 @@ FAQ_REPLIES = [
     },
     {
         "pattern": re.compile(
-            r"\b(?:verification|verified professional|trust tier|trust score|who verifies|"
-            r"how does verification work|get verified)\b", re.I),
+            r"\b(?:verification|verified professional|trust tier|trust score|trust light|trust lights|"
+            r"who verifies|how does verification work|get verified)\b", re.I),
         "intent": "trust_verification",
         "answer": ("A verification provider or a compliance reviewer checks identity, credentials and eligibility; "
-                   "AI never decides a verification outcome."),
+                   "AI never decides a verification outcome. On profiles, a green light means fully verified, amber "
+                   "means identity verified with restrictions clear, and red means verification is not complete."),
         "sections": [("Trust Tiers", [
             "Tier A: identity, credentials and eligibility verified.",
             "Tier B: identity verified and restrictions clear.",
-            "Tier C: verification not complete."])],
+            "Tier C: verification not complete."]),
+            ("Trust lights", [
+                "Green: fully verified.",
+                "Amber: identity verified and restrictions clear.",
+                "Red: verification not complete."])],
         "suggestions": ["Why can't I see a trust score?", "How do I join as a professional?",
                         "How does search rank professionals?"],
     },
@@ -215,6 +269,7 @@ FAQ_REPLIES = [
     {
         "pattern": re.compile(
             r"\b(?:proposal|ask for a proposal|request proposal|send a request|"
+            r"create (?:a )?(?:request|brief)|post (?:a )?(?:request|brief|job)|start a request|"
             r"how do (?:requests|proposals) work)\b", re.I),
         "intent": "contracts_milestones",
         "answer": ("Open a verified professional's profile or a search result and choose Request proposal. Describe "
@@ -226,6 +281,20 @@ FAQ_REPLIES = [
             "You can compare, revise or accept before a contract exists."])],
         "suggestions": ["Can I require an NDA?", "Can the terms change after signing?",
                         "When does work start?"],
+    },
+    {
+        "pattern": re.compile(
+            r"\b(?:message (?:a |the )?professional|message (?:the )?buyer|send (?:a |the )?message|"
+            r"messaging|chat with (?:a |the )?professional|communicate with|direct message)\b", re.I),
+        "intent": "contracts_milestones",
+        "answer": ("Open the engagement's Messages tab to talk with the other side. Messages are tied to the engagement "
+                   "and stay on record. If a dispute is open, direct messages move to the dispute thread."),
+        "sections": [("Messaging", [
+            "Messages live in the engagement workspace.",
+            "The conversation stays with the engagement record.",
+            "An open dispute moves discussion to the dispute thread."])],
+        "suggestions": ["How do I contact support?", "What happens in a dispute?",
+                        "How do I ask for a proposal?"],
     },
     {
         "pattern": re.compile(
@@ -247,9 +316,11 @@ FAQ_REPLIES = [
             r"\b(?:contract|change order|terms change|when does work start|milestones?|"
             r"engagement terms)\b", re.I),
         "intent": "contracts_milestones",
-        "answer": ("Work starts after the contract is signed and the first milestone is funded. Terms change only "
+        "answer": ("Work starts after the contract is signed and the first milestone is funded. The buyer signs "
+                   "first and the professional countersigns, each with a fresh two-step check. Terms change only "
                    "through a versioned change order that both parties accept."),
         "sections": [("Contracts and milestones", [
+            "The buyer's requester or approver signs first; the professional countersigns.",
             "Each milestone has an amount and a due date.",
             "The buyer funds a milestone before work on it starts.",
             "Change orders keep every accepted revision on record."])],
@@ -258,8 +329,21 @@ FAQ_REPLIES = [
     },
     {
         "pattern": re.compile(
-            r"\b(?:dispute|disagreement|something went wrong|problem with (?:the )?(?:work|delivery)|"
-            r"refund)\b", re.I),
+            r"\b(?:refund|money back|invoice|receipt|billing document|download (?:my )?invoice)\b", re.I),
+        "intent": "protected_payments",
+        "answer": ("Refunds follow the agreed outcome: if work is not accepted, the professional can agree to release "
+                   "the unused amount, or a mediator decides in a dispute. The payment partner returns the money to "
+                   "the original payment method. Invoices and receipts are available from Payments."),
+        "sections": [("Refunds and documents", [
+            "Unused milestone funds can be refunded by agreement or a dispute decision.",
+            "The payment partner returns funds to the original payment method.",
+            "Download invoices and receipts from Payments & Protection."])],
+        "suggestions": ["What happens in a dispute?", "How are payments protected?",
+                        "When is the professional paid?"],
+    },
+    {
+        "pattern": re.compile(
+            r"\b(?:dispute|disagreement|something went wrong|problem with (?:the )?(?:work|delivery))\b", re.I),
         "intent": "disputes_public",
         "answer": ("If something goes wrong on a funded milestone, raise a dispute from the engagement. The "
                    "milestone's funds are frozen while a mediator reviews the evidence, and direct messages move "
@@ -270,6 +354,23 @@ FAQ_REPLIES = [
             "A mediator reviews the evidence and records a decision."])],
         "suggestions": ["How are payments protected?", "How do I contact support?",
                         "Trust & Safety Charter"],
+    },
+    {
+        "pattern": re.compile(
+            r"\b(?:leave (?:a |the )?review|write (?:a |the )?review|how do reviews work|what are reviews|"
+            r"are reviews (?:public|verified)|review (?:a |the )?professional|rate (?:a |the )?professional|"
+            r"star rating|ratings? (?:count|matter|work))\b", re.I),
+        "intent": "trust_verification",
+        "answer": ("After an engagement is completed, the buyer can leave one rating from 1 to 5 and a review. It "
+                   "appears on the professional's public profile, the professional can reply once, and reviews feed "
+                   "the track-record ranking."),
+        "sections": [("Reviews", [
+            "Reviews open after the engagement is completed.",
+            "One review per engagement, rated 1 to 5.",
+            "The professional can post one public reply.",
+            "Reviews count toward search ranking."])],
+        "suggestions": ["How does search rank professionals?", "What does a Trust Tier mean?",
+                        "What happens in a dispute?"],
     },
     {
         "pattern": re.compile(
@@ -284,6 +385,21 @@ FAQ_REPLIES = [
             "Escrow funding follows the agreed milestones."])],
         "suggestions": ["How are payments protected?", "How do I ask for a proposal?",
                         "Terms of Service"],
+    },
+    {
+        "pattern": re.compile(
+            r"\b(?:report (?:a |the )?(?:user|professional|profile|fraud|scam|abuse)|fake profile|"
+            r"scam|fraud|abuse|trust & safety)\b", re.I),
+        "intent": "support_handoff",
+        "answer": ("Report a profile, message or engagement to Trust & Safety from the app or Help & Support, "
+                   "including the link or reference. Reports are reviewed and recorded; conduct and compliance "
+                   "cases skip direct resolution."),
+        "sections": [("Reporting a concern", [
+            "Report the profile or engagement with its link or reference.",
+            "Our team reviews the report and records the outcome.",
+            "Conduct and compliance cases go straight to review."])],
+        "suggestions": ["How do I contact support?", "What happens in a dispute?",
+                        "How does verification work?"],
     },
     {
         "pattern": re.compile(
