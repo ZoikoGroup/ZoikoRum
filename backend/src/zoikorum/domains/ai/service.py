@@ -86,6 +86,27 @@ GREETING_REPLY = {
 FAQ_REPLIES = [
     {
         "pattern": re.compile(
+            r"\b(?:can i use zoikorum|is zoikorum available|zoikorum (?:available|operate|operates)|"
+            r"use zoikorum (?:in|from)|available (?:in|to) (?:my|your) country|"
+            r"outside (?:the )?(?:us|uk|europe|united states)|which countries|what countries|"
+            r"supported countries|country availability|europe|asia|africa|australia|"
+            r"united states|usa|canada|united kingdom|india)\b", re.I),
+        "intent": "enterprise_discovery",
+        "answer": ("Zoikorum is an online marketplace, so you can browse from many locations. Professionals list the "
+                   "countries they serve and the languages they speak; if a professional does not serve your "
+                   "country, the request is flagged before agreement and cannot proceed. Cross-border work may have "
+                   "local legal, tax or payment requirements, so check the professional's listing or contact support "
+                   "for a country-specific question."),
+        "sections": [("Working across countries", [
+            "Professionals list the countries they serve and the languages they speak.",
+            "Use the location and language filters when searching.",
+            "A professional who does not serve your country is flagged before agreement.",
+            "Cross-border work may have local legal, tax or payment requirements."])],
+        "suggestions": ["How do I find the right professional?", "How are payments protected?",
+                        "How do I contact support?"],
+    },
+    {
+        "pattern": re.compile(
             r"\b(?:what(?:'s| is) zoikorum|how does zoikorum work|about zoikorum|what does zoikorum do|"
             r"why zoikorum|how does the platform work|what is this platform|what is the platform|"
             r"what is this site|what is this app|"
@@ -97,7 +118,9 @@ FAQ_REPLIES = [
         "intent": "general",
         "answer": ("Zoikorum is a governed marketplace for professional services. Buyers describe the work and request "
                    "proposals, agree a contract with milestones, fund milestones into escrow, and accept the work "
-                   "before the professional is paid. Verification, reviews and disputes keep a reliable record."),
+                   "before the professional is paid. Verification, reviews and disputes keep a reliable record. Ask "
+                   "about finding professionals, verification, requests, contracts, payments, organisations, "
+                   "security, reviews, disputes or support; the Help Center has the full answers."),
         "sections": [("For buyers", [
             "Search, compare and request proposals from verified professionals.",
             "Agree a contract and fund milestones into escrow.",
@@ -122,6 +145,23 @@ FAQ_REPLIES = [
             "Requests and proposals appear in your dashboard."])],
         "suggestions": ["What does a Trust Tier mean?", "How does verification work?",
                         "How do requests and proposals work?"],
+    },
+    {
+        "pattern": re.compile(
+            r"\b(?:find work|get work|find clients|get clients|find jobs?|get jobs?|more clients|more work|"
+            r"receive (?:more )?requests|open briefs?|job leads|win work|get hired|"
+            r"how do i get (?:work|clients|requests)|how do i find (?:work|clients|jobs))\b", re.I),
+        "intent": "professional_onboarding",
+        "answer": ("Complete verification and publish a clear professional profile with your services, availability "
+                   "and pricing. Buyers find you through search and send requests, and open briefs appear in your "
+                   "Professional workspace; reply with a proposal. Reviews from completed work strengthen your "
+                   "track record and ranking."),
+        "sections": [("Finding work", [
+            "Complete verification and publish your profile, services and availability.",
+            "Watch requests and open briefs in the Professional workspace.",
+            "Send proposals and build reviews from completed work."])],
+        "suggestions": ["How do I join as a professional?", "How does search rank professionals?",
+                        "How do I ask for a proposal?"],
     },
     {
         "pattern": re.compile(
@@ -158,15 +198,20 @@ FAQ_REPLIES = [
     {
         "pattern": re.compile(
             r"\b(?:store my card|save my card|card details|store my payment|payment method|payment methods|"
-            r"how can i pay|what can i pay with|credit card|debit card|"
-            r"is zoikorum a bank|hold a balance)\b", re.I),
+            r"how can i pay|what can i pay with|credit card|debit card|is zoikorum a bank|hold a balance|"
+            r"crypto|cryptocurrency|bitcoin|ethereum|usdt|paypal|venmo|zelle|cash app|apple pay|google pay|"
+            r"bank transfer|wire transfer|off-platform|off platform|accepted payment methods?|"
+            r"what payments do you accept|do you accept (?:payments?|cards?|paypal|bitcoin|crypto))\b", re.I),
         "intent": "protected_payments",
-        "answer": ("Zoikorum stores only a token from the payment partner, never your full card details. It is not a "
-                   "bank and holds no balance for you."),
+        "answer": ("Protected payments use the payment partner's hosted card checkout. Zoikorum stores only a token, "
+                   "never your full card details, and it is not a bank and holds no balance for you. Off-platform "
+                   "methods such as PayPal, crypto, wire or cash are not used for protected payments; only methods "
+                   "shown at checkout are supported."),
         "sections": [("Card and payment details", [
             "Card data is handled by the payment partner and tokenised.",
             "Zoikorum keeps the token, not the card number.",
-            "Escrow funds belong to the engagement, not a Zoikorum balance."])],
+            "Escrow funds belong to the engagement, not a Zoikorum balance.",
+            "Only methods shown at checkout are supported; do not pay off-platform."])],
         "suggestions": ["How are payments protected?", "How does milestone funding work?",
                         "Terms of Service"],
     },
@@ -308,9 +353,25 @@ FAQ_REPLIES = [
     },
     {
         "pattern": re.compile(
+            r"\b(?:mobile app|app store|google play|apple app store|download (?:the )?app|ios app|android app|"
+            r"phone app|tablet app|is there an app|do you have an app)\b", re.I),
+        "intent": "account_help",
+        "answer": ("Zoikorum runs in your web browser on desktop and mobile, so you do not need to install a "
+                   "separate app. Sign in at app.zoikorum.com; browser notifications can be enabled in "
+                   "Settings -> Notifications."),
+        "sections": [("Using Zoikorum on a phone", [
+            "Open app.zoikorum.com in your browser.",
+            "No separate app install is required.",
+            "Browser push notifications are in Settings -> Notifications."])],
+        "suggestions": ["How do I contact support?", "How do I turn on two-step verification?",
+                        "How do I get or delete my data?"],
+    },
+    {
+        "pattern": re.compile(
             r"\b(?:verification|verified professional|trust tier|trust score|trust light|trust lights|"
             r"who verifies|how does verification work|get verified|become verified|verify my profile|"
-            r"tier (?:a|b|c)|green light|amber light|red light)\b", re.I),
+            r"tier (?:a|b|c)|green light|amber light|red light|"
+            r"what (?:does|do) (?:the )?(?:green|amber|red) (?:mean|light))\b", re.I),
         "intent": "trust_verification",
         "answer": ("A verification provider or a compliance reviewer checks identity, credentials and eligibility; "
                    "AI never decides a verification outcome. On profiles, a green light means fully verified, amber "
@@ -554,14 +615,17 @@ FAQ_REPLIES = [
         "pattern": re.compile(
             r"\b(?:platform fee|fees?|commission|how much (?:does|do) (?:zoikorum|you) charge|"
             r"pricing|cost|free|membership|subscription|sign-up fee|joining fee|how much to join|"
-            r"charge|charges|do you charge|pay to join|cost to join)\b", re.I),
+            r"charge|charges|do you charge|pay to join|cost to join|set my rate|set my price|set my rates|"
+            r"hourly rate|fixed price|pricing model|charge per hour|how much should i charge|rate card)\b", re.I),
         "intent": "pricing_public",
         "answer": ("The price for the work is agreed in the proposal and contract, and any platform fee is shown "
-                   "there before you commit. No payment is taken until you fund a milestone in a signed contract, "
-                   "and Zoikorum does not add hidden charges."),
+                   "there before you commit. Professionals set their own price and pricing model, such as fixed "
+                   "price, hourly or retainer. Joining and browsing are free; no payment is taken until you fund a "
+                   "milestone in a signed contract, and Zoikorum does not add hidden charges."),
         "sections": [("Pricing", [
-            "Professionals set their own proposal price.",
+            "Professionals set their own proposal price and pricing model.",
             "Any platform fee is displayed before signing.",
+            "Joining and browsing are free; payment starts when you fund a milestone.",
             "Escrow funding follows the agreed milestones."])],
         "suggestions": ["How are payments protected?", "How do I ask for a proposal?",
                         "Terms of Service"],
@@ -631,10 +695,11 @@ FAQ_REPLIES = [
                         "How do I get or delete my data?"],
     },
 ]
+GENERAL_FAQ = next(entry for entry in FAQ_REPLIES if entry["intent"] == "general")
 CHAT_CACHE: dict[str, tuple[float, dict, str]] = {}
 CHAT_CACHE_TTL_SECONDS = 600
 CHAT_CACHE_MAX = 200
-CHAT_FALLBACK_MODELS = ["qwen2.5:1.5b", "llama3.2:3b"]
+CHAT_FALLBACK_MODELS = ["qwen2.5:0.5b"]
 
 
 async def _ollama_chat_with(settings, message: str, model: str) -> str:
@@ -752,7 +817,7 @@ async def chat(session, actor_id, message: str):
     elif faq:
         payload, model, fallback_used = _curated_reply(faq), "deterministic:faq:v1", False
     elif PLATFORM_RE.search(message):
-        payload, model, fallback_used = _curated_reply(FAQ_REPLIES[0]), "deterministic:overview:v1", False
+        payload, model, fallback_used = _curated_reply(GENERAL_FAQ), "deterministic:overview:v1", False
     else:
         key = " ".join(message.lower().split())
         cached = CHAT_CACHE.get(key)
