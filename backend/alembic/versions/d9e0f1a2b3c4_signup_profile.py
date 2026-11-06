@@ -1,7 +1,7 @@
 """identity: sign-up company and contact details
 
 Revision ID: d9e0f1a2b3c4
-Revises: c8d9e0f1a2b3
+Revises: b2d3e4f5a6c7
 Create Date: 2026-11-06 12:00:00
 """
 from __future__ import annotations
@@ -12,7 +12,7 @@ from sqlalchemy.dialects import postgresql
 
 
 revision = 'd9e0f1a2b3c4'
-down_revision = 'c8d9e0f1a2b3'
+down_revision = 'b2d3e4f5a6c7'
 branch_labels = None
 depends_on = None
 
