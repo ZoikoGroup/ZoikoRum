@@ -7,6 +7,7 @@ import { AuthLayout, ErrorAlert, Field, PasswordInput } from '../components/ui'
 import { passkeyCancelled, passkeysSupported, signWithPasskey } from '../lib/passkeys'
 import { PORTAL, signInHref } from '../portal'
 import { SsoSignInOptions } from '../components/SingleSignOn'
+import { Icon } from '../components/AuthIcons'
 import { dashboardPath } from '../staffRoutes'
 import { safeNextPath } from '../auth/guards'
 
@@ -26,6 +27,7 @@ export default function SignIn({ staff = false }: { staff?: boolean }) {
   const [password, setPassword] = useState('')
   const [code, setCode] = useState('')
   const [needsCode, setNeedsCode] = useState(false)
+  const [remember, setRemember] = useState(true)
   const [useRecovery, setUseRecovery] = useState(false)  // lost authenticator: a one-time recovery code
   const [error, setError] = useState<unknown>(null)
   const [busy, setBusy] = useState(false)
@@ -59,7 +61,7 @@ export default function SignIn({ staff = false }: { staff?: boolean }) {
     setError(null)
     try {
       const result = await authApi.login(email, password, needsCode && !useRecovery ? code : undefined,
-        needsCode && useRecovery ? code.trim().toLowerCase() : undefined, staff ? 'staff' : 'customer')
+        needsCode && useRecovery ? code.trim().toLowerCase() : undefined, staff ? 'staff' : 'customer', remember)
       accept(result)
       navigate(result.user.mfaRequired ? '/app/security' : safeNext ?? dashboardPath(result.user), { replace: true })
     } catch (err) {
@@ -81,8 +83,8 @@ export default function SignIn({ staff = false }: { staff?: boolean }) {
         <p className="sub">For the Zoikorum team only: operations, compliance, disputes, finance and administration.
           Two-step verification is required.</p>
       </> : <>
-        <h1>Sign in to Zoikorum</h1>
-        <p className="sub">Customers, professionals, firms and enterprise teams sign in here.</p>
+        <h1>Welcome back!</h1>
+        <p className="sub">Sign in to your Zoikorum account.</p>
       </>}
       <ErrorAlert error={error} />
       {error instanceof ApiError && (error.code === 'USE_STAFF_SIGN_IN' || error.code === 'NOT_STAFF_ACCOUNT') && (
@@ -95,16 +97,22 @@ export default function SignIn({ staff = false }: { staff?: boolean }) {
       <form onSubmit={submit} noValidate>
         {!needsCode ? (
           <>
-            <Field label="Work email" id="email">
-              <input id="email" className="input" type="email" autoComplete="email" required
-                value={email} onChange={(e) => setEmail(e.target.value)} autoFocus />
+            <Field label="Work email address" id="email">
+              <span className="with-icon"><span className="ico"><Icon name="mail" /></span>
+                <input id="email" className="input" type="email" autoComplete="email" required placeholder="name@company.com"
+                  value={email} onChange={(e) => setEmail(e.target.value)} autoFocus /></span>
             </Field>
             <Field label="Password" id="password">
-              <PasswordInput id="password" autoComplete="current-password" value={password} onChange={setPassword} />
+              <span className="with-icon"><span className="ico"><Icon name="lock" /></span>
+                <PasswordInput id="password" autoComplete="current-password" value={password} onChange={setPassword} /></span>
             </Field>
-            <p className="small" style={{ textAlign: 'right', marginTop: -6 }}>
+            <div className="row-between">
+              <label className="checkbox" style={{ margin: 0, alignItems: 'center' }}>
+                <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+                <span>Remember me on this device</span>
+              </label>
               <Link to="/forgot-password">Forgot password?</Link>
-            </p>
+            </div>
           </>
         ) : (
           <>
@@ -126,7 +134,7 @@ export default function SignIn({ staff = false }: { staff?: boolean }) {
           </>
         )}
         <button className="btn btn-primary btn-block" disabled={busy || !email || !password || (needsCode && code.length !== (useRecovery ? 23 : 6))}>
-          {busy ? 'Signing in…' : needsCode ? 'Verify and sign in' : 'Sign in'}
+          {busy ? 'Signing in…' : needsCode ? 'Verify and sign in' : 'Log In'}
         </button>
         {needsCode && (
           <button type="button" className="btn btn-ghost btn-block" onClick={() => { setNeedsCode(false); setUseRecovery(false); setCode('') }}>
@@ -134,20 +142,18 @@ export default function SignIn({ staff = false }: { staff?: boolean }) {
           </button>
         )}
       </form>
+      {!needsCode && !staff && (
+        <p className="auth-foot">New to Zoikorum? <Link to={joinNext ? `/join?${joinNext}` : '/join'}>Register</Link></p>
+      )}
       {!needsCode && !staff && <SsoSignInOptions email={email} />}
       {!needsCode && passkeysSupported() && (
-        <button type="button" className="btn btn-secondary btn-block" style={{ marginTop: 10 }} disabled={busy} onClick={withPasskey}>
+        <button type="button" className="btn btn-secondary btn-block" style={{ marginTop: 12 }} disabled={busy} onClick={withPasskey}>
           Sign in with a passkey
         </button>
       )}
       {staff ? (
         <p className="auth-foot">Not Zoikorum staff? <a href={other} onClick={(e) => { e.preventDefault(); goToOtherSignIn() }}>Sign in here</a></p>
       ) : <>
-        <div className="divider">New to Zoikorum?</div>
-        <div className="row">
-          <Link className="btn btn-secondary" style={{ flex: 1 }} to={joinNext ? `/join?${joinNext}` : '/join'}>Create an account</Link>
-          <Link className="btn btn-secondary" style={{ flex: 1 }} to={`/join?type=PROFESSIONAL${joinNext ? `&${joinNext}` : ''}`}>Join as a Professional</Link>
-        </div>
         {PORTAL === 'both' && <p className="auth-foot small">Zoikorum staff? <Link to="/staff/login">Staff sign-in</Link></p>}
       </>}
     </AuthLayout>

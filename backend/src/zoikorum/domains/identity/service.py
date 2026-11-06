@@ -165,6 +165,21 @@ async def _announce_new_device(session: AsyncSession, identity: Identity, user_a
                  "you, change your password and sign out of other sessions under Security now.")
 
 
+def _signup_profile(data: RegisterIn) -> dict:
+    """The optional company and contact details from the sign-up form, without the empty ones."""
+    fields = {"jobTitle": data.jobTitle, "currency": data.currency, "companyType": data.companyType, "industry": data.industry,
+              "companySize": data.companySize, "state": data.state, "city": data.city, "registeredAddress": data.registeredAddress,
+              "taxId": data.taxId}
+    return {k: v.strip() for k, v in fields.items() if v and v.strip()}
+
+
+def _company_profile(data: RegisterIn) -> dict:
+    """What the organization or firm record starts with: the company part of the sign-up form (no personal details)."""
+    fields = {"companyType": data.companyType, "industry": data.industry, "companySize": data.companySize, "state": data.state,
+              "city": data.city, "registeredAddress": data.registeredAddress, "taxId": data.taxId, "timezone": data.timezone}
+    return {k: v.strip() for k, v in fields.items() if v and v.strip()}
+
+
 async def register(session: AsyncSession, data: RegisterIn, user_agent: str | None):
     from zoikorum.domains.admin import facade as admin_facade
 
@@ -181,13 +196,18 @@ async def register(session: AsyncSession, data: RegisterIn, user_agent: str | No
         personas=[Persona.FROM_ACCOUNT_TYPE[data.accountType]],
         primary_persona=Persona.FROM_ACCOUNT_TYPE[data.accountType],
         signup_organization_name=(data.organizationName or "").strip() or None,
+        phone_enc=encrypt_field(data.phone.strip()) if data.phone else None,  # personal data: encrypted at rest
+        time_zone=(data.timezone or "").strip() or None,
+        signup_profile=_signup_profile(data) or None,
     )
     session.add(identity)
     await session.flush()
     session.add(ConsentRecord(identity_id=identity.id, consent_type="TERMS", document_version=data.termsVersion))
+    if data.marketingOptIn:  # optional, separate from the terms, and withdrawable
+        session.add(ConsentRecord(identity_id=identity.id, consent_type="MARKETING", document_version=data.termsVersion))
     _evt(session, E.IDENTITY_CREATED, identity, email=email, country=identity.country,
          accountType=data.accountType, personas=identity.personas,
-         organizationName=identity.signup_organization_name)
+         organizationName=identity.signup_organization_name, companyProfile=_company_profile(data))
     pair = await _start_session(session, identity, AuthStrength.PASSWORD, user_agent)
     confirm = tokens.mint_purpose_token(identity.id, "email_confirm", EMAIL_TOKEN_TTL)
     return identity, pair, confirm

@@ -36,6 +36,9 @@ class Identity(Base, UUIDPk, Timestamps, Versioned):
     # Organization name captured at Firm/Enterprise signup. The firm/buyer domains create the
     # organization itself from the IDENTITY_CREATED event (next build step).
     signup_organization_name: Mapped[str | None] = mapped_column(String(200))
+    # The rest of the sign-up form: company type, industry, size, address, tax number, job title, preferred currency.
+    # Personal data (address, tax number): erased with the account (privacy.erase) and included in the data export.
+    signup_profile: Mapped[dict | None] = mapped_column(JSONB)
     mfa_secret_enc: Mapped[str | None] = mapped_column(String(500))  # AES-GCM encrypted TOTP secret
     mfa_enabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # The 30-second time step of the last authenticator code accepted: a code is good once (RFC 6238 section 5.2).

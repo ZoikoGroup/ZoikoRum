@@ -44,6 +44,18 @@ export interface RegisterInput {
   country: string
   accountType: AccountType
   organizationName?: string
+  jobTitle?: string
+  phone?: string
+  timezone?: string
+  currency?: string
+  companyType?: string
+  industry?: string
+  companySize?: string
+  state?: string
+  city?: string
+  registeredAddress?: string
+  taxId?: string
+  marketingOptIn?: boolean
   acceptTerms: true
 }
 
@@ -78,8 +90,8 @@ export const authApi = {
   register: (input: RegisterInput) =>
     api<AuthResult & { emailConfirmationToken: string | null }>('/v1/auth/register', { method: 'POST', body: input, auth: false }),
   /** portal: which sign-in page this is; the server keeps staff and customer accounts on their own page. */
-  login: (email: string, password: string, totpCode?: string, recoveryCode?: string, portal?: 'customer' | 'staff') =>
-    api<AuthResult>('/v1/auth/login', { method: 'POST', body: { email, password, totpCode, recoveryCode, portal }, auth: false }),
+  login: (email: string, password: string, totpCode?: string, recoveryCode?: string, portal?: 'customer' | 'staff', rememberMe = true) =>
+    api<AuthResult>('/v1/auth/login', { method: 'POST', body: { email, password, totpCode, recoveryCode, portal, rememberMe }, auth: false }),
   logout: () => api<void>('/v1/auth/logout', { method: 'POST' }),
   me: () => api<User>('/v1/me'),
   confirmEmail: (token: string) => api<User>('/v1/auth/confirm-email', { method: 'POST', body: { token }, auth: false }),

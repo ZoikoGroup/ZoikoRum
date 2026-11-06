@@ -57,7 +57,7 @@ async def test_signup_by_account_type_routes_to_the_right_dashboard(
 
 async def test_firm_and_enterprise_signup_require_an_organization_name(client):
     r = await client.post("/v1/auth/register", json={
-        "email": "e@example.com", "password": "a-very-long-password", "displayName": "E",
+        "email": "e@example.com", "password": "A-Very-Long-Password-1!", "displayName": "E",
         "country": "US", "accountType": "ENTERPRISE", "acceptTerms": True})
     assert r.status_code == 422
 
@@ -142,14 +142,14 @@ async def test_password_reset_is_single_use_and_signs_out_everywhere(client, mak
     r = await client.post("/v1/auth/password/forgot", json={"email": "nobody@example.com"})
     assert r.status_code == 202 and r.json()["resetToken"] is None
 
-    r = await client.post("/v1/auth/password/reset", json={"token": token, "newPassword": "brand-new-password-42"})
+    r = await client.post("/v1/auth/password/reset", json={"token": token, "newPassword": "Brand-New-Password-42!"})
     assert r.status_code == 204
-    r = await client.post("/v1/auth/password/reset", json={"token": token, "newPassword": "another-password-4242"})
+    r = await client.post("/v1/auth/password/reset", json={"token": token, "newPassword": "Another-Password-4242!"})
     assert r.status_code == 422 and r.json()["code"] == "RESET_TOKEN_INVALID"
 
     assert (await client.post("/v1/auth/refresh", json={"refreshToken": u.refresh_token})).status_code == 401
     assert (await client.post("/v1/auth/login", json={"email": u.email, "password": u.password})).status_code == 401
-    r = await client.post("/v1/auth/login", json={"email": u.email, "password": "brand-new-password-42"})
+    r = await client.post("/v1/auth/login", json={"email": u.email, "password": "Brand-New-Password-42!"})
     assert r.status_code == 200
 
 
@@ -157,5 +157,5 @@ async def test_password_reset_token_expires(client, make_user):
     u = await make_user("slow")
     token = (await client.post("/v1/auth/password/forgot", json={"email": u.email})).json()["resetToken"]
     clock.advance(timedelta(minutes=31))
-    r = await client.post("/v1/auth/password/reset", json={"token": token, "newPassword": "brand-new-password-42"})
+    r = await client.post("/v1/auth/password/reset", json={"token": token, "newPassword": "Brand-New-Password-42!"})
     assert r.status_code == 422

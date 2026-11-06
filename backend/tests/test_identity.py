@@ -22,7 +22,7 @@ async def test_register_login_and_me(client, make_user):
 async def test_duplicate_email_and_short_password_rejected(client, make_user):
     u = await make_user("bob")
     r = await client.post("/v1/auth/register", json={
-        "email": u.email, "password": "another-long-password", "displayName": "B", "country": "US", "acceptTerms": True})
+        "email": u.email, "password": "Another-Long-Password-1!", "displayName": "B", "country": "US", "acceptTerms": True})
     assert r.status_code == 409 and r.json()["code"] == "EMAIL_TAKEN"
     r = await client.post("/v1/auth/register", json={
         "email": "x@example.com", "password": "short", "displayName": "B", "country": "US", "acceptTerms": True})
@@ -183,3 +183,58 @@ async def test_a_sign_in_from_a_new_device_is_announced(client, make_user, drain
     alerts = [n for n in (await client.get("/v1/notifications", headers=u.h)).json()["items"] if n["title"] == "New sign-in to your account"]
     assert len(alerts) == 2  # Chrome on Windows (first after sign-up) and Safari on iPhone
     assert any("Safari on iPhone" in n["body"] for n in alerts) and all("change your password" in n["body"] for n in alerts)
+
+
+async def test_register_keeps_company_and_contact_details(client, sf):
+    from sqlalchemy import text
+
+    r = await client.post("/v1/auth/register", json={
+        "email": "details@example.com", "password": "A-Long-Enough-Password-1!", "displayName": "Lennox Green", "country": "DE",
+        "accountType": "ENTERPRISE", "organizationName": "Zoiko Telecom", "acceptTerms": True, "marketingOptIn": True,
+        "jobTitle": "Head of Procurement", "phone": "+1 639 656 4510", "timezone": "Europe/Berlin", "currency": "EUR",
+        "companyType": "Private Limited", "industry": "Telecommunications", "companySize": "51–200 employees",
+        "state": "Berlin", "city": "Berlin", "registeredAddress": "1 Example Str", "taxId": "DE123456789"})
+    assert r.status_code in (200, 201), r.text
+    token = r.json()["tokens"]["accessToken"]
+    me = (await client.get("/v1/me", headers={"Authorization": f"Bearer {token}"})).json()
+    assert me["phone"] == "+1 639 656 4510" and me["timeZone"] == "Europe/Berlin"
+    async with sf() as s:
+        row = (await s.execute(text("SELECT signup_profile, phone_enc FROM identity.identities WHERE email = 'details@example.com'"))).one()
+        consents = (await s.execute(text("SELECT consent_type FROM identity.consent_records c JOIN identity.identities i ON i.id = c.identity_id "
+                                         "WHERE i.email = 'details@example.com' ORDER BY 1"))).scalars().all()
+    assert row.signup_profile["industry"] == "Telecommunications" and row.signup_profile["currency"] == "EUR"
+    assert row.signup_profile["taxId"] == "DE123456789" and "phone" not in row.signup_profile
+    assert row.phone_enc and "639" not in row.phone_enc  # encrypted at rest
+    assert consents == ["MARKETING", "TERMS"]
+
+    bad = await client.post("/v1/auth/register", json={
+        "email": "badphone@example.com", "password": "A-Long-Enough-Password-1!", "displayName": "B", "country": "US",
+        "acceptTerms": True, "phone": "call me", "currency": "euro"})
+    assert bad.status_code == 422
+
+
+async def test_login_without_remember_me_sets_a_session_cookie(client, make_user):
+    u = await make_user("remember")
+    web = {"X-Zk-Client": "web"}
+    r = await client.post("/v1/auth/login", headers=web, json={"email": u.email, "password": u.password, "rememberMe": False})
+    assert r.status_code == 200
+    cookies = r.headers.get_list("set-cookie")
+    refresh = next(c for c in cookies if c.startswith("zk_refresh="))
+    assert "max-age" not in refresh.lower() and any(c.startswith("zk_remember=0") for c in cookies)
+
+    # A refresh keeps that choice; a normal sign-in is remembered.
+    r = await client.post("/v1/auth/refresh", headers=web, json={})
+    assert "max-age" not in next(c for c in r.headers.get_list("set-cookie") if c.startswith("zk_refresh=")).lower()
+    r = await client.post("/v1/auth/login", headers=web, json={"email": u.email, "password": u.password})
+    assert "max-age" in next(c for c in r.headers.get_list("set-cookie") if c.startswith("zk_refresh=")).lower()
+
+
+async def test_weak_passwords_are_refused_at_sign_up_and_reset(client, make_user):
+    base = {"email": "weak@example.com", "displayName": "W", "country": "US", "acceptTerms": True}
+    for weak in ("alllowercase-and-long", "NoSymbolsOrDigitsHere", "No-Digits-Here-At-All", "no-upper-case-1-here!"):
+        r = await client.post("/v1/auth/register", json={**base, "password": weak})
+        assert r.status_code == 422, weak
+    ok = await client.post("/v1/auth/register", json={**base, "password": "Strong-Enough-Pass-1!"})
+    assert ok.status_code == 201
+    r = await client.post("/v1/auth/password/reset", json={"token": "x" * 20, "newPassword": "alllowercase-and-long"})
+    assert r.status_code == 422

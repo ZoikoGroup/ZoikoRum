@@ -7,3 +7,13 @@ export function passwordScore(value: string): 0 | 1 | 2 | 3 {
 }
 
 export const PASSWORD_LABEL = ['Too short (at least 12 characters)', 'Fair', 'Good', 'Strong'] as const
+
+/** The sign-up and reset rule (the server checks the same): 12+ characters, upper and lower case, a number and a symbol.
+    Returns the first thing missing, or '' when the password is fine. */
+export function passwordProblem(value: string): string {
+  if (value.length < 12) return 'Use at least 12 characters.'
+  if (!(/[a-z]/.test(value) && /[A-Z]/.test(value))) return 'Use both upper and lower case letters.'
+  if (!/\d/.test(value)) return 'Add a number.'
+  if (!/[^A-Za-z0-9]/.test(value)) return 'Add a symbol, such as ! or -.'
+  return ''
+}

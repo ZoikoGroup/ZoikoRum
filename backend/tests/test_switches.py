@@ -48,7 +48,7 @@ async def test_paused_sign_ups_are_refused_and_every_change_is_recorded(client, 
     now = {s["key"]: s for s in (await client.get(S, headers=admin.h)).json()}["SIGN_UPS"]
     assert now["paused"] and now["changedBy"] == str(admin.id)
     signup = await client.post("/v1/auth/register", json={
-        "email": "new@example.com", "password": "correct-horse-battery-staple", "displayName": "New", "country": "US",
+        "email": "new@example.com", "password": "Correct-Horse-Battery-Staple-42!", "displayName": "New", "country": "US",
         "accountType": "BUYER", "acceptTerms": True})
     assert signup.status_code == 503 and signup.json()["code"] == "FEATURE_PAUSED"
     assert "New accounts is paused" in signup.json()["detail"]

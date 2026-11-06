@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
    The stack runs with dev settings: no two-step codes, simulated identity partner, test payment provider. */
 
 export const API_URL = 'http://127.0.0.1:8100'
-export const PASSWORD = 'browser-test-password-1'
+export const PASSWORD = 'Browser-Test-Password-1!'
 const PHOTO_PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64, 0x30)]).toString('base64')
 
 export interface Account { email: string; name: string; token: string; confirmToken: string | null; api: APIRequestContext }
@@ -190,6 +190,6 @@ export async function signIn(page: Page, email: string, { staff = false } = {}) 
   await page.goto(staff ? '/staff/login' : '/login')
   await page.getByLabel('Work email').fill(email)
   await page.getByLabel('Password', { exact: true }).fill(PASSWORD)
-  await page.getByRole('button', { name: 'Sign in', exact: true }).click()
+  await page.getByRole('button', { name: 'Log In', exact: true }).click()
   await expect(page).toHaveURL(staff ? /\/(platform-admin|app)\// : /\/app\//)  // staff land in the console
 }

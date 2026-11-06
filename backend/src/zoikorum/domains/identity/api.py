@@ -72,17 +72,30 @@ def _cookie_mode(request: Request) -> bool:
     return request.headers.get("X-Zk-Client") == "web" or REFRESH_COOKIE in request.cookies
 
 
-def _issue(request: Request, response: Response, pair: TokenPair) -> TokenPair:
+REMEMBER_COOKIE = "zk_remember"  # "0" when the person chose not to be remembered: the sign-in then ends with the browser
+
+
+def _issue(request: Request, response: Response, pair: TokenPair, remember: bool | None = None) -> TokenPair:
+    """Puts the refresh token in its cookie. remember=None keeps the choice made at sign-in (refresh, step-up and so on)."""
     if not _cookie_mode(request):
         return pair
     s = get_settings()
-    response.set_cookie(REFRESH_COOKIE, pair.refreshToken, max_age=s.refresh_token_ttl_seconds, path="/v1/auth",
-                        httponly=True, samesite="strict", secure=s.env not in ("local", "development", "test"))
+    if remember is None:
+        remember = request.cookies.get(REMEMBER_COOKIE) != "0"
+    secure = s.env not in ("local", "development", "test")
+    # Remembered: the cookie lasts as long as the refresh token. Not remembered: a session cookie, gone when the browser closes.
+    response.set_cookie(REFRESH_COOKIE, pair.refreshToken, max_age=s.refresh_token_ttl_seconds if remember else None, path="/v1/auth",
+                        httponly=True, samesite="strict", secure=secure)
+    if remember:
+        response.delete_cookie(REMEMBER_COOKIE, path="/v1/auth")
+    else:
+        response.set_cookie(REMEMBER_COOKIE, "0", path="/v1/auth", httponly=True, samesite="strict", secure=secure)
     return pair.model_copy(update={"refreshToken": ""})
 
 
 def _forget(response: Response) -> None:
     response.delete_cookie(REFRESH_COOKIE, path="/v1/auth")
+    response.delete_cookie(REMEMBER_COOKIE, path="/v1/auth")
 
 
 def _expose_dev_tokens() -> bool:
@@ -116,7 +129,7 @@ async def login(body: LoginIn, request: Request, response: Response) -> AuthOut:
                                          body.portal)
     if isinstance(result, service.LoginFailure):
         raise Unauthenticated(result.detail, code=result.code)
-    return result.model_copy(update={"tokens": _issue(request, response, result.tokens)})
+    return result.model_copy(update={"tokens": _issue(request, response, result.tokens, remember=body.rememberMe)})
 
 
 @router.post("/auth/refresh", response_model=TokenPair)
@@ -399,7 +412,7 @@ async def resolve_duplicate(suspicion_id: uuid.UUID, body: DuplicateResolveIn, a
 
 class SsoStartIn(BaseModel):
     email: str | None = Field(default=None, max_length=320)
-    provider: Literal["google", "microsoft"] | None = None
+    provider: Literal["google", "microsoft", "apple"] | None = None
 
 
 class SsoCallbackIn(BaseModel):
@@ -429,7 +442,7 @@ class SsoConnectionIn(BaseModel):
 
 @router.get("/auth/sso/providers")
 async def sso_providers() -> dict:
-    """Which of Google and Microsoft sign-in this installation offers."""
+    """Which of Google, Microsoft and Apple sign-in this installation offers."""
     from zoikorum.domains.identity import sso
     return sso.providers()
 
@@ -447,7 +460,7 @@ async def sso_link(body: SsoStartIn, actor: CurrentActor, session: DbSession) ->
     """Signed in: connect Google or Microsoft to this account (needs a fresh two-step check)."""
     from zoikorum.domains.identity import sso
     if not body.provider:
-        raise ValidationFailed("Choose Google or Microsoft")
+        raise ValidationFailed("Choose Google, Microsoft or Apple")
     actor.require_step_up()
     return await sso.start(session, provider=body.provider, link_actor=actor)
 
@@ -553,6 +566,23 @@ async def saml_acs(request: Request) -> Response:
     return Response(status_code=303, headers={"Location": target, "Cache-Control": "no-store"})
 
 
+@router.post("/auth/apple/callback", status_code=status.HTTP_303_SEE_OTHER, response_class=Response)
+async def apple_callback(request: Request) -> Response:
+    """Sign in with Apple answers by posting code and state here (response_mode=form_post); the browser is sent on to the
+    web app's /sso/callback, which redeems the code through POST /v1/auth/sso/callback."""
+    from urllib.parse import parse_qs
+
+    from zoikorum.domains.identity import sso
+    body = await request.body()
+    if len(body) > 64 * 1024:
+        raise ValidationFailed("The sign-in response is too large")
+    form = parse_qs(body.decode("utf-8", "replace"), max_num_fields=20)
+    await enforce_budget("apple-callback", request.client.host if request.client else "", 30, 30, "Too many sign-in attempts.")
+    one = lambda k: (form.get(k) or [None])[0]  # noqa: E731
+    target = sso.apple_return(one("code"), one("state"), one("error"))
+    return Response(status_code=303, headers={"Location": target, "Cache-Control": "no-store"})
+
+
 # ---- SCIM 2.0 Groups (identity/scim.py) -------------------------------------------------------------------------------------
 
 @router.get("/scim/v2/Groups")
@@ -598,7 +628,7 @@ class SessionPolicyIn(BaseModel):
     maxSessionSeconds: int | None = Field(default=None, ge=900, le=90 * 24 * 3600)
     idleTimeoutSeconds: int | None = Field(default=None, ge=300, le=30 * 24 * 3600)
     requireMfa: bool = False
-    allowedIdps: list[Literal["PASSWORD", "PASSKEY", "OIDC", "SAML", "GOOGLE", "MICROSOFT"]] = Field(default_factory=list, max_length=6)
+    allowedIdps: list[Literal["PASSWORD", "PASSKEY", "OIDC", "SAML", "GOOGLE", "MICROSOFT", "APPLE"]] = Field(default_factory=list, max_length=7)
 
 
 @router.get("/organizations/{org_id}/session-policy")

@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     google_client_secret: str | None = None
     microsoft_client_id: str | None = None
     microsoft_client_secret: str | None = None
+    # Sign in with Apple: a Services ID (client id), the developer Team ID, the key id and the .p8 private key (PEM; line
+    # breaks may be written as \n). Return URL to register with Apple: <public_api_url>/v1/auth/apple/callback.
+    apple_client_id: str | None = None
+    apple_team_id: str | None = None
+    apple_key_id: str | None = None
+    apple_private_key: str | None = None
     # The separate staff web app (frontend VITE_PORTAL=staff). Links in emails to staff use it; empty: frontend_url.
     staff_frontend_url: str | None = None
     # Passkeys: the WebAuthn relying party (a domain). Empty: the web app's host name. With separate customer and staff

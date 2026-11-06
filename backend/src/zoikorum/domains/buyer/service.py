@@ -60,7 +60,8 @@ def _money(minor: int | None, ccy: str | None) -> MoneyDTO | None:
 # Organization lifecycle
 # ---------------------------------------------------------------------------
 
-async def create_for_signup(session: AsyncSession, identity_id: uuid.UUID, account_type: str, org_name: str | None) -> None:
+async def create_for_signup(session: AsyncSession, identity_id: uuid.UUID, account_type: str, org_name: str | None,
+                            profile: dict | None = None) -> None:
     """Consumer of IDENTITY_CREATED. Idempotent per (creator, org type)."""
     org_type = {"BUYER": "INDIVIDUAL", "ENTERPRISE": "ENTERPRISE"}.get(account_type)
     if org_type is None:
@@ -73,12 +74,16 @@ async def create_for_signup(session: AsyncSession, identity_id: uuid.UUID, accou
     who = await identity_facade.get_identity(session, identity_id)
     if who is None:
         return
+    profile = profile or {}
     org = Organization(
         name=(org_name or who.display_name).strip(),
         org_type=org_type,
         country=who.country,
         business_context="INDIVIDUAL" if org_type == "INDIVIDUAL" else "ENTERPRISE",
         created_by=identity_id,
+        industry=profile.get("industry"), time_zone=profile.get("timezone"), company_type=profile.get("companyType"),
+        company_size=profile.get("companySize"), state=profile.get("state"), city=profile.get("city"),
+        registered_address=profile.get("registeredAddress"), tax_id=profile.get("taxId"),
     )
     session.add(org)
     await session.flush()

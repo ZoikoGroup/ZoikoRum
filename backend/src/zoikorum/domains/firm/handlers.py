@@ -13,7 +13,8 @@ from zoikorum.shared.events import EventEnvelope, subscribe
 async def on_identity_created(session: AsyncSession, event: EventEnvelope) -> None:
     p = event.payload
     if p.get("accountType") == "FIRM":
-        await service.create_for_signup(session, uuid.UUID(p["identityId"]), p.get("organizationName"))
+        await service.create_for_signup(session, uuid.UUID(p["identityId"]), p.get("organizationName"),
+                                        (p.get("companyProfile") or {}).get("taxId"))
 
 
 @subscribe(E.VERIFICATION_COMPLETED, consumer="firm.registration_verified")

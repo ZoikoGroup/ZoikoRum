@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
+import { Icon } from './AuthIcons'
 import { PORTAL } from '../portal'
 import { authApi } from '../api/auth'
 import { ApiError, tokens } from '../api/client'
@@ -71,7 +72,7 @@ export function SiteHeader() {
             ) : (
               <>
                 <Link className="btn btn-ghost btn-sm" to="/login">Sign In</Link>
-                <Link className="btn btn-primary btn-sm" to="/join">Get started</Link>
+                <Link className="btn btn-primary btn-sm" to="/join">Register</Link>
               </>
             )}
           </div>
@@ -123,7 +124,57 @@ const DEFAULT_POINTS = [
   'Every action recorded in an audit-grade ledger',
 ]
 
+const HERO_POINTS: [Parameters<typeof Icon>[0]['name'], string][] = [
+  ['users', 'Verified professionals'],
+  ['shield', 'Secure contracts and payments'],
+  ['doc', 'End-to-end engagement management'],
+  ['chart', 'Enterprise-grade compliance and privacy'],
+]
+const AUTH_TABS: [string, string][] = [['/login', 'Login'], ['/join', 'Register'], ['/forgot-password', 'Reset Password']]
+
+/** Sign-in, register and reset pages: a brand panel on the left, the form in a tabbed card on the right. Pages that
+    pass their own `aside` keep the older two-column layout. */
 export function AuthLayout({ children, aside }: { children: ReactNode; aside?: ReactNode }) {
+  const { pathname, search } = useLocation()
+  if (!aside) {
+    // The sign-in and register tabs keep where the person was headed (?next=), so switching tabs does not lose it.
+    const next = new URLSearchParams(search).get('next')
+    const keep = next ? `?next=${encodeURIComponent(next)}` : ''
+    const active = pathname === '/reset-password' ? '/forgot-password' : pathname
+    const showTabs = AUTH_TABS.some(([to]) => to === active)
+    return (
+      <main className="auth-split">
+        <section className="auth-hero" aria-label="About Zoikorum">
+          <Link to="/" className="auth-hero-logo" aria-label="Zoikorum"><img src="/logo.png" alt="Zoikorum" /></Link>
+          <h2>Professional engagement, <span>done right.</span></h2>
+          <p className="auth-hero-sub">Connect, engage and manage professionals with trust, compliance and confidence.</p>
+          <ul>
+            {HERO_POINTS.map(([icon, text]) => (
+              <li key={text}><span className="ico"><Icon name={icon} size={22} /></span>{text}</li>
+            ))}
+          </ul>
+          {/* Optional product screenshot: drop the exported image at public/auth-hero.png and it appears here. */}
+          <img className="auth-hero-shot" src="/auth-hero.png" alt="" onError={(e) => { e.currentTarget.style.display = 'none' }} />
+        </section>
+        <section className="auth-panel">
+          <div className="auth-sheet">
+            {showTabs && (
+              <nav className="auth-tabs" aria-label="Account">
+                {AUTH_TABS.map(([to, label]) => (
+                  <Link key={to} to={to === '/login' || to === '/join' ? to + keep : to} aria-current={to === active ? 'page' : undefined}>{label}</Link>
+                ))}
+              </nav>
+            )}
+            <div className="auth-body">{children}</div>
+            <footer className="auth-legal">
+              <span><Link to="/legal/privacy">Privacy</Link> · <Link to="/legal/terms">Terms</Link> · <Link to="/legal/accessibility">Accessibility</Link></span>
+              <span>© {new Date().getFullYear()} Zoiko Tech Inc.</span>
+            </footer>
+          </div>
+        </section>
+      </main>
+    )
+  }
   return (
     <>
       <SiteHeader />
