@@ -48,6 +48,7 @@ async def erase(session: AsyncSession, identity_id: uuid.UUID) -> dict:
     identity.mfa_recovery_hashes = None
     identity.mfa_enabled_at = None
     identity.signup_organization_name = None
+    identity.signup_profile = None
     identity.time_zone = None
     identity.status = "DELETED"
     revoked = (await session.execute(update(Session).where(Session.identity_id == identity_id, Session.revoked_at.is_(None))

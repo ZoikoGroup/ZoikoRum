@@ -12,6 +12,13 @@ AccountType = Literal["BUYER", "PROFESSIONAL", "FIRM", "ENTERPRISE"]
 Dashboard = Literal["buyer", "professional", "firm", "enterprise", "ops"]
 
 
+def strong_password(value: str) -> str:
+    """The sign-up and reset rule shown on the form: 12+ characters with upper and lower case, a number and a symbol."""
+    if not (re.search(r"[a-z]", value) and re.search(r"[A-Z]", value) and re.search(r"\d", value) and re.search(r"[^A-Za-z0-9]", value)):
+        raise ValueError("Use upper and lower case letters, a number and a symbol")
+    return value
+
+
 class RegisterIn(BaseModel):
     email: EmailStr
     password: str = Field(min_length=12, max_length=256)
@@ -19,8 +26,23 @@ class RegisterIn(BaseModel):
     country: str = Field(min_length=2, max_length=2, pattern="^[A-Z]{2}$")
     accountType: AccountType = "BUYER"
     organizationName: str | None = Field(default=None, max_length=200)
+    # The rest of the sign-up form (all optional here; the form asks for the ones it needs).
+    jobTitle: str | None = Field(default=None, max_length=120)
+    phone: str | None = Field(default=None, max_length=32, pattern=r"^\+?[0-9][0-9 ()-]{5,30}$")
+    timezone: str | None = Field(default=None, max_length=64)
+    currency: str | None = Field(default=None, min_length=3, max_length=3, pattern="^[A-Z]{3}$")
+    companyType: str | None = Field(default=None, max_length=60)
+    industry: str | None = Field(default=None, max_length=80)
+    companySize: str | None = Field(default=None, max_length=40)
+    state: str | None = Field(default=None, max_length=100)
+    city: str | None = Field(default=None, max_length=100)
+    registeredAddress: str | None = Field(default=None, max_length=300)
+    taxId: str | None = Field(default=None, max_length=60)
+    marketingOptIn: bool = False
     acceptTerms: Literal[True]
     termsVersion: str = "2026-01"
+
+    _password_rule = field_validator("password")(strong_password)
 
     @model_validator(mode="after")
     def _org_name_for_organizations(self) -> "RegisterIn":
@@ -32,6 +54,7 @@ class RegisterIn(BaseModel):
 class LoginIn(BaseModel):
     email: EmailStr
     password: str
+    rememberMe: bool = True  # False: the sign-in ends when the browser closes (web only)
     totpCode: str | None = Field(default=None, pattern=r"^\d{6}$")
     recoveryCode: str | None = Field(default=None, pattern=r"^[0-9A-Fa-f]{5}(-[0-9A-Fa-f]{5}){3}$")  # lost authenticator
     # Which sign-in page this came from: staff accounts sign in only on the staff page, everyone else only on the
@@ -73,6 +96,8 @@ class ForgotPasswordIn(BaseModel):
 class ResetPasswordIn(BaseModel):
     token: str
     newPassword: str = Field(min_length=12, max_length=256)
+
+    _password_rule = field_validator("newPassword")(strong_password)
 
 
 class TokenPair(BaseModel):

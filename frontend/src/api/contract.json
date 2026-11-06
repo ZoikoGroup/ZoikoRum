@@ -1196,6 +1196,7 @@
   "password",
   "portal",
   "recoveryCode",
+  "rememberMe",
   "totpCode"
  ],
  "MePatch": [
@@ -2829,12 +2830,24 @@
  "zoikorum__domains__identity__schemas__RegisterIn": [
   "acceptTerms",
   "accountType",
+  "city",
+  "companySize",
+  "companyType",
   "country",
+  "currency",
   "displayName",
   "email",
+  "industry",
+  "jobTitle",
+  "marketingOptIn",
   "organizationName",
   "password",
-  "termsVersion"
+  "phone",
+  "registeredAddress",
+  "state",
+  "taxId",
+  "termsVersion",
+  "timezone"
  ],
  "zoikorum__domains__marketplace__schemas__ReferralIn": [
   "code"

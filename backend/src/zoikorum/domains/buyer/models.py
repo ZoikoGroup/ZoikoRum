@@ -30,6 +30,13 @@ class Organization(Base, UUIDPk, Timestamps, Versioned):
     created_by: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
     industry: Mapped[str | None] = mapped_column(String(80))
     time_zone: Mapped[str | None] = mapped_column(String(64))
+    # From the sign-up form (Enterprise and business buyers); all optional and editable later.
+    company_type: Mapped[str | None] = mapped_column(String(60))
+    company_size: Mapped[str | None] = mapped_column(String(40))
+    state: Mapped[str | None] = mapped_column(String(100))
+    city: Mapped[str | None] = mapped_column(String(100))
+    registered_address: Mapped[str | None] = mapped_column(String(300))
+    tax_id: Mapped[str | None] = mapped_column(String(60))
 
 
 class OrgMember(Base, UUIDPk, Timestamps):

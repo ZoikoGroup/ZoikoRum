@@ -5,6 +5,7 @@ import type { AuthResult } from '../api/auth'
 import { useAuth } from '../auth/AuthContext'
 import { AuthLayout, ErrorAlert, useStepUp } from './ui'
 import { dashboardPath } from '../staffRoutes'
+import { BrandIcon, Icon } from './AuthIcons'
 
 /* Single sign-on: an organisation's own identity provider (OpenID Connect: Okta, Entra ID, Google Workspace...), and
    Google or Microsoft sign-in where the platform offers them. */
@@ -14,38 +15,65 @@ async function go(body: { email?: string; provider?: string }) {
   window.location.assign(url)
 }
 
-/** On the sign-in page: "Sign in with SSO" (by work email) and the Google / Microsoft buttons. */
-export function SsoSignInOptions({ email }: { email: string }) {
-  const [providers, setProviders] = useState<{ google: boolean; microsoft: boolean }>({ google: false, microsoft: false })
-  const [error, setError] = useState<unknown>(null)
-  useEffect(() => { api<{ google: boolean; microsoft: boolean }>('/v1/auth/sso/providers', { auth: false }).then(setProviders).catch(() => {}) }, [])
+type Provider = 'google' | 'microsoft' | 'apple'
+const NAMES: Record<Provider, string> = { google: 'Google', microsoft: 'Microsoft', apple: 'Apple' }
+
+/** Always shown; when the server has no keys for the provider yet, say so instead of starting a sign-in that cannot work. */
+function social(provider: Provider, available: boolean, setError: (e: unknown) => void) {
+  if (!available) { setError(new Error(`${NAMES[provider]} sign-in is not set up on this server yet.`)); return }
+  go({ provider }).catch(setError)
+}
+
+function useProviders() {
+  const [providers, setProviders] = useState<Record<Provider, boolean>>({ google: false, microsoft: false, apple: false })
+  useEffect(() => { api<Record<Provider, boolean>>('/v1/auth/sso/providers', { auth: false }).then(setProviders).catch(() => {}) }, [])
+  return providers
+}
+
+function SocialButton({ icon, label, onClick }: { icon: 'microsoft' | 'google' | 'apple' | 'company'; label: string; onClick: () => void }) {
   return (
-    <div style={{ display: 'grid', gap: 8, marginTop: 10 }}>
-      <ErrorAlert error={error} />
-      <button type="button" className="btn btn-secondary btn-block" onClick={() => {
-        if (!email.includes('@')) { setError(new Error('Enter your work email first, then choose Sign in with SSO.')); return }
-        go({ email }).catch(setError)
-      }}>Sign in with SSO</button>
-      {providers.google && <button type="button" className="btn btn-secondary btn-block" onClick={() => go({ provider: 'google' }).catch(setError)}>Continue with Google</button>}
-      {providers.microsoft && <button type="button" className="btn btn-secondary btn-block" onClick={() => go({ provider: 'microsoft' }).catch(setError)}>Continue with Microsoft</button>}
-    </div>
+    <button type="button" className="social-btn" onClick={onClick}>
+      <BrandIcon name={icon} /><span className="label">{label}</span><span className="chev"><Icon name="chevron" size={18} /></span>
+    </button>
   )
 }
 
-/** On the sign-up page: "Continue with Google / Microsoft" (shown only where the platform has them set up). A new person
-    gets a Buyer account; the other role can be added later under Profile & roles. */
-export function SocialSignUpOptions() {
-  const [providers, setProviders] = useState<{ google: boolean; microsoft: boolean }>({ google: false, microsoft: false })
+/** On the sign-in page: "or continue with" Microsoft, Google, Apple and Company SSO (by work email). */
+export function SsoSignInOptions({ email }: { email: string }) {
+  const providers = useProviders()
   const [error, setError] = useState<unknown>(null)
-  useEffect(() => { api<{ google: boolean; microsoft: boolean }>('/v1/auth/sso/providers', { auth: false }).then(setProviders).catch(() => {}) }, [])
-  if (!providers.google && !providers.microsoft) return null
   return (
-    <div style={{ display: 'grid', gap: 8, margin: '12px 0' }}>
+    <>
+      <div className="divider">or continue with</div>
       <ErrorAlert error={error} />
-      {providers.google && <button type="button" className="btn btn-secondary btn-block" onClick={() => go({ provider: 'google' }).catch(setError)}>Sign up with Google</button>}
-      {providers.microsoft && <button type="button" className="btn btn-secondary btn-block" onClick={() => go({ provider: 'microsoft' }).catch(setError)}>Sign up with Microsoft</button>}
+      <div className="social-list">
+        <SocialButton icon="microsoft" label="Continue with Microsoft" onClick={() => social('microsoft', providers.microsoft, setError)} />
+        <SocialButton icon="google" label="Continue with Google" onClick={() => social('google', providers.google, setError)} />
+        <SocialButton icon="apple" label="Continue with Apple" onClick={() => social('apple', providers.apple, setError)} />
+        <SocialButton icon="company" label="Continue with Company SSO" onClick={() => {
+          if (!email.includes('@')) { setError(new Error('Enter your work email first, then choose Company SSO.')); return }
+          go({ email }).catch(setError)
+        }} />
+      </div>
+    </>
+  )
+}
+
+/** On the sign-up page: sign up with Microsoft, Google or Apple. A new person gets a Buyer account; the other role can
+    be added later under Profile & roles. */
+export function SocialSignUpOptions() {
+  const providers = useProviders()
+  const [error, setError] = useState<unknown>(null)
+  return (
+    <>
+      <ErrorAlert error={error} />
+      <div className="social-list">
+        <SocialButton icon="microsoft" label="Sign up with Microsoft" onClick={() => social('microsoft', providers.microsoft, setError)} />
+        <SocialButton icon="google" label="Sign up with Google" onClick={() => social('google', providers.google, setError)} />
+        <SocialButton icon="apple" label="Sign up with Apple" onClick={() => social('apple', providers.apple, setError)} />
+      </div>
       <div className="divider">or with your email</div>
-    </div>
+    </>
   )
 }
 

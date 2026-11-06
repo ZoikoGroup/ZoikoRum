@@ -5,7 +5,7 @@ An Organisation Admin sets, per organisation:
 * ``idleTimeoutSeconds``: a session ends when it has not been refreshed for this long;
 * ``requireMfa``: password sessions must be two-step (authenticator or passkey); single sign-on sessions count as the
   identity provider's responsibility;
-* ``allowedIdps``: the sign-in methods members may use (PASSWORD, PASSKEY, OIDC, SAML, GOOGLE, MICROSOFT); empty: any.
+* ``allowedIdps``: the sign-in methods members may use (PASSWORD, PASSKEY, OIDC, SAML, GOOGLE, MICROSOFT, APPLE); empty: any.
 
 The rules are inherited by every member's session and checked when it refreshes (and the sign-in method when a new
 session starts). Someone in several organisations gets the strictest combination. Staff sessions (admin audience) are
@@ -26,7 +26,7 @@ from zoikorum.shared.auth import Actor, AuthStrength, OrgRole
 from zoikorum.shared.errors import Forbidden
 from zoikorum.shared.events import record_audit
 
-IDPS = ("PASSWORD", "PASSKEY", "OIDC", "SAML", "GOOGLE", "MICROSOFT")
+IDPS = ("PASSWORD", "PASSKEY", "OIDC", "SAML", "GOOGLE", "MICROSOFT", "APPLE")
 SSO_IDPS = frozenset({"OIDC", "SAML"})
 
 

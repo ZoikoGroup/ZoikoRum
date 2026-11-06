@@ -187,3 +187,21 @@ async def test_team_events_are_audited(client, make_user, drain, sf):
         actions = set((await s.execute(text("SELECT action FROM audit.audit_records"))).scalars().all())
     assert {"zoikorum.buyer.organization.created.v1", "zoikorum.buyer.organization.member_added.v1",
             "zoikorum.buyer.organization.member_invited.v1"} <= actions
+
+
+async def test_company_details_from_sign_up_land_on_the_organization(client, drain, sf):
+    from sqlalchemy import text
+
+    r = await client.post("/v1/auth/register", json={
+        "email": "company@example.com", "password": "Company-Pass-Word-42!", "displayName": "Lennox Green", "country": "DE",
+        "accountType": "ENTERPRISE", "organizationName": "Zoiko Telecom", "acceptTerms": True, "timezone": "Europe/Berlin",
+        "companyType": "Private Limited", "industry": "Telecommunications", "companySize": "51–200 employees", "state": "Berlin",
+        "city": "Berlin", "registeredAddress": "1 Example Str", "taxId": "DE123456789", "jobTitle": "Head of Procurement"})
+    assert r.status_code == 201, r.text
+    await drain()
+    async with sf() as s:
+        org = (await s.execute(text("SELECT * FROM buyer.organizations WHERE name = 'Zoiko Telecom'"))).mappings().one()
+    assert org["industry"] == "Telecommunications" and org["company_type"] == "Private Limited" and org["company_size"] == "51–200 employees"
+    assert org["city"] == "Berlin" and org["registered_address"] == "1 Example Str" and org["tax_id"] == "DE123456789"
+    assert org["time_zone"] == "Europe/Berlin"
+    assert "jobTitle" not in org  # personal details stay on the account holder, not the company

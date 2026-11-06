@@ -132,7 +132,7 @@ test('an administrator pauses sign-ups during an incident and switches them back
   await expect(row.getByText('Paused', { exact: true })).toBeVisible()
   await expect(row.getByText(/Fraud wave of fake accounts/)).toBeVisible()
   const refused = await admin.api.post('/v1/auth/register', { data: {
-    email: `paused-${Date.now()}@example.com`, password: 'correct-horse-battery-staple', displayName: 'Paused', country: 'GB',
+    email: `paused-${Date.now()}@example.com`, password: 'Correct-Horse-Battery-Staple-42!', displayName: 'Paused', country: 'GB',
     accountType: 'BUYER', acceptTerms: true } })
   expect(refused.status()).toBe(503)
 

@@ -4,6 +4,8 @@ import { authApi } from '../api/auth'
 import { useAuth } from '../auth/AuthContext'
 import { AuthLayout, ErrorAlert, Field, PasswordInput } from '../components/ui'
 import { dashboardPath } from '../staffRoutes'
+import { Icon } from '../components/AuthIcons'
+import { passwordProblem } from '../lib/password'
 
 export function ForgotPassword() {
   const [email, setEmail] = useState('')
@@ -41,14 +43,15 @@ export function ForgotPassword() {
         </>
       ) : (
         <form onSubmit={submit}>
-          <Field label="Email" id="email">
-            <input id="email" className="input" type="email" autoComplete="email" value={email}
-              onChange={(e) => setEmail(e.target.value)} autoFocus required />
+          <Field label="Work email address" id="email">
+            <span className="with-icon"><span className="ico"><Icon name="mail" /></span>
+              <input id="email" className="input" type="email" autoComplete="email" value={email} placeholder="name@company.com"
+                onChange={(e) => setEmail(e.target.value)} autoFocus required /></span>
           </Field>
           <button className="btn btn-primary btn-block" disabled={busy || !email}>{busy ? 'Sending…' : 'Send reset link'}</button>
         </form>
       )}
-      <p className="auth-foot"><Link to="/login">Back to sign in</Link></p>
+      <p className="auth-foot">Remembered it? <Link to="/login">Log in</Link></p>
     </AuthLayout>
   )
 }
@@ -84,13 +87,15 @@ export function ResetPassword() {
       <ErrorAlert error={error} />
       {!token && <div className="alert alert-error">This reset link is missing its token. <Link to="/forgot-password">Request a new one</Link>.</div>}
       <form onSubmit={submit}>
-        <Field label="New password" id="pw" hint="At least 12 characters.">
-          <PasswordInput id="pw" autoComplete="new-password" value={password} onChange={setPassword} />
+        <Field label="New password" id="pw" hint="At least 12 characters, with upper and lower case, a number and a symbol.">
+          <span className="with-icon"><span className="ico"><Icon name="lock" /></span>
+            <PasswordInput id="pw" autoComplete="new-password" value={password} onChange={setPassword} /></span>
         </Field>
         <Field label="Confirm new password" id="pw2" error={mismatch ? 'Passwords do not match.' : undefined}>
-          <PasswordInput id="pw2" autoComplete="new-password" value={confirm} onChange={setConfirm} invalid={mismatch} />
+          <span className="with-icon"><span className="ico"><Icon name="lock" /></span>
+            <PasswordInput id="pw2" autoComplete="new-password" value={confirm} onChange={setConfirm} invalid={mismatch} /></span>
         </Field>
-        <button className="btn btn-primary btn-block" disabled={busy || !token || password.length < 12 || password !== confirm}>
+        <button className="btn btn-primary btn-block" disabled={busy || !token || !!passwordProblem(password) || password !== confirm}>
           {busy ? 'Saving…' : 'Set new password'}
         </button>
       </form>

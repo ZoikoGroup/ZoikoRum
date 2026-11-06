@@ -21,3 +21,17 @@ describe('passwordScore', () => {
     expect(PASSWORD_LABEL[3]).toBe('Strong')
   })
 })
+
+import { passwordProblem } from './password'
+
+describe('passwordProblem', () => {
+  it('asks for the first thing that is missing', () => {
+    expect(passwordProblem('Short1!')).toMatch(/12 characters/)
+    expect(passwordProblem('alllowercase-and-long')).toMatch(/upper and lower/)
+    expect(passwordProblem('No-Digits-Here-At-All')).toMatch(/number/)
+    expect(passwordProblem('NoSymbolsHere1234')).toMatch(/symbol/)
+  })
+  it('accepts a password with all four', () => {
+    expect(passwordProblem('Strong-Enough-Pass-1!')).toBe('')
+  })
+})

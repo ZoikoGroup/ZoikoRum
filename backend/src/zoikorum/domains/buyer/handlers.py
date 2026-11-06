@@ -13,4 +13,5 @@ from zoikorum.shared.events import EventEnvelope, subscribe
 async def on_identity_created(session: AsyncSession, event: EventEnvelope) -> None:
     """Buyer and Enterprise sign-ups get their organization (Individual / Enterprise)."""
     p = event.payload
-    await service.create_for_signup(session, uuid.UUID(p["identityId"]), p.get("accountType", ""), p.get("organizationName"))
+    await service.create_for_signup(session, uuid.UUID(p["identityId"]), p.get("accountType", ""), p.get("organizationName"),
+                                 p.get("companyProfile"))

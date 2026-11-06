@@ -247,7 +247,7 @@ def make_user(client, sf):
         account_type: str = "BUYER", organization: str | None = None,
     ) -> User:
         email = f"{name}-{uuid.uuid4().hex[:8]}@example.com"
-        password = "correct-horse-battery-staple"
+        password = "Correct-Horse-Battery-Staple-42!"
         r = await client.post(
             "/v1/auth/register",
             json={"email": email, "password": password, "displayName": name.title(), "country": country,

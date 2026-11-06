@@ -40,14 +40,16 @@ def _evt(session: AsyncSession, event_type: str, firm: Firm, **payload) -> None:
                  payload={"firmId": firm.id, **payload})
 
 
-async def create_for_signup(session: AsyncSession, identity_id: uuid.UUID, legal_name: str | None) -> None:
+async def create_for_signup(session: AsyncSession, identity_id: uuid.UUID, legal_name: str | None,
+                            registration_number: str | None = None) -> None:
     """Consumer of IDENTITY_CREATED for Firm sign-ups. Idempotent per creator."""
     if await session.scalar(select(Firm.id).where(Firm.created_by == identity_id)):
         return
     who = await identity_facade.get_identity(session, identity_id)
     if who is None:
         return
-    firm = Firm(legal_name=(legal_name or who.display_name).strip(), hq_country=who.country, created_by=identity_id)
+    firm = Firm(legal_name=(legal_name or who.display_name).strip(), hq_country=who.country, created_by=identity_id,
+                registration_number=(registration_number or "")[:100] or None)
     session.add(firm)
     await session.flush()
     roles = [FirmRole.FIRM_ADMIN]

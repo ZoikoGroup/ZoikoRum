@@ -37,7 +37,8 @@ from zoikorum.shared.event_catalog import E
 from zoikorum.shared.events import record_audit
 
 STATE_TTL = timedelta(minutes=10)
-SOCIAL = {"google": "https://accounts.google.com", "microsoft": "https://login.microsoftonline.com/common/v2.0"}
+SOCIAL = {"google": "https://accounts.google.com", "microsoft": "https://login.microsoftonline.com/common/v2.0",
+          "apple": "https://appleid.apple.com"}
 
 
 # ---- HTTP to the identity provider (replaced in tests) -----------------------------------------------------------------
@@ -212,13 +213,48 @@ async def sso_required(session: AsyncSession, identity: Identity) -> bool:
 
 # ---- Sign-in flow ------------------------------------------------------------------------------------------------------------
 
+def _apple_configured() -> bool:
+    s = get_settings()
+    return bool(s.apple_client_id and s.apple_team_id and s.apple_key_id and s.apple_private_key)
+
+
 def providers() -> dict:
     s = get_settings()
-    return {"google": bool(s.google_client_id), "microsoft": bool(s.microsoft_client_id)}
+    return {"google": bool(s.google_client_id), "microsoft": bool(s.microsoft_client_id), "apple": _apple_configured()}
+
+
+def apple_client_secret(now: datetime | None = None) -> str:
+    """Apple wants the client secret to be a short-lived ES256 token signed with the developer's private key."""
+    import jwt
+
+    s = get_settings()
+    issued = int((now or clock.now()).timestamp())
+    key = (s.apple_private_key or "").replace("\\n", "\n")
+    return jwt.encode({"iss": s.apple_team_id, "iat": issued, "exp": issued + 600, "aud": SOCIAL["apple"], "sub": s.apple_client_id},
+                      key, algorithm="ES256", headers={"kid": s.apple_key_id})
+
+
+def redirect_uri(provider: str) -> str:
+    """Where the provider sends the browser back. Apple (which posts its answer) comes to the API first and is passed on."""
+    if provider == "apple":
+        s = get_settings()
+        return (s.public_api_url or s.frontend_url).rstrip("/") + "/v1/auth/apple/callback"
+    return web_url() + "/sso/callback"
+
+
+def apple_return(code: str | None, state: str | None, error: str | None) -> str:
+    """The browser's next stop after Apple posts here: the web app's callback page (nothing is signed in until it redeems the code)."""
+    if error or not code or not state:
+        return _callback_error("The Apple sign-in was cancelled." if error in (None, "user_cancelled_authorize") else "Apple could not sign you in.")
+    return web_url() + "/sso/callback?" + urlencode({"code": code, "state": state})
 
 
 def _social_client(provider: str) -> tuple[str, str]:
     s = get_settings()
+    if provider == "apple":
+        if not _apple_configured():
+            raise NotFound("Apple sign-in is not available", code="PROVIDER_NOT_CONFIGURED")
+        return s.apple_client_id, apple_client_secret()
     cid, secret = (s.google_client_id, s.google_client_secret) if provider == "google" else (s.microsoft_client_id, s.microsoft_client_secret)
     if not cid or not secret:
         raise NotFound(f"{provider.title()} sign-in is not available", code="PROVIDER_NOT_CONFIGURED")
@@ -249,8 +285,10 @@ async def start(session: AsyncSession, *, email: str | None = None, provider: st
                    expires_at=clock.now() + STATE_TTL)
     session.add(row)
     await session.flush()
-    params = {"response_type": "code", "client_id": client_id, "redirect_uri": web_url() + "/sso/callback", "scope": "openid email profile",
+    params = {"response_type": "code", "client_id": client_id, "redirect_uri": redirect_uri(provider or "org"), "scope": "openid email profile",
               "state": str(row.id), "nonce": row.nonce, "code_challenge": challenge, "code_challenge_method": "S256"}
+    if provider == "apple":  # Apple only releases the email when its answer is posted (to /v1/auth/apple/callback)
+        params.update({"scope": "openid email name", "response_mode": "form_post"})
     if email:
         params["login_hint"] = email
     return {"url": doc["authorization_endpoint"] + "?" + urlencode(params)}
@@ -277,11 +315,13 @@ async def callback(session: AsyncSession, code: str, state: str, user_agent: str
     else:
         issuer = SOCIAL[row.provider]
         client_id, secret = _social_client(row.provider)
-        issuer_ok = (lambda iss, claims: iss == "https://accounts.google.com" or iss == "accounts.google.com") if row.provider == "google" \
-            else (lambda iss, claims: iss == f"https://login.microsoftonline.com/{claims.get('tid')}/v2.0")
+        issuer_ok = {
+            "google": lambda iss, claims: iss == "https://accounts.google.com" or iss == "accounts.google.com",
+            "apple": lambda iss, claims: iss == SOCIAL["apple"],
+        }.get(row.provider) or (lambda iss, claims: iss == f"https://login.microsoftonline.com/{claims.get('tid')}/v2.0")
     doc = await discover(issuer)
     tokens = await _post_form(doc["token_endpoint"], {"grant_type": "authorization_code", "code": code, "client_id": client_id,
-                                                       "client_secret": secret, "redirect_uri": web_url() + "/sso/callback",
+                                                       "client_secret": secret, "redirect_uri": redirect_uri(row.provider),
                                                        "code_verifier": row.code_verifier})
     if "id_token" not in tokens:
         raise Unauthenticated("The identity provider did not return an identity", code="SSO_INVALID_TOKEN")
@@ -296,10 +336,11 @@ async def callback(session: AsyncSession, code: str, state: str, user_agent: str
     elif row.provider == "org":
         identity = await _org_identity(session, connection, email, name, subject)
     else:
-        identity = await _social_identity(session, row.provider, email, name, subject, bool(claims.get("email_verified")))
+        identity = await _social_identity(session, row.provider, email, name, subject,
+                                          str(claims.get("email_verified")).lower() == "true")  # Apple sends the string "true"
     if identity.status != "ACTIVE":
         raise Forbidden("This account is not active", code="ACCOUNT_NOT_ACTIVE")
-    idp = {"org": "OIDC", "google": "GOOGLE", "microsoft": "MICROSOFT"}.get(row.provider, "OIDC")
+    idp = {"org": "OIDC", "google": "GOOGLE", "microsoft": "MICROSOFT", "apple": "APPLE"}.get(row.provider, "OIDC")
     pair = await service._start_session(session, identity, AuthStrength.PASSWORD, user_agent, idp=idp)
     record_audit(session, "identity.sso.signed_in", object_type="Identity", object_id=identity.id,
                  details={"provider": row.provider, "issuer": claims["iss"]})

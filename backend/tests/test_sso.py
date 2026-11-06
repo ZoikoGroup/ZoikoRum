@@ -88,7 +88,7 @@ async def test_organisation_sso_jit_enforcement_and_account_safety(client, make_
     assert bad.json()["code"] == "SSO_INVALID_TOKEN"
 
     # An account outside the organisation with an address in the domain is never taken over.
-    await client.post("/v1/auth/register", json={"email": f"outsider@{domain}", "password": "correct-horse-battery-staple",
+    await client.post("/v1/auth/register", json={"email": f"outsider@{domain}", "password": "Correct-Horse-Battery-Staple-42!",
                                                   "displayName": "Outsider", "country": "US", "accountType": "BUYER", "acceptTerms": True})
     taken = await _sign_in(client, sf, idp, {"email": f"outsider@{domain}"}, {"sub": "u-out", "email": f"outsider@{domain}"})
     assert taken.json()["code"] == "SSO_ACCOUNT_EXISTS"
@@ -97,8 +97,8 @@ async def test_organisation_sso_jit_enforcement_and_account_safety(client, make_
     await client.put(f"/v1/organizations/{org['id']}/sso", headers=admin.h, json={**cfg, "clientSecret": None, "enforce": True})
     async with sf() as s, s.begin():
         i = await s.scalar(select(Identity).where(Identity.id == uuid.UUID(nia["id"])))
-        i.password_hash = _hasher.hash("correct-horse-battery-staple")
-    pw = await client.post("/v1/auth/login", json={"email": f"nia@{domain}", "password": "correct-horse-battery-staple"})
+        i.password_hash = _hasher.hash("Correct-Horse-Battery-Staple-42!")
+    pw = await client.post("/v1/auth/login", json={"email": f"nia@{domain}", "password": "Correct-Horse-Battery-Staple-42!"})
     assert pw.json()["code"] == "SSO_REQUIRED"
 
 
@@ -135,7 +135,7 @@ async def test_google_sign_in_creates_then_reuses_the_account(client, sf, idp, m
     s = get_settings()
     monkeypatch.setattr(s, "google_client_id", "g-client")
     monkeypatch.setattr(s, "google_client_secret", "g-secret")
-    assert (await client.get("/v1/auth/sso/providers")).json() == {"google": True, "microsoft": False}
+    assert (await client.get("/v1/auth/sso/providers")).json() == {"google": True, "microsoft": False, "apple": False}
     email = f"gina-{uuid.uuid4().hex[:6]}@gmail.test"
     claims = {"sub": "g-1", "email": email, "email_verified": True, "name": "Gina"}
     r = await _sign_in(client, sf, idp, {"provider": "google"}, claims, issuer="https://accounts.google.com")
