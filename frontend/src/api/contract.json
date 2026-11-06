@@ -456,6 +456,14 @@
   "methodLabel",
   "status"
  ],
+ "ChatFeedbackIn": [
+  "note",
+  "rating",
+  "reason"
+ ],
+ "ChatIn": [
+  "message"
+ ],
  "ClarificationIn": [
   "question",
   "to"

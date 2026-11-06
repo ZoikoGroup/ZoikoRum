@@ -66,6 +66,7 @@ const EnterpriseHome = lazy(() => import('./pages/EnterprisePages').then((m) => 
 const CustomerVerification = lazy(() => import('./pages/customer/CustomerVerification'))
 const FindProfessionals = lazy(() => import('./pages/customer/FindProfessionals'))
 const HelpPage = lazy(() => import('./pages/customer/Help'))
+const AssistantPage = lazy(() => import('./pages/Assistant'))
 const OrganisationPage = lazy(() => import('./pages/customer/Organisation'))
 const ProposalsPage = lazy(() => import('./pages/customer/CustomerRequests').then((m) => ({ default: m.ProposalsPage })))
 const RequestDetailPage = lazy(() => import('./pages/customer/CustomerRequests').then((m) => ({ default: m.RequestDetailPage })))
@@ -167,6 +168,7 @@ export default function App() {
             <Route path="verification" element={<RequireRole any={CUSTOMER}><CustomerVerification /></RequireRole>} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="help" element={<HelpPage />} />
+            <Route path="assistant" element={<RequireRole any={[...CUSTOMER, 'PROFESSIONAL']}><AssistantPage /></RequireRole>} />
             <Route path="invitations" element={<InvitationsPage />} />
             <Route path="account" element={<AccountPage />} />
             <Route path="safety" element={<SafetyPage />} />

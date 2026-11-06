@@ -16,7 +16,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 
 from zoikorum.config import get_settings
 from zoikorum.domains import DOMAINS
@@ -114,6 +114,11 @@ def create_app() -> FastAPI:
         for name in ("router", "admin_router", "root_router"):
             if api is not None and hasattr(api, name):
                 app.include_router(getattr(api, name))
+
+    @app.get("/", include_in_schema=False)
+    async def root() -> RedirectResponse:
+        """The API root has no page; send people to the interactive API documentation."""
+        return RedirectResponse(url="/docs")
 
     @app.get("/health", tags=["platform"])
     async def health() -> dict:
