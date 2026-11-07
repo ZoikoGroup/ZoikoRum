@@ -36,11 +36,20 @@ const TOPICS: Topic[] = [
     ['How do I add a colleague?', 'Org Admins invite members and assign roles from Organisation → Members & access.'],
   ] },
   { icon: 'user', title: 'Account & security', summary: 'Sign-in, two-step verification, privacy.', answers: [
-    ['How do I turn on two-step verification?', 'Settings → Security → Two-step verification. Admin roles must use it.'],
+    ['How do I turn on two-step verification?', 'Open Settings → Security and choose Manage next to Two-step verification. Admin roles must use it.'],
+    ['Can I use a passkey?', 'Yes. Open Settings → Security, choose Manage, then add a passkey on the Security page. A passkey can sign you in on supported devices without a password and code.'],
+    ['I lost my authenticator. What do I do?', 'Use a recovery code at sign-in. If you have none, contact support to reset two-step verification after identity checks.'],
+    ['Can I sign in with Google or Microsoft?', 'Yes, when the platform offers it: choose Continue with Google or Continue with Microsoft on the sign-in page. Organisations can also use single sign-on with their identity provider.'],
+    ['How do I set up single sign-on?', 'Org Admins connect the organisation’s identity provider with OpenID Connect (Okta, Microsoft Entra ID, Google Workspace and others) under Organisation → Security, and can enable SCIM provisioning.'],
     ['How do I get or delete my data?', 'Settings → Privacy & data. Legally required records are kept and anonymised where possible.'],
   ] },
   { icon: 'bell', title: 'Disputes', summary: 'When something goes wrong.', answers: [
     ['What happens in a dispute?', 'The milestone’s funds are frozen and a mediator reviews the evidence. Direct messages are replaced by the dispute thread.'],
+  ] },
+  { icon: 'star', title: 'Reviews & reputation', summary: 'Ratings, replies and ranking.', answers: [
+    ['When can I leave a review?', 'After an engagement is completed, the buyer can leave one rating from 1 to 5 and a review.'],
+    ['Can the professional reply?', 'Yes. The professional can post one public reply and edit it; edits are recorded.'],
+    ['Do reviews affect ranking?', 'Reviews feed the professional’s track record. Search still ranks by relevance, then verification, availability and fit, and nobody can pay to rank higher.'],
   ] },
 ]
 
