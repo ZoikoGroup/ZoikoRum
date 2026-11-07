@@ -57,7 +57,7 @@ RELATED_PAGES = {
     "disputes_public": [("Trust & Safety Charter", "/legal/trust-and-safety"), ("Help Center", "/app/help")],
     "support_handoff": [("Help Center", "/app/help"), ("Browse professionals", "/professionals")],
     "account_help": [("Help Center", "/app/help"), ("Security settings", "/app/security")],
-    "general": [("Help Center", "/app/help"), ("Privacy Policy", "/legal/privacy")],
+    "general": [("Help Center", "/app/help"), ("Browse professionals", "/professionals")],
 }
 CHAT_SUGGESTIONS = [
     "How do I find the right professional?",
@@ -222,12 +222,12 @@ FAQ_REPLIES = [
             r"when will i (?:get paid|be paid)|when.*payout)\b", re.I),
         "intent": "protected_payments",
         "answer": ("Add a payout account in Payments, then funds are released to it after the buyer accepts each "
-                   "milestone. A payout usually reaches the bank within two business days after it starts, and the "
-                   "expected date is shown to professionals."),
+                   "milestone. The expected bank arrival date is shown with each payout; Zoikorum does not publish a "
+                   "fixed payout time."),
         "sections": [("Getting paid", [
             "Add and verify a payout account in Payments.",
             "Escrow releases after the buyer accepts a milestone.",
-            "Expected bank arrival is about two business days after a payout starts."])],
+            "The expected bank arrival date is shown with each payout."])],
         "suggestions": ["How are payments protected?", "When does work start?",
                         "What happens in a dispute?"],
     },
@@ -309,17 +309,26 @@ FAQ_REPLIES = [
     },
     {
         "pattern": re.compile(
-            r"\b(?:two-step|two step|2fa|authenticator|security settings|"
-            r"signed-in devices|sign out (?:a |this )?device)\b", re.I),
+            r"\b(?:two-step|two step|2fa|authenticator|recovery codes?|passkeys?|"
+            r"lost (?:my )?(?:phone|authenticator)|security settings|signed-in devices|"
+            r"sign out (?:a |this )?device|continue with google|continue with microsoft|"
+            r"sign in (?:with )?(?:my )?google|sign in (?:with )?(?:my )?microsoft|"
+            r"google sign-in|microsoft sign-in|social sign-in)\b", re.I),
         "intent": "account_help",
-        "answer": ("Turn on two-step verification in Settings -> Security; admin roles must use it. You can also "
-                   "review and sign out signed-in devices from the same page."),
+        "answer": ("Turn on two-step verification in Settings -> Security; admin roles must use it. On the Security "
+                   "page you can also add a passkey, create recovery codes, and review or sign out signed-in devices. "
+                   "If you lose your authenticator, use a recovery code at sign-in; if you have none, contact support. "
+                   "Google or Microsoft sign-in appears when your organisation offers it."),
         "sections": [("Account and security", [
-            "Two-step verification lives in Settings -> Security.",
+            "Two-step verification, passkeys and recovery codes live on the Security page.",
             "Admin roles must keep two-step verification on.",
-            "Signed-in devices can be signed out from the same page."])],
-        "suggestions": ["How do I get or delete my data?", "How do I contact support?",
-                        "How do I add a colleague?"],
+            "Sign out signed-in devices from the same page."]),
+            ("Sign-in options", [
+                "Use a passkey instead of a password and code on supported devices.",
+                "Google or Microsoft sign-in appears when your organisation enables it.",
+                "Organisations can also use single sign-on with their identity provider."])],
+        "suggestions": ["How do I reset my password?", "How do I contact support?",
+                        "How do I set up single sign-on?"],
     },
     {
         "pattern": re.compile(
@@ -598,16 +607,18 @@ FAQ_REPLIES = [
             r"\b(?:leave (?:a |the )?review|write (?:a |the )?review|how do reviews work|what are reviews|"
             r"are reviews (?:public|verified)|review (?:a |the )?professional|rate (?:a |the )?professional|"
             r"star rating|ratings? (?:count|matter|work)|reply to (?:a )?review|respond to (?:a )?review|"
-            r"review reply|review score|rating score)\b", re.I),
+            r"review reply|review score|rating score|edit (?:my )?(?:review|reply)|change (?:my )?(?:review|reply)|"
+            r"delete (?:my )?review)\b", re.I),
         "intent": "trust_verification",
         "answer": ("After an engagement is completed, the buyer can leave one rating from 1 to 5 and a review. It "
-                   "appears on the professional's public profile, the professional can reply once, and reviews feed "
-                   "the track-record ranking."),
+                   "appears on the professional's public profile; the professional can post one public reply and "
+                   "edit it, with edits recorded. Reviews feed the professional's track record and ranking. A buyer "
+                   "cannot edit a review after posting; contact support if it contains a mistake."),
         "sections": [("Reviews", [
             "Reviews open after the engagement is completed.",
             "One review per engagement, rated 1 to 5.",
-            "The professional can post one public reply.",
-            "Reviews count toward search ranking."])],
+            "The professional can post and edit one public reply; edits are recorded.",
+            "Reviews feed the professional's track record and ranking."])],
         "suggestions": ["How does search rank professionals?", "What does a Trust Tier mean?",
                         "What happens in a dispute?"],
     },
@@ -621,7 +632,7 @@ FAQ_REPLIES = [
         "answer": ("The price for the work is agreed in the proposal and contract, and any platform fee is shown "
                    "there before you commit. Professionals set their own price and pricing model, such as fixed "
                    "price, hourly or retainer. Joining and browsing are free; no payment is taken until you fund a "
-                   "milestone in a signed contract, and Zoikorum does not add hidden charges."),
+                   "milestone in a signed contract."),
         "sections": [("Pricing", [
             "Professionals set their own proposal price and pricing model.",
             "Any platform fee is displayed before signing.",
@@ -663,15 +674,21 @@ FAQ_REPLIES = [
     {
         "pattern": re.compile(
             r"\b(?:contact support|get help|help & support|help and support|customer service|help center|"
-            r"support hours|response time|how long.*reply|talk to (?:a |the )?human|contact (?:a |the )?human|"
-            r"contact us|how do i contact (?:support|you|the team|zoikorum))\b", re.I),
+            r"support hours|support (?:ticket|time|response|sla)|response time|how long.*reply|"
+            r"how long (?:does|do) (?:support|it) take|how quickly.*(?:support|help|reply)|"
+            r"talk to (?:a |the )?human|contact (?:a |the )?human|get in touch|reach (?:support|you|the team)|"
+            r"contact us|how do i contact (?:support|you|the team|zoikorum)|"
+            r"report a bug|something is broken|not working|technical problem|feature request|request a feature|"
+            r"product feedback|feedback about (?:zoikorum|the platform|the app|the site)|"
+            r"live chat|chat with support|support email|email support)\b", re.I),
         "intent": "support_handoff",
         "answer": ("Open Help & Support in the app to search answers or send a help request; we reply within one "
-                   "business day. For disagreements about delivered work, raise a dispute from the engagement "
-                   "instead."),
+                   "business day. Choose Technical for a bug and include the page or error reference. For "
+                   "disagreements about delivered work, raise a dispute from the engagement instead."),
         "sections": [("Getting help", [
             "Search the Help Center for common answers.",
             "Send a help request with the page or error reference.",
+            "Use Technical for a bug or something that is not working.",
             "Raise a dispute for problems with delivered work."])],
         "suggestions": ["What happens in a dispute?", "How do I turn on two-step verification?",
                         "How do I get or delete my data?"],
@@ -681,16 +698,21 @@ FAQ_REPLIES = [
             r"\b(?:organisation|organization|add a colleague|invite (?:a )?(?:colleague|member)|"
             r"invite (?:someone|a user|people)|team member|set up a team|team setup|manage a team|"
             r"spending approval|spend limit|who can approve|roles? and permissions|"
-            r"permissions|single sign-on|sso|create (?:an )?organisation)\b", re.I),
+            r"permissions|single sign-on|sso|create (?:an )?organisation|"
+            r"okta|entra|google workspace|identity provider|scim|directory sync|oidc|openid connect)\b", re.I),
         "intent": "account_help",
         "answer": ("Org Admins invite members and assign roles from Organisation -> Members & access. Approvers can "
                    "approve spending up to their spend limit, and requesters cannot approve their own requests. "
-                   "Sign-in strength can be password, two-step, passkey or single sign-on."),
+                   "Org Admins can also connect single sign-on with OpenID Connect (Okta, Microsoft Entra ID, "
+                   "Google Workspace and others) under Organisation -> Security and enable SCIM provisioning."),
         "sections": [("Organisation and access", [
             "Org Admins manage members and roles.",
             "Approvers work within their spend limit.",
-            "Requesters cannot approve their own requests.",
-            "Sign-in strength can be password, two-step, passkey or single sign-on."])],
+            "Requesters cannot approve their own requests."]),
+            ("Single sign-on", [
+                "Connect an OpenID Connect identity provider under Organisation -> Security.",
+                "Providers include Okta, Microsoft Entra ID and Google Workspace.",
+                "SCIM provisioning can be enabled for automatic member sync."])],
         "suggestions": ["How do I turn on two-step verification?", "How do I contact support?",
                         "How do I get or delete my data?"],
     },

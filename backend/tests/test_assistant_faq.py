@@ -40,6 +40,23 @@ from zoikorum.domains.ai import service
     ("what does green mean", "trust_verification"),
     ("how do i add a team member", "account_help"),
     ("how do i export my data", "account_help"),
+    ("how do i add a passkey", "account_help"),
+    ("how do i use a passkey", "account_help"),
+    ("i lost my authenticator", "account_help"),
+    ("how do i get recovery codes", "account_help"),
+    ("can i sign in with google", "account_help"),
+    ("can i sign in with microsoft", "account_help"),
+    ("how do i set up single sign-on", "account_help"),
+    ("do you support okta", "account_help"),
+    ("how do i enable scim", "account_help"),
+    ("how do i report a bug", "support_handoff"),
+    ("my payment is not working", "support_handoff"),
+    ("how do i request a feature", "support_handoff"),
+    ("how long does support take", "support_handoff"),
+    ("is there live chat", "support_handoff"),
+    ("how do i get in touch", "support_handoff"),
+    ("can i edit my review reply", "trust_verification"),
+    ("can i delete my review", "trust_verification"),
 ])
 def test_common_platform_questions_have_an_instant_answer(message: str, intent: str):
     entry = service._match_faq(message)
@@ -72,3 +89,47 @@ def test_general_platform_questions_use_the_overview():
 @pytest.mark.unit
 def test_chat_fallback_models_include_the_production_model():
     assert "qwen2.5:0.5b" in service.CHAT_FALLBACK_MODELS
+
+
+@pytest.mark.unit
+def test_security_answer_covers_passkeys_recovery_and_sso():
+    passkey = service._match_faq("how do i add a passkey")
+    recovery = service._match_faq("i lost my authenticator")
+    sso = service._match_faq("how do i set up single sign-on")
+    assert passkey is not None and "passkey" in passkey["answer"].lower()
+    assert recovery is not None and "recovery code" in recovery["answer"].lower()
+    assert sso is not None and "single sign-on" in sso["answer"].lower()
+    assert sso is not None and "scim" in sso["answer"].lower()
+
+
+@pytest.mark.unit
+def test_support_answer_covers_bugs_and_feedback():
+    for message in ("how do i report a bug", "how do i request a feature", "is there live chat"):
+        entry = service._match_faq(message)
+        assert entry is not None, message
+        assert entry["intent"] == "support_handoff", message
+        assert "help request" in entry["answer"].lower(), message
+
+
+@pytest.mark.unit
+def test_review_answer_is_accurate_about_editable_replies():
+    entry = service._match_faq("can i edit my review reply")
+    assert entry is not None
+    assert "post one public reply and edit it" in entry["answer"]
+    assert "edits recorded" in entry["answer"]
+
+
+@pytest.mark.unit
+def test_payout_answer_does_not_invent_a_fixed_sla():
+    entry = service._match_faq("how long do payouts take")
+    assert entry is not None
+    assert "two business days" not in entry["answer"].lower()
+    assert "expected bank arrival date" in entry["answer"].lower()
+
+
+@pytest.mark.unit
+def test_general_links_help_a_general_question():
+    labels = [label for label, _ in service.RELATED_PAGES["general"]]
+    assert "Help Center" in labels
+    assert "Browse professionals" in labels
+    assert all("Privacy" not in label for label in labels)

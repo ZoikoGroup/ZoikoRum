@@ -46,14 +46,14 @@ export default function SettingsPage() {
           {tab === 'privacy' && <PrivacyTab onNotice={setNotice} />}
           {tab === 'payments' && (
             <section className="card panel"><div className="panel-head"><h2>Payment preferences</h2></div>
-              <div className="empty-row" style={{ padding: 24 }}><strong>No payment methods yet.</strong> Payment methods are added when protected payments
-                launch. Zoikorum never stores card details — only a token from the payment partner.</div></section>
+              <div className="empty-row" style={{ padding: 24 }}><strong>No saved payment methods.</strong> Card details are entered at checkout and handled by the payment partner.
+                Zoikorum stores only a token, never your full card details.</div></section>
           )}
           {tab === 'platform' && <PlatformTab me={me} onSaved={(p) => saved(p, 'Platform preferences saved.')} />}
           {tab === 'linked' && (
             <section className="card panel"><div className="panel-head"><h2>Linked accounts</h2></div>
-              <div className="empty-row" style={{ padding: 24 }}><strong>No linked accounts.</strong> Single sign-on (SAML/OIDC) for enterprise
-                organisations and passkeys are planned. You sign in with your email and password plus two-step verification.</div></section>
+              <div className="empty-row" style={{ padding: 24 }}><strong>No linked accounts.</strong> Passkeys and recovery codes are managed on the Security page.
+                Organisation Admins configure single sign-on under Organisation → Security.</div></section>
           )}
         </div>
         <aside>
