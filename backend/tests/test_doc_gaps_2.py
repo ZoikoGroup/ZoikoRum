@@ -61,8 +61,9 @@ async def test_an_appeal_is_decided_once_by_an_independent_reviewer(client, make
 
 async def test_appeals_are_time_bounded_and_upheld_decisions_stand(client, make_user, drain, sf):
     u, pro, case, first = await failed_identity_case(client, make_user, drain)
-    # Advancing time also expires the session: authentication must run first.
-    clock.advance(timedelta(days=15))
+    # Advancing time past the session lifetime also expires the session: authentication must run first.
+    from zoikorum.config import get_settings
+    clock.advance(timedelta(seconds=get_settings().refresh_token_ttl_seconds) + timedelta(days=1))
     try:
         expired = await client.post(f"{V}/cases/{case['id']}/appeal", headers=u.h,
                                     json={"statement": "Late appeal after the window has closed."})
@@ -72,7 +73,6 @@ async def test_appeals_are_time_bounded_and_upheld_decisions_stand(client, make_
         clock.set_now(None)
 
     # Age the decision independently so the appeal deadline is tested with valid authentication.
-    from zoikorum.config import get_settings
     async with sf() as session, session.begin():
         await session.execute(text("UPDATE verification.cases SET decided_at = :decided WHERE id = :id"),
                               {"decided": clock.now() - timedelta(days=get_settings().verification_appeal_days + 1),

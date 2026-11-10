@@ -87,7 +87,7 @@ class Settings(BaseSettings):
     sign_in_velocity_per_hour: int = Field(default=10, ge=1)  # more sign-ins than this to one account in an hour
     sign_in_max_travel_kmh: int = Field(default=900, ge=100)  # faster than an airliner between two sign-ins
     access_token_ttl_seconds: int = 900
-    refresh_token_ttl_seconds: int = 14 * 24 * 3600
+    refresh_token_ttl_seconds: int = 30 * 24 * 3600  # "Remember me for 30 days"; a sign-in without it ends with the browser
     step_up_max_age_seconds: int = 300
     # Development only: switch off authenticator-app codes (login, step-up, staff MFA) while building features.
     # Active only when env is "local" or "development". Ignored in "test" (tests always use real MFA, even when a
