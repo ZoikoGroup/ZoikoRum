@@ -98,13 +98,33 @@
   .auth-hero-tag::before { top: 12px; }
 }
 @media (min-width: 961px) and (max-height: 800px) { .auth-hero ul { display: none; } }
+@media (min-width: 961px) and (max-height: 800px) {
+  html .auth-split:has(.auth-form-logo) .auth-panel { padding: 8px 16px; }
+  html .auth-split:has(.auth-form-logo) .auth-tabs a { padding: 8px; font-size: 15px; }
+  html .auth-split:has(.auth-form-logo) .auth-form-logo { height: 30px; margin-bottom: 2px; }
+  html .auth-split:has(.auth-form-logo) .auth-body > h1 { font-size: 22px; }
+  html .auth-split:has(.auth-form-logo) .auth-body > .sub { font-size: 14px; margin-bottom: 8px; }
+  html .auth-split:has(.auth-form-logo) .social-btn, .auth-split:has(.auth-form-logo) .auth-body .input { min-height: 36px; }
+  html .auth-split:has(.auth-form-logo) .with-icon > .ico { top: 18px; }
+  html .auth-split:has(.auth-form-logo) .auth-body .btn-block { min-height: 38px; }
+  html .auth-split:has(.auth-form-logo) .auth-body .auth-foot { margin-top: 6px; }
+}
 @media (min-width: 961px) and (max-width: 1500px) { .auth-hero-tag { font-size: 10px; letter-spacing: .05em; } }
 /* Sign-in page only (it is the one with the logo above the form): the whole page fits the window, no page scrolling.
    Sizes follow the window height; only a very short window scrolls inside the form. */
 @media (min-width: 961px) {
   .auth-split:has(.auth-form-logo) { height: 100vh; min-height: 0; overflow: hidden; }
-  .auth-split:has(.auth-form-logo) .auth-panel { height: 100vh; }
-  .auth-split:has(.auth-form-logo) .auth-sheet { height: 100vh; min-height: 0; }
+  /* The form sits in a white rounded card on a light panel, as in the design. */
+  .auth-split:has(.auth-form-logo) .auth-panel { height: 100vh; box-sizing: border-box; padding: 14px 22px; background: #edf2f3; align-items: stretch; }
+  .auth-split:has(.auth-form-logo) .auth-sheet { height: 100%; min-height: 0; background: #fff; border: 1px solid #dfe6e8; border-radius: 18px;
+    box-shadow: 0 14px 34px -22px rgba(6, 48, 58, .45); overflow: hidden; }
+  .auth-split:has(.auth-form-logo) .auth-tabs { background: #f1f4f5; border-bottom-color: #e2e8ea; }
+  .auth-split:has(.auth-form-logo) .auth-legal { border-top-color: #e8eef0; }
+  .auth-split:has(.auth-form-logo) .social-btn { box-shadow: 0 1px 2px rgba(16, 24, 32, .06); }
+  /* Brand wordmark on the dark side: no box, brightened so it reads on the teal. */
+  .auth-split:has(.auth-form-logo) .auth-hero-logo.pill { padding: 0; background: none; border: 0; }
+  .auth-split:has(.auth-form-logo) .auth-hero-logo img,
+  .auth-split:has(.auth-form-logo) .auth-hero-logo.pill img { height: clamp(40px, 6vh, 60px); filter: brightness(1.9) saturate(1.25); }
   .auth-split:has(.auth-form-logo) .auth-tabs a { padding: clamp(10px, 1.6vh, 16px) 8px; font-size: 16px; }
   .auth-split:has(.auth-form-logo) .auth-body { padding: clamp(10px, 2vh, 24px) 40px 6px; min-height: 0; overflow-y: auto; }
   .auth-split:has(.auth-form-logo) .auth-form-logo { height: clamp(34px, 5vh, 48px); margin-bottom: 4px; }
