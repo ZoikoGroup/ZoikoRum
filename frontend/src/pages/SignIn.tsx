@@ -83,6 +83,7 @@ export default function SignIn({ staff = false }: { staff?: boolean }) {
         <p className="sub">For the Zoikorum team only: operations, compliance, disputes, finance and administration.
           Two-step verification is required.</p>
       </> : <>
+        <img className="auth-form-logo" src="/logo.png" alt="Zoikorum" />
         <h1>Welcome back!</h1>
         <p className="sub">Sign in to your Zoikorum account.</p>
       </>}
@@ -94,6 +95,7 @@ export default function SignIn({ staff = false }: { staff?: boolean }) {
           {staff ? 'Continue to the main sign-in' : 'Continue to staff sign-in'}
         </button>
       )}
+      {!needsCode && !staff && <><SsoSignInOptions email={email} /><div className="divider">or sign in with email</div></>}
       <form onSubmit={submit} noValidate>
         {!needsCode ? (
           <>
@@ -109,7 +111,7 @@ export default function SignIn({ staff = false }: { staff?: boolean }) {
             <div className="row-between">
               <label className="checkbox" style={{ margin: 0, alignItems: 'center' }}>
                 <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
-                <span>Remember me on this device</span>
+                <span>Remember me for 30 days</span>
               </label>
               <Link to="/forgot-password">Forgot password?</Link>
             </div>
@@ -145,7 +147,6 @@ export default function SignIn({ staff = false }: { staff?: boolean }) {
       {!needsCode && !staff && (
         <p className="auth-foot">New to Zoikorum? <Link to={joinNext ? `/join?${joinNext}` : '/join'}>Register</Link></p>
       )}
-      {!needsCode && !staff && <SsoSignInOptions email={email} />}
       {!needsCode && passkeysSupported() && (
         <button type="button" className="btn btn-secondary btn-block" style={{ marginTop: 12 }} disabled={busy} onClick={withPasskey}>
           Sign in with a passkey

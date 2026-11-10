@@ -145,7 +145,11 @@ export function AuthLayout({ children, aside }: { children: ReactNode; aside?: R
     return (
       <main className="auth-split">
         <section className="auth-hero" aria-label="About Zoikorum">
-          <Link to="/" className="auth-hero-logo" aria-label="Zoikorum"><img src="/logo.png" alt="Zoikorum" /></Link>
+          {/* Optional light brand logo for the dark panel: drop it at public/auth-logo.png; otherwise the standard logo sits on a soft pill. */}
+          <Link to="/" className="auth-hero-logo" aria-label="Zoikorum">
+            <img src="/auth-logo.png" alt="Zoikorum"
+              onError={(e) => { e.currentTarget.src = '/logo.png'; e.currentTarget.parentElement?.classList.add('pill') }} />
+          </Link>
           <h2>Professional engagement, <span>done right.</span></h2>
           <p className="auth-hero-sub">Connect, engage and manage professionals with trust, compliance and confidence.</p>
           <ul>
@@ -155,6 +159,7 @@ export function AuthLayout({ children, aside }: { children: ReactNode; aside?: R
           </ul>
           {/* Optional product screenshot: drop the exported image at public/auth-hero.png and it appears here. */}
           <img className="auth-hero-shot" src="/auth-hero.png" alt="" onError={(e) => { e.currentTarget.style.display = 'none' }} />
+          <p className="auth-hero-tag" aria-hidden>People <i>/</i> Projects <i>/</i> Contracts <i>/</i> Payments <i>/</i> Compliance <i>/</i> A stronger tomorrow</p>
         </section>
         <section className="auth-panel">
           <div className="auth-sheet">
@@ -167,7 +172,7 @@ export function AuthLayout({ children, aside }: { children: ReactNode; aside?: R
             )}
             <div className="auth-body">{children}</div>
             <footer className="auth-legal">
-              <span><Link to="/legal/privacy">Privacy</Link> · <Link to="/legal/terms">Terms</Link> · <Link to="/legal/accessibility">Accessibility</Link></span>
+              <span><Link to="/legal/privacy">Privacy</Link> · <Link to="/legal/terms">Terms</Link> · <Link to="/legal/accessibility">Accessibility</Link> · <Link to="/app/help">Help</Link></span>
               <span>© {new Date().getFullYear()} Zoiko Tech Inc.</span>
             </footer>
           </div>

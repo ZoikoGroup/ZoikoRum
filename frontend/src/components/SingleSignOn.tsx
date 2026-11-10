@@ -38,13 +38,12 @@ function SocialButton({ icon, label, onClick }: { icon: 'microsoft' | 'google' |
   )
 }
 
-/** On the sign-in page: "or continue with" Microsoft, Google, Apple and Company SSO (by work email). */
+/** On the sign-in page, above the email form: Microsoft, Google, Apple and Company SSO (by work email). */
 export function SsoSignInOptions({ email }: { email: string }) {
   const providers = useProviders()
   const [error, setError] = useState<unknown>(null)
   return (
     <>
-      <div className="divider">or continue with</div>
       <ErrorAlert error={error} />
       <div className="social-list">
         <SocialButton icon="microsoft" label="Continue with Microsoft" onClick={() => social('microsoft', providers.microsoft, setError)} />
