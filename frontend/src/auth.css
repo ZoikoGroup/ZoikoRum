@@ -83,6 +83,11 @@
 .wizard-actions .btn-secondary { min-width: 110px; min-height: 54px; border-radius: 12px; font-size: 17px; font-weight: 600; }
 .wizard-actions .btn-primary { flex: 1; display: inline-flex; justify-content: center; align-items: center; gap: 10px; }
 .reg-note { display: flex; gap: 10px; justify-content: center; text-align: center; font-size: 14.5px; color: #4b5563; margin-top: 16px; }
+/* Desktop: the hero is the full brand artwork (globe, devices, headline), so the text beside it is kept for screen readers only. */
+@media (min-width: 961px) {
+  .auth-hero { background: #06303a url('/auth-bg.png') left top / cover no-repeat; }
+  .auth-hero > * { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; margin: 0; padding: 0; }
+}
 @media (max-width: 960px) {
   .auth-split { grid-template-columns: 1fr; }
   .auth-hero { padding: 28px 24px 24px; }
