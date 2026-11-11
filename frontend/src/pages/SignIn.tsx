@@ -83,7 +83,7 @@ export default function SignIn({ staff = false }: { staff?: boolean }) {
         <p className="sub">For the Zoikorum team only: operations, compliance, disputes, finance and administration.
           Two-step verification is required.</p>
       </> : <>
-        <img className="auth-form-logo" src="/logo.png" alt="Zoikorum" />
+        <img className="auth-form-logo" src="/auth-form-logo.png" alt="Zoikorum" />
         <h1>Welcome back!</h1>
         <p className="sub">Sign in to your Zoikorum account.</p>
       </>}

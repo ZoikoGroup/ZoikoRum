@@ -88,7 +88,8 @@
   /* Pinned to the window height so the artwork always fits the screen, even while the form side scrolls. */
   .auth-hero { position: sticky; top: 0; height: 100vh; align-self: start; box-sizing: border-box;
     background: #06303a url('/auth-bg.png') center calc(100% + 50px) / cover no-repeat; }
-  .auth-hero h2 { font-size: clamp(30px, 4.6vh, 50px); margin: 16px 0 10px; }
+  .auth-hero h2 { font-size: clamp(32px, 5.1vh, 58px); font-weight: 700; margin: 16px 0 10px; }
+  .auth-hero h2 span { color: #19e3c6; }
   .auth-hero-sub { font-size: clamp(15px, 2vh, 18px); margin-bottom: 16px; }
   .auth-hero ul { gap: 8px; margin-bottom: 0; }
   .auth-hero li { font-size: clamp(14px, 1.9vh, 17px); gap: 12px; }
@@ -97,7 +98,17 @@
   .auth-hero-tag { margin: auto -56px 0; padding: 26px 56px 14px; background: linear-gradient(to bottom, rgba(4,28,38,0), rgba(4,28,38,.88) 45%); }
   .auth-hero-tag::before { top: 12px; }
 }
-@media (min-width: 961px) and (max-height: 800px) { .auth-hero ul { display: none; } }
+/* Shorter windows (laptops, or a scaled display): keep the feature list, make the text compact and tuck the artwork lower. */
+@media (min-width: 961px) and (max-height: 800px) {
+  .auth-hero { background-position: center calc(100% + 100px); }
+  .auth-hero h2 { font-size: clamp(26px, 4.2vh, 34px); margin: 10px 0 6px; }
+  .auth-hero-sub { font-size: 14px; margin-bottom: 10px; line-height: 1.4; }
+  .auth-hero ul { gap: 6px; }
+  .auth-hero li { font-size: 14px; gap: 12px; }
+  .auth-hero .ico { width: 30px; height: 30px; }
+  .auth-hero .ico svg { width: 16px; height: 16px; }
+}
+@media (min-width: 961px) and (min-height: 801px) and (max-height: 940px) { .auth-hero { background-position: center calc(100% + 110px); } }
 @media (min-width: 961px) and (max-height: 800px) {
   html .auth-split:has(.auth-form-logo) .auth-panel { padding: 8px 16px; }
   html .auth-split:has(.auth-form-logo) .auth-tabs a { padding: 8px; font-size: 15px; }
@@ -113,7 +124,7 @@
 /* Sign-in page only (it is the one with the logo above the form): the whole page fits the window, no page scrolling.
    Sizes follow the window height; only a very short window scrolls inside the form. */
 @media (min-width: 961px) {
-  .auth-split:has(.auth-form-logo) { height: 100vh; min-height: 0; overflow: hidden; }
+  .auth-split:has(.auth-form-logo) { height: 100vh; min-height: 0; overflow: hidden; grid-template-columns: minmax(0, 56fr) minmax(0, 44fr); }
   /* The form sits in a white rounded card on a light panel, as in the design. */
   .auth-split:has(.auth-form-logo) .auth-panel { height: 100vh; box-sizing: border-box; padding: 14px 22px; background: #edf2f3; align-items: stretch; }
   .auth-split:has(.auth-form-logo) .auth-sheet { height: 100%; min-height: 0; background: #fff; border: 1px solid #dfe6e8; border-radius: 18px;
@@ -124,10 +135,10 @@
   /* Brand wordmark on the dark side: no box, brightened so it reads on the teal. */
   .auth-split:has(.auth-form-logo) .auth-hero-logo.pill { padding: 0; background: none; border: 0; }
   .auth-split:has(.auth-form-logo) .auth-hero-logo img,
-  .auth-split:has(.auth-form-logo) .auth-hero-logo.pill img { height: clamp(40px, 6vh, 60px); filter: brightness(1.9) saturate(1.25); }
+  .auth-split:has(.auth-form-logo) .auth-hero-logo.pill img { height: clamp(44px, 6.4vh, 68px); }
   .auth-split:has(.auth-form-logo) .auth-tabs a { padding: clamp(10px, 1.6vh, 16px) 8px; font-size: 16px; }
   .auth-split:has(.auth-form-logo) .auth-body { padding: clamp(10px, 2vh, 24px) 40px 6px; min-height: 0; overflow-y: auto; }
-  .auth-split:has(.auth-form-logo) .auth-form-logo { height: clamp(34px, 5vh, 48px); margin-bottom: 4px; }
+  .auth-split:has(.auth-form-logo) .auth-form-logo { height: clamp(38px, 5.6vh, 58px); margin-bottom: 4px; }
   .auth-split:has(.auth-form-logo) .auth-body > h1 { font-size: clamp(24px, 3.6vh, 32px); margin-bottom: 2px; }
   .auth-split:has(.auth-form-logo) .auth-body > .sub { font-size: 15px; margin-bottom: clamp(8px, 1.6vh, 16px); }
   .auth-split:has(.auth-form-logo) .social-list { gap: clamp(6px, 1vh, 10px); }
